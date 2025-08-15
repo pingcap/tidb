@@ -181,7 +181,7 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool, filter func(expr expression.Expression) bool) []expression.Expression {
 	if len(predicates) == 0 {
 		return predicates
 	}
@@ -192,13 +192,11 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.
 	if propagateConstant {
-		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+		simplifiedPredicate = expression.PropagateConstant(exprCtx, filter, simplifiedPredicate...)
 	} else {
-		exprs := expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+		exprs := expression.PropagateConstant(exprCtx, filter, simplifiedPredicate...)
 		if len(exprs) == 1 {
-			if _, ok := exprs[0].(*expression.Constant); ok {
-				simplifiedPredicate = exprs
-			}
+			simplifiedPredicate = exprs
 		}
 	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
@@ -303,7 +301,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 		if err != nil {
 			return false
 		}
-		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), newPred)
+		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), nil, newPred)
 		return unsatisfiableExpression(ctx, newPredList[0])
 	}
 	return false

@@ -856,36 +856,6 @@ func getPlanCostVer24PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = child-cost + net-cost
-func (p *PhysicalExchangeReceiver) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
-		return p.PlanCostVer2, nil
-	}
-
-	rows := getCardinality(p, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
-	netFactor := getTaskNetFactorVer2(p, taskType)
-	isBCast := false
-	if sender, ok := p.Children()[0].(*PhysicalExchangeSender); ok {
-		isBCast = sender.ExchangeType == tipb.ExchangeType_Broadcast
-	}
-	numNode := float64(3) // TODO: remove this empirical value
-
-	netCost := netCostVer2(option, rows, rowSize, netFactor)
-	if isBCast {
-		netCost = costusage.MulCostVer2(netCost, numNode)
-	}
-	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
-	if err != nil {
-		return costusage.ZeroCostVer2, err
-	}
-
-	p.PlanCostVer2 = costusage.SumCostVer2(childCost, netCost)
-	p.PlanCostInit = true
-	return p.PlanCostVer2, nil
-}
-
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	if p.planCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.planCostVer2, nil
@@ -902,6 +872,37 @@ func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optim
 	p.planCostVer2 = netCostVer2(option, 1, rowSize, netFactor)
 	p.planCostInit = true
 	return p.planCostVer2, nil
+}
+
+// getPlanCostVer2PhysicalExchangeReceiver returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + net-cost
+func getPlanCostVer2PhysicalExchangeReceiver(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalExchangeReceiver)
+	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	rows := getCardinality(p, option.CostFlag)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	netFactor := getTaskNetFactorVer2(p, taskType)
+	isBCast := false
+	if sender, ok := p.Children()[0].(*physicalop.PhysicalExchangeSender); ok {
+		isBCast = sender.ExchangeType == tipb.ExchangeType_Broadcast
+	}
+	numNode := float64(3) // TODO: remove this empirical value
+
+	netCost := netCostVer2(option, rows, rowSize, netFactor)
+	if isBCast {
+		netCost = costusage.MulCostVer2(netCost, numNode)
+	}
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(childCost, netCost)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -1190,11 +1191,11 @@ func getTaskNetFactorVer2(p base.PhysicalPlan, _ property.TaskType) costusage.Co
 	if isTemporaryTable(getTableInfo(p)) {
 		return defaultVer2Factors.TiDBTemp
 	}
-	if _, ok := p.(*PhysicalExchangeReceiver); ok { // TiFlash MPP
+	if _, ok := p.(*physicalop.PhysicalExchangeReceiver); ok { // TiFlash MPP
 		return defaultVer2Factors.TiFlashMPPNet
 	}
 	if tblReader, ok := p.(*PhysicalTableReader); ok {
-		if _, isMPP := tblReader.tablePlan.(*PhysicalExchangeSender); isMPP { // TiDB to TiFlash with mpp protocol
+		if _, isMPP := tblReader.tablePlan.(*physicalop.PhysicalExchangeSender); isMPP { // TiDB to TiFlash with mpp protocol
 			return defaultVer2Factors.TiDB2FlashNet
 		}
 	}

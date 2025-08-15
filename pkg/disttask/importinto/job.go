@@ -24,7 +24,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -90,7 +89,9 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	var (
 		jobID, taskID int64
 	)
+	var runningOnUserKS bool
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		runningOnUserKS = kv.IsUserKS(se.GetStore())
 		var err2 error
 		exec := se.GetSQLExecutor()
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
@@ -106,7 +107,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		}
 		// in classical kernel or if we are inside SYSTEM keyspace itself, we
 		// submit the task to DXF in the same transaction as creating the job.
-		if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == keyspace.System {
+		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
 			logicalPlan.JobID = jobID
 			planCtx.SessionCtx = se
 			planCtx.TaskKey = TaskKey(jobID)
@@ -122,7 +123,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
 	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
 	dxfTaskMgr := taskManager
-	if keyspace.IsRunningOnUser() {
+	if runningOnUserKS {
 		var err2 error
 		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
 		if err2 != nil {

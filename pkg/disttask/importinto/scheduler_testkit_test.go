@@ -50,7 +50,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
 
 	// create job
 	conn := tk.Session().GetSQLExecutor()
@@ -93,7 +93,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(false)
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(manager, store), store)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -201,7 +201,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
 	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
 
 	// create job
@@ -255,7 +255,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(true)
+	store = &importinto.StoreWithoutKS{}
+	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(manager, store), store)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)

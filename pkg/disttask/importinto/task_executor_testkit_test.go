@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -79,7 +80,9 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		taskKS = keyspace.System
 	}
-	executor := importinto.NewPostProcessStepExecutor(1, store, taskMeta, taskKS, zap.NewExample())
+	taskMgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	executor := importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
@@ -88,17 +91,17 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	stepMeta.Checksum[-1] = tmp
 	bytes, err = json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, taskKS, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.ErrorContains(t, err, "checksum mismatched remote vs local")
 
 	taskMeta.Plan.Checksum = config.OpLevelOptional
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, taskKS, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
 	taskMeta.Plan.Checksum = config.OpLevelOff
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, taskKS, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 }
