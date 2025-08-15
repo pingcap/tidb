@@ -215,9 +215,21 @@ func (r *byteReader) switchToConcurrentReader() error {
 // next call.
 func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	if n <= 0 {
+		r.logger.Error("readNBytes corruptted",
+			zap.Int("n", n),
+			zap.String("filename", r.concurrentReader.filename),
+			zap.Bool("now", r.concurrentReader.now),
+			zap.Int("concurrency", r.concurrentReader.concurrency),
+		)
 		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
 	}
 	if n > int(size.GB) {
+		r.logger.Error("readNBytes corruptted",
+			zap.Int("n", n),
+			zap.String("filename", r.concurrentReader.filename),
+			zap.Bool("now", r.concurrentReader.now),
+			zap.Int("concurrency", r.concurrentReader.concurrency),
+		)
 		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
 	}
 
