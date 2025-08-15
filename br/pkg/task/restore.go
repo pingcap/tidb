@@ -925,7 +925,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer printRestoreMetrics()
 
 	// build restore registry
-	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	restoreRegistry, err := registry.NewRestoreRegistry(c, g, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1905,7 +1905,7 @@ func filterRestoreFiles(
 		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
-		if !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
+		if !loadStatsPhysical && !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
 			continue
 		}
 		dbMap[db.Info.ID] = db
@@ -2626,7 +2626,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	}
 
 	// build restore registry
-	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	restoreRegistry, err := registry.NewRestoreRegistry(ctx, g, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
