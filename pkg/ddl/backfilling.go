@@ -780,7 +780,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		defer bd.Close()
 	}
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
-		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
+		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID, indexIDs).
 		Build(cfg, bd)
 	if err != nil {
 		return errors.Trace(err)
