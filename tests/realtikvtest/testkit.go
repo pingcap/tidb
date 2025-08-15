@@ -112,6 +112,11 @@ type realtikvStoreOption struct {
 	// driver will cache store.
 	keepSystemStore bool
 	keepSelfStore   bool
+	// whether to allocate port for the mock domain, else keep the default.
+	// some tests depend on the default port, such as TestImportFromServer, as
+	// infosync.MockGlobalServerInfoManagerEntry only have one mock server info
+	// with default port 4000.
+	allocPort bool
 }
 
 // RealTiKVStoreOption is the config option for creating a real TiKV store.
@@ -145,6 +150,13 @@ func WithKeepSelfStore(keep bool) RealTiKVStoreOption {
 	}
 }
 
+// WithAllocPort allows the store to allocate port for the mock domain.
+func WithAllocPort(alloc bool) RealTiKVStoreOption {
+	return func(opt *realtikvStoreOption) {
+		opt.allocPort = alloc
+	}
+}
+
 // KSRuntime is a runtime environment for a keyspace.
 type KSRuntime struct {
 	Store kv.Storage
@@ -168,7 +180,7 @@ func PrepareForCrossKSTest(t *testing.T, userKSs ...string) map[string]*KSRuntim
 	ksList := append([]string{keyspace.System}, userKSs...)
 	for _, ks := range ksList {
 		store, dom := CreateMockStoreAndDomainAndSetup(t, WithKeyspaceName(ks),
-			WithKeepSystemStore(true), WithKeepSelfStore(true))
+			WithKeepSystemStore(true), WithKeepSelfStore(true), WithAllocPort(true))
 		res[ks] = &KSRuntime{
 			Store: store,
 			Dom:   dom,
@@ -219,11 +231,17 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		path += "&keyspaceName=" + ks
 	}
 	var d driver.TiKVDriver
+	bak := *config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&bak)
+	})
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TxnLocalLatches.Enabled = false
 		conf.KeyspaceName = ks
 		conf.Store = config.StoreTypeTiKV
-		conf.Port = uint(mockPortAlloc.Add(1))
+		if option.allocPort {
+			conf.Port = uint(mockPortAlloc.Add(1))
+		}
 	})
 	if ks == keyspace.System {
 		UpdateTiDBConfig()
