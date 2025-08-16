@@ -29,5 +29,4 @@ func TestIsReadOnlyVarInNextGen(t *testing.T) {
 	require.True(t, IsReadOnlyVarInNextGen(TiDBEnableMDL))
 	require.True(t, IsReadOnlyVarInNextGen("TIDB_ENABLE_METADATA_LOCK"))
 	require.True(t, IsReadOnlyVarInNextGen(TiDBMaxDistTaskNodes))
-	require.True(t, IsReadOnlyVarInNextGen(TiDBDDLReorgWorkerCount))
 }

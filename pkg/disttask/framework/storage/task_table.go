@@ -281,7 +281,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	extraParams proto.ExtraParams,
 	meta []byte,
 ) (taskID int64, err error) {
-	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNodeByRole(ctx, se, "", true)
 	if err != nil {
 		return 0, err
 	}
@@ -1024,7 +1024,7 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNodeByRole(ctx, se, "", true)
 	if err != nil {
 		return err
 	}

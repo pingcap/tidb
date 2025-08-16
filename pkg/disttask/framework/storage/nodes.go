@@ -163,15 +163,31 @@ func (mgr *TaskManager) GetCPUCountOfNode(ctx context.Context) (int, error) {
 	var cnt int
 	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		cnt, err2 = mgr.getCPUCountOfNode(ctx, se)
+		cnt, err2 = mgr.getCPUCountOfNodeByRole(ctx, se, "", true)
 		return err2
 	})
 	return cnt, err
 }
 
-// getCPUCountOfNode gets the cpu count of managed node.
+// GetCPUCountOfNodeByRole gets the cpu count of node by role.
+func (mgr *TaskManager) GetCPUCountOfNodeByRole(ctx context.Context, role string) (int, error) {
+	var cnt int
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		cnt, err2 = mgr.getCPUCountOfNodeByRole(ctx, se, role, false)
+		return err2
+	})
+	return cnt, err
+}
+
+// getCPUCountOfNodeByRole gets the cpu count of managed node by role,
 // returns error when there's no node or no node has valid cpu count.
-func (mgr *TaskManager) getCPUCountOfNode(ctx context.Context, se sessionctx.Context) (int, error) {
+func (mgr *TaskManager) getCPUCountOfNodeByRole(
+	ctx context.Context,
+	se sessionctx.Context,
+	role string,
+	arbitarary bool,
+) (int, error) {
 	nodes, err := mgr.getAllNodesWithSession(ctx, se)
 	if err != nil {
 		return 0, err
@@ -181,6 +197,9 @@ func (mgr *TaskManager) getCPUCountOfNode(ctx context.Context, se sessionctx.Con
 	}
 	var cpuCount int
 	for _, n := range nodes {
+		if !arbitarary && n.Role != role {
+			continue
+		}
 		if n.CPUCount > 0 {
 			cpuCount = n.CPUCount
 			break

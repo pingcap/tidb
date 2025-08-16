@@ -19,6 +19,8 @@ import (
 	"fmt"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -28,8 +30,8 @@ import (
 
 // CalcMaxNodeCountByTableSize calculates the maximum number of nodes to execute DXF based on the table size.
 func CalcMaxNodeCountByTableSize(ctx context.Context, dataSizeInBytes int64) int {
-	coresPerNode := int64(cpu.GetCPUCount())
-	nodeCnt := calcMaxNodeCountByTableSize(dataSizeInBytes, coresPerNode)
+	coresPerNode := getSystemKeyspaceCPUNode(ctx)
+	nodeCnt := calcMaxNodeCountByTableSize(dataSizeInBytes, int64(coresPerNode))
 	logutil.Logger(ctx).Info("calculated max node count for dist task execution",
 		zap.Int64("tableSize", dataSizeInBytes),
 		zap.Int64("coresPerNode", coresPerNode),
@@ -51,7 +53,7 @@ func calcMaxNodeCountByTableSize(tableSizeInBytes int64, coresPerNode int64) int
 
 // CalcMaxNodeCountByDataSize calculates the maximum number of nodes to execute DXF based on the data size.
 func CalcMaxNodeCountByDataSize(ctx context.Context, dataSizeInBytes int64) int {
-	coresPerNode := int64(cpu.GetCPUCount())
+	coresPerNode := getSystemKeyspaceCPUNode(ctx)
 	nodeCnt := calcMaxNodeCountByDataSize(dataSizeInBytes, coresPerNode)
 	logutil.Logger(ctx).Info("calculated max node count for dist task execution",
 		zap.Int64("storageSize", dataSizeInBytes),
@@ -95,8 +97,8 @@ func CalcMaxNodeCountByStoresNum(ctx context.Context, store kv.Storage) int {
 }
 
 // CalcConcurrencyByDataSize calculates the concurrency based on the data size.
-func CalcConcurrencyByDataSize(dataSizeInBytes int64) int {
-	coresPerNode := int64(cpu.GetCPUCount())
+func CalcConcurrencyByDataSize(ctx context.Context, dataSizeInBytes int64) int {
+	coresPerNode := getSystemKeyspaceCPUNode(ctx)
 	return calcConcurrencyByDataSize(dataSizeInBytes, coresPerNode)
 }
 
@@ -108,4 +110,19 @@ func calcConcurrencyByDataSize(dataSizeInBytes int64, coresPerNode int64) int {
 	concurrency = min(concurrency, coresPerNode-1)
 	concurrency = max(concurrency, 1)
 	return int(concurrency)
+}
+
+func getSystemKeyspaceCPUNode(ctx context.Context) int64 {
+	var cpuNode int
+	mgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		logutil.Logger(ctx).Warn("failed to get dxf service task manager", zap.Error(err))
+		cpuNode = cpu.GetCPUCount()
+	}
+	cpuNode, err = mgr.GetCPUCountOfNodeByRole(ctx, handle.NextGenTargetScope)
+	if err != nil {
+		logutil.Logger(ctx).Warn("failed to get cpu count of dxf service nodes", zap.Error(err))
+		cpuNode = cpu.GetCPUCount()
+	}
+	return int64(cpuNode)
 }

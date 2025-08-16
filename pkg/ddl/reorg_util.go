@@ -42,6 +42,10 @@ import (
 func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
 
+	//nolint:forbidigo
+	// sctx comes from the user session.
+	sessVars := sctx.GetSessionVars()
+
 	var setReorgParam bool
 	var setDistTaskParam bool
 
@@ -77,16 +81,14 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 
 	if setReorgParam {
 		if kerneltype.IsNextGen() {
-			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes)
+			autoConc := scheduler.CalcConcurrencyByDataSize(ctx, tableSizeInBytes)
 			m.SetConcurrency(autoConc)
 		} else {
-			//nolint:forbidigo
-			if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
+			if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
 				m.SetConcurrency(variable.TidbOptInt(sv, 0))
 			}
 		}
-		//nolint:forbidigo
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
+		if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
 			m.SetBatchSize(variable.TidbOptInt(sv, 0))
 		}
 		m.SetMaxWriteSpeed(int(vardef.DDLReorgMaxWriteSpeed.Load()))
@@ -99,8 +101,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 		if kerneltype.IsNextGen() {
 			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(ctx, tableSizeInBytes)
 		} else {
-			//nolint:forbidigo
-			if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
 				if m.MaxNodeCount == -1 { // -1 means calculate automatically
 					m.MaxNodeCount = scheduler.CalcMaxNodeCountByStoresNum(ctx, sctx.GetStore())
@@ -141,28 +142,28 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 func getTableSizeByID(ctx context.Context, store kv.Storage, tblID int64) int64 {
 	helperStore, ok := store.(helper.Storage)
 	if !ok {
-		logutil.DDLLogger().Error("store does not implement helper.Storage interface",
+		logutil.DDLLogger().Warn("store does not implement helper.Storage interface",
 			zap.String("storeType", fmt.Sprintf("%T", store)))
 		return 0
 	}
 	h := helper.NewHelper(helperStore)
 	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
-		logutil.DDLLogger().Error("failed to get PD HTTP client for calculating table size",
+		logutil.DDLLogger().Warn("failed to get PD HTTP client for calculating table size",
 			zap.Int64("tableID", tblID),
 			zap.Error(err))
 		return 0
 	}
 	totalSize, err := estimateTableSizeByID(ctx, pdCli, tblID)
 	if err != nil {
-		logutil.DDLLogger().Error("failed to estimate table size for calculating concurrency",
+		logutil.DDLLogger().Warn("failed to estimate table size for calculating concurrency",
 			zap.Int64("tableID", tblID),
 			zap.Error(err))
 	}
 	if totalSize == 0 {
 		regionStats, err := h.GetPDRegionStats(ctx, tblID, false)
 		if err != nil {
-			logutil.DDLLogger().Error("failed to get region stats for calculating concurrency",
+			logutil.DDLLogger().Warn("failed to get region stats for calculating concurrency",
 				zap.Int64("tableID", tblID),
 				zap.Error(err))
 			return 0

@@ -611,7 +611,7 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 		threadCnt = 2
 	}
 	if kerneltype.IsNextGen() {
-		threadCnt = scheduler.CalcConcurrencyByDataSize(p.TotalFileSize)
+		threadCnt = scheduler.CalcConcurrencyByDataSize(ctx, p.TotalFileSize)
 	}
 
 	p.Checksum = config.OpLevelRequired
