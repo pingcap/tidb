@@ -845,8 +845,6 @@ func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) 
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.pushDownFilter, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.pushDownFilter, s.filterConds...)
-	s.joinConds = RemoveDupExprs(s.joinConds)
-	s.filterConds = RemoveDupExprs(s.filterConds)
 	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 
