@@ -281,6 +281,7 @@ func (s *propConstSolver) propagateConstantEQ() {
 	visited := make([]bool, len(s.conditions))
 	cols := make([]*Column, 0, 4)
 	cons := make([]Expression, 0, 4)
+	evalCtx := s.ctx.GetEvalCtx()
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -294,17 +295,20 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				// `!visited[i]` is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
-				// and then using `b = 1` to get `a = 1` again.
-				if isColEqCondition(s.conditions[i]) && !visited[i] {
+				if isColEqCondition(s.conditions[i]) {
 					// We should protect the equal condition. so we append the new expr.
 					// It is necessary to set visited to false, for example.
 					//   a = b, a = 1, c = b + 1
 					// -> a = b, a = 1, c = b + 1, b = 1
 					// -> a = b, a = 1, c = 1 + 1, b = 1
-					visited = append(visited, false) // nolint:makezero
-					visited[i] = true
-					s.conditions = append(s.conditions, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
+					newExpr := ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+					if !newExpr.Equal(evalCtx, cond) {
+						visited = append(visited, false) // nolint:makezero
+						// it is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
+						// and then using `b = 1` to get `a = 1` again.
+						visited[i] = true
+						s.conditions = append(s.conditions, newExpr)
+					}
 				} else {
 					s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 				}
@@ -669,6 +673,7 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 	clear(s.eqMapper)
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
+	evalCtx := s.ctx.GetEvalCtx()
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -682,17 +687,20 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				// `!visited[i]` is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
-				// and then using `b = 1` to get `a = 1` again.
-				if isColEqCondition(s.joinConds[i]) && !visited[i] {
+				if isColEqCondition(s.joinConds[i]) {
 					// We should protect the equal condition. so we append the new expr.
 					// It is necessary to set visited to false, for example.
 					//   a = b, a = 1, c = b + 1
 					// -> a = b, a = 1, c = b + 1, b = 1
 					// -> a = b, a = 1, c = 1 + 1, b = 1
-					visited = append(visited, false) // nolint:makezero
-					visited[i] = true
-					s.joinConds = append(s.joinConds, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
+					newExpr := ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+					if !newExpr.Equal(evalCtx, cond) {
+						visited = append(visited, false) // nolint:makezero
+						// it is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
+						// and then using `b = 1` to get `a = 1` again.
+						visited[i+lenFilters] = true
+						s.joinConds = append(s.joinConds, newExpr)
+					}
 				} else {
 					s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 				}
