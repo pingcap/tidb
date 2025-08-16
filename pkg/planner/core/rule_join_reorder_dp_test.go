@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -50,8 +51,8 @@ func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*prop
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
-func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
-	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
+func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType, _ *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType, _ *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 		retJoin := mockLogicalJoin{}.init(ctx)
 		retJoin.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 		retJoin.statsMap = statsMap
@@ -203,7 +204,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		baseSingleGroupJoinOrderSolver: baseGroupSolver,
 		newJoin:                        newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroups, nil)
+	result, err := solver.solve(joinGroups, &joinReorderTrace{cost: map[string]float64{}})
 	require.NoError(t, err)
 
 	expected := "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}"
@@ -231,7 +232,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 		},
 		newJoin: newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroup, nil)
+	result, err := solver.solve(joinGroup, &joinReorderTrace{cost: map[string]float64{}})
 	require.NoError(t, err)
 
 	expected := "MockJoin{MockJoin{a, b}, MockJoin{c, d}}"
