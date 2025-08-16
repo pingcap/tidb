@@ -32,8 +32,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
+<<<<<<< HEAD
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+=======
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+>>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -78,8 +84,15 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	originalReadStaleness := se.GetSessionVars().ReadStaleness
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	sessVars.ReadStaleness = 0
+	// NT-DML should not use the bulk DML mode.
+	originalBulkDMLEnabled := sessVars.BulkDMLEnabled
+	sessVars.BulkDMLEnabled = false
+	// NT-DML is used to be large and unusual, so we don't mix it with other DMLs, give it the prefix "NTDML-".
+	stmtType := fmt.Sprintf("NTDML-%s", ast.GetStmtLabel(stmt.DMLStmt))
+	ctx = stmtctx.WithStmtLabel(ctx, stmtType)
 	defer func() {
 		sessVars.ReadStaleness = originalReadStaleness
+		sessVars.BulkDMLEnabled = originalBulkDMLEnabled
 	}()
 	err := core.Preprocess(ctx, se, stmt)
 	if err != nil {

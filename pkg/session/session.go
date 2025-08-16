@@ -2073,11 +2073,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
 		if err == nil && prepareStmt.PreparedAst != nil {
-			stmtLabel = ast.GetStmtLabel(prepareStmt.PreparedAst.Stmt)
+			stmtLabel = stmtctx.GetStmtLabel(ctx, prepareStmt.PreparedAst.Stmt)
 		}
 	}
 	if stmtLabel == "" {
-		stmtLabel = ast.GetStmtLabel(stmtNode)
+		stmtLabel = stmtctx.GetStmtLabel(ctx, stmtNode)
 	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 

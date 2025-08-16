@@ -54,6 +54,21 @@ var (
 
 	// AffectedRowsCounterReplace records the number of replace affected rows.
 	AffectedRowsCounterReplace prometheus.Counter
+<<<<<<< HEAD
+=======
+
+	// AffectedRowsCounterNTDMLUpdate records the number of NT-DML update affected rows.
+	AffectedRowsCounterNTDMLUpdate prometheus.Counter
+	// AffectedRowsCounterNTDMLDelete records the number of NT-DML delete affected rows.
+	AffectedRowsCounterNTDMLDelete prometheus.Counter
+	// AffectedRowsCounterNTDMLInsert records the number of NT-DML insert affected rows.
+	AffectedRowsCounterNTDMLInsert prometheus.Counter
+	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
+	AffectedRowsCounterNTDMLReplace prometheus.Counter
+
+	// NetworkTransmissionStats records the network transmission for queries
+	NetworkTransmissionStats *prometheus.CounterVec
+>>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -129,4 +144,19 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterUpdate = AffectedRowsCounter.WithLabelValues("Update")
 	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
 	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
+<<<<<<< HEAD
+=======
+	AffectedRowsCounterNTDMLUpdate = AffectedRowsCounter.WithLabelValues("NTDML-Update")
+	AffectedRowsCounterNTDMLDelete = AffectedRowsCounter.WithLabelValues("NTDML-Delete")
+	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
+	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
+
+	NetworkTransmissionStats = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "network_transmission",
+			Help:      "Counter of network transmission bytes.",
+		}, []string{LblType})
+>>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 }

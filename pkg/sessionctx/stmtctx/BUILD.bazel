@@ -10,7 +10,11 @@ go_library(
         "//pkg/domain/resourcegroup",
         "//pkg/errctx",
         "//pkg/parser",
+<<<<<<< HEAD
         "//pkg/parser/model",
+=======
+        "//pkg/parser/ast",
+>>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/statistics/handle/usage/indexusage",
