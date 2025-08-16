@@ -1238,6 +1238,11 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
 				args[0] = newCol
 			}
+			if sf, ok := args[0].(*ScalarFunction); ok {
+				nsf := sf.Clone()
+				nsf.(*ScalarFunction).RetType = sf.RetType.Clone()
+				args[0] = nsf
+			}
 			if args[0].GetType(ctx).GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale

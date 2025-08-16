@@ -353,6 +353,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 	}
+
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
@@ -360,7 +361,40 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
+	cloneRetType(c, sf.RetType.Clone(), sf.RetType)
 	return c
+}
+
+func cloneRetType(expr Expression, newRet, oldRet *types.FieldType) {
+	switch e := expr.(type) {
+	case *ScalarFunction:
+		if e.RetType.EvalType() != types.ETJson {
+			return
+		}
+		if e.RetType == oldRet {
+			if e.RetType == e.Function.getRetTp() {
+				// Not every return type is equal at these two positions.
+				// in the BuildJSONSumCrc32FunctionWithCheck, the return type is fixed to bigint.
+				e.Function.setRetTp(newRet)
+			}
+			e.RetType = newRet
+			for _, arg := range e.GetArgs() {
+				cloneRetType(arg, newRet, oldRet)
+			}
+		} else {
+			oRet := e.RetType
+			nRet := e.RetType.Clone()
+			if e.RetType == e.Function.getRetTp() {
+				// Not every return type is equal at these two positions.
+				// in the BuildJSONSumCrc32FunctionWithCheck, the return type is fixed to bigint.
+				e.Function.setRetTp(nRet)
+			}
+			e.RetType = nRet
+			for _, arg := range e.GetArgs() {
+				cloneRetType(arg, nRet, oRet)
+			}
+		}
+	}
 }
 
 // GetType implements Expression interface.
