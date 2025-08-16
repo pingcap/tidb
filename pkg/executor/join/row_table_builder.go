@@ -53,6 +53,8 @@ type rowTableBuilder struct {
 	hash      hash.Hash64
 	rehashBuf []byte
 
+	bitMap []byte
+
 	partitionNumber uint
 }
 
@@ -62,7 +64,7 @@ type preAllocHelper struct {
 	rawDataLen  int64
 }
 
-func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
+func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool, nullMapLength int) *rowTableBuilder {
 	builder := &rowTableBuilder{
 		buildKeyIndex:                 buildKeyIndex,
 		buildKeyTypes:                 buildKeyTypes,
@@ -71,6 +73,7 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 		hasFilter:                     hasFilter,
 		keepFilteredRows:              keepFilteredRows,
 		partitionNumber:               partitionNumber,
+		bitMap:                        make([]byte, nullMapLength),
 	}
 	return builder
 }
@@ -131,6 +134,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 	// 1. split partition
+	codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer)
 	for index, colIdx := range b.buildKeyIndex {
 		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
 		if err != nil {
@@ -272,22 +276,24 @@ func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashT
 	}
 }
 
-func fillNullMap(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment) int {
-	return fillNullMapImpl(rowTableMeta, row, seg, false)
+func fillNullMap(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment, bitmap []byte) int {
+	return fillNullMapImpl(rowTableMeta, row, seg, bitmap, false)
 }
 
-func estimateFillNullMap(rowTableMeta *joinTableMeta) int {
-	return fillNullMapImpl(rowTableMeta, nil, nil, true)
+func estimateFillNullMap(rowTableMeta *joinTableMeta, bitmap []byte) int {
+	return fillNullMapImpl(rowTableMeta, nil, nil, bitmap, true)
 }
 
-func fillNullMapImpl(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment, estimate bool) int {
+func fillNullMapImpl(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment, bitmap []byte, estimate bool) int {
 	nullMapLength := rowTableMeta.nullMapLength
 	if estimate {
 		return nullMapLength
 	}
 
 	if nullMapLength > 0 {
-		bitmap := make([]byte, nullMapLength)
+		for i := range nullMapLength {
+			bitmap[i] = 0
+		}
 		for colIndexInRowTable, colIndexInRow := range rowTableMeta.rowColumnsOrder {
 			colIndexInBitMap := colIndexInRowTable + rowTableMeta.colOffsetInNullMap
 			if row.IsNull(colIndexInRow) {
@@ -445,7 +451,7 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 
 		rowLength := int64(0)
 		rowLength += int64(estimateFillNextRowPtr(seg))
-		rowLength += int64(estimateFillNullMap(rowTableMeta))
+		rowLength += int64(estimateFillNullMap(rowTableMeta, b.bitMap))
 		rowLength += b.estimateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
 		rowLength += estimateFillRowData(rowTableMeta, &row, seg)
 		rowLength += estimateFillFake(seg, rowLength)
@@ -520,7 +526,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		// fill next_row_ptr field
 		rowLength += int64(fillNextRowPtr(seg))
 		// fill null_map
-		rowLength += int64(fillNullMap(rowTableMeta, &row, seg))
+		rowLength += int64(fillNullMap(rowTableMeta, &row, seg, b.bitMap))
 		// fill serialized key and key length if needed
 		rowLength += b.fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
 		// fill row data

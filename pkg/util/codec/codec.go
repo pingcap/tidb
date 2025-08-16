@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -422,6 +423,48 @@ const (
 	// column, and the key is not inlined, then no need to record the column length, otherwise, always need to record the column length
 	KeepVarColumnLength
 )
+
+// TODO refine
+// PreAllocForSerializedKeyBuffer estimates key length
+func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte) {
+	maxLen := int64(0)
+	for i, idx := range buildKeyIndex {
+		switch tps[i].GetType() {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			maxLen += size.SizeOfByte + 8
+		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			column := chk.Column(idx)
+			canSkip := func(index int) bool {
+				if column.IsNull(index) {
+					nullVector[index] = true
+				}
+				return (filterVector != nil && !filterVector[index]) || (nullVector != nil && nullVector[index])
+			}
+
+			maxStringLen := int64(0)
+			for _, physicalRowIndex := range usedRows {
+				if canSkip(physicalRowIndex) {
+					continue
+				}
+				strLen := int64(len(column.GetBytes(physicalRowIndex))) * 2
+				if serializeModes[idx] == KeepVarColumnLength {
+					strLen += int64(sizeUint32)
+				}
+				maxStringLen = max(maxStringLen, strLen)
+			}
+
+			maxLen += maxStringLen
+		default:
+			// TODO support more types
+		}
+	}
+
+	for i := range serializedKeysVectorBuffer {
+		if cap(serializedKeysVectorBuffer[i]) < int(maxLen) {
+			serializedKeysVectorBuffer[i] = make([]byte, 0, maxLen)
+		}
+	}
+}
 
 // SerializeKeys is used in join
 func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType, colIdx int, usedRows []int, filterVector []bool, nullVector []bool, serializeMode SerializeMode, serializedKeysVector [][]byte) (err error) {
