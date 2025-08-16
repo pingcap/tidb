@@ -393,6 +393,7 @@ func waitVersionSynced(
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
 		return err
 	}
+	failpoint.InjectCall("afterWaitVersionSynced", sum)
 	logger.Info("wait schema version synced success",
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()), zap.Stringer("summary", sum))

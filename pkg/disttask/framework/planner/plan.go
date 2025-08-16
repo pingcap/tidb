@@ -33,6 +33,7 @@ type PlanCtx struct {
 	TaskType   proto.TaskType
 	ThreadCnt  int
 	MaxNodeCnt int
+	Keyspace   string
 
 	// PreviousSubtaskMetas is subtask metas of previous steps.
 	// We can remove this field if we find a better way to pass the result between steps.

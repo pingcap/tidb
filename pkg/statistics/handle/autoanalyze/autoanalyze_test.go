@@ -572,13 +572,13 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	require.NoError(
 		t,
 		failpoint.Enable(
-			"github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo",
+			"github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo",
 			makeFailpointRes(t, getMockedServerInfo()),
 		),
 	)
 	defer func() {
 		require.NoError(
-			t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"),
+			t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"),
 		)
 	}()
 	// Create a new chunk with capacity for three fields

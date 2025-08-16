@@ -298,6 +298,8 @@ type Plan struct {
 	ForceMergeStep bool
 	// see ManualRecovery in proto.ExtraParams
 	ManualRecovery bool
+	// the keyspace name when submitting this job, only for import-into
+	Keyspace string
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -481,6 +483,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		InImportInto:           true,
 		DataSourceType:         getDataSourceType(plan),
 		User:                   userSctx.GetSessionVars().User.String(),
+		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err

@@ -17,18 +17,15 @@ package infosync
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -212,42 +209,4 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
 	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
 	require.Equal(t, info.Labels, decodeInfo.Labels)
-}
-
-func TestGetServersForISSync(t *testing.T) {
-	var syncer *serverinfo.Syncer
-	if kerneltype.IsClassic() {
-		syncer = serverinfo.NewSyncer("1", func() uint64 { return 1 }, nil, nil)
-	} else {
-		syncer = serverinfo.NewCrossKSSyncer("1", func() uint64 { return 1 }, nil, nil, "ks1")
-	}
-	setGlobalInfoSyncer(&InfoSyncer{svrInfoSyncer: syncer})
-	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
-		"s1": {StaticInfo: serverinfo.StaticInfo{Keyspace: "ks1"}},
-		"s2": {StaticInfo: serverinfo.StaticInfo{Keyspace: "ks1"}},
-		"s3": {StaticInfo: serverinfo.StaticInfo{Keyspace: "ks1", AssumedKeyspace: keyspace.System}},
-	}
-	makeFailPointRes := func(v any) string {
-		bytes, err := json.Marshal(v)
-		require.NoError(t, err)
-		return fmt.Sprintf("return(`%s`)", string(bytes))
-	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailPointRes(mockedAllServerInfos))
-
-	// checkAssumedSvr = false
-	infos, err := GetServersForISSync(context.Background(), false)
-	require.NoError(t, err)
-	if kerneltype.IsClassic() {
-		require.Len(t, infos, 3)
-	} else {
-		require.Len(t, infos, 2)
-		for _, info := range infos {
-			require.False(t, info.IsAssumed())
-		}
-	}
-
-	// checkAssumedSvr = true
-	infos, err = GetServersForISSync(context.Background(), true)
-	require.NoError(t, err)
-	require.Len(t, infos, 3)
 }

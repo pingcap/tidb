@@ -411,7 +411,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		bytes, err := json.Marshal(serverInfos)
 		require.NoError(t, err)
 		inTerms := fmt.Sprintf("return(`%s`)", string(bytes))
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", inTerms)
 	}
 
 	t.Run("all support v2, even with pre-release label", func(t *testing.T) {

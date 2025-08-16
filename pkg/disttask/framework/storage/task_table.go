@@ -256,6 +256,7 @@ func (mgr *TaskManager) CreateTask(
 	ctx context.Context,
 	key string,
 	tp proto.TaskType,
+	keyspace string,
 	concurrency int,
 	targetScope string,
 	maxNodeCnt int,
@@ -264,7 +265,7 @@ func (mgr *TaskManager) CreateTask(
 ) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, maxNodeCnt, extraParams, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, keyspace, concurrency, targetScope, maxNodeCnt, extraParams, meta)
 		return err2
 	})
 	return
@@ -276,6 +277,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	se sessionctx.Context,
 	key string,
 	tp proto.TaskType,
+	keyspace string,
 	concurrency int,
 	targetScope string,
 	maxNodeCount int,
@@ -293,7 +295,6 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	keyspace := config.GetGlobalKeyspaceName()
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
 			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?, %?, %?)`,
