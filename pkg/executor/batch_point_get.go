@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
@@ -483,7 +484,25 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
-	txnCtx := sctx.GetSessionVars().TxnCtx
+	sessVars := sctx.GetSessionVars()
+
+	// Check max_execution_time constraint for batch point-get with lock
+	// max_execution_time only applies to SELECT statements
+	maxExecTimeMS := sessVars.GetMaxExecutionTime()
+	if maxExecTimeMS > 0 && sessVars.StmtCtx.InSelectStmt {
+		// Get the query start time from ProcessInfo
+		processInfo := sctx.ShowProcess()
+		if processInfo != nil {
+			queryStartTime := processInfo.Time
+			elapsed := time.Since(queryStartTime).Milliseconds()
+			if elapsed >= int64(maxExecTimeMS) {
+				// Already exceeded max_execution_time, fail immediately
+				return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+			}
+		}
+	}
+
+	txnCtx := sessVars.TxnCtx
 	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
 	if err != nil {
 		return err

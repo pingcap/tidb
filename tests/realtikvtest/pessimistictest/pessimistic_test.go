@@ -3680,3 +3680,49 @@ func TestForShareWithPromotionPlanCache(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`rollback`)
 }
+
+func TestMaxExecutionTimeWithSelectForUpdate(t *testing.T) {
+	// for issue https://github.com/pingcap/tidb/issues/62960
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_lock")
+	tk.MustExec("create table test_lock (id int primary key, value int)")
+	tk.MustExec("insert into test_lock values (1, 100)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set innodb_lock_wait_timeout = 30")
+
+	// Transaction 1: Hold the lock
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select * from test_lock where id = 1 for update").Check(testkit.Rows("1 100"))
+
+	// Transaction 2: Try to acquire lock with max_execution_time
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("set max_execution_time = 2345")
+
+	// Also test with hint
+	start := time.Now()
+	err := tk2.ExecToErr("select * from test_lock where id = 1 for update")
+	elapsed := time.Since(start)
+
+	// The query should timeout due to max_execution_time (around 2s), not lock_wait_timeout (50s)
+	require.Error(t, err)
+
+	// Check if it's a max execution time exceeded error
+	// Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
+	require.True(t, strings.Contains(err.Error(), "Query execution was interrupted") ||
+		strings.Contains(err.Error(), "maximum statement execution time exceeded") ||
+		err.Error() == "context deadline exceeded",
+		"Expected max_execution_time error, but got: %v", err)
+
+	require.Greater(t, elapsed, 2340*time.Millisecond, "Query should take more than 2 seconds due to max_execution_time, but took %v", elapsed)
+	require.Less(t, elapsed, 4*time.Second, "Query should timeout within 5 seconds due to max_execution_time, but took %v", elapsed)
+
+	tk2.MustExec("rollback")
+	tk1.MustExec("rollback")
+}
