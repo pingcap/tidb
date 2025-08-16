@@ -294,13 +294,16 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				if isColEqCondition(s.conditions[i]) {
+				// `!visited[i]` is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
+				// and then using `b = 1` to get `a = 1` again.
+				if isColEqCondition(s.conditions[i]) && !visited[i] {
 					// We should protect the equal condition. so we append the new expr.
 					// It is necessary to set visited to false, for example.
 					//   a = b, a = 1, c = b + 1
 					// -> a = b, a = 1, c = b + 1, b = 1
 					// -> a = b, a = 1, c = 1 + 1, b = 1
 					visited = append(visited, false) // nolint:makezero
+					visited[i] = true
 					s.conditions = append(s.conditions, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
 				} else {
 					s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
@@ -679,13 +682,16 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				if isColEqCondition(s.joinConds[i]) {
+				// `!visited[i]` is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
+				// and then using `b = 1` to get `a = 1` again.
+				if isColEqCondition(s.joinConds[i]) && !visited[i] {
 					// We should protect the equal condition. so we append the new expr.
 					// It is necessary to set visited to false, for example.
 					//   a = b, a = 1, c = b + 1
 					// -> a = b, a = 1, c = b + 1, b = 1
 					// -> a = b, a = 1, c = 1 + 1, b = 1
 					visited = append(visited, false) // nolint:makezero
+					visited[i] = true
 					s.joinConds = append(s.joinConds, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
 				} else {
 					s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
