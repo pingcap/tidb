@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	rutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -739,8 +740,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
-	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
-	defer cancel()
+	opCtx := NewLocalOperatorCtx(ctx, job.ID)
+	defer opCtx.Cancel()
 
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
@@ -880,7 +881,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 	}
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) error {
+func executeAndClosePipeline(ctx *rutil.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) error {
 	err := pipe.Execute()
 	if err != nil {
 		return err

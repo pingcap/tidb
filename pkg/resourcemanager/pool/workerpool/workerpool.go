@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -32,15 +33,17 @@ import (
 // the task.
 type TaskMayPanic interface {
 	// RecoverArgs returns the argument for pkg/util.Recover function of this task.
-	RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool)
+	// The error returned is which will be passed to upper level, if not provided,
+	// we will use the default error.
+	RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error)
 }
 
 // Worker is worker interface.
 type Worker[T TaskMayPanic, R any] interface {
 	// HandleTask consumes a task(T) and produces a result(R).
 	// The result is sent to the result channel by calling `send` function.
-	HandleTask(task T, send func(R))
-	Close()
+	HandleTask(task T, send func(R)) error
+	Close() error
 }
 
 type tuneConfig struct {
@@ -49,6 +52,7 @@ type tuneConfig struct {
 
 // WorkerPool is a pool of workers.
 type WorkerPool[T TaskMayPanic, R any] struct {
+	opCtx         *util.Context
 	ctx           context.Context
 	cancel        context.CancelFunc
 	name          string
@@ -111,7 +115,7 @@ func (p *WorkerPool[T, R]) SetResultSender(sender chan R) {
 }
 
 // Start starts default count of workers.
-func (p *WorkerPool[T, R]) Start(ctx context.Context) {
+func (p *WorkerPool[T, R]) Start(ctx *util.Context) {
 	if p.taskChan == nil {
 		p.taskChan = make(chan T)
 	}
@@ -124,6 +128,7 @@ func (p *WorkerPool[T, R]) Start(ctx context.Context) {
 		}
 	}
 
+	p.opCtx = ctx
 	p.ctx, p.cancel = context.WithCancel(ctx)
 
 	p.mu.Lock()
@@ -140,7 +145,17 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	defer func() {
 		p.runningTask.Add(-1)
 	}()
-	defer tidbutil.Recover(task.RecoverArgs())
+
+	label, funcInfo, quit, err := task.RecoverArgs()
+	recoverFn := func() {
+		if err != nil {
+			p.opCtx.OnError(err)
+		} else {
+			p.opCtx.OnError(errors.Errorf("task panic: %s, func info: %s", label, funcInfo))
+		}
+	}
+
+	defer tidbutil.Recover(label, funcInfo, recoverFn, quit)
 
 	sendResult := func(r R) {
 		if p.resChan == nil {
@@ -152,7 +167,9 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 		}
 	}
 
-	w.HandleTask(task, sendResult)
+	if err := w.HandleTask(task, sendResult); err != nil {
+		p.opCtx.OnError(err)
+	}
 }
 
 func (p *WorkerPool[T, R]) runAWorker() {
@@ -161,29 +178,36 @@ func (p *WorkerPool[T, R]) runAWorker() {
 		return // Fail to create worker, quit.
 	}
 	p.wg.Run(func() {
+		var err error
+		defer func() {
+			if err != nil {
+				p.opCtx.OnError(err)
+			}
+		}()
+
 		for {
 			select {
 			case task, ok := <-p.taskChan:
 				if !ok {
-					w.Close()
+					err = w.Close()
 					return
 				}
 				p.handleTaskWithRecover(w, task)
 			case cfg, ok := <-p.quitChan:
-				w.Close()
+				err = w.Close()
 				if ok {
 					cfg.wg.Done()
 				}
 				return
 			case <-p.ctx.Done():
-				w.Close()
+				err = w.Close()
 				return
 			}
 		}
 	})
 }
 
-// AddTask adds a task to the pool.
+// AddTask adds a task to the pool, only used in test.
 func (p *WorkerPool[T, R]) AddTask(task T) {
 	select {
 	case <-p.ctx.Done():
@@ -266,23 +290,27 @@ func (p *WorkerPool[T, R]) Name() string {
 	return p.name
 }
 
-// ReleaseAndWait releases the pool and wait for complete.
-func (p *WorkerPool[T, R]) ReleaseAndWait() {
-	close(p.quitChan)
-	p.Release()
-	p.Wait()
-}
-
-// Wait waits for all workers to complete.
-func (p *WorkerPool[T, R]) Wait() {
-	p.wg.Wait()
-}
-
-// Release releases the pool.
-func (p *WorkerPool[T, R]) Release() {
+// CloseAndWait manually closes the pool and wait for complete, only used in test
+func (p *WorkerPool[T, R]) CloseAndWait() {
 	if p.cancel != nil {
 		p.cancel()
 	}
+	close(p.quitChan)
+	p.Release()
+}
+
+// Release waits the pool to be released.
+// It will wait the input channel to be closed,
+// or the context being cancelled by business error.
+func (p *WorkerPool[T, R]) Release() {
+	// First, wait waits for all workers to complete.
+	p.wg.Wait()
+
+	// Cancel tuning workers.
+	if p.cancel != nil {
+		p.cancel()
+	}
+
 	if p.resChan != nil {
 		close(p.resChan)
 		p.resChan = nil

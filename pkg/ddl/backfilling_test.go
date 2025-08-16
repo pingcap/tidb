@@ -507,7 +507,7 @@ func TestTuneTableScanWorkerBatchSize(t *testing.T) {
 			FieldTypes: []*types.FieldType{},
 		},
 	}
-	opCtx, cancel := NewDistTaskOperatorCtx(context.Background())
+	opCtx := NewDistTaskOperatorCtx(context.Background())
 	w := tableScanWorker{
 		copCtx:        copCtx,
 		ctx:           opCtx,
@@ -526,7 +526,7 @@ func TestTuneTableScanWorkerBatchSize(t *testing.T) {
 		require.Equal(t, 64, chk.Capacity())
 		w.srcChkPool.Put(chk)
 	}
-	cancel()
+	opCtx.Cancel()
 }
 
 func TestSplitRangesByKeys(t *testing.T) {

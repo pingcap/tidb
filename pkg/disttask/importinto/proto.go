@@ -17,8 +17,8 @@ package importinto
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -161,14 +161,11 @@ type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      importer.Chunk
 	SharedVars *SharedVars
-	panicked   *atomic.Bool
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "encodeAndSortOperator", "RecoverArgs", func() {
-		t.panicked.Store(true)
-	}, false
+func (*importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
+	return "importExecutor", "importStepMininalTask", false, errors.Errorf("panic occurred during import, please check log")
 }
 
 func (t *importStepMinimalTask) String() string {

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -81,8 +82,9 @@ func TestEncodeAndSortOperator(t *testing.T) {
 		logger: logger,
 	}
 
+	opCtx := util.NewContext(context.Background())
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, nil, 3, 1)
+	op := newEncodeAndSortOperator(opCtx, executorForParam, nil, nil, 3, 1)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
@@ -92,17 +94,19 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
-		return op.hasError()
+		return opCtx.OperatorErr() != nil
 	}, 3*time.Second, 300*time.Millisecond)
-	require.Equal(t, mockErr, op.firstErr.Load())
+	require.Equal(t, mockErr, opCtx.OperatorErr())
 	// should not block
-	<-op.ctx.Done()
-	require.ErrorIs(t, op.Close(), mockErr)
+	<-opCtx.Done()
+	require.NoError(t, op.Close())
+	require.ErrorIs(t, opCtx.OperatorErr(), mockErr)
 
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
+	opCtx = util.NewContext(context.Background())
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, nil, 2, 2)
+	op = newEncodeAndSortOperator(opCtx, executorForParam, nil, nil, 2, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -128,7 +132,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 			wg.Wait()
 			// wait error in executor1 has been processed
 			require.Eventually(t, func() bool {
-				return op.hasError()
+				return opCtx.OperatorErr() != nil
 			}, 3*time.Second, 300*time.Millisecond)
 			return errors.New("mock error should be logged")
 		})
@@ -137,12 +141,9 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	source.Channel() <- &importStepMinimalTask{}
 	source.Channel() <- &importStepMinimalTask{}
 	// should not block
-	<-op.ctx.Done()
-	require.ErrorIs(t, op.Close(), mockErr2)
-	require.NoError(t, os.Stdout.Sync())
-	content, err := os.ReadFile(logFileName)
-	require.NoError(t, err)
-	require.Contains(t, string(content), "mock error should be logged")
+	<-opCtx.Done()
+	require.NoError(t, op.Close())
+	require.ErrorIs(t, opCtx.OperatorErr(), mockErr2)
 }
 
 func TestGetWriterMemorySizeLimit(t *testing.T) {
