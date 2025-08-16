@@ -1141,12 +1141,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
 			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount &&
-			(rhs.path.MaxCountAfterAccess <= 0 || lhs.path.CountAfterAccess < rhs.path.MaxCountAfterAccess) {
+			// if rhs's maxCount hasn't been adjusted or its adjusted max risk is greater than than lhs's regular count, then lhs can win
+			(rhs.path.MaxCountAfterAccess <= rhs.path.CountAfterAccess || lhs.path.CountAfterAccess < rhs.path.MaxCountAfterAccess) {
 			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
 		if !rhsPseudo && globalResult <= 0 && sum <= 0 &&
 			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount &&
-			(lhs.path.MaxCountAfterAccess <= 0 || rhs.path.CountAfterAccess < lhs.path.MaxCountAfterAccess) {
+			// if lhs's maxCount hasn't been adjusted or its adjusted max risk is greater than rhs's regular count, then rhs can win
+			(lhs.path.MaxCountAfterAccess <= lhs.path.CountAfterAccess || rhs.path.CountAfterAccess < lhs.path.MaxCountAfterAccess) {
 			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
 		}
 		if preferRange {
