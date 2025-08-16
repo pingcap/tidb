@@ -197,6 +197,17 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	}
 }
 
+// sortArgs aims to place the column before the const value, which is beneficial for identifying identical expressions.
+func sortArgs(e []Expression) {
+	if len(e) == 2 {
+		_, ok1 := e[1].(*Column)
+		_, ok0 := e[0].(*Constant)
+		if ok1 && ok0 {
+			e[0], e[1] = e[1], e[0]
+		}
+	}
+}
+
 // newFunctionImpl creates a new scalar function or constant.
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
@@ -246,6 +257,9 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	}
 	funcArgs := slices.Clone(args)
 	switch funcName {
+	case ast.EQ, ast.NullEQ:
+		sortArgs(funcArgs)
+		typeInferForNull(ctx.GetEvalCtx(), funcArgs)
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
 	case ast.RowFunc:
