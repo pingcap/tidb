@@ -2427,7 +2427,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	var err error
 	if keyspaceMeta != nil {
 		store, err = mockstore.NewMockStore(
-			mockstore.WithKeyspaceMeta(keyspaceMeta),
+			mockstore.WithCurrentKeyspaceMeta(keyspaceMeta),
 			mockstore.WithStoreType(mockstore.EmbedUnistore),
 		)
 	} else {
