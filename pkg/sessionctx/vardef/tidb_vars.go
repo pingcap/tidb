@@ -1332,7 +1332,7 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
-	DefOptLimitPushDownThreshold            = 100
+	DefOptLimitPushDownThreshold            = 5000
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
 	DefOptRiskEqSkewRatio                   = 0.0
