@@ -78,7 +78,7 @@ func (c *AsyncOperator[T, R]) Close() error {
 	// Wait all tasks done.
 	// The task channel will be closed by the pool, so we don't need to close it here.
 	c.pool.Release()
-	return c.ctx.OperatorErr()
+	return nil
 }
 
 // String show the name.

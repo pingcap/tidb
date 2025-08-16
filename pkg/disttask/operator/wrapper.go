@@ -66,9 +66,9 @@ func (s *SimpleDataSource[T]) Open() error {
 // Close implements the Operator interface.
 func (s *SimpleDataSource[T]) Close() error {
 	//nolint: errcheck
-	s.errGroup.Wait()
+	err := s.errGroup.Wait()
 	close(s.target.Channel())
-	return s.ctx.OperatorErr()
+	return err
 }
 
 // String implements the Operator interface.
@@ -114,9 +114,7 @@ func (s *simpleSink[R]) Open() error {
 }
 
 func (s *simpleSink[R]) Close() error {
-	//nolint: errcheck
-	s.errGroup.Wait()
-	return s.ctx.OperatorErr()
+	return s.errGroup.Wait()
 }
 
 func (s *simpleSink[T]) SetSource(ch DataChannel[T]) {

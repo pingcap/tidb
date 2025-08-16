@@ -241,7 +241,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	if err := pipe.Execute(); err != nil {
 		return err
 	}
-	if err := pipe.Close(); err != nil {
+
+	err = pipe.Close()
+	if err := opCtx.OperatorErr(); err != nil {
+		return err
+	}
+	if err != nil {
 		return err
 	}
 

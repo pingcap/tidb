@@ -288,6 +288,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
 			poolutil.CheckTable, 3, e.createWorker))
 	op.SetSource(dc)
+	//nolint: errcheck
 	op.Open()
 
 	for i := range e.indexInfos {
@@ -295,7 +296,11 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	close(ch)
 
-	return op.Close()
+	err := op.Close()
+	if err := opCtx.OperatorErr(); err != nil {
+		return err
+	}
+	return err
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {

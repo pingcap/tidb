@@ -858,7 +858,7 @@ func (s *indexWriteResultSink) collectResult() error {
 	for {
 		select {
 		case <-s.ctx.Done():
-			return s.ctx.OperatorErr()
+			return s.ctx.Err()
 		case rs, ok := <-s.source.Channel():
 			if !ok {
 				err := s.flush()

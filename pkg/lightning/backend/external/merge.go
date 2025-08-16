@@ -199,7 +199,11 @@ func MergeOverlappingFiles(
 		return err
 	}
 
-	return pipe.Close()
+	err := pipe.Close()
+	if err := ctx.OperatorErr(); err != nil {
+		return err
+	}
+	return err
 }
 
 // split input data files into multiple shares evenly, with the max number files
