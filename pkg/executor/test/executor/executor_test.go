@@ -729,8 +729,8 @@ func TestPrevStmtDesensitization(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec(fmt.Sprintf("set @@session.%v=1", vardef.TiDBRedactLog))
-	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", vardef.TiDBRedactLog))
+	tk.MustExec(fmt.Sprintf("set @@global.%v=1", vardef.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@global.%v=0", vardef.TiDBRedactLog))
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
