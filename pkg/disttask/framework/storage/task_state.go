@@ -248,11 +248,12 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 			update mysql.tidb_global_task
 			set state = %?,
 			    concurrency = %?,
+				max_node_count = %?,
 				meta = %?,
 			    modify_params = null,
 				state_update_time = CURRENT_TIMESTAMP()
 			where id = %? and state = %?`,
-			prevState, task.Concurrency, task.Meta, task.ID, proto.TaskStateModifying,
+			prevState, task.Concurrency, task.MaxNodeCount, task.Meta, task.ID, proto.TaskStateModifying,
 		)
 		if err != nil {
 			return err
