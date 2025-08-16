@@ -154,6 +154,11 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 		vals = append(vals, val)
 	}
 out:
+	// For multi-valued index, if all values result in null or empty arrays,
+	// should handle it more to check issue: #62461
+	if c.idxInfo.MVIndex && (len(vals) == 0 || (len(vals) == 1 && len(vals[0]) > 0 && vals[0][0].IsNull())) {
+		return [][]types.Datum{}
+	}
 	return vals
 }
 

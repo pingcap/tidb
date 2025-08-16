@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"encoding/binary"
+	"fmt"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -104,16 +105,25 @@ func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
 func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained []byte) {
 	// Todo(Shenghui Wu): Optimize all data is null.
 	// decode length.
+	if len(buffer) < 4 {
+		panic(fmt.Sprintf("buffer too short to decode column length: expected at least 4 bytes, got %d", len(buffer)))
+	}
 	col.length = int(binary.LittleEndian.Uint32(buffer))
 	buffer = buffer[4:]
 
 	// decode nullCount.
+	if len(buffer) < 4 {
+		panic(fmt.Sprintf("buffer too short to decode null count: expected at least 4 bytes, got %d", len(buffer)))
+	}
 	nullCount := int(binary.LittleEndian.Uint32(buffer))
 	buffer = buffer[4:]
 
 	// decode nullBitmap.
 	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
+		if len(buffer) < numNullBitmapBytes {
+			panic(fmt.Sprintf("buffer too short to decode null bitmap: expected at least %d bytes, got %d", numNullBitmapBytes, len(buffer)))
+		}
 		col.nullBitmap = buffer[:numNullBitmapBytes:numNullBitmapBytes]
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
@@ -125,6 +135,9 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	numDataBytes := int64(numFixedBytes * col.length)
 	if numFixedBytes == -1 {
 		numOffsetBytes := (col.length + 1) * 8
+		if len(buffer) < numOffsetBytes {
+			panic(fmt.Sprintf("buffer too short to decode offsets: expected at least %d bytes, got %d", numOffsetBytes, len(buffer)))
+		}
 		col.offsets = bytesToI64Slice(buffer[:numOffsetBytes:numOffsetBytes])
 		buffer = buffer[numOffsetBytes:]
 		numDataBytes = col.offsets[col.length]
@@ -133,6 +146,9 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	}
 
 	// decode data.
+	if int64(len(buffer)) < numDataBytes {
+		panic(fmt.Sprintf("buffer too short to decode data: expected at least %d bytes, got %d", numDataBytes, len(buffer)))
+	}
 	col.data = buffer[:numDataBytes:numDataBytes]
 	// The column reference the data of the grpc response, the memory of the grpc message cannot be GCed if we reuse
 	// this column. Thus, we set `avoidReusing` to true.
