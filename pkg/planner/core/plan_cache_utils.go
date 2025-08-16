@@ -37,6 +37,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+>>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -128,10 +132,15 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	prepared := &ast.Prepared{
+<<<<<<< HEAD
 		Stmt:          paramStmt,
 		StmtType:      ast.GetStmtLabel(paramStmt),
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
+=======
+		Stmt:     paramStmt,
+		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
+>>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 

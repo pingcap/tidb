@@ -20,9 +20,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+>>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -69,6 +73,6 @@ func TestStmtLabel(t *testing.T) {
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		require.Equal(t, tt.label, ast.GetStmtLabel(stmtNode))
+		require.Equal(t, tt.label, stmtctx.GetStmtLabel(context.Background(), stmtNode))
 	}
 }

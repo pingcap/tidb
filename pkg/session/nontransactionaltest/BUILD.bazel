@@ -8,13 +8,20 @@ go_test(
         "nontransactional_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:pkg/session/nontransactionaltest/BUILD.bazel
     shard_count = 3,
+=======
+    shard_count = 5,
+>>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837)):pkg/session/test/nontransactionaltest/BUILD.bazel
     deps = [
         "//pkg/config",
+        "//pkg/metrics",
         "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
