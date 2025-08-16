@@ -188,6 +188,8 @@ go_library(
         "//pkg/util/redact",
         "//pkg/util/rowcodec",
         "//pkg/util/sem",
+        "//pkg/util/sem/compat",
+        "//pkg/util/sem/v2:sem",
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/sqlexec",
