@@ -53,7 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
@@ -1151,7 +1151,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1165,7 +1165,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
 
 	// Two tables in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)

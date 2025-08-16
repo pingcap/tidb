@@ -124,7 +124,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			}
 		}
 	case *PhysicalIndexLookUpReader:
-		index := pp.IndexPlans[0].(*PhysicalIndexScan)
+		index := pp.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: ast.NewCIStr(h.HintUseIndex),
@@ -142,7 +142,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			Indexes:  []ast.CIStr{index.Index.Name},
 		})
 	case *PhysicalIndexReader:
-		index := pp.IndexPlans[0].(*PhysicalIndexScan)
+		index := pp.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: ast.NewCIStr(h.HintUseIndex),
@@ -164,7 +164,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		var tableName ast.CIStr
 		var tableAsName *ast.CIStr
 		for _, partialPlan := range pp.PartialPlans {
-			if index, ok := partialPlan[0].(*PhysicalIndexScan); ok {
+			if index, ok := partialPlan[0].(*physicalop.PhysicalIndexScan); ok {
 				indexs = append(indexs, index.Index.Name)
 				tableName = index.Table.Name
 				tableAsName = index.TableAsName
@@ -507,13 +507,13 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 		}
 		return &ts.DBName, &ts.Table.Name
 	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		is := x.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		if is.TableAsName != nil && is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
 	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		is := x.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		if is.TableAsName != nil && is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName
 		}

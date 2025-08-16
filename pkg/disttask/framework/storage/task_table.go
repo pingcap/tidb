@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -170,7 +171,7 @@ func SetTaskManager(is *TaskManager) {
 
 // GetDXFSvcTaskMgr returns the task manager to access DXF service.
 func GetDXFSvcTaskMgr() (*TaskManager, error) {
-	if keyspace.IsRunningOnUser() {
+	if kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() != keyspace.System {
 		v := dxfSvcTaskMgr.Load()
 		if v == nil {
 			return nil, errors.New("DXF service task manager is not initialized")
