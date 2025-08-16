@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -546,7 +547,9 @@ func TestDMLWithAddForeignKey(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_1pc='OFF';")
-	tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set global tidb_enable_metadata_lock='OFF';")
+	}
 	tk.MustExec("set global tidb_enable_async_commit='ON'")
 
 	tkDML := testkit.NewTestKit(t, store)
