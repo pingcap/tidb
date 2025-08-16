@@ -23,8 +23,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -167,6 +170,8 @@ type DataDivideConfig struct {
 	// we need it read row-count for parquet, and to read line terminator to split large CSV files
 	Store     storage.ExternalStorage
 	TableMeta *MDTableMeta
+	// only used when read parquet files, to check if the table has auto-increment column
+	TableInfo *model.TableInfo
 
 	// only used when split large CSV files.
 	StrictFormat           bool
@@ -236,12 +241,11 @@ func MakeTableRegions(
 				sizes   []float64
 				err     error
 			)
-			dataFileSize := info.FileMeta.FileSize
 			if info.FileMeta.Type == SourceTypeParquet {
 				regions, sizes, err = makeParquetFileRegion(egCtx, cfg, info)
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&
-				dataFileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
+				info.FileMeta.FileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
 				// If a csv file is overlarge, we need to split it into multiple regions.
 				// Note: We can only split a csv file whose format is strict.
 				// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
@@ -359,6 +363,38 @@ func MakeSourceFileRegion(
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.RealSize)}, nil
 }
 
+// Determines whether a precise row count is needed for the table.
+// Returns true if the table has an auto-increment or auto-random column,
+// or any unique/primary index contains an auto-increment column.
+// Otherwise, returns false, allowing file size to be used as the row count.
+func checkNeedPreciseRowCount(tblInfo *model.TableInfo) bool {
+	if common.TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
+		return true
+	}
+
+	for _, idx := range tblInfo.Indices {
+		if idx.Unique || idx.Primary {
+			return true
+		}
+		for _, col := range idx.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			if mysql.HasAutoIncrementFlag(colInfo.GetFlag()) {
+				return true
+			}
+		}
+	}
+
+	if tblInfo.PKIsHandle {
+		for _, col := range tblInfo.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(col.GetFlag()) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // because parquet files can't seek efficiently, there is no benefit in split.
 // parquet file are column orient, so the offset is read line number
 func makeParquetFileRegion(
@@ -366,15 +402,18 @@ func makeParquetFileRegion(
 	cfg *DataDivideConfig,
 	dataFile FileInfo,
 ) ([]*TableRegion, []float64, error) {
-	numberRows := dataFile.FileMeta.Rows
-	var err error
-	// for safety
-	if numberRows <= 0 {
-		numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta)
-		if err != nil {
+	var (
+		numberRows int64
+		err        error
+	)
+	if checkNeedPreciseRowCount(cfg.TableInfo) {
+		if numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta); err != nil {
 			return nil, nil, err
 		}
+	} else if numberRows <= 0 {
+		numberRows = dataFile.FileMeta.FileSize
 	}
+
 	region := &TableRegion{
 		DB:       cfg.TableMeta.DB,
 		Table:    cfg.TableMeta.Name,
