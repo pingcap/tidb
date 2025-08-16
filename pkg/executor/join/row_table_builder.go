@@ -294,6 +294,7 @@ func fillNullMapImpl(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableS
 				bitmap[colIndexInBitMap/8] |= 1 << (7 - colIndexInBitMap%8)
 			}
 		}
+		// checkMem(cap(seg.rawData), len(seg.rawData), len(bitmap))
 		seg.rawData = append(seg.rawData, bitmap...)
 	}
 	return nullMapLength
@@ -309,6 +310,7 @@ func estimateFillNextRowPtr(seg *rowTableSegment) int {
 
 func fillNextRowPtrImpl(seg *rowTableSegment, estimate bool) int {
 	if !estimate {
+		// checkMem(cap(seg.rawData), len(seg.rawData), len(fakeAddrPlaceHolder))
 		seg.rawData = append(seg.rawData, fakeAddrPlaceHolder...)
 	}
 	return sizeOfNextPtr
@@ -337,6 +339,7 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeededImpl(rowTableMeta
 			} else {
 				length = 0
 			}
+			// checkMem(cap(seg.rawData), len(seg.rawData), sizeOfElementSize)
 			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfElementSize)...)
 		}
 		appendRowLength += int64(sizeOfElementSize)
@@ -346,6 +349,7 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeededImpl(rowTableMeta
 		// if join_key is not inlined: `serialized_key` need to be written in rawData
 		if hasValidKey {
 			if !estimate {
+				// checkMem(cap(seg.rawData), len(seg.rawData), len(b.serializedKeyVectorBuffer[logicalRowIndex]))
 				seg.rawData = append(seg.rawData, b.serializedKeyVectorBuffer[logicalRowIndex]...)
 			}
 			appendRowLength += int64(len(b.serializedKeyVectorBuffer[logicalRowIndex]))
@@ -353,6 +357,7 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeededImpl(rowTableMeta
 			// if there is no valid key, and the key is fixed length, then write a fake key
 			if rowTableMeta.isJoinKeysFixedLength {
 				if !estimate {
+					// checkMem(cap(seg.rawData), len(seg.rawData), len(rowTableMeta.fakeKeyByte))
 					seg.rawData = append(seg.rawData, rowTableMeta.fakeKeyByte...)
 				}
 				appendRowLength += int64(rowTableMeta.joinKeysLength)
@@ -377,6 +382,7 @@ func fillRowDataImpl(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableS
 		if rowTableMeta.columnsSize[index] > 0 {
 			if !estimate {
 				// fixed size
+				// checkMem(cap(seg.rawData), len(seg.rawData), len(row.GetRaw(colIdx)))
 				seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
 			}
 			appendRowLength += int64(rowTableMeta.columnsSize[index])
@@ -385,6 +391,7 @@ func fillRowDataImpl(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableS
 			raw := row.GetRaw(colIdx)
 			length := uint32(len(raw))
 			if !estimate {
+				// checkMem(cap(seg.rawData), len(seg.rawData), sizeOfElementSize+len(raw))
 				seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfElementSize)...)
 				seg.rawData = append(seg.rawData, raw...)
 			}
@@ -408,6 +415,7 @@ func fillFakeImpl(seg *rowTableSegment, rowLength int64, estimate bool) int64 {
 		appendedFakePlaceHolder := fakeAddrPlaceHolder[:8-rowLength%8]
 		fakeLength = int64(len(appendedFakePlaceHolder))
 		if !estimate {
+			// checkMem(cap(seg.rawData), len(seg.rawData), len(appendedFakePlaceHolder))
 			seg.rawData = append(seg.rawData, appendedFakePlaceHolder...)
 		}
 	}
@@ -427,13 +435,12 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 			row     = chk.GetRow(logicalRowIndex)
 			partIdx = b.partIdxVector[logicalRowIndex]
 			seg     = segs[partIdx]
-			helper  = helpers[partIdx]
 		)
 
-		helper.totalRowNum++
+		helpers[partIdx].totalRowNum++
 
 		if hasValidKey {
-			helper.validRowNum++
+			helpers[partIdx].validRowNum++
 		}
 
 		rowLength := int64(0)
@@ -442,7 +449,7 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		rowLength += b.estimateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
 		rowLength += estimateFillRowData(rowTableMeta, &row, seg)
 		rowLength += estimateFillFake(seg, rowLength)
-		helper.rawDataLen += rowLength
+		helpers[partIdx].rawDataLen += rowLength
 	}
 
 	for partIdx, seg := range segs {
@@ -453,6 +460,12 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		seg.validJoinKeyPos = make([]int, 0, helper.validRowNum)
 	}
 }
+
+// func checkMem(capLen int, curLen int, addedLen int) {
+// 	if capLen < curLen+addedLen {
+// 		panic(fmt.Sprintf("cap: %d, len: %d, addedLen: %d", capLen, curLen, addedLen))
+// 	}
+// }
 
 func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int) error {
 	if len(b.usedRows) == 0 {
@@ -496,9 +509,12 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		)
 		seg = segs[partIdx]
 		if hasValidKey {
+			// checkMem(cap(seg.validJoinKeyPos), len(seg.validJoinKeyPos), 1)
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
+		// checkMem(cap(seg.hashValues), len(seg.hashValues), 1)
 		seg.hashValues = append(seg.hashValues, b.hashValue[logicalRowIndex])
+		// checkMem(cap(seg.rowStartOffset), len(seg.rowStartOffset), 1)
 		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
 		rowLength := int64(0)
 		// fill next_row_ptr field
