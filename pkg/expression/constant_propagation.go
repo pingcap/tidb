@@ -296,6 +296,10 @@ func (s *propConstSolver) propagateConstantEQ() {
 			if !visited[i] {
 				if isColEqCondition(s.conditions[i]) {
 					// We should protect the equal condition. so we append the new expr.
+					// It is necessary to set visited to false, for example.
+					//   a = b, a = 1, c = b + 1
+					// -> a = b, a = 1, c = b + 1, b = 1
+					// -> a = b, a = 1, c = 1 + 1, b = 1
 					visited = append(visited, false) // nolint:makezero
 					s.conditions = append(s.conditions, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
 				} else {
@@ -677,6 +681,10 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 			if !visited[i+lenFilters] {
 				if isColEqCondition(s.joinConds[i]) {
 					// We should protect the equal condition. so we append the new expr.
+					// It is necessary to set visited to false, for example.
+					//   a = b, a = 1, c = b + 1
+					// -> a = b, a = 1, c = b + 1, b = 1
+					// -> a = b, a = 1, c = 1 + 1, b = 1
 					visited = append(visited, false) // nolint:makezero
 					s.joinConds = append(s.joinConds, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
 				} else {
