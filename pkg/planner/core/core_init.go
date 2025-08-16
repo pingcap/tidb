@@ -155,7 +155,6 @@ func init() {
 
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
-	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache

@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -164,15 +166,15 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
 	// But this problem has affected tiflash CI.
 	// Simplify predicates from the LogicalSelection
-	simplifiedPredicates := applyPredicateSimplification(p.SCtx(), logicalSelection.Conditions, true, nil)
+	simplifiedPredicates := ruleutil.ApplyPredicateSimplification(p.SCtx(), logicalSelection.Conditions, true, nil)
 
 	// Determine if this is a "true selection"
 	trueSelection := false
 	if len(simplifiedPredicates) == 0 {
 		trueSelection = true
 	} else if len(simplifiedPredicates) == 1 {
-		_, simplifiedPredicatesType := FindPredicateType(p.SCtx(), simplifiedPredicates[0])
-		if simplifiedPredicatesType == truePredicate {
+		_, simplifiedPredicatesType := rule.FindPredicateType(p.SCtx(), simplifiedPredicates[0])
+		if simplifiedPredicatesType == rule.TruePredicate {
 			trueSelection = true
 		}
 	}
