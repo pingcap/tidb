@@ -25,7 +25,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-
 	. "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
