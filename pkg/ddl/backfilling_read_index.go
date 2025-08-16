@@ -148,9 +148,14 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
-	// TODO(tangenta): support checkpoint manager that interact with subtask table.
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.store, r.job).
 		WithImportDistributedLock(r.etcdCli, sm.TS).
+		WithDistTaskCheckpointManagerParam(
+			subtask.ID,
+			r.ptbl.GetPhysicalID(),
+			r.GetCheckpointUpdateFunc(),
+			r.GetCheckpointFunc(),
+		).
 		Build(r.backendCfg, r.backend)
 	if err != nil {
 		return err
