@@ -25,7 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/tidb/pkg/kv"
+
 	. "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -259,7 +259,7 @@ func TestCommonHandlesFitIntHandleRange(t *testing.T) {
 	for _, tc := range testCases {
 		encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, tc.datums...)
 		require.NoError(t, err)
-		ch, err := kv.NewCommonHandle(encoded)
+		ch, err := NewCommonHandle(encoded)
 		require.NoError(t, err)
 		t.Logf("common handle: %s\n", hex.EncodeToString(ch.Encoded()))
 		require.True(t, bytes.Compare(minIntHandle.Encoded(), ch.Encoded()) < 0)
