@@ -276,8 +276,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}.Init(ctx, t.p.StatsInfo())
 	sender.SetChildren(t.p)
 
-	p := PhysicalTableReader{
-		tablePlan: sender,
+	p := physicalop.PhysicalTableReader{
+		TablePlan: sender,
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
@@ -508,8 +508,8 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			tp = tp.Children()[0]
 		}
 		ts := tp.(*physicalop.PhysicalTableScan)
-		p := PhysicalTableReader{
-			tablePlan:      t.tablePlan,
+		p := physicalop.PhysicalTableReader{
+			TablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
 		}.Init(ctx, t.tablePlan.QueryBlockOffset())
@@ -523,7 +523,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		// schema will be broken, the final agg will fail to find needed columns in ResolveIndices().
 		// Besides, the agg would only be pushed down if it doesn't contain virtual columns, so virtual column should not be affected.
 		aggPushedDown := false
-		switch p.tablePlan.(type) {
+		switch p.TablePlan.(type) {
 		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 			aggPushedDown = true
 		}

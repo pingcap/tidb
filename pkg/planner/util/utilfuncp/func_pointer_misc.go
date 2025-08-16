@@ -16,6 +16,8 @@ package utilfuncp
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -418,8 +420,19 @@ var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) 
 var GetPlanCostVer24PhysicalCTE func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
 
-// Attach2Task4PhysicalCTEStorage will be called by PhysicalCTEStorage in physicalOp pkg.
+// Attach2Task4PhysicalCTEStorage will be called in physicalOp pkg.
 var Attach2Task4PhysicalCTEStorage func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer24PhysicalTableReader get the cost v2 for table reader.
+var GetPlanCostVer24PhysicalTableReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
+// GetPlanCostVer14PhysicalTableReader get the cost v1 for table reader.
+var GetPlanCostVer14PhysicalTableReader func(pp base.PhysicalPlan,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// LoadTableStats wille be called in physicalOp pkg.
+var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
 // ****************************************** task related ***********************************************
 

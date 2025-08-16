@@ -2205,7 +2205,7 @@ func attach2Task4PhysicalSequence(pp base.PhysicalPlan, tasks ...base.Task) base
 	return mppTask
 }
 
-func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
+func collectPartitionInfosFromMPPPlan(p *physicalop.PhysicalTableReader, mppPlan base.PhysicalPlan) {
 	switch x := mppPlan.(type) {
 	case *physicalop.PhysicalTableScan:
 		p.TableScanAndPartitionInfos = append(p.TableScanAndPartitionInfos, physicalop.TableScanAndPartitionInfo{TableScan: x, PhysPlanPartInfo: x.PlanPartInfo})
