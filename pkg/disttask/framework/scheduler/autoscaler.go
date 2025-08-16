@@ -31,7 +31,7 @@ import (
 // CalcMaxNodeCountByTableSize calculates the maximum number of nodes to execute DXF based on the table size.
 func CalcMaxNodeCountByTableSize(ctx context.Context, dataSizeInBytes int64) int {
 	coresPerNode := getSystemKeyspaceCPUNode(ctx)
-	nodeCnt := calcMaxNodeCountByTableSize(dataSizeInBytes, int64(coresPerNode))
+	nodeCnt := calcMaxNodeCountByTableSize(dataSizeInBytes, coresPerNode)
 	logutil.Logger(ctx).Info("calculated max node count for dist task execution",
 		zap.Int64("tableSize", dataSizeInBytes),
 		zap.Int64("coresPerNode", coresPerNode),
@@ -118,6 +118,7 @@ func getSystemKeyspaceCPUNode(ctx context.Context) int64 {
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to get dxf service task manager", zap.Error(err))
 		cpuNode = cpu.GetCPUCount()
+		return int64(cpuNode)
 	}
 	cpuNode, err = mgr.GetCPUCountOfNodeByRole(ctx, handle.NextGenTargetScope)
 	if err != nil {
