@@ -44,7 +44,12 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		}
 	} else {
 		kvstore, err = tikv.NewTestKeyspaceTiKVStore(newClientRedirector(client),
-			pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches, *opts.keyspaceMeta)
+			pdClient, opts.clientHijacker,
+			opts.pdClientHijacker,
+			opts.txnLocalLatches,
+			*opts.keyspaceMeta,
+			opts.tikvOptions...,
+		)
 		if err != nil {
 			return nil, err
 		}
