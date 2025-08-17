@@ -89,7 +89,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "core.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
 			c.write("for i, plan := range cloned.partialPlans {")
-			c.write("cloned.PartialPlans[i] = physicalop.flattenPushDownPlan(plan)")
+			c.write("cloned.PartialPlans[i] = physicalop.FlattenPushDownPlan(plan)")
 			c.write("}")
 			continue
 		}
