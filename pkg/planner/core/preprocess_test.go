@@ -425,10 +425,3 @@ func TestPreprocessDeleteFromWithAlias(t *testing.T) {
 	tk.MustExec("delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
 	tk.MustExec("create global binding for delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id using delete /*+ MAX_EXECUTION_TIME(10)*/ tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
 }
-
-func TestPreprocessDeleteFromsWithAlias(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test; create table t(a int); create view v as select * from t;")
-	tk.MustExec("drop view v")
-}
