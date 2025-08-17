@@ -259,7 +259,6 @@ func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
 	if dbName.L == "" {
 		currentDB := p.sctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
-			p.err = errors.Trace(plannererrors.ErrNoDB)
 			return
 		}
 		dbName = pmodel.NewCIStr(currentDB)
@@ -274,7 +273,6 @@ func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
 func (p *preprocessor) schemaReadOnlyByTable(name *ast.TableName) {
 	table, err := p.tableByName(name)
 	if err != nil {
-		p.err = err
 		return
 	}
 	// The database read-only state has no effect on temporary table.
