@@ -89,7 +89,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "core.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
 			c.write("for i, plan := range cloned.partialPlans {")
-			c.write("cloned.PartialPlans[i] = flattenPushDownPlan(plan)")
+			c.write("cloned.PartialPlans[i] = physicalop.flattenPushDownPlan(plan)")
 			c.write("}")
 			continue
 		}
@@ -251,6 +251,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 `
