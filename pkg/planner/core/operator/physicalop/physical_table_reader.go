@@ -17,6 +17,8 @@ package physicalop
 import (
 	"context"
 	"fmt"
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -38,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"strconv"
 )
 
 // ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
