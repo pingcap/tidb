@@ -82,6 +82,7 @@ func MergeOverlappingFiles(
 	concurrency int,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
+	memSizePerCon int64,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
 	// during encode&sort step, the writer-limit is aligned to block size, so we
@@ -111,6 +112,7 @@ func MergeOverlappingFiles(
 				collector,
 				checkHotspot,
 				onDup,
+				memSizePerCon,
 			)
 		})
 	}
@@ -177,6 +179,7 @@ func mergeOverlappingFilesInternal(
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
+	memSizePerCon int64,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
@@ -187,7 +190,10 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 2)
+	outerConcurrency := 256 * 8 * units.MiB / memSizePerCon
+	task.Info("mergeOverlappingFilesInternal",
+		zap.Int64("outerConcurrency", outerConcurrency), zap.Int64("memSizePerCon", memSizePerCon))
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, int(outerConcurrency))
 	if err != nil {
 		return err
 	}

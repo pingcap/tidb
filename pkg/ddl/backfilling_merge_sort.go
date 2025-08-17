@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"path"
 	"strconv"
 	"sync"
@@ -91,6 +92,8 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	res := m.GetResource()
 	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
+	logutil.Logger(ctx).Info("mergeSortExecutor RunSubtask",
+		zap.Int64("mem", res.Mem.Capacity()), zap.Int64("cpu", res.CPU.Capacity()))
 
 	err = external.MergeOverlappingFiles(
 		ctx,
@@ -104,6 +107,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		int(res.CPU.Capacity()),
 		true,
 		engineapi.OnDuplicateKeyError,
+		memSizePerCon,
 	)
 	failpoint.Inject("mockMergeSortRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded

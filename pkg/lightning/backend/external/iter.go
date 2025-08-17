@@ -524,6 +524,7 @@ func NewMergeKVIter(
 	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
 	// too large when checkHotspot = true(add-index).
 	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
+	logutil.BgLogger().Info("NewMergeKVIter", zap.Int("largeBufSize", largeBufSize))
 	memPool := membuf.NewPool(
 		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
