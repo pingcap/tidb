@@ -431,7 +431,7 @@ var GetPlanCostVer24PhysicalTableReader func(pp base.PhysicalPlan, taskType prop
 var GetPlanCostVer14PhysicalTableReader func(pp base.PhysicalPlan,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
-// LoadTableStats wille be called in physicalOp pkg.
+// LoadTableStats will be called in physicalOp pkg.
 var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
 // ****************************************** task related ***********************************************
