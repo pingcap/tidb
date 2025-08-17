@@ -266,17 +266,12 @@ func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
 	}
 
 	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
-	if !exists {
-		p.err = errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O))
-		return
-	}
-
-	if dbInfo.ReadOnly() {
+	if exists && dbInfo.ReadOnly {
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
 	}
 }
 
-func (p *preprocessor) schemaReadOnlyByTable(name *ast.TableName, checkTemporaryTable bool) {
+func (p *preprocessor) schemaReadOnlyByTable(name *ast.TableName) {
 	table, err := p.tableByName(name)
 	if err != nil {
 		p.err = err
@@ -288,11 +283,7 @@ func (p *preprocessor) schemaReadOnlyByTable(name *ast.TableName, checkTemporary
 	}
 
 	dbInfo, exists := infoschema.SchemaByTable(p.ensureInfoSchema(), table.Meta())
-	if !exists {
-		p.err = errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", table.Meta().DBID)))
-		return
-	}
-	if dbInfo.ReadOnly() {
+	if exists && dbInfo.ReadOnly {
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbInfo.Name.L))
 	}
 }
@@ -342,38 +333,39 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeDrop
 		p.checkDropTableGrammar(node)
 		for _, tbl := range node.Tables {
-			p.schemaReadOnlyByTable(tbl, true)
+			p.schemaReadOnlyByTable(tbl)
 		}
 	case *ast.RenameTableStmt:
 		p.stmtTp = TypeRename
 		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
 		for _, tbl := range node.TableToTables {
-			p.schemaReadOnlyByTable(tbl.OldTable, false)
+			p.schemaReadOnly(tbl.OldTable.Schema)
+			p.schemaReadOnly(tbl.NewTable.Schema)
 		}
 	case *ast.CreateIndexStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateIndexGrammar(node)
-		p.schemaReadOnlyByTable(node.Table, false)
+		p.schemaReadOnlyByTable(node.Table)
 	case *ast.AlterTableStmt:
 		p.stmtTp = TypeAlter
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
-		p.schemaReadOnlyByTable(node.Table, false)
+		p.schemaReadOnlyByTable(node.Table)
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
 	case *ast.AlterDatabaseStmt:
 		p.stmtTp = TypeAlter
 		p.checkAlterDatabaseGrammar(node)
-		//for _, opt := range node.Options {
-		//	if opt.Tp != ast.AlterDatabaseOptionReadOnly {
-		//		p.schemaReadOnly(node.Name)
-		//		if p.err != nil {
-		//			break
-		//		}
-		//	}
-		//}
+		for _, opt := range node.Options {
+			if opt.Tp != ast.DatabaseOptionReadOnly {
+				p.schemaReadOnly(node.Name)
+				if p.err != nil {
+					break
+				}
+			}
+		}
 	case *ast.DropDatabaseStmt:
 		p.stmtTp = TypeDrop
 		p.checkDropDatabaseGrammar(node)
@@ -434,7 +426,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.ImportIntoStmt:
 		p.stmtTp = TypeImportInto
 		p.flag |= inImportInto
-		p.schemaReadOnlyByTable(node.Table, false)
+		p.schemaReadOnlyByTable(node.Table)
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -507,11 +499,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			}
 		}
 	case *ast.TruncateTableStmt:
-		p.schemaReadOnlyByTable(node.Table, true)
+		p.schemaReadOnlyByTable(node.Table)
 	case *ast.DropIndexStmt:
-		p.schemaReadOnlyByTable(node.Table, false)
+		p.schemaReadOnlyByTable(node.Table)
 	case *ast.LoadDataStmt:
-		p.schemaReadOnlyByTable(node.Table, false)
+		p.schemaReadOnlyByTable(node.Table)
 	default:
 		p.flag &= ^parentIsJoin
 	}
