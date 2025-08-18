@@ -29,6 +29,7 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_client_go_v2//util/async",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//constants",
     ],
 )
 
