@@ -105,7 +105,7 @@ type LogicalJoin struct {
 
 	JoinType      JoinType `hash64-equals:"true"`
 	Reordered     bool
-	CartesianJoin bool // gjt todo: useless???
+	CartesianJoin bool
 	StraightJoin  bool
 
 	// HintInfo stores the join algorithm hint information specified by client.

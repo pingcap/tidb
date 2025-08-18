@@ -1159,7 +1159,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	}
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
-		// gjt todo: why not merge this if branch withe the else branch?
 		rexpr = np.Schema().Columns[0]
 		rCol := rexpr.(*expression.Column)
 		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
@@ -1181,9 +1180,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for i, col := range np.Schema().Columns {
 			if v.Not || asScalar {
-				// gjt todo: length of args of lexpr shoud be equal to the length of np.Schema().Columns
-				// (a, b, c) in (select a1, b1, c1 from t1);
-				// What's lexpr when left side is (a, b, c)? Is it a ScalarFunction?
 				larg := expression.GetFuncArg(lexpr, i)
 				// If both input columns of `in` expression are not null, we can treat the expression
 				// as normal column equal condition instead. Otherwise, mark the left and right side.
