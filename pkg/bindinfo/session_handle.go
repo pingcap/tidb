@@ -173,7 +173,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 
 	for _, record := range records {
 		// Restore hints and ID because hints are hard to encode.
-		if err = prepareHints(sctx, record); err != nil {
+		if err = prepareHintsWithPool(sctx, record, h.sPool); err != nil {
 			return err
 		}
 		h.bindings[parser.DigestNormalized(record.OriginalSQL).String()] = record
