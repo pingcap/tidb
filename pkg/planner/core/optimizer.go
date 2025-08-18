@@ -105,7 +105,7 @@ var optRuleList = []base.LogicalOptRule{
 	&rule.CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
-	&PredicateSimplification{},
+	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},

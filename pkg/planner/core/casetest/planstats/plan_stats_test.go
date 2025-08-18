@@ -169,7 +169,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // recursive CTE
 				sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					pc, ok := p.(*plannercore.PhysicalCTE)
+					pc, ok := p.(*physicalop.PhysicalCTE)
 					require.True(t, ok)
 					pp, ok := pc.SeedPlan.(*physicalop.PhysicalProjection)
 					require.True(t, ok)
