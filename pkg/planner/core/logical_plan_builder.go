@@ -691,12 +691,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 			return sel, nil
 		}
 		joinPlan.AttachOnConds(onCondition)
-	} else if joinPlan.JoinType == logicalop.InnerJoin {
-		// If a inner join without "ON" or "USING" clause, it's a cartesian
-		// product over the join tables.
-		joinPlan.CartesianJoin = true
 	}
-
 	return joinPlan, nil
 }
 
