@@ -4859,6 +4859,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if len(indexName.L) == 0 {
+		// It means that there is already an index exists with same name
+		return nil
+	}
 
 	tblInfo := t.Meta()
 	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))

@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	goerrors "errors"
 	"io"
 
 	"github.com/docker/go-units"
@@ -43,7 +44,8 @@ func newKVReader(
 	initFileOffset uint64,
 	bufSize int,
 ) (*kvReader, error) {
-	oneThird := bufSize / 3
+	// some test use very random buf size, might < 3
+	oneThird := max(bufSize/3, 1)
 	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, oneThird*2)
 	if err != nil {
 		return nil, err
@@ -77,7 +79,7 @@ func (r *kvReader) nextKV() (key, val []byte, err error) {
 
 // noEOF converts the EOF error to io.ErrUnexpectedEOF.
 func noEOF(err error) error {
-	if err == io.EOF {
+	if goerrors.Is(err, io.EOF) {
 		logutil.BgLogger().Warn("unexpected EOF", zap.Error(errors.Trace(err)))
 		return io.ErrUnexpectedEOF
 	}

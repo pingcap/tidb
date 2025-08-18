@@ -18,11 +18,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
@@ -31,9 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -63,6 +61,13 @@ import (
 //   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
 //     trailing 1 is for RS divided by odd number.
 //   - else RangeS = floor(TempRangeS / RS) * RS.
+//
+// Note: below calculation only consider the memory taken by the KV pair itself,
+// golang takes 24*2 = 48B for each KV pair, so if the size of KV pair itself is
+// very small, the real memory taken by each KV pair might be doubled, so it's
+// only an estimation.
+// such as, for a simple table "create table t(id bigint primary key, v bigint, index(v))",
+// each index KV is 38B, golang need 86B memory to store it.
 //
 // RangeS for different region size and cpu:mem ratio, the number in parentheses
 // is the number of SST files per region:
@@ -150,12 +155,8 @@ type Engine struct {
 	// 	more load routine + read each file using 1 reader (import-into uses this one)
 	checkHotspot bool
 
-	keyAdapter         common.KeyAdapter
-	duplicateDetection bool
-	duplicateDB        *pebble.DB
-	dupDetectOpt       common.DupDetectOpt
-	workerConcurrency  int
-	ts                 uint64
+	workerConcurrency int
+	ts                uint64
 
 	totalKVSize  int64
 	totalKVCount int64
@@ -163,6 +164,7 @@ type Engine struct {
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
 	memLimit        int
+	onDup           common.OnDuplicateKey
 }
 
 var _ common.Engine = (*Engine)(nil)
@@ -180,16 +182,13 @@ func NewExternalEngine(
 	endKey []byte,
 	jobKeys [][]byte,
 	splitKeys [][]byte,
-	keyAdapter common.KeyAdapter,
-	duplicateDetection bool,
-	duplicateDB *pebble.DB,
-	dupDetectOpt common.DupDetectOpt,
 	workerConcurrency int,
 	ts uint64,
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
 	memCapacity int64,
+	onDup common.OnDuplicateKey,
 ) common.Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
@@ -214,18 +213,15 @@ func NewExternalEngine(
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 		),
-		checkHotspot:       checkHotspot,
-		keyAdapter:         keyAdapter,
-		duplicateDetection: duplicateDetection,
-		duplicateDB:        duplicateDB,
-		dupDetectOpt:       dupDetectOpt,
-		workerConcurrency:  workerConcurrency,
-		ts:                 ts,
-		totalKVSize:        totalKVSize,
-		totalKVCount:       totalKVCount,
-		importedKVSize:     atomic.NewInt64(0),
-		importedKVCount:    atomic.NewInt64(0),
-		memLimit:           memLimit,
+		checkHotspot:      checkHotspot,
+		workerConcurrency: workerConcurrency,
+		ts:                ts,
+		totalKVSize:       totalKVSize,
+		totalKVCount:      totalKVCount,
+		importedKVSize:    atomic.NewInt64(0),
+		importedKVCount:   atomic.NewInt64(0),
+		memLimit:          memLimit,
+		onDup:             onDup,
 	}
 }
 
@@ -302,6 +298,8 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	// Note: this is the file size of the range group, KV size is smaller, as we
+	// need additional 8*2 for each KV.
 	logutil.Logger(ctx).Info("estimated file size of this range group",
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
@@ -344,7 +342,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
-	var dupKey atomic.Pointer[[]byte]
+	var dupKey, dupVal atomic.Pointer[[]byte]
 	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
 		cmp := bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k])
 		if cmp < 0 { // strict comparator like < or >
@@ -355,8 +353,12 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 			return true
 		}
 		if cmp == 0 && i != k {
-			cloned := append([]byte(nil), e.memKVsAndBuffers.keys[i]...)
-			dupKey.Store(&cloned)
+			if dupKey.Load() == nil {
+				key := slices.Clone(e.memKVsAndBuffers.keys[i])
+				dupKey.Store(&key)
+				value := slices.Clone(e.memKVsAndBuffers.values[i])
+				dupVal.Store(&value)
+			}
 		}
 		return false
 	})
@@ -366,8 +368,16 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
 		zap.Duration("cost time", time.Since(sortStart)))
 
-	if k := dupKey.Load(); k != nil {
-		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+	// we shouldn't handle duplicates for OnDuplicateKeyIgnore, it's the semantic
+	// of OnDuplicateKeyError, but to make keep compatible with the old code, we
+	// keep this behavior.
+	// TODO: remove this when we have have fully integrated the OnDuplicateKey.
+	if k, v := dupKey.Load(), dupVal.Load(); k != nil {
+		if e.onDup == common.OnDuplicateKeyIgnore {
+			return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+		} else if e.onDup == common.OnDuplicateKeyError {
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(*k, *v)
+		}
 	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)
@@ -390,30 +400,19 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	e.memKVsAndBuffers.size = 0
 
 	ranges := make([]common.Range, 0, len(jobKeys)-1)
-	prev, err2 := e.keyAdapter.Decode(nil, jobKeys[0])
-	if err2 != nil {
-		return err
-	}
+	prev := slices.Clone(jobKeys[0])
 	for i := 1; i < len(jobKeys)-1; i++ {
-		cur, err3 := e.keyAdapter.Decode(nil, jobKeys[i])
-		if err3 != nil {
-			return err3
-		}
+		cur := slices.Clone(jobKeys[i])
 		ranges = append(ranges, common.Range{
 			Start: prev,
 			End:   cur,
 		})
 		prev = cur
 	}
-	// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
-	lastKey := jobKeys[len(jobKeys)-1]
-	cur, err4 := e.tryDecodeEndKey(lastKey)
-	if err4 != nil {
-		return err4
-	}
+	lastKey := slices.Clone(jobKeys[len(jobKeys)-1])
 	ranges = append(ranges, common.Range{
 		Start: prev,
-		End:   cur,
+		End:   lastKey,
 	})
 
 	select {
@@ -454,17 +453,13 @@ func (e *Engine) LoadIngestData(
 
 func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *MemoryIngestData {
 	return &MemoryIngestData{
-		keyAdapter:         e.keyAdapter,
-		duplicateDetection: e.duplicateDetection,
-		duplicateDB:        e.duplicateDB,
-		dupDetectOpt:       e.dupDetectOpt,
-		keys:               keys,
-		values:             values,
-		ts:                 e.ts,
-		memBuf:             buf,
-		refCnt:             atomic.NewInt64(0),
-		importedKVSize:     e.importedKVSize,
-		importedKVCount:    e.importedKVCount,
+		keys:            keys,
+		values:          values,
+		ts:              e.ts,
+		memBuf:          buf,
+		refCnt:          atomic.NewInt64(0),
+		importedKVSize:  e.importedKVSize,
+		importedKVCount: e.importedKVCount,
 	}
 }
 
@@ -485,66 +480,16 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
-	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
-		return e.startKey, e.endKey, nil
-	}
-
-	startKey, err = e.keyAdapter.Decode(nil, e.startKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	endKey, err = e.tryDecodeEndKey(e.endKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	return startKey, endKey, nil
+	return e.startKey, e.endKey, nil
 }
 
 // GetRegionSplitKeys implements common.Engine.
 func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
-	splitKeys := make([][]byte, len(e.splitKeys))
-	var (
-		err      error
-		splitKey []byte
-	)
-	for i, k := range e.splitKeys {
-		if i < len(e.splitKeys)-1 {
-			splitKey, err = e.keyAdapter.Decode(nil, k)
-		} else {
-			splitKey, err = e.tryDecodeEndKey(k)
-		}
-		if err != nil {
-			return nil, err
-		}
-		splitKeys[i] = splitKey
+	splitKeys := make([][]byte, 0, len(e.splitKeys))
+	for _, k := range e.splitKeys {
+		splitKeys = append(splitKeys, slices.Clone(k))
 	}
 	return splitKeys, nil
-}
-
-// tryDecodeEndKey tries to decode the key from two sources.
-// When duplicate detection feature is enabled, the **end key** comes from
-// DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
-// error.
-func (e Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
-	decoded, err = e.keyAdapter.Decode(nil, key)
-	if err == nil {
-		return
-	}
-	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
-		// NoopKeyAdapter.Decode always return nil error
-		intest.Assert(false, "Unreachable code path")
-		return nil, err
-	}
-	// handle the case that end key is from Key.Next()
-	if key[len(key)-1] != 0 {
-		return nil, err
-	}
-	key = key[:len(key)-1]
-	decoded, err = e.keyAdapter.Decode(nil, key)
-	if err != nil {
-		return nil, err
-	}
-	return kv.Key(decoded).Next(), nil
 }
 
 // Close implements common.Engine.
@@ -585,11 +530,6 @@ func (e *Engine) Reset() error {
 
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
-	keyAdapter         common.KeyAdapter
-	duplicateDetection bool
-	duplicateDB        *pebble.DB
-	dupDetectOpt       common.DupDetectOpt
-
 	keys   [][]byte
 	values [][]byte
 	ts     uint64
@@ -605,7 +545,6 @@ var _ common.IngestData = (*MemoryIngestData)(nil)
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
-		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
 		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
 			return bytes.Compare(lowerBound, m.keys[i]) <= 0
 		})
@@ -616,7 +555,6 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 
 	lastKeyIdx := len(m.keys) - 1
 	if len(upperBound) > 0 {
-		upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
 		i := sort.Search(len(m.keys), func(i int) bool {
 			reverseIdx := len(m.keys) - 1 - i
 			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
@@ -636,14 +574,8 @@ func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]
 	if firstKeyIdx < 0 || firstKeyIdx > lastKeyIdx {
 		return nil, nil, nil
 	}
-	firstKey, err := m.keyAdapter.Decode(nil, m.keys[firstKeyIdx])
-	if err != nil {
-		return nil, nil, err
-	}
-	lastKey, err := m.keyAdapter.Decode(nil, m.keys[lastKeyIdx])
-	if err != nil {
-		return nil, nil, err
-	}
+	firstKey := slices.Clone(m.keys[firstKeyIdx])
+	lastKey := slices.Clone(m.keys[lastKeyIdx])
 	return firstKey, lastKey, nil
 }
 
@@ -699,76 +631,11 @@ func (m *memoryDataIter) Error() error {
 // ReleaseBuf implements ForwardIter.
 func (m *memoryDataIter) ReleaseBuf() {}
 
-type memoryDataDupDetectIter struct {
-	iter           *memoryDataIter
-	dupDetector    *common.DupDetector
-	err            error
-	curKey, curVal []byte
-	buf            *membuf.Buffer
-}
-
-// First implements ForwardIter.
-func (m *memoryDataDupDetectIter) First() bool {
-	if m.err != nil || !m.iter.First() {
-		return false
-	}
-	m.curKey, m.curVal, m.err = m.dupDetector.Init(m.iter)
-	return m.Valid()
-}
-
-// Valid implements ForwardIter.
-func (m *memoryDataDupDetectIter) Valid() bool {
-	return m.err == nil && m.iter.Valid()
-}
-
-// Next implements ForwardIter.
-func (m *memoryDataDupDetectIter) Next() bool {
-	if m.err != nil {
-		return false
-	}
-	key, val, ok, err := m.dupDetector.Next(m.iter)
-	if err != nil {
-		m.err = err
-		return false
-	}
-	if !ok {
-		return false
-	}
-	m.curKey, m.curVal = key, val
-	return true
-}
-
-// Key implements ForwardIter.
-func (m *memoryDataDupDetectIter) Key() []byte {
-	return m.buf.AddBytes(m.curKey)
-}
-
-// Value implements ForwardIter.
-func (m *memoryDataDupDetectIter) Value() []byte {
-	return m.buf.AddBytes(m.curVal)
-}
-
-// Close implements ForwardIter.
-func (m *memoryDataDupDetectIter) Close() error {
-	m.buf.Destroy()
-	return m.dupDetector.Close()
-}
-
-// Error implements ForwardIter.
-func (m *memoryDataDupDetectIter) Error() error {
-	return m.err
-}
-
-// ReleaseBuf implements ForwardIter.
-func (m *memoryDataDupDetectIter) ReleaseBuf() {
-	m.buf.Reset()
-}
-
 // NewIter implements IngestData.NewIter.
 func (m *MemoryIngestData) NewIter(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
-	bufPool *membuf.Pool,
+	_ *membuf.Pool,
 ) common.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
@@ -777,16 +644,7 @@ func (m *MemoryIngestData) NewIter(
 		firstKeyIdx: firstKeyIdx,
 		lastKeyIdx:  lastKeyIdx,
 	}
-	if !m.duplicateDetection {
-		return iter
-	}
-	logger := log.FromContext(ctx)
-	detector := common.NewDupDetector(m.keyAdapter, m.duplicateDB.NewBatch(), logger, m.dupDetectOpt)
-	return &memoryDataDupDetectIter{
-		iter:        iter,
-		dupDetector: detector,
-		buf:         bufPool.NewBuffer(),
-	}
+	return iter
 }
 
 // GetTS implements IngestData.GetTS.

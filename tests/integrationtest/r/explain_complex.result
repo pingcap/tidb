@@ -153,16 +153,16 @@ Projection	1.00	root		explain_complex.st.cm, explain_complex.st.p1, explain_comp
       └─TableRowIDScan	250.00	cop[tikv]	table:st	keep order:false, stats:pseudo
 explain format = 'brief' select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	estRows	task	access object	operator info
-Projection	0.01	root		explain_complex.dt.id, explain_complex.dt.aid, explain_complex.dt.pt, explain_complex.dt.dic, explain_complex.dt.cm, explain_complex.rr.gid, explain_complex.rr.acd, explain_complex.rr.t, explain_complex.dt.p1, explain_complex.dt.p2, explain_complex.dt.p3, explain_complex.dt.p4, explain_complex.dt.p5, explain_complex.dt.p6_md5, explain_complex.dt.p7_md5
-└─Limit	0.01	root		offset:0, count:2000
-  └─IndexJoin	0.01	root		inner join, inner:IndexLookUp, outer key:explain_complex.rr.aid, explain_complex.rr.dic, inner key:explain_complex.dt.aid, explain_complex.dt.dic, equal cond:eq(explain_complex.rr.aid, explain_complex.dt.aid), eq(explain_complex.rr.dic, explain_complex.dt.dic)
+Projection	0.00	root		explain_complex.dt.id, explain_complex.dt.aid, explain_complex.dt.pt, explain_complex.dt.dic, explain_complex.dt.cm, explain_complex.rr.gid, explain_complex.rr.acd, explain_complex.rr.t, explain_complex.dt.p1, explain_complex.dt.p2, explain_complex.dt.p3, explain_complex.dt.p4, explain_complex.dt.p5, explain_complex.dt.p6_md5, explain_complex.dt.p7_md5
+└─Limit	0.00	root		offset:0, count:2000
+  └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:explain_complex.rr.aid, explain_complex.rr.dic, inner key:explain_complex.dt.aid, explain_complex.dt.dic, equal cond:eq(explain_complex.rr.aid, explain_complex.dt.aid), eq(explain_complex.rr.dic, explain_complex.dt.dic)
     ├─TableReader(Build)	3.33	root		data:Selection
     │ └─Selection	3.33	cop[tikv]		eq(explain_complex.rr.pt, "ios"), gt(explain_complex.rr.t, 1478185592)
     │   └─TableFullScan	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
-    └─IndexLookUp(Probe)	0.01	root		
+    └─IndexLookUp(Probe)	0.00	root		
       ├─Selection(Build)	3.33	cop[tikv]		not(isnull(explain_complex.dt.dic))
       │ └─IndexRangeScan	3.33	cop[tikv]	table:dt, index:aid(aid, dic)	range: decided by [eq(explain_complex.dt.aid, explain_complex.rr.aid) eq(explain_complex.dt.dic, explain_complex.rr.dic)], keep order:false, stats:pseudo
-      └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.dt.bm, 0), eq(explain_complex.dt.pt, "ios"), gt(explain_complex.dt.t, 1478185592)
+      └─Selection(Probe)	0.00	cop[tikv]		eq(explain_complex.dt.bm, 0), eq(explain_complex.dt.pt, "ios"), gt(explain_complex.dt.t, 1478185592)
         └─TableRowIDScan	3.33	cop[tikv]	table:dt	keep order:false, stats:pseudo
 explain format = 'brief' select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info

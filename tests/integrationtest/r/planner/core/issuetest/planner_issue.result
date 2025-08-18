@@ -118,7 +118,7 @@ Projection_8	382.00	root		planner__core__issuetest__planner_issue.tbl_39.col_239
       ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))
       │ └─IndexRangeScan_24	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
       ├─Selection_27(Build)	458.26	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
-      │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:idx_223(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
+      │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
       └─TableRowIDScan_28(Probe)	382.00	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo
 select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 col_239
@@ -943,3 +943,9 @@ HashJoin	19472.71	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
     └─TableReader(Probe)	9990.00	root		data:Selection
       └─Selection	9990.00	cop[tikv]		not(isnull(test.t3.b))
         └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+drop table if exists t0, v0;
+drop view if exists v0;
+CREATE  TABLE  t0(c0 INTEGER);
+CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
+SELECT t0.c0 FROM v0, t0 WHERE RAND();
+c0

@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -65,6 +68,14 @@ type schemaIDName struct {
 	id            int64
 	name          pmodel.CIStr
 	tomb          bool
+}
+
+type referredForeignKeyItem struct {
+	schemaVersion  int64
+	dbName         string
+	tableName      string
+	referredFKInfo []*model.ReferredFKInfo
+	tomb           bool
 }
 
 func (si *schemaItem) Name() string {
@@ -116,6 +127,9 @@ type Data struct {
 	// For the SchemaByID API, sorted by {id, schemaVersion}
 	// Stores only id, name and schemaVersion in memory.
 	schemaID2Name atomic.Pointer[btree.BTreeG[schemaIDName]]
+
+	// referredForeignKeys records all table's ReferredFKInfo.
+	referredForeignKeys atomic.Pointer[btree.BTreeG[*referredForeignKeyItem]]
 
 	tableCache *Sieve[tableCacheKey, table.Table]
 
@@ -213,6 +227,7 @@ func NewData() *Data {
 	ret.pid2tid.Store(btree.NewG[partitionItem](btreeDegree, comparePartitionItem))
 	ret.tableInfoResident.Store(btree.NewG[tableInfoItem](btreeDegree, compareTableInfoItem))
 	ret.tableCache.SetStatusHook(newSieveStatusHookImpl())
+	ret.referredForeignKeys.Store(btree.NewG[*referredForeignKeyItem](btreeDegree, compareReferredForeignKeyItem))
 	return ret
 }
 
@@ -275,6 +290,233 @@ func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	btreeSet(&isd.schemaID2Name, schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
 }
 
+type referredForeignKeysHelper struct {
+	start           referredForeignKeyItem
+	schemaVersion   int64
+	referredFKInfos []*model.ReferredFKInfo
+}
+
+func (h *referredForeignKeysHelper) onItem(item *referredForeignKeyItem) bool {
+	if item.dbName != h.start.dbName || item.tableName != h.start.tableName {
+		return false
+	}
+
+	if item.schemaVersion <= h.schemaVersion {
+		if !item.tomb { // If the item is a tomb record, all the foreign keys are deleted.
+			h.referredFKInfos = item.referredFKInfo
+		}
+		return false
+	}
+	return true
+}
+
+func (isd *Data) getTableReferredForeignKeys(schema, table string, schemaMetaVersion int64) []*model.ReferredFKInfo {
+	helper := referredForeignKeysHelper{
+		start:           referredForeignKeyItem{dbName: schema, tableName: table, schemaVersion: math.MaxInt64},
+		schemaVersion:   schemaMetaVersion,
+		referredFKInfos: make([]*model.ReferredFKInfo, 0),
+	}
+	isd.referredForeignKeys.Load().DescendLessOrEqual(&helper.start, helper.onItem)
+	return helper.referredFKInfos
+}
+
+// hasForeignKeyReference checks if a specific foreign key reference already exists
+func (isd *Data) hasForeignKeyReference(refs []*model.ReferredFKInfo, schema, table, fkName pmodel.CIStr) bool {
+	for _, ref := range refs {
+		if ref.ChildSchema.L == schema.L &&
+			ref.ChildTable.L == table.L &&
+			ref.ChildFKName.L == fkName.L {
+			return true
+		}
+	}
+	return false
+}
+
+func (isd *Data) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.TableInfo, schemaMetaVersion int64) {
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+
+		// Get current foreign key references for the table
+		refSchema, refTable := fk.RefSchema.L, fk.RefTable.L
+		existingRefs := isd.getTableReferredForeignKeys(fk.RefSchema.L, fk.RefTable.L, schemaMetaVersion)
+
+		// Skip if this specific foreign key reference already exists
+		if isd.hasForeignKeyReference(existingRefs, schema, tbInfo.Name, fk.Name) {
+			continue
+		}
+
+		// Create a new array with existing refs + new reference
+		newRefs := make([]*model.ReferredFKInfo, 0, len(existingRefs)+1)
+		newRefs = append(newRefs, existingRefs...)
+		newRefs = append(newRefs, &model.ReferredFKInfo{
+			Cols:        fk.RefCols,
+			ChildSchema: schema,
+			ChildTable:  tbInfo.Name,
+			ChildFKName: fk.Name,
+		})
+		sort.Slice(newRefs, func(i, j int) bool {
+			if newRefs[i].ChildSchema.L != newRefs[j].ChildSchema.L {
+				return newRefs[i].ChildSchema.L < newRefs[j].ChildSchema.L
+			}
+			if newRefs[i].ChildTable.L != newRefs[j].ChildTable.L {
+				return newRefs[i].ChildTable.L < newRefs[j].ChildTable.L
+			}
+			return newRefs[i].ChildFKName.L < newRefs[j].ChildFKName.L
+		})
+		btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
+			dbName:         refSchema,
+			tableName:      refTable,
+			schemaVersion:  schemaMetaVersion,
+			referredFKInfo: newRefs,
+		})
+	}
+}
+
+func (isd *Data) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.TableInfo, schemaMetaVersion int64) {
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+
+		// Get current foreign key references for the table
+		refSchema, refTable := fk.RefSchema.L, fk.RefTable.L
+		existingRefs := isd.getTableReferredForeignKeys(refSchema, refTable, schemaMetaVersion)
+
+		// Skip if this specific foreign key reference doesn't exist
+		if !isd.hasForeignKeyReference(existingRefs, schema, tbInfo.Name, fk.Name) {
+			continue
+		}
+
+		// Delete the reference
+		if len(existingRefs) == 1 {
+			// If this is the only reference, mark the whole item as deleted
+			btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
+				dbName:         refSchema,
+				tableName:      refTable,
+				schemaVersion:  schemaMetaVersion,
+				tomb:           true,
+				referredFKInfo: nil,
+			})
+		} else {
+			// If there are multiple references, create new array excluding this one
+			// clone existingRefs to avoid modifying the original slice
+			tmpRefs := append([]*model.ReferredFKInfo(nil), existingRefs...)
+			newRefs := slices.DeleteFunc(tmpRefs, func(ref *model.ReferredFKInfo) bool {
+				return ref.ChildSchema.L == schema.L &&
+					ref.ChildTable.L == tbInfo.Name.L &&
+					ref.ChildFKName.L == fk.Name.L
+			})
+
+			btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
+				dbName:         refSchema,
+				tableName:      refTable,
+				schemaVersion:  schemaMetaVersion,
+				tomb:           false,
+				referredFKInfo: newRefs,
+			})
+		}
+	}
+}
+
+// gcCollectTableItem returns up to maxItems old tableItem versions for GC.
+func gcCollectTableItem(bt *btree.BTreeG[*tableItem], cutVer int64, maxItems int) []*tableItem {
+	var dels []*tableItem
+	var prev *tableItem
+	// Example:
+	// gcOldVersion to v4
+	//	db3 tbl1 v5
+	//	db3 tbl1 v4
+	//	db3 tbl1 v3    <- delete, because v3 < v4
+	//	db2 tbl2 v1    <- keep, need to keep the latest version if all versions are less than v4
+	//	db2 tbl2 v0    <- delete, because v0 < v4
+	//	db1 tbl3 v4
+	//	...
+	// So the rule can be simplify to "remove all items whose (version < schemaVersion && previous item is same table)"
+	bt.Descend(func(item *tableItem) bool {
+		if item.schemaVersion < cutVer &&
+			prev != nil &&
+			prev.dbName.L == item.dbName.L &&
+			prev.tableName.L == item.tableName.L {
+			dels = append(dels, item)
+			if len(dels) >= maxItems {
+				return false
+			}
+		}
+		prev = item
+		return true
+	})
+	return dels
+}
+
+// gcCollectReferredForeignKeyItem returns up to maxItems old referredForeignKeyItem versions for GC.
+func gcCollectReferredForeignKeyItem(bt *btree.BTreeG[*referredForeignKeyItem], cutVer int64, maxItems int) []*referredForeignKeyItem {
+	var dels []*referredForeignKeyItem
+	var prev *referredForeignKeyItem
+	bt.Descend(func(item *referredForeignKeyItem) bool {
+		if item.schemaVersion < cutVer &&
+			prev != nil &&
+			prev.dbName == item.dbName &&
+			prev.tableName == item.tableName {
+			dels = append(dels, item)
+			if len(dels) >= maxItems {
+				return false
+			}
+		}
+		prev = item
+		return true
+	})
+	return dels
+}
+
+// gcOldFKVersion performs GC of old referredForeignKeyItem entries up to maxItems.
+func (isd *Data) gcOldFKVersion(schemaVersion int64) int {
+	rfOld := isd.referredForeignKeys.Load()
+	rfNew := rfOld.Clone()
+	rfDels := gcCollectReferredForeignKeyItem(rfOld, schemaVersion, 1024)
+	for _, fk := range rfDels {
+		rfNew.Delete(fk)
+	}
+	if !isd.referredForeignKeys.CompareAndSwap(rfOld, rfNew) {
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() referredForeignKeys gc conflict")
+	}
+	return len(rfDels)
+}
+
+// GCOldVersion compacts btree nodes by removing items older than schema version.
+// exported for testing
+func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
+	if isd.byName.Load().Len() == 0 {
+		return 0, 0
+	}
+
+	// collect and remove old tableItems
+	dels := gcCollectTableItem(isd.byName.Load(), schemaVersion, 1024)
+	byNameOld := isd.byName.Load()
+	byNameNew := byNameOld.Clone()
+	byIDOld := isd.byID.Load()
+	byIDNew := byIDOld.Clone()
+	for _, ti := range dels {
+		byNameNew.Delete(ti)
+		byIDNew.Delete(ti)
+	}
+	succ1 := isd.byID.CompareAndSwap(byIDOld, byIDNew)
+	var succ2 bool
+	if succ1 {
+		succ2 = isd.byName.CompareAndSwap(byNameOld, byNameNew)
+	}
+	if !succ1 || !succ2 {
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() writes conflict",
+			zap.Bool("byID", succ1), zap.Bool("byName", succ2))
+	}
+
+	// collect and remove old referredForeignKeyItems
+	_ = isd.gcOldFKVersion(schemaVersion)
+
+	return len(dels), int64(isd.byName.Load().Len())
+}
+
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
 // TODO: write a generics version to avoid repeated code.
 func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
@@ -287,6 +529,7 @@ func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
 	resetSchemaID2NameBeforeFullLoad(&isd.schemaID2Name, schemaVersion)
 
 	resetPID2TIDBeforeFullLoad(&isd.pid2tid, schemaVersion)
+	resetFKBeforeFullLoad(&isd.referredForeignKeys, schemaVersion)
 }
 
 func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], schemaVersion int64) {
@@ -481,6 +724,33 @@ func resetPID2TIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[partitionItem]]
 	}
 }
 
+func resetFKBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*referredForeignKeyItem]], schemaVersion int64) {
+	bt := ptr.Load()
+	pivot, ok := bt.Max()
+	if !ok {
+		return
+	}
+	items := make([]*referredForeignKeyItem, 0, bt.Len())
+	items = append(items, pivot)
+	bt.DescendLessOrEqual(pivot, func(item *referredForeignKeyItem) bool {
+		if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+			return true
+		}
+		pivot = item
+		items = append(items, pivot)
+		return true
+	})
+	for _, item := range items {
+		btreeSet(ptr, &referredForeignKeyItem{
+			dbName:         item.dbName,
+			tableName:      item.tableName,
+			schemaVersion:  schemaVersion,
+			tomb:           true,
+			referredFKInfo: nil,
+		})
+	}
+}
+
 func compareByID(a, b *tableItem) bool {
 	if a.tableID < b.tableID {
 		return true
@@ -553,6 +823,16 @@ func compareSchemaByID(a, b schemaIDName) bool {
 	}
 	if a.id > b.id {
 		return false
+	}
+	return a.schemaVersion < b.schemaVersion
+}
+
+func compareReferredForeignKeyItem(a, b *referredForeignKeyItem) bool {
+	if a.dbName != b.dbName {
+		return a.dbName < b.dbName
+	}
+	if a.tableName != b.tableName {
+		return a.tableName < b.tableName
 	}
 	return a.schemaVersion < b.schemaVersion
 }
@@ -1165,6 +1445,12 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	return is.SchemaByName(name)
 }
 
+// GetTableReferredForeignKeys implements InfoSchema.GetTableReferredForeignKeys
+func (is *infoschemaV2) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+	is.keepAlive()
+	return is.Data.getTableReferredForeignKeys(schema, table, is.infoSchema.schemaMetaVersion)
+}
+
 func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
 	failpoint.Inject("mockLoadTableInfoError", func(_ failpoint.Value) {
@@ -1421,6 +1707,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
+	b.infoschemaV2.Data.deleteReferredForeignKeys(dbInfo.Name, tblInfo, diff.Version)
 
 	if pi := table.Meta().GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {

@@ -1263,10 +1263,10 @@ PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
 insert into PK_S_MULTI_31 values(122,100),(124,-22),(124,34),(127,103);
 explain format='brief' SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;
 id	estRows	task	access object	operator info
-Sort	0.80	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
-└─Projection	0.80	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
-  └─Selection	0.80	root		gt(Column#7, 2)
-    └─HashAgg	1.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:count(distinct planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->Column#7
+Sort	6400.00	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
+└─Projection	6400.00	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
+  └─Selection	6400.00	root		gt(Column#7, 2)
+    └─HashAgg	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:count(distinct planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->Column#7
       └─HashJoin	100000000.00	root		CARTESIAN left outer join, other cond:gt(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1)
         ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
         │ └─IndexFullScan	10000.00	cop[tikv]	table:T2, index:PRIMARY(COL1, COL2)	keep order:false, stats:pseudo
@@ -3838,10 +3838,10 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
 └─Limit	1.00	root		offset:0, count:1
   └─IndexMerge	1.00	root		type: union
+    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
+    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("PE",+inf], keep order:true, stats:pseudo
     ├─Selection(Build)	0.00	cop[tikv]		1
     │ └─TableRangeScan	0.00	cop[tikv]	table:tbl_43	range:["LUBGzGMA","LUBGzGMA"], keep order:true, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:("PE",+inf], keep order:true, stats:pseudo
     ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, stats:pseudo
     ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("TSeMYpDXnFIyp",+inf], keep order:true, stats:pseudo
     └─Selection(Probe)	1.00	cop[tikv]		or(or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "YEpfYfPVvhMlHGHSMKm"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "PE")), or(and(eq(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "LUBGzGMA"), 1), or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "MFWmuOsoyDv"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "TSeMYpDXnFIyp"))))
@@ -3854,10 +3854,10 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
 └─Limit	1.00	root		offset:0, count:1
   └─IndexMerge	1.00	root		type: union
+    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo
+    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("PE",+inf], keep order:true, desc, stats:pseudo
     ├─Selection(Build)	0.00	cop[tikv]		1
     │ └─TableRangeScan	0.00	cop[tikv]	table:tbl_43	range:["LUBGzGMA","LUBGzGMA"], keep order:true, desc, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:("PE",+inf], keep order:true, desc, stats:pseudo
     ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, desc, stats:pseudo
     ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("TSeMYpDXnFIyp",+inf], keep order:true, desc, stats:pseudo
     └─Selection(Probe)	1.00	cop[tikv]		or(or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "YEpfYfPVvhMlHGHSMKm"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "PE")), or(and(eq(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "LUBGzGMA"), 1), or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "MFWmuOsoyDv"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "TSeMYpDXnFIyp"))))

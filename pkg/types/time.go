@@ -461,6 +461,13 @@ func (t Time) Convert(ctx Context, tp uint8) (Time, error) {
 
 	t1.SetType(tp)
 	err := t1.Check(ctx)
+	if tp == mysql.TypeTimestamp && ErrTimestampInDSTTransition.Equal(err) {
+		tAdj, adjErr := t1.AdjustedGoTime(ctx.Location())
+		if adjErr == nil {
+			ctx.AppendWarning(err)
+			return Time{FromGoTime(tAdj)}, nil
+		}
+	}
 	return t1, errors.Trace(err)
 }
 
@@ -2010,9 +2017,33 @@ func parseTime(ctx Context, str string, tp byte, fsp int, isFloat bool) (Time, e
 
 	t.SetType(tp)
 	if err = t.Check(ctx); err != nil {
+		if tp == mysql.TypeTimestamp && !t.IsZero() {
+			tAdjusted, errAdjusted := adjustTimestampErrForDST(ctx.Location(), str, tp, t, err)
+			if ErrTimestampInDSTTransition.Equal(errAdjusted) {
+				return tAdjusted, errors.Trace(errAdjusted)
+			}
+		}
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
+}
+
+func adjustTimestampErrForDST(loc *gotime.Location, str string, tp byte, t Time, err error) (Time, error) {
+	if tp != mysql.TypeTimestamp || t.IsZero() {
+		return t, err
+	}
+	minTS, maxTS := MinTimestamp, MaxTimestamp
+	minErr := minTS.ConvertTimeZone(gotime.UTC, loc)
+	maxErr := maxTS.ConvertTimeZone(gotime.UTC, loc)
+	if minErr == nil && maxErr == nil &&
+		t.Compare(minTS) > 0 && t.Compare(maxTS) < 0 {
+		// Handle the case when the timestamp given is in the DST transition
+		if tAdjusted, err2 := t.AdjustedGoTime(loc); err2 == nil {
+			t.SetCoreTime(FromGoTime(tAdjusted))
+			return t, errors.Trace(ErrTimestampInDSTTransition.GenWithStackByArgs(str, loc.String()))
+		}
+	}
+	return t, err
 }
 
 // ParseDatetime is a helper function wrapping ParseTime with datetime type and default fsp.
@@ -2171,7 +2202,8 @@ func checkTimestampType(t CoreTime, tz *gotime.Location) error {
 		convertTime := NewTime(t, mysql.TypeTimestamp, DefaultFsp)
 		err := convertTime.ConvertTimeZone(tz, BoundTimezone)
 		if err != nil {
-			return err
+			_, err2 := adjustTimestampErrForDST(tz, t.String(), mysql.TypeTimestamp, Time{t}, err)
+			return err2
 		}
 		checkTime = convertTime.coreTime
 	} else {

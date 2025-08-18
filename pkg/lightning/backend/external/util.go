@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"io"
 	"slices"
 	"sort"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -64,7 +66,7 @@ func seekPropsOffsets(
 		eg.Go(func() error {
 			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)
 			if err2 != nil {
-				if err2 == io.EOF {
+				if goerrors.Is(err2, io.EOF) {
 					return nil
 				}
 				return errors.Trace(err2)
@@ -76,16 +78,15 @@ func seekPropsOffsets(
 
 			p, err3 := r.nextProp()
 			for {
-				switch err3 {
-				case nil:
-				case io.EOF:
-					// fill the rest of the offsets with the last offset
-					currOffset := offsetsPerFile[i][keyIdx]
-					for keyIdx++; keyIdx < len(starts); keyIdx++ {
-						offsetsPerFile[i][keyIdx] = currOffset
+				if err3 != nil {
+					if goerrors.Is(err3, io.EOF) {
+						// fill the rest of the offsets with the last offset
+						currOffset := offsetsPerFile[i][keyIdx]
+						for keyIdx++; keyIdx < len(starts); keyIdx++ {
+							offsetsPerFile[i][keyIdx] = currOffset
+						}
+						return nil
 					}
-					return nil
-				default:
 					return errors.Trace(err3)
 				}
 				propKey := kv.Key(p.firstKey)
@@ -344,4 +345,45 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 		return units.BytesSize(float64(n) / dur)
 	}
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
+}
+
+// DivideMergeSortDataFiles divides the data files into multiple groups for
+// merge sort. Each group will be assigned to a node for sorting.
+// The number of files in each group is limited to MergeSortFileCountStep.
+func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
+	if nodeCnt == 0 {
+		return nil, errors.Errorf("unsupported zero node count")
+	}
+	if len(dataFiles) == 0 {
+		return [][]string{}, nil
+	}
+	dataFilesCnt := len(dataFiles)
+	result := make([][]string, 0, nodeCnt)
+	batches := len(dataFiles) / MergeSortFileCountStep
+	rounds := batches / nodeCnt
+	for range rounds * nodeCnt {
+		result = append(result, dataFiles[:MergeSortFileCountStep])
+		dataFiles = dataFiles[MergeSortFileCountStep:]
+	}
+	remainder := dataFilesCnt - (nodeCnt * rounds * MergeSortFileCountStep)
+	if remainder == 0 {
+		return result, nil
+	}
+	// adjust node cnt for remainder files to avoid having too much target files.
+	adjustNodeCnt := nodeCnt
+	maxTargetFilesPerSubtask := max(MergeSortMaxSubtaskTargetFiles, mergeConc)
+	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(MergeSortOverlapThreshold) {
+		adjustNodeCnt--
+		if adjustNodeCnt == 0 {
+			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)
+		}
+	}
+	minimalFileCount := 32 // Each subtask should merge at least 32 files.
+	adjustNodeCnt = max(min(remainder/minimalFileCount, adjustNodeCnt), 1)
+	sizes := mathutil.Divide2Batches(remainder, adjustNodeCnt)
+	for _, s := range sizes {
+		result = append(result, dataFiles[:s])
+		dataFiles = dataFiles[s:]
+	}
+	return result, nil
 }

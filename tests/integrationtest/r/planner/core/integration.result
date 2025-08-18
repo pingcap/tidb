@@ -3404,7 +3404,7 @@ create table t30094(a varchar(10));
 explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);
 id	estRows	task	access object	operator info
 TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		cast(planner__core__integration.t30094.a, float BINARY), cast(planner__core__integration.t30094.a, var_string(5))
+└─Selection	8000.00	cop[tikv]		cast(planner__core__integration.t30094.a, float BINARY), cast(planner__core__integration.t30094.a, var_string(10))
   └─TableFullScan	10000.00	cop[tikv]	table:t30094	keep order:false, stats:pseudo
 explain format = 'brief' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;
 id	estRows	task	access object	operator info
@@ -4297,3 +4297,12 @@ case when (
 t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
 ) then 1 else 2 end;
 1
+drop table if exists t;
+create table t (col timestamp);
+explain format='brief' select cast(col as char) from t group by cast(col as char);
+id	estRows	task	access object	operator info
+Projection	8000.00	root		cast(planner__core__integration.t.col, var_string(19))->Column#3
+└─HashAgg	8000.00	root		group by:Column#5, funcs:firstrow(Column#6)->planner__core__integration.t.col
+  └─TableReader	8000.00	root		data:HashAgg
+    └─HashAgg	8000.00	cop[tikv]		group by:cast(planner__core__integration.t.col, var_string(19)), funcs:firstrow(planner__core__integration.t.col)->Column#6
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

@@ -347,6 +347,27 @@ const (
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
+
+	// The following optimizer cost factors represent a multiplier for each optimizer physical operator.
+	// These factors are used to adjust the cost of each operator to influence the optimizer's plan selection.
+	TiDBOptIndexScanCostFactor        = "tidb_opt_index_scan_cost_factor"
+	TiDBOptIndexReaderCostFactor      = "tidb_opt_index_reader_cost_factor"
+	TiDBOptTableReaderCostFactor      = "tidb_opt_table_reader_cost_factor"
+	TiDBOptTableFullScanCostFactor    = "tidb_opt_table_full_scan_cost_factor"
+	TiDBOptTableRangeScanCostFactor   = "tidb_opt_table_range_scan_cost_factor"
+	TiDBOptTableRowIDScanCostFactor   = "tidb_opt_table_rowid_scan_cost_factor"
+	TiDBOptTableTiFlashScanCostFactor = "tidb_opt_table_tiflash_scan_cost_factor"
+	TiDBOptIndexLookupCostFactor      = "tidb_opt_index_lookup_cost_factor"
+	TiDBOptIndexMergeCostFactor       = "tidb_opt_index_merge_cost_factor"
+	TiDBOptSortCostFactor             = "tidb_opt_sort_cost_factor"
+	TiDBOptTopNCostFactor             = "tidb_opt_topn_cost_factor"
+	TiDBOptLimitCostFactor            = "tidb_opt_limit_cost_factor"
+	TiDBOptStreamAggCostFactor        = "tidb_opt_stream_agg_cost_factor"
+	TiDBOptHashAggCostFactor          = "tidb_opt_hash_agg_cost_factor"
+	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
+	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
+	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
+
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
@@ -673,8 +694,7 @@ const (
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
-	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
-	// Deprecated: it is 'off' always since Telemetry has been removed from TiDB.
+	// TiDBEnableTelemetry indicates that whether usage data print to log is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
@@ -1294,6 +1314,23 @@ const (
 	DefOptMemoryFactor                      = 0.001
 	DefOptDiskFactor                        = 1.5
 	DefOptConcurrencyFactor                 = 3.0
+	DefOptIndexScanCostFactor               = 1.0
+	DefOptIndexReaderCostFactor             = 1.0
+	DefOptTableReaderCostFactor             = 1.0
+	DefOptTableFullScanCostFactor           = 1.0
+	DefOptTableRangeScanCostFactor          = 1.0
+	DefOptTableRowIDScanCostFactor          = 1.0
+	DefOptTableTiFlashScanCostFactor        = 1.0
+	DefOptIndexLookupCostFactor             = 1.0
+	DefOptIndexMergeCostFactor              = 1.0
+	DefOptSortCostFactor                    = 1.0
+	DefOptTopNCostFactor                    = 1.0
+	DefOptLimitCostFactor                   = 1.0
+	DefOptStreamAggCostFactor               = 1.0
+	DefOptHashAggCostFactor                 = 1.0
+	DefOptMergeJoinCostFactor               = 1.0
+	DefOptHashJoinCostFactor                = 1.0
+	DefOptIndexJoinCostFactor               = 1.0
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
@@ -1391,7 +1428,7 @@ const (
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
-	DefTiDBEnableTelemetry                  = false
+	DefTiDBEnableTelemetry                  = true
 	DefTiDBEnableParallelApply              = false
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false
@@ -1589,14 +1626,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
-	DefTiDBEnableLabelSecurity                        = false
-	DefTiDBEnableLoginHistory                         = false
-	DefTiDBLoginHistoryRetainDuration                 = time.Hour * 24 * 90 // default 90 days.
-	DefStoredProgramCacheSize                         = 256
-	DefTiDBEnableProcedure                            = false
-	DefTiDBEnableDutySeparationMode                   = false
-	DefTiDBEnableUDVSubstitute                        = false
-	DefTiDBEnableSPParamSubstitute                    = false
+	DefTiDBLoadBindingTimeout                         = 200
 )
 
 // Process global variables.
@@ -1720,15 +1750,6 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
-	EnableLabelSecurity       = atomic.NewBool(DefTiDBEnableLabelSecurity)
-
-	EnableLoginHistory         = atomic.NewBool(DefTiDBEnableLoginHistory)
-	LoginHistoryRetainDuration = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)
-	StoredProgramCacheSize     = atomic.NewInt64(DefStoredProgramCacheSize)
-	TiDBEnableSPAstReuse       = atomic.NewBool(true)
-	TiDBEnableProcedureValue   = atomic.NewBool(DefTiDBEnableProcedure)
-	AutomaticSPPrivileges      = atomic.NewBool(true)
-	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
 )
 
 var (

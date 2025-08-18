@@ -763,6 +763,15 @@ explain analyze select * from pt order by id limit 100000;      # expected dists
 -- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
 explain analyze select * from pt where val = 126 order by id limit 100;  # expected distsql concurrency 15
 
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=5)*/ * from t order by id;  # expected distsql concurrency 5
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select /*+ set_var(tidb_distsql_scan_concurrency=15)*/ * from t order by id;  # expected distsql concurrency 2
+
+
 # TestIssue55837
 CREATE TABLE test_55837 (col1 int(4) NOT NULL, col2 bigint(4) NOT NULL, KEY col2_index (col2));
 insert into test_55837 values(0,1725292800),(0,1725292800);
@@ -770,3 +779,8 @@ select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s'
 
 # TestIssue56641
 select ((exists (select 1)) * -5) as c1;
+
+# TestIssue62458 should no error
+CREATE TABLE test_62458 (c1 INT, c2 VARCHAR(255)) PARTITION BY LIST (c1) (PARTITION p1 VALUES IN (1, 2, 3), PARTITION p2 VALUES IN (4, 5, 6));
+CREATE UNIQUE INDEX i ON test_62458 (c1);
+DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
