@@ -225,6 +225,18 @@ func WithKeyspacesAndCurrentKeyspaceID(clusterKeyspaces []*keyspacepb.KeyspaceMe
 	}
 }
 
+func (o *mockOptions) currentKeyspaceMeta() *keyspacepb.KeyspaceMeta {
+	if o.keyspaceSpecified && o.currentKeyspaceID != constants.NullKeyspaceID {
+		for _, meta := range o.clusterKeyspaces {
+			if meta.Id == o.currentKeyspaceID {
+				return meta
+			}
+		}
+		panic("currentKeyspaceID and clusterKeyspaces mismatches")
+	}
+	return nil
+}
+
 // DDLCheckerInjector is used to break import cycle.
 var DDLCheckerInjector func(kv.Storage) kv.Storage
 

@@ -16,13 +16,11 @@ package mockstore
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/pd/client/constants"
 )
 
 // newMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
@@ -41,17 +39,5 @@ func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	var keyspaceMeta *keyspacepb.KeyspaceMeta
-	if opt.keyspaceSpecified && opt.currentKeyspaceID != constants.NullKeyspaceID {
-		for _, keyspace := range opt.clusterKeyspaces {
-			if keyspace.Id == opt.currentKeyspaceID {
-				keyspaceMeta = keyspace
-				break
-			}
-		}
-		if keyspaceMeta == nil {
-			return nil, errors.Errorf("keyspace meta of keyspace ID %v is missing", opt.currentKeyspaceID)
-		}
-	}
-	return mockstorage.NewMockStorage(kvstore, keyspaceMeta)
+	return mockstorage.NewMockStorage(kvstore, opt.currentKeyspaceMeta())
 }
