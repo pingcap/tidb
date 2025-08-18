@@ -3212,9 +3212,6 @@ func checkExprInGroupByOrIsSingleValue(
 }
 
 func (b *PlanBuilder) checkOnlyFullGroupBy(p base.LogicalPlan, sel *ast.SelectStmt) (err error) {
-	if strings.Contains(p.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select a,min(a) from t where a=-1") {
-		fmt.Println(1)
-	}
 	if sel.GroupBy != nil {
 		err = b.checkOnlyFullGroupByWithGroupClause(p, sel)
 	} else {
