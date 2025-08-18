@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package rule
 
 import (
 	"context"
@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -53,7 +52,8 @@ const (
 	andPredicate
 	scalarPredicate
 	falsePredicate
-	truePredicate
+	// TruePredicate TODO: make it lower case after rule_decorrelate is migrated.
+	TruePredicate
 	otherPredicate
 )
 
@@ -74,7 +74,7 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 		if isTrue == 0 {
 			return falsePredicate
 		}
-		return truePredicate
+		return TruePredicate
 	}
 	return otherPredicate
 }
@@ -181,24 +181,22 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool, filter func(expr expression.Expression) bool) []expression.Expression {
 	if len(predicates) == 0 {
 		return predicates
 	}
 	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
-	simplifiedPredicate = rule.PushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
+	simplifiedPredicate = PushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
 	// In some scenarios, we need to perform constant propagation,
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.
 	if propagateConstant {
-		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+		simplifiedPredicate = expression.PropagateConstant(exprCtx, filter, simplifiedPredicate...)
 	} else {
-		exprs := expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+		exprs := expression.PropagateConstant(exprCtx, filter, simplifiedPredicate...)
 		if len(exprs) == 1 {
-			if _, ok := exprs[0].(*expression.Constant); ok {
-				simplifiedPredicate = exprs
-			}
+			simplifiedPredicate = exprs
 		}
 	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
@@ -303,7 +301,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 		if err != nil {
 			return false
 		}
-		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), newPred)
+		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), nil, newPred)
 		return unsatisfiableExpression(ctx, newPredList[0])
 	}
 	return false
@@ -413,17 +411,17 @@ func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expressi
 	secondCondition, secondType := processCondition(sctx, secondCondition)
 
 	switch {
-	case firstType == truePredicate && orCase:
+	case firstType == TruePredicate && orCase:
 		return firstCondition, true
-	case secondType == truePredicate && orCase:
+	case secondType == TruePredicate && orCase:
 		return secondCondition, true
 	case firstType == falsePredicate && orCase:
 		return secondCondition, true
 	case secondType == falsePredicate && orCase:
 		return firstCondition, true
-	case firstType == truePredicate && !orCase:
+	case firstType == TruePredicate && !orCase:
 		return secondCondition, true
-	case secondType == truePredicate && !orCase:
+	case secondType == TruePredicate && !orCase:
 		return firstCondition, true
 	case firstType == falsePredicate && !orCase:
 		return firstCondition, true
@@ -471,7 +469,7 @@ func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression
 			return []expression.Expression{predicate}
 		}
 
-		if predicateType != truePredicate {
+		if predicateType != TruePredicate {
 			finalResult = append(finalResult, predicate)
 		}
 	}

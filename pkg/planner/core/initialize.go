@@ -108,7 +108,7 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 
 func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 	if p.StoreType == kv.TiFlash {
-		_, ok := p.tablePlan.(*PhysicalExchangeSender)
+		_, ok := p.tablePlan.(*physicalop.PhysicalExchangeSender)
 		if ok {
 			p.ReadReqType = MPP
 			return
@@ -191,20 +191,6 @@ func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offs
 	return &p
 }
 
-// Init only assigns type and context.
-func (p PhysicalExchangeSender) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeSender {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeReceiver {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
-	p.SetStats(stats)
-	return &p
-}
-
 func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
 	plans = append(plans, plan)
 	for _, child := range plan.Children() {
@@ -222,13 +208,6 @@ func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 		plans[i], plans[j] = plans[j], plans[i]
 	}
 	return plans
-}
-
-// Init only assigns type and context.
-func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTE {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeCTE, &p, 0)
-	p.SetStats(stats)
-	return &p
 }
 
 // Init initializes FKCheck.

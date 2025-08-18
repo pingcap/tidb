@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -129,11 +130,11 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 		IsPartialSort: true,
 	}
 	sort := &physicalop.PhysicalSort{}
-	recv := &PhysicalExchangeReceiver{}
-	passSender := &PhysicalExchangeSender{
+	recv := &physicalop.PhysicalExchangeReceiver{}
+	passSender := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
-	hashSender := &PhysicalExchangeSender{
+	hashSender := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	tableScan := &physicalop.PhysicalTableScan{}
@@ -165,7 +166,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	}
 
 	const expStreamCount int64 = 8
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
 	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
 	defer func() {
@@ -264,10 +265,10 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	tableReader.tablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	hashJoin := &physicalop.PhysicalHashJoin{}
-	recv1 := &PhysicalExchangeReceiver{}
+	recv1 := &physicalop.PhysicalExchangeReceiver{}
 	tableScan1 := &physicalop.PhysicalTableScan{}
 	partWindow.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	hashSender1 := &PhysicalExchangeSender{
+	hashSender1 := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
@@ -282,12 +283,12 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	tableReader.tablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	hashJoin = &physicalop.PhysicalHashJoin{}
-	recv1 = &PhysicalExchangeReceiver{}
+	recv1 = &physicalop.PhysicalExchangeReceiver{}
 	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
 	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
 	hashSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	recv2 := &PhysicalExchangeReceiver{}
-	hashSender2 := &PhysicalExchangeSender{
+	recv2 := &physicalop.PhysicalExchangeReceiver{}
+	hashSender2 := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	tableScan2 := &physicalop.PhysicalTableScan{}
@@ -343,14 +344,14 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	hashJoin.RightJoinKeys = append(hashJoin.RightJoinKeys, col0)
 	hashJoin.InnerChildIdx = 1
 	passSender.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	recv = &PhysicalExchangeReceiver{}
-	recv1 = &PhysicalExchangeReceiver{}
+	recv = &physicalop.PhysicalExchangeReceiver{}
+	recv1 = &physicalop.PhysicalExchangeReceiver{}
 	tableScan = &physicalop.PhysicalTableScan{}
 	tableScan1 = &physicalop.PhysicalTableScan{}
-	hashSender = &PhysicalExchangeSender{
+	hashSender = &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
-	hashSender1 = &PhysicalExchangeSender{
+	hashSender1 = &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
@@ -389,9 +390,9 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
 	hashJoin.InnerChildIdx = 1
 	passSender.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	recv1 = &PhysicalExchangeReceiver{}
+	recv1 = &physicalop.PhysicalExchangeReceiver{}
 	tableScan1 = &physicalop.PhysicalTableScan{}
-	hashSender1 = &PhysicalExchangeSender{
+	hashSender1 = &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
@@ -406,7 +407,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 }
 
 func TestCanTiFlashUseHashJoinV2(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

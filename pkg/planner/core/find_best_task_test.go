@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/stretchr/testify/require"
 )
@@ -140,7 +141,7 @@ func (p *mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
 }
 
 func TestCostOverflow(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -157,7 +158,7 @@ func TestCostOverflow(t *testing.T) {
 }
 
 func TestEnforcedProperty(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -194,7 +195,7 @@ func TestEnforcedProperty(t *testing.T) {
 }
 
 func TestHintCannotFitProperty(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()

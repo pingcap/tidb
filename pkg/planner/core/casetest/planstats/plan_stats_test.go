@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -168,7 +169,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // recursive CTE
 				sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					pc, ok := p.(*plannercore.PhysicalCTE)
+					pc, ok := p.(*physicalop.PhysicalCTE)
 					require.True(t, ok)
 					pp, ok := pc.SeedPlan.(*physicalop.PhysicalProjection)
 					require.True(t, ok)
@@ -420,7 +421,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			}
 
 			// call the function
-			res := plannercore.CollectDependingVirtualCols(tblID2Tbl, neededItems)
+			res := rule.CollectDependingVirtualCols(tblID2Tbl, neededItems)
 
 			// record and check the output
 			cols := make([]string, 0, len(res))

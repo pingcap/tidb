@@ -155,9 +155,6 @@ var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInf
 var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
 	conds []expression.Expression) []expression.Expression
 
-// ApplyPredicateSimplification will be called by LogicalSelection in logicalOp pkg.
-var ApplyPredicateSimplification func(base.PlanContext, []expression.Expression, bool) []expression.Expression
-
 // IsSingleScan check whether the data source is a single scan.
 var IsSingleScan func(ds base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool
 
@@ -206,6 +203,14 @@ var GetPlanCostVer14PhysicalUnionAll func(pp base.PhysicalPlan, taskType propert
 
 // GetPlanCostVer24PhysicalUnionAll will be called by PhysicalUnionAll in physicalOp pkg.
 var GetPlanCostVer24PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
+// GetPlanCostVer1PhysicalExchangeReceiver will be called by PhysicalExchangeReceiver in physicalOp pkg.
+var GetPlanCostVer1PhysicalExchangeReceiver func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer2PhysicalExchangeReceiver will be called by PhysicalExchangeReceiver in physicalOp pkg.
+var GetPlanCostVer2PhysicalExchangeReceiver func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
 
 // ResolveIndices4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
@@ -408,6 +413,13 @@ var GetPlanCostVer24PhysicalApply func(pp base.PhysicalPlan, taskType property.T
 
 // Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer24PhysicalCTE will be called by PhysicalCTE in physicalOp pkg.
+var GetPlanCostVer24PhysicalCTE func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
+// Attach2Task4PhysicalCTEStorage will be called by PhysicalCTEStorage in physicalOp pkg.
+var Attach2Task4PhysicalCTEStorage func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // ****************************************** task related ***********************************************
 

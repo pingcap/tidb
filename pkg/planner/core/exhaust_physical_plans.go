@@ -3881,15 +3881,15 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 
 func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalCTE)
-	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
+	pcte := physicalop.PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
-		pcte.storageSender = PhysicalExchangeSender{
+		pcte.StorageSender = physicalop.PhysicalExchangeSender{
 			ExchangeType: tipb.ExchangeType_Broadcast,
 		}.Init(p.SCtx(), p.StatsInfo())
 	}
 	pcte.SetSchema(p.Schema())
 	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})
-	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
+	return []base.PhysicalPlan{(*physicalop.PhysicalCTEStorage)(pcte)}, true, nil
 }
 
 // getGEAndLogicalSequence extracts the possible group expression and logical sequence operator from a common super pointer.

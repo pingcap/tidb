@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -96,6 +97,7 @@ func (sm *Manager) getSchedulers() []Scheduler {
 type Manager struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	store       kv.Storage
 	taskMgr     TaskManager
 	wg          tidbutil.WaitGroupWrapper
 	schedulerWG tidbutil.WaitGroupWrapper
@@ -119,7 +121,7 @@ type Manager struct {
 }
 
 // NewManager creates a scheduler struct.
-func NewManager(ctx context.Context, taskMgr TaskManager, serverID string, nodeRes *proto.NodeResource) *Manager {
+func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serverID string, nodeRes *proto.NodeResource) *Manager {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", serverID))
@@ -130,6 +132,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string, nodeR
 	schedulerManager := &Manager{
 		ctx:      subCtx,
 		cancel:   cancel,
+		store:    store,
 		taskMgr:  taskMgr,
 		serverID: serverID,
 		slotMgr:  slotMgr,
@@ -333,6 +336,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		serverID:       sm.serverID,
 		allocatedSlots: allocateSlots,
 		nodeRes:        sm.nodeRes,
+		Store:          sm.store,
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))

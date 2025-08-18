@@ -264,6 +264,7 @@ type tikvStore struct {
 	opts      sync.Map
 	clusterID uint64
 	keyspace  string
+	closed    bool
 }
 
 // GetOption wraps around sync.Map.
@@ -369,6 +370,14 @@ func (s *tikvStore) GetMPPClient() kv.MPPClient {
 func (s *tikvStore) Close() error {
 	mc.Lock()
 	defer mc.Unlock()
+	// we shouldn't call Close twice, but store is cached, and in some real TiKV
+	// test of nextgen, we have multiple places want to manage the store's lifecycle,
+	// such as real TiKV testkit and cross keyspace session manager, so we add it
+	// to avoid double close.
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	delete(mc.cache, s.UUID())
 	if s.gcWorker != nil {
 		s.gcWorker.Close()

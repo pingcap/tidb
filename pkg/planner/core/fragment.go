@@ -49,9 +49,9 @@ import (
 // Communication by pfs are always through shuffling / broadcasting / passing through.
 type Fragment struct {
 	// following field are filled during getPlanFragment.
-	TableScan         *physicalop.PhysicalTableScan // result physical table scan
-	ExchangeReceivers []*PhysicalExchangeReceiver   // data receivers
-	CTEReaders        []*PhysicalCTE                // The receivers for CTE storage/producer.
+	TableScan         *physicalop.PhysicalTableScan          // result physical table scan
+	ExchangeReceivers []*physicalop.PhysicalExchangeReceiver // data receivers
+	CTEReaders        []*physicalop.PhysicalCTE              // The receivers for CTE storage/producer.
 
 	// following fields are filled after scheduling.
 	Sink MPPSink // data exporter
@@ -62,8 +62,8 @@ type Fragment struct {
 }
 
 type cteGroupInFragment struct {
-	CTEStorage *PhysicalCTEStorage
-	CTEReader  []*PhysicalCTE
+	CTEStorage *physicalop.PhysicalCTEStorage
+	CTEReader  []*physicalop.PhysicalCTE
 
 	StorageTasks     []*kv.MPPTask
 	StorageFragments []*Fragment
@@ -116,6 +116,9 @@ type mppTaskGenerator struct {
 	frags      []*Fragment
 	cache      map[int]tasksAndFrags
 
+	// fragMap maps ExchangeReceiver to its fragments
+	fragMap map[*physicalop.PhysicalExchangeReceiver][]*Fragment
+
 	CTEGroups map[int]*cteGroupInFragment
 
 	// For MPPGather under UnionScan, need keyRange to scan MemBuffer.
@@ -127,7 +130,7 @@ type mppTaskGenerator struct {
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
 func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID uint64,
-	mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, map[string]bool, error) {
+	mppQueryID kv.MPPQueryID, sender *physicalop.PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, map[string]bool, error) {
 	g := &mppTaskGenerator{
 		ctx:              ctx,
 		gatherID:         mppGatherID,
@@ -135,6 +138,7 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID ui
 		mppQueryID:       mppQueryID,
 		is:               is,
 		cache:            make(map[int]tasksAndFrags),
+		fragMap:          make(map[*physicalop.PhysicalExchangeReceiver][]*Fragment),
 		KVRanges:         make([]kv.KeyRange, 0),
 		nodeInfo:         make(map[string]bool),
 		tableReaderCache: make(map[string][]kv.MPPTaskMeta),
@@ -162,7 +166,7 @@ func AllocMPPQueryID() uint64 {
 	return atomic.AddUint64(&mppQueryID, 1)
 }
 
-func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
+func (e *mppTaskGenerator) generateMPPTasks(s *physicalop.PhysicalExchangeSender) ([]*Fragment, error) {
 	tidbTask := &kv.MPPTask{
 		StartTs:      e.startTS,
 		GatherID:     e.gatherID,
@@ -243,13 +247,13 @@ func (f *Fragment) init(p base.PhysicalPlan) error {
 			return errors.New("one task contains at most one table scan")
 		}
 		f.TableScan = x
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		// TODO: after we support partial merge, we should check whether all the target exchangeReceiver is same.
-		f.singleton = f.singleton || x.Children()[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
+		f.singleton = f.singleton || x.Children()[0].(*physicalop.PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
 	case *physicalop.PhysicalUnionAll:
 		return errors.New("unexpected union all detected")
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		f.CTEReaders = append(f.CTEReaders, x)
 	default:
 		for _, ch := range p.Children() {
@@ -269,15 +273,15 @@ func (f *Fragment) init(p base.PhysicalPlan) error {
 // after untwist, there will be two plans in `forest` slice:
 // - ExchangeSender -> Projection (c1) -> TableScan(t)
 // - ExchangeSender -> Projection (c2) -> TableScan(s)
-func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
+func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]*physicalop.PhysicalExchangeSender) error {
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
-	case *physicalop.PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
+	case *physicalop.PhysicalTableScan, *physicalop.PhysicalExchangeReceiver, *physicalop.PhysicalCTE: // This should be the leave node.
 		p, err := stack[0].Clone(e.ctx.GetPlanCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		*forest = append(*forest, p.(*PhysicalExchangeSender))
+		*forest = append(*forest, p.(*physicalop.PhysicalExchangeSender))
 		for i := 1; i < len(stack); i++ {
 			if _, ok := stack[i].(*physicalop.PhysicalUnionAll); ok {
 				continue
@@ -296,7 +300,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			}
 			p = ch
 		}
-		if cte, ok := p.(*PhysicalCTE); ok {
+		if cte, ok := p.(*physicalop.PhysicalCTE); ok {
 			e.CTEGroups[cte.CTE.IDForStorage].CTEReader = append(e.CTEGroups[cte.CTE.IDForStorage].CTEReader, cte)
 		}
 	case *physicalop.PhysicalHashJoin:
@@ -320,10 +324,10 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			if e.CTEGroups == nil {
 				e.CTEGroups = make(map[int]*cteGroupInFragment)
 			}
-			cteStorage := x.Children()[i].(*PhysicalCTEStorage)
+			cteStorage := x.Children()[i].(*physicalop.PhysicalCTEStorage)
 			e.CTEGroups[cteStorage.CTE.IDForStorage] = &cteGroupInFragment{
 				CTEStorage: cteStorage,
-				CTEReader:  make([]*PhysicalCTE, 0, 3),
+				CTEReader:  make([]*physicalop.PhysicalCTE, 0, 3),
 			}
 		}
 		stack = append(stack, x.Children()[lastChildIdx])
@@ -345,8 +349,8 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 	return nil
 }
 
-func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
-	forest := make([]*PhysicalExchangeSender, 0, 1)
+func (e *mppTaskGenerator) buildFragments(s *physicalop.PhysicalExchangeSender) ([]*Fragment, error) {
+	forest := make([]*physicalop.PhysicalExchangeSender, 0, 1)
 	err := e.untwistPlanAndRemoveUnionAll([]base.PhysicalPlan{s}, &forest)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -363,7 +367,7 @@ func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragmen
 	return fragments, nil
 }
 
-func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
+func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *physicalop.PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
 	if cached, ok := e.cache[s.ID()]; ok {
 		return cached.tasks, cached.frags, nil
 	}
@@ -394,7 +398,9 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	for _, r := range f.ExchangeReceivers {
 		// chain call: to get lower fragments and tasks
-		r.Tasks, r.frags, err = e.generateMPPTasksForExchangeSender(r.GetExchangeSender())
+		tasks, frags, err := e.generateMPPTasksForExchangeSender(r.GetExchangeSender())
+		r.Tasks = tasks
+		e.fragMap[r] = frags
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -417,8 +423,8 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 			if _, ok := child.(*physicalop.PhysicalProjection); ok {
 				child = child.Children()[0]
 			}
-			cteProducerTasks = append(cteProducerTasks, child.(*PhysicalExchangeReceiver).Tasks...)
-			childrenTasks = append(childrenTasks, child.(*PhysicalExchangeReceiver).Tasks...)
+			cteProducerTasks = append(cteProducerTasks, child.(*physicalop.PhysicalExchangeReceiver).Tasks...)
+			childrenTasks = append(childrenTasks, child.(*physicalop.PhysicalExchangeReceiver).Tasks...)
 		}
 		if f.singleton && len(childrenTasks) > 0 {
 			childrenTasks = childrenTasks[0:1]
@@ -429,7 +435,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		return nil, errors.Trace(err)
 	}
 	for _, r := range f.ExchangeReceivers {
-		for _, frag := range r.frags {
+		for _, frag := range e.fragMap[r] {
 			frag.Sink.AppendTargetTasks(tasks)
 		}
 	}
@@ -449,10 +455,10 @@ func (f *Fragment) flipCTEReader(currentPlan base.PhysicalPlan) {
 	for i := range currentPlan.Children() {
 		child := currentPlan.Children()[i]
 		newChildren[i] = child
-		if cteR, ok := child.(*PhysicalCTE); ok {
+		if cteR, ok := child.(*physicalop.PhysicalCTE); ok {
 			receiver := cteR.Children()[0]
 			newChildren[i] = receiver
-		} else if _, ok := child.(*PhysicalExchangeReceiver); !ok {
+		} else if _, ok := child.(*physicalop.PhysicalExchangeReceiver); !ok {
 			// The receiver is the leaf of the fragment though it has child, we need break it.
 			f.flipCTEReader(child)
 		}
@@ -463,18 +469,18 @@ func (f *Fragment) flipCTEReader(currentPlan base.PhysicalPlan) {
 // genereateTasksForCTEReader generates the task leaf for cte reader.
 // A fragment's leaf must be Exchange and we could not lost the information of the CTE.
 // So we create the plan like ParentPlan->CTEReader->ExchangeReceiver.
-func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
+func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *physicalop.PhysicalCTE) (err error) {
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
 	if group.StorageFragments == nil {
-		group.CTEStorage.storageSender.SetChildren(group.CTEStorage.Children()...)
-		group.StorageTasks, group.StorageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.storageSender)
+		group.CTEStorage.StorageSender.SetChildren(group.CTEStorage.Children()...)
+		group.StorageTasks, group.StorageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.StorageSender)
 		if err != nil {
 			return err
 		}
 	}
-	receiver := cteReader.readerReceiver
+	receiver := cteReader.ReaderReceiver
 	receiver.Tasks = group.StorageTasks
-	receiver.frags = group.StorageFragments
+	e.fragMap[receiver] = group.StorageFragments
 	cteReader.SetChildren(receiver)
 	receiver.SetChildren(group.CTEStorage.Children()[0])
 	inconsistenceNullable := false
