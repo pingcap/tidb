@@ -2722,6 +2722,19 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		return joins, true, nil
 	}
 
+	// tidb executor doesn't support NullAwareLeftOuterSemiJoinJoin for now.
+	// So this code tries to disable the NullAwareLeftOuterSemiJoinJoin for tidb executor and
+	// restore the original conditions to avoid changing the original LogicalPlan.
+	// And we assume that by the time the code reaches here, **all the joins on TiFlash have
+	// already been generated**, and the following code is only used to generate the joins on tidb.
+	oriNAEQConds := p.NAEQConditions
+	oriOtherConds := p.OtherConditions
+	p.DisableNAJoinForLeftOuterSemi()
+	defer func() {
+		p.NAEQConditions = oriNAEQConds
+		p.OtherConditions = oriOtherConds
+	}()
+
 	if !p.IsNAAJ() {
 		// naaj refuse merge join and index join.
 		stats0, stats1, _, _ := getJoinChildStatsAndSchema(ge, p)

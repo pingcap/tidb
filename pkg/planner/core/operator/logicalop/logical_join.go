@@ -105,7 +105,7 @@ type LogicalJoin struct {
 
 	JoinType      JoinType `hash64-equals:"true"`
 	Reordered     bool
-	CartesianJoin bool
+	CartesianJoin bool // gjt todo: useless???
 	StraightJoin  bool
 
 	// HintInfo stores the join algorithm hint information specified by client.
@@ -1660,7 +1660,7 @@ func (p *LogicalJoin) updateEQCond() {
 	// todo: by now, when there is already a normal EQ condition, just keep NA-EQ as other-condition filters above it.
 	// eg: select * from stu where stu.name not in (select name from exam where exam.stu_id = stu.id);
 	// combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id> for join key is little complicated for now.
-	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
+	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin) && len(p.EqualConditions) == 0
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		var otherCond expression.CNFExprs
 		for i := range p.OtherConditions {
@@ -1729,6 +1729,15 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expres
 		innerTableSchema, nullSensitive, p.canPropagateConstantForJoinPropConst)
 	p.AttachOnConds(joinConds)
 	return predicates
+}
+
+func (p *LogicalJoin) DisableNAJoinForLeftOuterSemi() {
+	if p.JoinType == LeftOuterSemiJoin && len(p.NAEQConditions) > 0 {
+		for _, eqCond := range p.NAEQConditions {
+			p.OtherConditions = append(p.OtherConditions, eqCond)
+		}
+		p.NAEQConditions = p.NAEQConditions[:0]
+	}
 }
 
 func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
