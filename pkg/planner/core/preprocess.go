@@ -253,6 +253,9 @@ type preprocessor struct {
 }
 
 func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
+	if p.err != nil {
+		return
+	}
 	if util.IsSysDB(dbName.L) || util.IsSystemView(dbName.L) {
 		return
 	}
@@ -346,9 +349,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		for _, opt := range node.Options {
 			if opt.Tp != ast.DatabaseOptionReadOnly {
 				p.schemaReadOnly(node.Name)
-				if p.err != nil {
-					break
-				}
 			}
 		}
 	case *ast.DropDatabaseStmt:
