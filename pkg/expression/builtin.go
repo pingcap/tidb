@@ -417,6 +417,10 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
+func (b *baseBuiltinFunc) setRetTp(tp *types.FieldType) {
+	b.tp = tp
+}
+
 func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
@@ -565,6 +569,8 @@ type builtinFunc interface {
 	equal(EvalContext, builtinFunc) bool
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
+	// setRetTp set the return type of the built-in function.
+	setRetTp(tp *types.FieldType)
 	// setPbCode sets pbCode for signature.
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
