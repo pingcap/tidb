@@ -30,7 +30,7 @@ import (
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -180,9 +180,9 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 
 	for _, group := range dataGroup {
-		opCtx := util.NewContext(ctx)
+		wctx := workerpool.NewContext(ctx)
 		op := NewMergeOperator(
-			opCtx,
+			wctx,
 			memStore,
 			int64(5*size.MB),
 			"/test2",
@@ -195,7 +195,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		)
 
 		require.NoError(t, MergeOverlappingFiles(
-			opCtx,
+			wctx,
 			group,
 			1,
 			op,

@@ -24,7 +24,7 @@ go_test(
     embed = [":operator"],
     flaky = True,
     deps = [
-        "//pkg/resourcemanager/util",
+        "//pkg/resourcemanager/pool/workerpool",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],

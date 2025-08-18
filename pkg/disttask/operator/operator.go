@@ -42,13 +42,13 @@ type TunableOperator interface {
 // use the same channel, Then op2's worker will handle
 // the result from op1.
 type AsyncOperator[T workerpool.TaskMayPanic, R any] struct {
-	ctx  *util.Context
+	ctx  *workerpool.Context
 	pool *workerpool.WorkerPool[T, R]
 }
 
 // NewAsyncOperatorWithTransform create an AsyncOperator with a transform function.
 func NewAsyncOperatorWithTransform[T workerpool.TaskMayPanic, R any](
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	name string,
 	workerNum int,
 	transform func(T) R,
@@ -60,7 +60,7 @@ func NewAsyncOperatorWithTransform[T workerpool.TaskMayPanic, R any](
 // NewAsyncOperator create an AsyncOperator.
 // To catch the error and close the whole pipeline, you should pass the
 // same context to each operator in the pipeline.
-func NewAsyncOperator[T workerpool.TaskMayPanic, R any](ctx *util.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
+func NewAsyncOperator[T workerpool.TaskMayPanic, R any](ctx *workerpool.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
 	return &AsyncOperator[T, R]{
 		ctx:  ctx,
 		pool: pool,

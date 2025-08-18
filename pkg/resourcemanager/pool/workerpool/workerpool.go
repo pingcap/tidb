@@ -29,6 +29,45 @@ import (
 	"go.uber.org/zap"
 )
 
+// Context is the context used for worker pool
+type Context struct {
+	context.Context
+	cancel context.CancelFunc
+	err    atomic.Pointer[error]
+}
+
+// OnError store the error and cancel the context.
+// If the error is already set, it will not overwrite it.
+func (ctx *Context) OnError(err error) {
+	ctx.err.CompareAndSwap(nil, &err)
+	ctx.cancel()
+}
+
+// OperatorErr returns the error caused by business logic.
+func (ctx *Context) OperatorErr() error {
+	err := ctx.err.Load()
+	if err == nil {
+		return nil
+	}
+	return *err
+}
+
+// Cancel cancels the context of the operator.
+func (ctx *Context) Cancel() {
+	ctx.cancel()
+}
+
+// NewContext creates a new Context
+func NewContext(
+	ctx context.Context,
+) *Context {
+	cctx, cancel := context.WithCancel(ctx)
+	return &Context{
+		Context: cctx,
+		cancel:  cancel,
+	}
+}
+
 // TaskMayPanic is a type to remind the developer that need to handle panic in
 // the task.
 type TaskMayPanic interface {
@@ -52,7 +91,7 @@ type tuneConfig struct {
 
 // WorkerPool is a pool of workers.
 type WorkerPool[T TaskMayPanic, R any] struct {
-	opCtx         *util.Context
+	wctx          *Context
 	ctx           context.Context
 	cancel        context.CancelFunc
 	name          string
@@ -115,7 +154,7 @@ func (p *WorkerPool[T, R]) SetResultSender(sender chan R) {
 }
 
 // Start starts default count of workers.
-func (p *WorkerPool[T, R]) Start(ctx *util.Context) {
+func (p *WorkerPool[T, R]) Start(ctx *Context) {
 	if p.taskChan == nil {
 		p.taskChan = make(chan T)
 	}
@@ -128,7 +167,7 @@ func (p *WorkerPool[T, R]) Start(ctx *util.Context) {
 		}
 	}
 
-	p.opCtx = ctx
+	p.wctx = ctx
 	p.ctx, p.cancel = context.WithCancel(ctx)
 
 	p.mu.Lock()
@@ -149,9 +188,9 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	label, funcInfo, quit, err := task.RecoverArgs()
 	recoverFn := func() {
 		if err != nil {
-			p.opCtx.OnError(err)
+			p.wctx.OnError(err)
 		} else {
-			p.opCtx.OnError(errors.Errorf("task panic: %s, func info: %s", label, funcInfo))
+			p.wctx.OnError(errors.Errorf("task panic: %s, func info: %s", label, funcInfo))
 		}
 	}
 
@@ -168,7 +207,7 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	}
 
 	if err := w.HandleTask(task, sendResult); err != nil {
-		p.opCtx.OnError(err)
+		p.wctx.OnError(err)
 	}
 }
 
@@ -181,7 +220,7 @@ func (p *WorkerPool[T, R]) runAWorker() {
 		var err error
 		defer func() {
 			if err != nil {
-				p.opCtx.OnError(err)
+				p.wctx.OnError(err)
 			}
 		}()
 

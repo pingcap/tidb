@@ -95,7 +95,7 @@ go_test(
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/membuf",
-        "//pkg/resourcemanager/util",
+        "//pkg/resourcemanager/pool/workerpool",
         "//pkg/testkit/testfailpoint",
         "//pkg/util/intest",
         "//pkg/util/logutil",

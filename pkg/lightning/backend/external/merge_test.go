@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
@@ -167,10 +167,10 @@ func TestMergeOperator(t *testing.T) {
 		)
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
-		opCtx := util.NewContext(ctx)
+		wctx := workerpool.NewContext(ctx)
 
 		op := NewMergeOperator(
-			opCtx,
+			wctx,
 			nil,
 			0,
 			"",
@@ -192,7 +192,7 @@ func TestMergeOperator(t *testing.T) {
 		}
 
 		err := MergeOverlappingFiles(
-			opCtx,
+			wctx,
 			datas,
 			1,
 			op,

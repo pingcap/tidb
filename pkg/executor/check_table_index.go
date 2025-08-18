@@ -281,11 +281,11 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}()
 
 	ch := make(chan checkIndexTask)
-	dc := operator.NewSimpleDataChannel[checkIndexTask](ch)
+	dc := operator.NewSimpleDataChannel(ch)
 
-	opCtx := poolutil.NewContext(ctx)
-	op := operator.NewAsyncOperator(opCtx,
-		workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+	wctx := workerpool.NewContext(ctx)
+	op := operator.NewAsyncOperator(wctx,
+		workerpool.NewWorkerPool("checkIndex",
 			poolutil.CheckTable, 3, e.createWorker))
 	op.SetSource(dc)
 	//nolint: errcheck
@@ -297,7 +297,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	close(ch)
 
 	err := op.Close()
-	if err := opCtx.OperatorErr(); err != nil {
+	if err := wctx.OperatorErr(); err != nil {
 		return err
 	}
 	return err

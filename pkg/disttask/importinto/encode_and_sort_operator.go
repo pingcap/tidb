@@ -58,7 +58,7 @@ var _ operator.WithSource[*importStepMinimalTask] = (*encodeAndSortOperator)(nil
 var _ operator.WithSink[workerpool.None] = (*encodeAndSortOperator)(nil)
 
 func newEncodeAndSortOperator(
-	opCtx *util.Context,
+	wctx *workerpool.Context,
 	executor *importStepExecutor,
 	sharedVars *SharedVars,
 	collector execute.Collector,
@@ -79,11 +79,11 @@ func newEncodeAndSortOperator(
 		util.ImportInto,
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(opCtx, op, executor.dataKVMemSizePerCon,
+			return newChunkWorker(wctx, op, executor.dataKVMemSizePerCon,
 				executor.perIndexKVMemSizePerCon, executor.dataBlockSize, executor.indexBlockSize)
 		},
 	)
-	op.AsyncOperator = operator.NewAsyncOperator(opCtx, pool)
+	op.AsyncOperator = operator.NewAsyncOperator(wctx, pool)
 	return op
 }
 

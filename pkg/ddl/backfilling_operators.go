@@ -78,15 +78,10 @@ type opSessPool interface {
 	Put(sessionctx.Context)
 }
 
-// NewDistTaskOperatorCtx is used for adding index with dist framework.
-func NewDistTaskOperatorCtx(ctx context.Context) *util.Context {
-	return util.NewContext(ctx)
-}
-
-// NewLocalOperatorCtx is used for adding index with local ingest mode.
-func NewLocalOperatorCtx(ctx context.Context, jobID int64) *util.Context {
+// NewLocalWorkerCtx is used for adding index with local ingest mode.
+func NewLocalWorkerCtx(ctx context.Context, jobID int64) *workerpool.Context {
 	ctx = logutil.WithFields(ctx, zap.Int64("jobID", jobID))
-	return util.NewContext(ctx)
+	return workerpool.NewContext(ctx)
 }
 
 var (
@@ -96,7 +91,7 @@ var (
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	store kv.Storage,
 	sessPool opSessPool,
 	backendCtx ingest.BackendCtx,
@@ -149,7 +144,7 @@ func NewAddIndexIngestPipeline(
 
 // NewWriteIndexToExternalStoragePipeline creates a pipeline for writing index to external storage.
 func NewWriteIndexToExternalStoragePipeline(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	store kv.Storage,
 	extStoreURI string,
 	sessPool opSessPool,
@@ -236,7 +231,7 @@ type TableScanTask struct {
 	Start kv.Key
 	End   kv.Key
 
-	ctx *util.Context
+	ctx *workerpool.Context
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
@@ -252,11 +247,11 @@ func (t TableScanTask) String() string {
 
 // IndexRecordChunk contains one of the chunk read from corresponding TableScanTask.
 type IndexRecordChunk struct {
+	ctx   *workerpool.Context
 	ID    int
 	Chunk *chunk.Chunk
 	Err   error
 	Done  bool
-	ctx   *util.Context
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
@@ -266,7 +261,7 @@ func (IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, qui
 
 // TableScanTaskSource produces TableScanTask by splitting table records into ranges.
 type TableScanTaskSource struct {
-	ctx *util.Context
+	ctx *workerpool.Context
 
 	errGroup errgroup.Group
 	sink     operator.DataChannel[TableScanTask]
@@ -281,7 +276,7 @@ type TableScanTaskSource struct {
 
 // NewTableScanTaskSource creates a new TableScanTaskSource.
 func NewTableScanTaskSource(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	store kv.Storage,
 	physicalTable table.PhysicalTable,
 	startKey kv.Key,
@@ -427,7 +422,7 @@ type TableScanOperator struct {
 
 // NewTableScanOperator creates a new TableScanOperator.
 func NewTableScanOperator(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	sessPool opSessPool,
 	copCtx copr.CopContext,
 	srcChkPool *sync.Pool,
@@ -470,7 +465,7 @@ func (o *TableScanOperator) Close() error {
 }
 
 type tableScanWorker struct {
-	ctx        *util.Context
+	ctx        *workerpool.Context
 	copCtx     copr.CopContext
 	sessPool   opSessPool
 	se         *session.Session
@@ -578,7 +573,7 @@ type WriteExternalStoreOperator struct {
 
 // NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
 func NewWriteExternalStoreOperator(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	copCtx copr.CopContext,
 	sessPool opSessPool,
 	taskID int64,
@@ -660,7 +655,7 @@ type IndexIngestOperator struct {
 
 // NewIndexIngestOperator creates a new IndexIngestOperator.
 func NewIndexIngestOperator(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	copCtx copr.CopContext,
 	sessPool opSessPool,
 	tbl table.PhysicalTable,
@@ -709,7 +704,7 @@ func NewIndexIngestOperator(
 }
 
 type indexIngestWorker struct {
-	ctx *util.Context
+	ctx *workerpool.Context
 
 	tbl       table.PhysicalTable
 	indexes   []table.Index
@@ -817,7 +812,7 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, nextKey
 }
 
 type indexWriteResultSink struct {
-	ctx        *util.Context
+	ctx        *workerpool.Context
 	backendCtx ingest.BackendCtx
 	tbl        table.PhysicalTable
 	indexes    []table.Index
@@ -829,7 +824,7 @@ type indexWriteResultSink struct {
 }
 
 func newIndexWriteResultSink(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
 	indexes []table.Index,

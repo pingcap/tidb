@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -82,9 +82,9 @@ func TestEncodeAndSortOperator(t *testing.T) {
 		logger: logger,
 	}
 
-	opCtx := util.NewContext(context.Background())
+	wctx := workerpool.NewContext(context.Background())
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(opCtx, executorForParam, nil, nil, 3, 1)
+	op := newEncodeAndSortOperator(wctx, executorForParam, nil, nil, 3, 1)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
@@ -94,19 +94,19 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
-		return opCtx.OperatorErr() != nil
+		return wctx.OperatorErr() != nil
 	}, 3*time.Second, 300*time.Millisecond)
-	require.Equal(t, mockErr, opCtx.OperatorErr())
+	require.Equal(t, mockErr, wctx.OperatorErr())
 	// should not block
-	<-opCtx.Done()
+	<-wctx.Done()
 	require.NoError(t, op.Close())
-	require.ErrorIs(t, opCtx.OperatorErr(), mockErr)
+	require.ErrorIs(t, wctx.OperatorErr(), mockErr)
 
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
-	opCtx = util.NewContext(context.Background())
+	wctx = workerpool.NewContext(context.Background())
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(opCtx, executorForParam, nil, nil, 2, 2)
+	op = newEncodeAndSortOperator(wctx, executorForParam, nil, nil, 2, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -132,7 +132,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 			wg.Wait()
 			// wait error in executor1 has been processed
 			require.Eventually(t, func() bool {
-				return opCtx.OperatorErr() != nil
+				return wctx.OperatorErr() != nil
 			}, 3*time.Second, 300*time.Millisecond)
 			return errors.New("mock error should be logged")
 		})
@@ -141,9 +141,9 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	source.Channel() <- &importStepMinimalTask{}
 	source.Channel() <- &importStepMinimalTask{}
 	// should not block
-	<-opCtx.Done()
+	<-wctx.Done()
 	require.NoError(t, op.Close())
-	require.ErrorIs(t, opCtx.OperatorErr(), mockErr2)
+	require.ErrorIs(t, wctx.OperatorErr(), mockErr2)
 }
 
 func TestGetWriterMemorySizeLimit(t *testing.T) {

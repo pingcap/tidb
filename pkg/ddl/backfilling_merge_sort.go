@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -97,9 +97,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
-	opCtx := util.NewContext(ctx)
+	wctx := workerpool.NewContext(ctx)
 	op := external.NewMergeOperator(
-		opCtx,
+		wctx,
 		store,
 		partSize,
 		prefix,
@@ -117,7 +117,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	failpoint.InjectCall("mergeOverlappingFiles", op)
 
 	err = external.MergeOverlappingFiles(
-		opCtx,
+		wctx,
 		sm.DataFiles,
 		int(res.CPU.Capacity()),
 		op,

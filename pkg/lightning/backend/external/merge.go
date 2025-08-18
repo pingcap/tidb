@@ -79,7 +79,7 @@ type mergeMinimalTask struct {
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
 func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
-	return "mergeSortOperator", "mergeMinimalTask", false, nil
+	return "merge_sort", "mergeMinimalTask", false, nil
 }
 
 // MergeOperator is the operator that merges overlapping files.
@@ -89,7 +89,7 @@ type MergeOperator struct {
 
 // NewMergeOperator creates a new MergeOperator instance.
 func NewMergeOperator(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	store storage.ExternalStorage,
 	partSize int64,
 	newFilePrefix string,
@@ -173,7 +173,7 @@ func (*mergeWorker) Close() error {
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(
-	ctx *util.Context,
+	ctx *workerpool.Context,
 	paths []string,
 	concurrency int,
 	op *MergeOperator,

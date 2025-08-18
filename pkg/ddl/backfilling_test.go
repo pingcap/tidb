@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -507,10 +508,10 @@ func TestTuneTableScanWorkerBatchSize(t *testing.T) {
 			FieldTypes: []*types.FieldType{},
 		},
 	}
-	opCtx := NewDistTaskOperatorCtx(context.Background())
+	wctx := workerpool.NewContext(context.Background())
 	w := tableScanWorker{
 		copCtx:        copCtx,
-		ctx:           opCtx,
+		ctx:           wctx,
 		srcChkPool:    createChunkPool(copCtx, reorgMeta),
 		hintBatchSize: 32,
 		reorgMeta:     reorgMeta,
@@ -526,7 +527,7 @@ func TestTuneTableScanWorkerBatchSize(t *testing.T) {
 		require.Equal(t, 64, chk.Capacity())
 		w.srcChkPool.Put(chk)
 	}
-	opCtx.Cancel()
+	wctx.Cancel()
 }
 
 func TestSplitRangesByKeys(t *testing.T) {

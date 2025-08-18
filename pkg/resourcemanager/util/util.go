@@ -15,7 +15,6 @@
 package util
 
 import (
-	"context"
 	"time"
 
 	"go.uber.org/atomic"
@@ -44,45 +43,6 @@ type GoroutinePool interface {
 type PoolContainer struct {
 	Pool      GoroutinePool
 	Component Component
-}
-
-// Context is the context used for worker pool
-type Context struct {
-	context.Context
-	cancel context.CancelFunc
-	err    atomic.Pointer[error]
-}
-
-// OnError store the error and cancel the context.
-// If the error is already set, it will not overwrite it.
-func (ctx *Context) OnError(err error) {
-	ctx.err.CompareAndSwap(nil, &err)
-	ctx.cancel()
-}
-
-// OperatorErr returns the error caused by business logic.
-func (ctx *Context) OperatorErr() error {
-	err := ctx.err.Load()
-	if err == nil {
-		return nil
-	}
-	return *err
-}
-
-// Cancel cancels the context of the operator.
-func (ctx *Context) Cancel() {
-	ctx.cancel()
-}
-
-// NewContext creates a new Context
-func NewContext(
-	ctx context.Context,
-) *Context {
-	opCtx, cancel := context.WithCancel(ctx)
-	return &Context{
-		Context: opCtx,
-		cancel:  cancel,
-	}
 }
 
 // Component is ID for difference component

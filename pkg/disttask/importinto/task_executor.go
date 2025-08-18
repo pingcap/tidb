@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -223,7 +223,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
-	opCtx := util.NewContext(ctx)
+	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
 	for _, chunk := range subtaskMeta.Chunks {
 		tasks = append(tasks, &importStepMinimalTask{
@@ -233,8 +233,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		})
 	}
 
-	sourceOp := operator.NewSimpleDataSource(opCtx, tasks)
-	op := newEncodeAndSortOperator(opCtx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	sourceOp := operator.NewSimpleDataSource(wctx, tasks)
+	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()))
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)
@@ -243,7 +243,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	err = pipe.Close()
-	if err := opCtx.OperatorErr(); err != nil {
+	if err := wctx.OperatorErr(); err != nil {
 		return err
 	}
 	if err != nil {
@@ -410,9 +410,9 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	concurrency := int(m.GetResource().CPU.Capacity())
 
-	opCtx := util.NewContext(ctx)
+	wctx := workerpool.NewContext(ctx)
 	op := external.NewMergeOperator(
-		opCtx,
+		wctx,
 		m.sortStore,
 		partSize,
 		prefix,
@@ -425,7 +425,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	)
 
 	if err = external.MergeOverlappingFiles(
-		opCtx,
+		wctx,
 		sm.DataFiles,
 		concurrency,
 		op,
