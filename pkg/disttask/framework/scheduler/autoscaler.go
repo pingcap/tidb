@@ -65,19 +65,19 @@ func calcMaxNodeCountBySize(size int64, coresPerNode int, factor float64) int {
 func CalcMaxNodeCountByStoresNum(ctx context.Context, store kv.Storage) int {
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		logutil.Logger(ctx).Error("store does not implement tikv.Storage interface",
+		logutil.Logger(ctx).Warn("store does not implement tikv.Storage interface",
 			zap.String("storeType", fmt.Sprintf("%T", store)))
 		return 0
 	}
 	pdClient := tikvStore.GetRegionCache().PDClient()
 	if pdClient == nil {
-		logutil.Logger(ctx).Error("pd client is nil, cannot calculate max node count",
+		logutil.Logger(ctx).Warn("pd client is nil, cannot calculate max node count",
 			zap.String("storeType", fmt.Sprintf("%T", store)))
 		return 0
 	}
 	stores, err := pdClient.GetAllStores(context.Background())
 	if err != nil {
-		logutil.Logger(ctx).Error("failed to get all stores for calculating max node count", zap.Error(err))
+		logutil.Logger(ctx).Warn("failed to get all stores for calculating max node count", zap.Error(err))
 		return 0
 	}
 	return max(3, len(stores)/3)
