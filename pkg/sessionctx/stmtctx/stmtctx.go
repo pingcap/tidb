@@ -486,6 +486,9 @@ type StatementContext struct {
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
+
+	// InternalAnalyze is used to indicate whether the current session is used for internal analyze.
+	InternalAnalyze bool
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
