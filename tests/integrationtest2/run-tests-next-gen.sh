@@ -494,3 +494,5 @@ function main() {
 
     echo "integrationtest passed!"
 }
+
+main "$@"
