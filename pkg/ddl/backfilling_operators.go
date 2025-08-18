@@ -489,8 +489,8 @@ func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecord
 		}
 		w.se = session.NewSession(sessCtx)
 	}
-	w.scanRecords(task, sender)
-	return nil
+
+	return w.scanRecords(task, sender)
 }
 
 func (w *tableScanWorker) Close() error {
@@ -501,7 +501,7 @@ func (w *tableScanWorker) Close() error {
 	return nil
 }
 
-func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
+func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) error {
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
@@ -532,9 +532,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		}
 		return rs.Close()
 	})
-	if err != nil {
-		w.ctx.OnError(err)
-	}
+
 	for i, idxResult := range idxResults {
 		sender(idxResult)
 		rowCnt := idxResult.Chunk.NumRows()
@@ -544,6 +542,8 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		}
 		w.totalCount.Add(int64(rowCnt))
 	}
+
+	return err
 }
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {

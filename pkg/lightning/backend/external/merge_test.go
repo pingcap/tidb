@@ -152,7 +152,7 @@ func TestMergeOperator(t *testing.T) {
 		},
 		{
 			failpointValue: "return(2)",
-			expectError:    errors.Errorf("task panic: mergeSortOperator, func info: mergeMinimalTask"),
+			expectError:    errors.Errorf("task panic: merge_sort, func info: mergeMinimalTask"),
 		},
 		{
 			failpointValue: "return(3)",
