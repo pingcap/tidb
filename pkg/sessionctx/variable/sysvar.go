@@ -2536,8 +2536,9 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBRedactLog, Value: vardef.DefTiDBRedactLog, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Marker}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRedactLog, Value: vardef.DefTiDBRedactLog, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Marker}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		s.EnableRedactLog = val
+		// NOTE: switch of errors is a singleton, thus we can not set it for different sessions
 		errors.RedactLogEnabled.Store(val)
 		return nil
 	}},

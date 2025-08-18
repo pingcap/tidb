@@ -15,36 +15,9 @@
 package core
 
 import (
-	"bytes"
-	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tipb/go-tipb"
 )
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalTableReader) ExplainInfo() string {
-	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
-
-	if p.ReadReqType == MPP {
-		return fmt.Sprintf("MppVersion: %d, %s", p.SCtx().GetSessionVars().ChooseMppVersion(), tablePlanInfo)
-	}
-
-	return tablePlanInfo
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (*PhysicalTableReader) ExplainNormalizedInfo() string {
-	return ""
-}
-
-// OperatorInfo return other operator information to be explained.
-func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
-	return "data:" + p.tablePlan.ExplainID().String()
-}
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
@@ -96,45 +69,4 @@ func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
 	return p.PhysicalIndexJoin.ExplainInfoInternal(true, true)
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalExchangeSender) ExplainInfo() string {
-	buffer := bytes.NewBufferString("ExchangeType: ")
-	switch p.ExchangeType {
-	case tipb.ExchangeType_PassThrough:
-		fmt.Fprintf(buffer, "PassThrough")
-	case tipb.ExchangeType_Broadcast:
-		fmt.Fprintf(buffer, "Broadcast")
-	case tipb.ExchangeType_Hash:
-		fmt.Fprintf(buffer, "HashPartition")
-	}
-	if p.CompressionMode != vardef.ExchangeCompressionModeNONE {
-		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
-	}
-	if p.ExchangeType == tipb.ExchangeType_Hash {
-		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.SCtx().GetExprCtx().GetEvalCtx(), p.HashCols))
-	}
-	if len(p.Tasks) > 0 {
-		fmt.Fprintf(buffer, ", tasks: [")
-		for idx, task := range p.Tasks {
-			if idx != 0 {
-				fmt.Fprintf(buffer, ", ")
-			}
-			fmt.Fprintf(buffer, "%v", task.ID)
-		}
-		fmt.Fprintf(buffer, "]")
-	}
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		res = fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return res
 }

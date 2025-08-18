@@ -206,12 +206,12 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
-	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.joinPropConst(predicates)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, false, nil)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -230,6 +230,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, nil)
 		predicates = p.joinPropConst(predicates)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -256,7 +257,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
+		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -271,8 +272,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 		predicates = p.joinPropConst(predicates)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -1263,6 +1264,28 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 	return false
 }
 
+// canPropagateConstantWithInnerJoinOrSemiJoin is to It is used to determine whether the newly created expression
+// during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
+// we will remove it.
+// This function is only used with inner join and semi join.
+func (p *LogicalJoin) canPropagateConstantWithInnerJoinOrSemiJoin(expr expression.Expression) bool {
+	_, _, _, otherCond := p.extractOnCondition([]expression.Expression{expr}, true, true)
+	// If otherCond is empty, we may consider this expression to be useful.
+	// This expression is created by the constant propagation
+	return len(otherCond) == 0
+}
+
+// canPropagateConstantForJoinPropConst is to It is used to determine whether the newly created expression
+// during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
+// we will remove it.
+// This function is only used in LogicalJoin.joinPropConst.
+func (p *LogicalJoin) canPropagateConstantForJoinPropConst(expr expression.Expression) bool {
+	_, _, _, otherCond := p.extractOnCondition([]expression.Expression{expr}, false, false)
+	// If otherCond is empty, we may consider this expression to be useful.
+	// This expression is created by the constant propagation
+	return len(otherCond) == 0
+}
+
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
 // These conditions can be where conditions, join conditions, or collection of both.
 // If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
@@ -1702,7 +1725,8 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expres
 	exprCtx := p.SCtx().GetExprCtx()
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
-	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
+	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema,
+		innerTableSchema, nullSensitive, p.canPropagateConstantForJoinPropConst)
 	p.AttachOnConds(joinConds)
 	return predicates
 }

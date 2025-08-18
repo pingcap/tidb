@@ -714,7 +714,7 @@
           "└─TableReader(Seed Part) 6929.18 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 6929.18 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 6929.18 mpp[tiflash]  test.t.a, test.t.b",
-          "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)], other cond:or(lt(test.t.a, 18), gt(test.t.b, 1))",
+          "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 5543.34 mpp[tiflash]  ",
           "        │ └─ExchangeSender 5543.34 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        │   └─Selection 5543.34 mpp[tiflash]  not(isnull(test.t.a)), or(lt(test.t.a, 18), gt(test.t.b, 1))",
@@ -739,7 +739,7 @@
           "└─TableReader(Seed Part) 6929.18 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 6929.18 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 6929.18 mpp[tiflash]  test.t.a, test.t.b",
-          "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)], other cond:or(lt(test.t.a, 18), gt(test.t.b, 1))",
+          "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 5543.34 mpp[tiflash]  ",
           "        │ └─ExchangeSender 5543.34 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 5543.34 mpp[tiflash]  not(isnull(test.t.a)), or(lt(test.t.a, 18), gt(test.t.b, 1))",
@@ -2115,7 +2115,7 @@
       },
       {
         "SQL": "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-        "Best": "TableReader(Table(t)->Sel([or(or(eq(test.t.c, 1), eq(test.t.c, 2)), or(eq(test.t.c, 3), or(eq(test.t.c, 4), eq(test.t.c, 5))))])->Projection)"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,5]], Table(t))->Projection"
       },
       {
         "SQL": "select a from t where c = 5",

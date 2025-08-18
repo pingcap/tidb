@@ -144,7 +144,7 @@ func setPhysicalTableOrIndexScanCostDetail(p base.PhysicalPlan, opt *optimizetra
 	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalTableReaderCostDetail(p *PhysicalTableReader, opt *optimizetrace.PhysicalOptimizeOp,
+func setPhysicalTableReaderCostDetail(p *physicalop.PhysicalTableReader, opt *optimizetrace.PhysicalOptimizeOp,
 	rowCount, rowSize, networkFactor, netSeekCost, tablePlanCost float64,
 	scanConcurrency int, storeType kv.StoreType) {
 	// tracer haven't support non tikv plan for now
