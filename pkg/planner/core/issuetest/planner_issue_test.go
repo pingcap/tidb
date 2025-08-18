@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -55,8 +56,8 @@ func TestIssue43461(t *testing.T) {
 	}
 	require.True(t, ok)
 
-	is := idxLookUpPlan.IndexPlans[0].(*core.PhysicalIndexScan)
-	ts := idxLookUpPlan.TablePlans[0].(*core.PhysicalTableScan)
+	is := idxLookUpPlan.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+	ts := idxLookUpPlan.TablePlans[0].(*physicalop.PhysicalTableScan)
 
 	require.NotEqual(t, is.Columns, ts.Columns)
 }
@@ -323,4 +324,14 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`  └─Projection_133(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#28`,
 		`    └─TableReader_136 10000.00 root  data:TableFullScan_135`,
 		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+}
+
+func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec("create table t(a int);")
+		testKit.MustQuery("select a,min(a) from t where a=-1;").Check(testkit.Rows("<nil> <nil>"))
+		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
+	})
 }

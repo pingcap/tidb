@@ -20,7 +20,6 @@ import (
 	"testing"
 	gotime "time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -500,7 +500,7 @@ func TestShowRunningRenameTable(t *testing.T) {
 	tk1.MustExec("create table t1 (a int, b int)")
 
 	tk2 := testkit.NewTestKit(t, store)
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
 		if job.State != model.JobStateSynced && job.Type == model.ActionRenameTable {
 			rs := tk2.MustQuery("admin show ddl jobs where state != 'synced'").Rows()
 			require.Len(t, rs, 1)

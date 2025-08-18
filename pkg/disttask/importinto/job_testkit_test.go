@@ -96,7 +96,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		taskMgr := storage.NewTaskManager(getPoolFn(currKSStore))
 		storage.SetTaskManager(taskMgr)
 		sysKSTaskMgr := taskMgr
-		if keyspace.IsRunningOnUser() {
+		if kv.IsUserKS(currKSStore) {
 			sysKSTaskMgr = storage.NewTaskManager(getPoolFn(sysKSStore))
 			storage.SetDXFSvcTaskMgr(sysKSTaskMgr)
 		}
@@ -286,7 +286,7 @@ func TestShowImportProgress(t *testing.T) {
 
 	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 1000)
+		"root", "", &importer.ImportParameters{}, 1000)
 	require.NoError(t, err)
 
 	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
@@ -297,11 +297,33 @@ func TestShowImportProgress(t *testing.T) {
 		state   proto.SubtaskState
 	}{
 		{
-			execute.SubtaskSummary{RowCnt: *atomic.NewInt64(20), Bytes: *atomic.NewInt64(200)},
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(20),
+				Bytes:  *atomic.NewInt64(200),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 20, Bytes: 200, UpdateTime: time.Unix(1002, 0)},
+				},
+			},
 			proto.SubtaskStateRunning,
 		},
 		{
-			execute.SubtaskSummary{RowCnt: *atomic.NewInt64(30), Bytes: *atomic.NewInt64(300)},
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(30),
+				Bytes:  *atomic.NewInt64(300),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1000, 0)},
+					{RowCnt: 15, Bytes: 150, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 30, Bytes: 300, UpdateTime: time.Unix(1002, 0)},
+				},
+			},
+			proto.SubtaskStateSucceed,
+		},
+		{
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(0),
+				Bytes:  *atomic.NewInt64(0),
+			},
 			proto.SubtaskStateSucceed,
 		},
 	}
@@ -324,7 +346,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepGlobalSorting))
 	checkShowInfo("init", "0B", "0B", "N/A", "0B/s", "N/A", 0)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(5)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockSpeedDuration", "return(5000)")
 
 	// Encode step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
@@ -339,7 +361,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1000, runInfo.Total)
 	require.EqualValues(t, 500, runInfo.Processed)
-	checkShowInfo("encode", "500B", "1kB", "50", "100B/s", "00:00:05", 0)
+	checkShowInfo("encode", "500B", "1000B", "50", "100B/s", "00:00:05", 0)
 
 	// Merge step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
@@ -356,13 +378,78 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(500)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockSpeedDuration", "return(10000)")
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
-	checkShowInfo("ingest", "500B", "1kB", "50", "1B/s", "00:08:20", 50)
+	checkShowInfo("ingest", "500B", "1000B", "50", "50B/s", "00:00:10", 50)
 
 	// Post-process step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)
 	checkShowInfo("post-process", "0B", "0B", "N/A", "0B/s", "N/A", 100)
+}
+
+func TestShowImportGroup(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	conn := tk.Session().GetSQLExecutor()
+
+	// No groups at start
+	rs := tk.MustQuery(`show import group "group2"`).Rows()
+	require.Len(t, rs, 0)
+	rs = tk.MustQuery(`show import groups`).Rows()
+	require.Len(t, rs, 0)
+
+	importJobs := []struct {
+		SchemaName string
+		TableName  string
+		TableID    int64
+		GroupKey   string
+	}{
+		{"test", "t1", 1, "group1"},
+		{"test", "t2", 2, "group1"},
+		{"test", "t3", 3, "group2"},
+		{"test", "t4", 4, ""}, // not displayed in show import groups
+	}
+
+	for _, job := range importJobs {
+		jobID, err := importer.CreateJob(ctx, conn, job.SchemaName, job.TableName, job.TableID,
+			"root", job.GroupKey, &importer.ImportParameters{}, 1000)
+		require.NoError(t, err)
+
+		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+
+		switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepEncodeAndSort,
+			"", nil, proto.ImportInto, 11)
+	}
+
+	rs = tk.MustQuery("show import groups").Sort().Rows()
+	require.Len(t, rs, 2)
+	require.Equal(t, "group1", rs[0][0])
+	require.Equal(t, "2", rs[0][1])
+	require.Equal(t, "group2", rs[1][0])
+	require.Equal(t, "1", rs[1][1])
+
+	rs = tk.MustQuery(`show import group "nonexist"`).Rows()
+	require.Len(t, rs, 0)
+
+	rs = tk.MustQuery(`show import group "group2"`).Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "group2", rs[0][0])
+	require.Equal(t, "1", rs[0][1])
 }
 
 func TestFormatTime(t *testing.T) {

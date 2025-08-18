@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
@@ -74,6 +76,7 @@ type Syncer struct {
 	schemaValidator   validatorapi.Validator
 	loader            *Loader
 	logger            *zap.Logger
+	crossKS           bool
 
 	// below fields are set when running background routines
 	isCoordinatorGetter func() sessmgr.InfoSchemaCoordinator
@@ -89,6 +92,34 @@ func New(
 	sysSessionPool util.DestroyableSessionPool,
 	isValidator validatorapi.Validator,
 ) *Syncer {
+	s := newSyncer(store, logutil.BgLogger(), schemaLease, sysSessionPool, isValidator)
+	s.loader = newLoader(store, infoCache, &s.deferFn)
+	return s
+}
+
+// NewCrossKSSyncer creates a new Syncer instance for cross keyspace.
+func NewCrossKSSyncer(
+	store kv.Storage,
+	infoCache *infoschema.InfoCache,
+	schemaLease time.Duration,
+	sysSessionPool util.DestroyableSessionPool,
+	isValidator validatorapi.Validator,
+	targetKS string,
+) *Syncer {
+	logger := logutil.BgLogger().With(zap.String("targetKS", targetKS))
+	s := newSyncer(store, logger, schemaLease, sysSessionPool, isValidator)
+	s.loader = NewLoaderForCrossKS(store, infoCache)
+	s.crossKS = true
+	return s
+}
+
+func newSyncer(
+	store kv.Storage,
+	logger *zap.Logger,
+	schemaLease time.Duration,
+	sysSessionPool util.DestroyableSessionPool,
+	isValidator validatorapi.Validator,
+) *Syncer {
 	s := &Syncer{
 		store:          store,
 		schemaLease:    schemaLease,
@@ -99,18 +130,9 @@ func New(
 			mu:   sync.Mutex{},
 			jobs: make(map[int64]*mdldef.JobMDL),
 		},
-		logger: logutil.BgLogger(),
+		logger: logger,
 	}
 	s.schemaValidator = isValidator
-	mode := LoadModeAuto
-	s.loader = &Loader{
-		mode:      mode,
-		store:     store,
-		infoCache: infoCache,
-		deferFn:   &s.deferFn,
-		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
-	}
-
 	return s
 }
 
@@ -146,12 +168,11 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 		return
 	}
 	defer s.sysSessionPool.Put(se)
-	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := s.InfoSchema().SchemaMetaVersion()
 	// the job must stay inside tidb_ddl_job if we need to wait schema version for it.
 	sql := fmt.Sprintf(`select job_id, version, table_ids from mysql.tidb_mdl_info
 		where job_id >= %d and version <= %d`, s.minJobIDRefresher.GetCurrMinJobID(), domainSchemaVer)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
+	rows, err := sqlexec.ExecSQL(ctx, sctx.GetSQLExecutor(), sql)
 	if err != nil {
 		s.logger.Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -163,12 +184,30 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 	s.mdlCheckTableInfo.jobs = make(map[int64]*mdldef.JobMDL, len(rows))
 	for i := range rows {
 		jobID := rows[i].GetInt64(0)
-
+		tableIDs := util.Str2Int64Map(rows[i].GetString(2))
+		if s.skipMDLCheck(tableIDs) {
+			continue
+		}
 		s.mdlCheckTableInfo.jobs[jobID] = &mdldef.JobMDL{
 			Ver:      rows[i].GetInt64(1),
-			TableIDs: util.Str2Int64Map(rows[i].GetString(2)),
+			TableIDs: tableIDs,
 		}
 	}
+}
+
+func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
+	if !s.crossKS {
+		return false
+	}
+
+	// for cross keyspace syncer, we only care about the system tables, so we can
+	// skip the MDL check for user tables.
+	for id := range tableIDs {
+		if metadef.IsReservedID(id) {
+			return false
+		}
+	}
+	return true
 }
 
 // MDLCheckLoop is a loop that checks the MDL locks periodically.
@@ -187,7 +226,7 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 			return
 		}
 
-		if !vardef.EnableMDL.Load() {
+		if !vardef.IsMDLEnabled() {
 			continue
 		}
 

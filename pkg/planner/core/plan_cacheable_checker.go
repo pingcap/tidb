@@ -549,7 +549,7 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		if paramNum > 0 {
 			return false, "get a TableDual plan"
 		}
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		if x.StoreType == kv.TiFlash {
 			return false, "TiFlash plan is un-cacheable"
 		}
@@ -563,15 +563,15 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		}
 		underIndexMerge = true
 		subPlans = append(subPlans, x.partialPlans...)
-	case *PhysicalIndexScan:
-		if underIndexMerge && x.isFullScan() {
+	case *physicalop.PhysicalIndexScan:
+		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
-	case *PhysicalTableScan:
-		if underIndexMerge && x.isFullScan() {
+	case *physicalop.PhysicalTableScan:
+		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
-	case *PhysicalApply:
+	case *physicalop.PhysicalApply:
 		return false, "PhysicalApply plan is un-cacheable"
 	}
 

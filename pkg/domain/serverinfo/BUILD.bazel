@@ -33,8 +33,12 @@ go_test(
     srcs = ["syncer_test.go"],
     embed = [":serverinfo"],
     flaky = True,
+    shard_count = 2,
     deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/util",
+        "//pkg/keyspace",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "@com_github_pingcap_errors//:errors",

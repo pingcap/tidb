@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -88,10 +87,10 @@ func TestCheckRequirements(t *testing.T) {
 	}
 
 	// create a dummy job
-	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", "", &importer.ImportParameters{}, 0)
 	require.NoError(t, err)
 	// there is active job on the target table already
-	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", "", &importer.ImportParameters{}, 0)
 	require.NoError(t, err)
 	err = c.CheckRequirements(ctx, conn)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
@@ -126,12 +125,12 @@ func TestCheckRequirements(t *testing.T) {
 		embedEtcd.Close()
 	})
 	backup := importer.GetEtcdClient
-	importer.GetEtcdClient = func() (*etcd.Client, error) {
+	importer.GetEtcdClient = func() (*clientv3.Client, error) {
 		etcdCli, err := clientv3.New(clientv3.Config{
 			Endpoints: []string{clientAddr},
 		})
 		require.NoError(t, err)
-		return etcd.NewClient(etcdCli, ""), nil
+		return etcdCli, nil
 	}
 	t.Cleanup(func() {
 		importer.GetEtcdClient = backup
