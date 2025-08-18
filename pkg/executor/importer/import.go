@@ -612,7 +612,7 @@ func (e *LoadDataController) checkFieldParams() error {
 func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
 	var threadCnt int
 	if kerneltype.IsNextGen() {
-		threadCnt = scheduler.CalcConcurrencyByDataSize(ctx, p.TotalFileSize, targetNodeCPUCnt)
+		threadCnt = scheduler.CalcConcurrencyByDataSize(p.TotalFileSize, targetNodeCPUCnt)
 	} else {
 		threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 		if p.DataSourceType == DataSourceTypeQuery {
@@ -867,7 +867,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	if kerneltype.IsNextGen() {
-		p.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(ctx, p.TotalFileSize)
+		p.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(p.TotalFileSize, targetNodeCPUCnt)
 	} else {
 		if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 			p.MaxNodeCnt = variable.TidbOptInt(sv, 0)

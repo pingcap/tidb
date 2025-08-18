@@ -29,7 +29,7 @@ import (
 )
 
 // CalcMaxNodeCountByTableSize calculates the maximum number of nodes to execute DXF based on the table size.
-func CalcMaxNodeCountByTableSize(ctx context.Context, size int64, coresPerNode int) int {
+func CalcMaxNodeCountByTableSize(size int64, coresPerNode int) int {
 	if coresPerNode <= 0 {
 		return 0
 	}
@@ -41,7 +41,7 @@ func CalcMaxNodeCountByTableSize(ctx context.Context, size int64, coresPerNode i
 }
 
 // CalcMaxNodeCountByDataSize calculates the maximum number of nodes to execute DXF based on the data size.
-func CalcMaxNodeCountByDataSize(ctx context.Context, size int64, coresPerNode int) int {
+func CalcMaxNodeCountByDataSize(size int64, coresPerNode int) int {
 	if coresPerNode <= 0 {
 		return 0
 	}
@@ -75,7 +75,7 @@ func CalcMaxNodeCountByStoresNum(ctx context.Context, store kv.Storage) int {
 }
 
 // CalcConcurrencyByDataSize calculates the concurrency based on the data size.
-func CalcConcurrencyByDataSize(ctx context.Context, size int64, coresPerNode int) int {
+func CalcConcurrencyByDataSize(size int64, coresPerNode int) int {
 	if size <= 0 {
 		return 4
 	}

@@ -24,7 +24,6 @@ import (
 )
 
 func TestCalcMaxNodeCountByTableSize(t *testing.T) {
-	ctx := context.Background()
 	tests := []struct {
 		tableSize int64
 		cores     int
@@ -43,12 +42,11 @@ func TestCalcMaxNodeCountByTableSize(t *testing.T) {
 		{1000, 0, 0},
 	}
 	for _, tt := range tests {
-		got := CalcMaxNodeCountByTableSize(ctx, tt.tableSize, tt.cores)
+		got := CalcMaxNodeCountByTableSize(tt.tableSize, tt.cores)
 		require.Equal(t, tt.expected, got, fmt.Sprintf("tableSize:%d cores:%d", tt.tableSize, tt.cores))
 	}
 }
 func TestCalcMaxNodeCountByDataSize(t *testing.T) {
-	ctx := context.Background()
 	tests := []struct {
 		dataSize int64
 		cores    int
@@ -67,14 +65,13 @@ func TestCalcMaxNodeCountByDataSize(t *testing.T) {
 		{320*units.GiB + 100, 4, 3},
 	}
 	for _, tt := range tests {
-		got := CalcMaxNodeCountByDataSize(ctx, tt.dataSize, tt.cores)
+		got := CalcMaxNodeCountByDataSize(tt.dataSize, tt.cores)
 		require.Equal(t, tt.expected, got,
 			fmt.Sprintf("dataSize:%d cores:%d", tt.dataSize, tt.cores))
 	}
 }
 
 func TestCalcConcurrencyByDataSize(t *testing.T) {
-	ctx := context.Background()
 	tests := []struct {
 		dataSize int64
 		cores    int
@@ -93,7 +90,7 @@ func TestCalcConcurrencyByDataSize(t *testing.T) {
 		{1, 5, 1},
 	}
 	for _, tt := range tests {
-		require.Equal(t, tt.expected, CalcConcurrencyByDataSize(ctx, tt.dataSize, tt.cores),
+		require.Equal(t, tt.expected, CalcConcurrencyByDataSize(tt.dataSize, tt.cores),
 			fmt.Sprintf("dataSize:%d cores:%d", tt.dataSize, tt.cores))
 	}
 }
