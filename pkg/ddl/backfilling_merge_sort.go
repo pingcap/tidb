@@ -107,7 +107,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		int(res.CPU.Capacity()),
 		true,
 		engineapi.OnDuplicateKeyError,
-		memSizePerCon,
+		res.Mem.Capacity(),
 	)
 	failpoint.Inject("mockMergeSortRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
