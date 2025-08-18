@@ -734,7 +734,9 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 	result := IndexWriteResult{
 		ID: ck.ID,
 	}
-	w.initSessCtx()
+	if err := w.initSessCtx(); err != nil {
+		return err
+	}
 	count, _, err := w.WriteChunk(&ck)
 	if err != nil {
 		return err
@@ -754,20 +756,20 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 	return nil
 }
 
-func (w *indexIngestWorker) initSessCtx() {
+func (w *indexIngestWorker) initSessCtx() error {
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
-			w.ctx.OnError(err)
-			return
+			return err
 		}
 		w.restore = restoreSessCtx(sessCtx)
 		if err := initSessCtx(sessCtx, w.reorgMeta); err != nil {
-			w.ctx.OnError(err)
-			return
+			return err
 		}
 		w.se = session.NewSession(sessCtx)
 	}
+
+	return nil
 }
 
 func (w *indexIngestWorker) Close() error {
