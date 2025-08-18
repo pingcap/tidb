@@ -335,3 +335,12 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+func TestIssue57284(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE  TABLE  t0(c0 INT);`)
+	tk.MustQuery(`SELECT * FROM t0 RIGHT  JOIN  (SELECT BIT_OR(1970) FROM t0) AS sub0  ON true WHERE (CASE 1 WHEN NULL THEN true END );`).Check(
+		testkit.Rows())
+}
