@@ -16,11 +16,8 @@ package stmtctx
 
 import (
 	"bytes"
-<<<<<<< HEAD
-	"encoding/json"
-=======
 	"context"
->>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -36,11 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/parser/model"
-=======
 	"github.com/pingcap/tidb/pkg/parser/ast"
->>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
