@@ -28,26 +28,35 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// Node count is calculated using the 8c machine as the baseline.
+	baseCores = 8.0
+	// Each node should handle at least 2 subtasks, each 100GiB data.
+	// For every additional 200 GiB of data, add 1 node. Then multiply by the scaling factor R.
+	baseDataSize = 200 * units.GiB
+	// To improve performance for small tasks, we assume that on an 8c machine,
+	// importing 200 GiB of data requires full utilization of a single node’s resources.
+	// Therefore, for every additional 25 GiB, add 1 concurrency unit as an estimate for task concurrency.
+	smallDataSize = 25 * units.GiB
+)
+
 // CalcMaxNodeCountByTableSize calculates the maximum number of nodes to execute DXF based on the table size.
 func CalcMaxNodeCountByTableSize(size int64, coresPerNode int) int {
-	if coresPerNode <= 0 {
-		return 0
-	}
-	r := 8.0 / float64(coresPerNode)
-	nodeCnt := float64(size) * r / (200 * units.GiB)
-	nodeCnt = min(nodeCnt, 30*r)
-	nodeCnt = max(nodeCnt, 1)
-	return int(nodeCnt)
+	return calcMaxNodeCountBySize(size, coresPerNode, 30)
 }
 
 // CalcMaxNodeCountByDataSize calculates the maximum number of nodes to execute DXF based on the data size.
 func CalcMaxNodeCountByDataSize(size int64, coresPerNode int) int {
+	return calcMaxNodeCountBySize(size, coresPerNode, 32)
+}
+
+func calcMaxNodeCountBySize(size int64, coresPerNode int, factor float64) int {
 	if coresPerNode <= 0 {
 		return 0
 	}
-	r := 8.0 / float64(coresPerNode)
-	nodeCnt := float64(size) * r / (200 * units.GiB)
-	nodeCnt = min(nodeCnt, 32*r)
+	r := baseCores / float64(coresPerNode)
+	nodeCnt := float64(size) * r / baseDataSize
+	nodeCnt = min(nodeCnt, factor*r)
 	nodeCnt = max(nodeCnt, 1)
 	return int(nodeCnt)
 }
@@ -79,8 +88,8 @@ func CalcConcurrencyByDataSize(size int64, coresPerNode int) int {
 	if size <= 0 {
 		return 4
 	}
-	concurrency := size / (25 * units.GiB)
-	concurrency = min(concurrency, int64(coresPerNode-1))
+	concurrency := size / smallDataSize
+	concurrency = min(concurrency, int64(coresPerNode))
 	concurrency = max(concurrency, 1)
 	return int(concurrency)
 }

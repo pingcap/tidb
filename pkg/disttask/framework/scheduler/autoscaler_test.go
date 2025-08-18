@@ -15,7 +15,6 @@
 package scheduler
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -27,19 +26,23 @@ func TestCalcMaxNodeCountByTableSize(t *testing.T) {
 	tests := []struct {
 		tableSize int64
 		cores     int
-		expected  int64
+		expected  int
 	}{
 		{0, 8, 1},
-		{1, 8, 1},
-		{200 * units.GiB, 8, 1},         // 200GiB
-		{200 * units.GiB * 3, 8, 3},     // 600GiB
-		{200 * units.GiB * 6, 8, 6},     // 1.2TiB
-		{200 * units.GiB * 30, 8, 30},   // 6TiB
-		{200 * units.GiB * 1000, 8, 30}, // 200TiB
-		{200 * units.GiB * 25, 4, 50},   // 5TiB
-		{200 * units.GiB * 30, 3, 80},   // 6TiB
-		{200*units.GiB*29 + 100, 8, 29}, // 5.8TiB
-		{1000, 0, 0},
+		{10, 0, 0},
+		{320*units.GiB + 100, 4, 3},
+		{100 * units.TiB, 4, 60},
+		{10 * units.GiB, 8, 1},
+		{200 * units.GiB, 8, 1},
+		{800 * units.GiB, 8, 4},
+		{1100 * units.GiB, 8, 5},
+		{200 * units.TiB, 8, 30},
+		{200 * units.GiB, 16, 1},
+		{600 * units.GiB, 16, 1},
+		{1200 * units.GiB, 16, 3},
+		{4 * units.TiB, 16, 10},
+		{6 * units.TiB, 16, 15},
+		{10 * units.TiB, 16, 15},
 	}
 	for _, tt := range tests {
 		got := CalcMaxNodeCountByTableSize(tt.tableSize, tt.cores)
@@ -50,19 +53,24 @@ func TestCalcMaxNodeCountByDataSize(t *testing.T) {
 	tests := []struct {
 		dataSize int64
 		cores    int
-		expected int64
+		expected int
 	}{
 		{0, 8, 1},
 		{10, 0, 0},
+		{320*units.GiB + 100, 4, 3},
+		{100 * units.TiB, 4, 64},
 		{10 * units.GiB, 8, 1},
-		{105 * units.GiB, 8, 1},
 		{200 * units.GiB, 8, 1},
 		{800 * units.GiB, 8, 4},
-		{800 * units.GiB, 5, 6},
-		{1*units.TiB + 100*units.GiB, 8, 5},
+		{1100 * units.GiB, 8, 5},
 		{200 * units.TiB, 8, 32},
-		{200 * units.TiB, 4, 64},
-		{320*units.GiB + 100, 4, 3},
+		{200 * units.GiB, 16, 1},
+		{600 * units.GiB, 16, 1},
+		{1200 * units.GiB, 16, 3},
+		{4 * units.TiB, 16, 10},
+		{6 * units.TiB, 16, 15},
+		{10 * units.TiB, 16, 16},
+		{100 * units.TiB, 16, 16},
 	}
 	for _, tt := range tests {
 		got := CalcMaxNodeCountByDataSize(tt.dataSize, tt.cores)
