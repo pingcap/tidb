@@ -194,7 +194,8 @@ func mergeOverlappingFilesInternal(
 	outerConcurrency := 256 * int64(ConcurrentReaderBufferSizePerConc) / (memForPerConcurrentReader - int64(defaultOneWriterMemSizeLimit))
 	task.Info("mergeOverlappingFilesInternal",
 		zap.Int64("outerConcurrency", outerConcurrency), zap.Int64("memSizePerCon", memForPerConcurrentReader-int64(defaultOneWriterMemSizeLimit)))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, int(outerConcurrency))
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, int(outerConcurrency),
+		int(memForPerConcurrentReader)-int(defaultOneWriterMemSizeLimit))
 	if err != nil {
 		return err
 	}
