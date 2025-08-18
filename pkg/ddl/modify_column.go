@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -579,6 +580,12 @@ func (w *worker) doModifyColumnTypeWithData(
 		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		switch oldCol.State {
 		case model.StateWriteOnly:
+			if len(oldIdxInfos) > 0 {
+				done := w.analyzeTableAfterCreateIndex(job, dbInfo.Name.L, tblInfo.Name.L)
+				if !done {
+					return ver, nil
+				}
+			}
 			updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 			if err != nil {
@@ -613,6 +620,50 @@ func (w *worker) doModifyColumnTypeWithData(
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName string) bool {
+	doneCh := w.ddlCtx.getAnalyzeDoneCh(job.ID)
+	if doneCh == nil {
+		doneCh = make(chan struct{})
+		eg := util.NewErrorGroupWithRecover()
+		eg.Go(func() error {
+			sessCtx, err := w.sessPool.Get()
+			if err != nil {
+				return err
+			}
+			sessCtx.GetSessionVars().StmtCtx.InternalAnalyze = true
+			defer func() {
+				sessCtx.GetSessionVars().StmtCtx.InternalAnalyze = false
+				w.sessPool.Put(sessCtx)
+				close(doneCh)
+			}()
+			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+
+			_, err = sessCtx.GetSQLExecutor().ExecuteInternal(w.ctx, "ANALYZE TABLE "+dbTable+";")
+			if err != nil {
+				logutil.DDLLogger().Warn("analyze table failed",
+					zap.String("category", "ddl"),
+					zap.String("db", dbName),
+					zap.String("table", tblName),
+					zap.Error(err))
+				// We can continue to finish the job even if analyze table failed.
+			}
+			return nil
+		})
+		w.ddlCtx.setAnalyzeDoneCh(job.ID, doneCh)
+	}
+	select {
+	case <-doneCh:
+		logutil.DDLLogger().Info("analyze table after create index done", zap.Int64("jobID", job.ID))
+		return true
+	case <-w.ctx.Done():
+		logutil.DDLLogger().Info("analyze table after create index context done", zap.Int64("jobID", job.ID))
+		return true
+	case <-time.After(10 * time.Second):
+		logutil.DDLLogger().Info("analyze table after create index timeout", zap.Int64("jobID", job.ID))
+		return false
+	}
 }
 
 func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
