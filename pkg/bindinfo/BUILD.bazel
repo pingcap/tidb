@@ -65,8 +65,9 @@ go_test(
     embed = [":bindinfo"],
     flaky = True,
     race = "on",
-    shard_count = 44,
+    shard_count = 45,
     deps = [
+        "//pkg/config",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",

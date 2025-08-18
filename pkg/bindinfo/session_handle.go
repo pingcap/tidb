@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
@@ -54,11 +55,12 @@ type SessionBindingHandle interface {
 type sessionBindingHandle struct {
 	mu       sync.RWMutex
 	bindings map[string]*Binding // sqlDigest --> Binding
+	sPool    util.DestroyableSessionPool
 }
 
-// NewSessionBindingHandle creates a new SessionBindingHandle.
-func NewSessionBindingHandle() SessionBindingHandle {
-	return &sessionBindingHandle{bindings: make(map[string]*Binding)}
+// NewSessionBindingHandle creates a new SessionBindingHandle with a session pool.
+func NewSessionBindingHandle(sPool util.DestroyableSessionPool) SessionBindingHandle {
+	return &sessionBindingHandle{bindings: make(map[string]*Binding), sPool: sPool}
 }
 
 // CreateSessionBinding creates a Bindings to the cache.
@@ -67,7 +69,7 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bin
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, binding := range bindings {
-		if err := prepareHints(sctx, binding); err != nil {
+		if err := prepareHintsWithPool(sctx, binding, h.sPool); err != nil {
 			return err
 		}
 	}

@@ -3947,7 +3947,7 @@ func createSessionWithOpt(
 	s.sessionVars.GlobalVarsAccessor = s
 	s.txn.init()
 
-	sessionBindHandle := bindinfo.NewSessionBindingHandle()
+	sessionBindHandle := bindinfo.NewSessionBindingHandle(dom.SysSessionPool())
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
 	return s, nil
