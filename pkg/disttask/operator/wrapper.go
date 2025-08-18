@@ -50,6 +50,8 @@ func NewSimpleDataSource[T workerpool.TaskMayPanic](
 // Open implements the Operator interface.
 func (s *SimpleDataSource[T]) Open() error {
 	s.errGroup.Go(func() error {
+		defer close(s.target.Channel())
+
 		for _, input := range s.inputs {
 			select {
 			case s.target.Channel() <- input:
@@ -65,10 +67,7 @@ func (s *SimpleDataSource[T]) Open() error {
 
 // Close implements the Operator interface.
 func (s *SimpleDataSource[T]) Close() error {
-	//nolint: errcheck
-	err := s.errGroup.Wait()
-	close(s.target.Channel())
-	return err
+	return s.errGroup.Wait()
 }
 
 // String implements the Operator interface.
