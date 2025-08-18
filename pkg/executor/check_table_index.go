@@ -765,8 +765,8 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		}
 
 		// TODO(joechenrh): remove me after testing.
-		meetError = true
-		currentOffset = int(tableChecksum[0].bucket)
+		// meetError = true
+		// currentOffset = int(tableChecksum[0].bucket)
 		offset += currentOffset * mod
 		mod *= bucketSize
 	}

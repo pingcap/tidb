@@ -1170,7 +1170,7 @@ func getPossibleAccessPaths(
 	tableHints *hint.PlanHints,
 	indexHints []*ast.IndexHint,
 	tbl table.Table, dbName, tblName ast.CIStr,
-	check, hasFlagPartitionProcessor, inAdminCheckSQL bool) ([]*util.AccessPath, error) {
+	check, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1380,9 +1380,7 @@ func getPossibleAccessPaths(
 		}
 	}
 
-	// In admin check SQL, we may use MVIndex as possible access path, in such case we should not add table scan.
-	// Otherwise we can't guarantee index scan is chosen after cost estimation.
-	if allMVIIndexPath && !inAdminCheckSQL {
+	if allMVIIndexPath {
 		available = append(available, tablePath)
 	}
 

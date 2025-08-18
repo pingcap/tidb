@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -3708,7 +3709,8 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	b.inAdminCheckSQL = true
+	// TODO(joechenrh): remove me after tested
+	// b.inAdminCheckSQL = true
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -4249,6 +4251,22 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	return version
 }
 
+// buildTableForAdminCheckSQL builds a mock table for ADMIN CHECK SQL statements.
+// Since we want to utilize MVIndex to read the data in FAST ADMIN CHECK, to prevent adding
+// many hacky code in the planner module, here we build a table with all columns treated as
+// non-array types and all indices as non-MVIndex. So optimizer will treat it as a normal table.
+func buildTableForAdminCheckSQL(tbl table.Table) (table.Table, error) {
+	mockInfo := tbl.Meta().Clone()
+	for _, col := range mockInfo.Columns {
+		col.FieldType.SetArray(false)
+	}
+	for _, idx := range mockInfo.Indices {
+		idx.MVIndex = false
+	}
+
+	return tables.TableFromMeta(autoid.NewAllocators(false, nil), mockInfo)
+}
+
 // tryBuildCTE considers the input tn as a reference to a CTE and tries to build the logical plan for it like building
 // DataSource for normal tables.
 // tryBuildCTE will push an entry into handleHelper when successful.
@@ -4450,6 +4468,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
+	if b.inAdminCheckSQL {
+		if tbl, err = buildTableForAdminCheckSQL(tbl); err != nil {
+			return nil, err
+		}
+	}
+
 	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, b.ctx, dbName, tbl, b.is)
 	if err != nil {
 		return nil, err
@@ -4534,7 +4558,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, b.inAdminCheckSQL)
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
 	if err != nil {
 		return nil, err
 	}
@@ -4684,7 +4708,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		PreferPartitions:       make(map[int][]ast.CIStr),
 		IS:                     b.is,
 		IsForUpdateRead:        b.isForUpdateRead,
-		EnableMVIndexScan:      b.inAdminCheckSQL,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
@@ -4706,12 +4729,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			RetType:  col.FieldType.Clone(),
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
-		}
-		if b.inAdminCheckSQL {
-			newCol.RetType.SetArray(false)
-		}
-		if col.IsPKHandleColumn(tableInfo) {
-			handleCols = util.NewIntHandleCols(newCol)
 		}
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
