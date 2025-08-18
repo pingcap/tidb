@@ -953,7 +953,7 @@ func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 			return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
 		}
 
-		// Because duplicated items only generate one index entry, we have to deduplicate the items.
+		// Deduplicate items since duplicated values should only generate one index entry.
 		s := make(map[int64]struct{}, jsonItem.GetElemCount())
 		for j := range jsonItem.GetElemCount() {
 			item, err := f(fakeSctx, jsonItem.ArrayGetElem(j), ft)

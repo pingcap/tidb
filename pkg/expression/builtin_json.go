@@ -229,6 +229,7 @@ func (c *jsonSumCRC32FunctionClass) getFunction(ctx BuildContext, args []Express
 	return sig, nil
 }
 
+// builtinJSONSumCRC32Sig is the signature for JSON_SUM_CRC32, which is used in internal SQL only.
 type builtinJSONSumCRC32Sig struct {
 	baseBuiltinFunc
 
@@ -257,7 +258,7 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
 	}
 
-	// Because duplicated items only generate one index entry, we have to deduplicate the items.
+	// Deduplicate items since duplicated values should only generate one index entry.
 	s := make(map[int64]struct{}, val.GetElemCount())
 	for i := range val.GetElemCount() {
 		// Convert to string before calculation, to mimic the logic of builtinCRC32.
