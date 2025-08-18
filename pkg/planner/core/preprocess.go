@@ -256,9 +256,7 @@ func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
 	if p.err != nil {
 		return
 	}
-	if util.IsSysDB(dbName.L) || util.IsSystemView(dbName.L) {
-		return
-	}
+
 	if dbName.L == "" {
 		currentDB := p.sctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
@@ -266,7 +264,6 @@ func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
 		}
 		dbName = pmodel.NewCIStr(currentDB)
 	}
-
 	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
 	if exists && dbInfo.ReadOnly {
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
