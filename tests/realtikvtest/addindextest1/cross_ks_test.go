@@ -15,17 +15,14 @@
 package addindextest
 
 import (
-	"context"
+	"fmt"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/ddl"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -35,56 +32,26 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 		t.Skip("This test is only for nextgen kernel, skip it in classic kernel")
 	}
 
-	t.Run("bootstrap system keyspace", func(t *testing.T) {
-		realtikvtest.CreateMockStoreAndSetup(t)
-	})
+	runtimes := realtikvtest.PrepareForCrossKSTest(t, "keyspace1")
+	userStore := runtimes["keyspace1"].Store
+	// submit add index sql on user keyspace
+	tk := testkit.NewTestKit(t, userStore)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustExec("alter table t add index idx_a (a);")
+	tk.MustExec("admin check table t;")
+	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	jobIDStr := rs[0][0].(string)
+	jobID, err := strconv.Atoi(jobIDStr)
+	require.NoError(t, err)
+	taskKey := ddl.TaskKey(int64(jobID))
 
-	t.Run("submit add index sql on user keyspace", func(t *testing.T) {
-		userStore := realtikvtest.CreateMockStoreAndSetup(t,
-			realtikvtest.WithKeyspaceName("keyspace1"))
-		tk := testkit.NewTestKit(t, userStore)
-		tk.MustExec("use test")
-		tk.MustExec("create table t (a int, b int);")
-		tk.MustExec("insert into t values (1, 2);")
-
-		var ch = make(chan struct{})
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSubmitDXFTask", func() {
-			close(ch)
-		})
-		go func() {
-			tk.Exec("alter table t add index idx_a (a);")
-		}()
-		<-ch
-		t.Log("global task submitted")
-	})
-
-	t.Run("run add index worker at system keyspace", func(t *testing.T) {
-		systemStore := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithRetainData())
-		tk := testkit.NewTestKit(t, systemStore)
-		tk.MustExec("use test")
-		// The table in system keyspace is different from the one in user keyspace.
-		tk.MustExec("create table t (a int, b int);")
-
-		rs := tk.MustQuery("select * from mysql.tidb_global_task order by id desc").Rows()
-		require.Greater(t, len(rs), 0)
-
-		taskID, err := strconv.Atoi(rs[0][0].(string))
-		require.NoError(t, err)
-		ctx := kv.WithInternalSourceType(context.Background(), "realtikvtest")
-		err = handle.WaitTaskDoneOrPaused(ctx, int64(taskID))
-		require.NoError(t, err)
-	})
-
-	t.Run("check ddl state at user keyspace", func(t *testing.T) {
-		systemStore := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithKeyspaceName("keyspace1"), realtikvtest.WithRetainData())
-		tk := testkit.NewTestKit(t, systemStore)
-		var jobState string
-		require.Eventuallyf(t, func() bool {
-			rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
-			jobState = rs[0][11].(string)
-			return jobState == model.JobStateSynced.String()
-		}, 10*time.Second, 200*time.Millisecond, "job state should be done")
-		tk.MustExec("use test")
-		tk.MustExec("admin check table t;")
-	})
+	// job to user keyspace, task to system keyspace
+	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
+	taskQuerySQL := fmt.Sprintf(`select sum(c) from (select count(1) c from mysql.tidb_global_task where task_key='%s'
+		union select count(1) c from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
+	sysKSTk.MustQuery(taskQuerySQL).Check(testkit.Rows("1"))
+	// reverse check
+	tk.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
 }

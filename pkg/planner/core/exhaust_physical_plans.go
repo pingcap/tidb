@@ -1399,7 +1399,7 @@ func constructDS2IndexScanTask(
 	if keepOrder && ds.TableInfo.GetPartitionInfo() != nil {
 		return nil
 	}
-	is := PhysicalIndexScan{
+	is := physicalop.PhysicalIndexScan{
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
@@ -1407,15 +1407,15 @@ func constructDS2IndexScanTask(
 		Index:            path.Index,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
-		dataSourceSchema: ds.Schema(),
+		DataSourceSchema: ds.Schema(),
 		KeepOrder:        keepOrder,
 		Ranges:           ranges,
-		rangeInfo:        rangeInfo,
+		RangeInfo:        rangeInfo,
 		Desc:             desc,
-		isPartition:      ds.PartitionDefIdx != nil,
-		physicalTableID:  ds.PhysicalTableID,
-		tblColHists:      ds.TblColHists,
-		pkIsHandleCol:    ds.GetPKIsHandleCol(),
+		IsPartition:      ds.PartitionDefIdx != nil,
+		PhysicalTableID:  ds.PhysicalTableID,
+		TblColHists:      ds.TblColHists,
+		PkIsHandleCol:    ds.GetPKIsHandleCol(),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	cop := &CopTask{
 		indexPlan:   is,
@@ -1440,7 +1440,7 @@ func constructDS2IndexScanTask(
 			TblCols:         ds.TblCols,
 			TblColHists:     ds.TblColHists,
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
-		ts.SetSchema(is.dataSourceSchema.Clone())
+		ts.SetSchema(is.DataSourceSchema.Clone())
 		ts.SetIsPartition(ds.PartitionDefIdx != nil)
 		if ds.TableInfo.IsCommonHandle {
 			commonHandle := ds.HandleCols.(*util.CommonHandleCols)
@@ -1474,7 +1474,7 @@ func constructDS2IndexScanTask(
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.CommonHandleCols
 	}
-	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
+	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
@@ -1556,12 +1556,12 @@ func constructDS2IndexScanTask(
 	}
 	is.SetStats(ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats.GetUsedInfo(is.physicalTableID) != nil {
-		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
+	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
+		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
 	finalStats := ds.TableStats.ScaleByExpectCnt(rowCount)
-	if err := is.addPushedDownSelection(cop, ds, tmpPath, finalStats); err != nil {
-		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
+	if err := addPushedDownSelection4PhysicalIndexScan(is, cop, ds, tmpPath, finalStats); err != nil {
+		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection4PhysicalIndexScan function", zap.Error(err))
 		return nil
 	}
 	return cop
@@ -1665,9 +1665,9 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 		// change to keep order for index scan and dsCopTask
 		if dsCopTask.indexPlan != nil {
 			// get the index scan from dsCopTask.indexPlan
-			physicalIndexScan, _ := dsCopTask.indexPlan.(*PhysicalIndexScan)
+			physicalIndexScan, _ := dsCopTask.indexPlan.(*physicalop.PhysicalIndexScan)
 			if physicalIndexScan == nil && len(dsCopTask.indexPlan.Children()) == 1 {
-				physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
+				physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*physicalop.PhysicalIndexScan)
 			}
 			// The double read case should change the table plan together if we want to build stream agg,
 			// so it need to find out the table scan
@@ -3881,15 +3881,15 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 
 func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalCTE)
-	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
+	pcte := physicalop.PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
-		pcte.storageSender = PhysicalExchangeSender{
+		pcte.StorageSender = physicalop.PhysicalExchangeSender{
 			ExchangeType: tipb.ExchangeType_Broadcast,
 		}.Init(p.SCtx(), p.StatsInfo())
 	}
 	pcte.SetSchema(p.Schema())
 	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})
-	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
+	return []base.PhysicalPlan{(*physicalop.PhysicalCTEStorage)(pcte)}, true, nil
 }
 
 // getGEAndLogicalSequence extracts the possible group expression and logical sequence operator from a common super pointer.

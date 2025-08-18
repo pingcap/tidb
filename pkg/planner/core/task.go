@@ -398,11 +398,11 @@ func appendExpr(p *physicalop.PhysicalProjection, expr expression.Expression) *e
 func convertPartitionKeysIfNeed4PhysicalHashJoin(pp base.PhysicalPlan, lTask, rTask *MppTask) (_, _ *MppTask) {
 	p := pp.(*physicalop.PhysicalHashJoin)
 	lp := lTask.p
-	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
+	if _, ok := lp.(*physicalop.PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
 	}
 	rp := rTask.p
-	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
+	if _, ok := rp.(*physicalop.PhysicalExchangeReceiver); ok {
 		rp = rp.Children()[0].Children()[0]
 	}
 	// to mark if any partition key needs to convert
@@ -2138,8 +2138,9 @@ func attach2Task4PhysicalWindow(pp base.PhysicalPlan, tasks ...base.Task) base.T
 	return attachPlan2Task(p.Self, t)
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalCTEStorage implements the PhysicalPlan interface.
+func attach2Task4PhysicalCTEStorage(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalCTEStorage)
 	t := tasks[0].Copy()
 	if mpp, ok := t.(*MppTask); ok {
 		p.SetChildren(t.Plan())
@@ -2287,7 +2288,7 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 		}
 	}
 	ctx := t.p.SCtx()
-	sender := PhysicalExchangeSender{
+	sender := physicalop.PhysicalExchangeSender{
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.StatsInfo())
@@ -2297,7 +2298,7 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 	}
 
 	sender.SetChildren(t.p)
-	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
+	receiver := physicalop.PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
 	receiver.SetChildren(sender)
 	nt := &MppTask{
 		p:        receiver,

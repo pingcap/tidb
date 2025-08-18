@@ -52,9 +52,9 @@ func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 	case *physicalop.PhysicalTableScan:
 		x.Ranges = ranges
 		x.RangeInfo = rangeInfo
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		x.Ranges = ranges
-		x.rangeInfo = rangeInfo
+		x.RangeInfo = rangeInfo
 	case *PhysicalTableReader:
 		updateRange(x.TablePlans[0], ranges, rangeInfo)
 	case *PhysicalIndexReader:
@@ -101,7 +101,7 @@ func rebuildRange(p base.Plan) error {
 		if err != nil {
 			return err
 		}
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		err = buildRangeForIndexScan(sctx, x)
 		if err != nil {
 			return err
@@ -401,7 +401,7 @@ func buildRangesForBatchGet(sctx base.PlanContext, x *BatchPointGetPlan) (err er
 	return nil
 }
 
-func buildRangeForIndexScan(sctx base.PlanContext, is *PhysicalIndexScan) (err error) {
+func buildRangeForIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
 		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
 			is.Ranges = ranger.FullRange()

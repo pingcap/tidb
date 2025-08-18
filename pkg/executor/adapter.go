@@ -410,7 +410,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
-			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+			sctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
 	}
 
@@ -634,7 +634,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
 		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
 		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
@@ -1545,6 +1545,14 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
 		case "Update":
 			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		case "NTDML-Delete":
+			metrics.AffectedRowsCounterNTDMLDelete.Add(float64(affectedRows))
+		case "NTDML-Update":
+			metrics.AffectedRowsCounterNTDMLUpdate.Add(float64(affectedRows))
+		case "NTDML-Insert":
+			metrics.AffectedRowsCounterNTDMLInsert.Add(float64(affectedRows))
+		case "NTDML-Replace":
+			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
 		}
 	}
 }
@@ -1808,11 +1816,6 @@ func GetPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	return normalized, planDigest
 }
 
-// GetEncodedPlan returned same as getEncodedPlan
-func GetEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
-	return getEncodedPlan(stmtCtx, genHint)
-}
-
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
 func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
 	var hintSet bool
@@ -1867,7 +1870,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := sessVars.GetTotalCostDuration()

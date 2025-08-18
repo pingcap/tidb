@@ -321,9 +321,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.IsSyncStatsFailed = stmtCtx.IsSyncStatsFailed
 	items.Warnings = variable.CollectWarningsForSlowLog(stmtCtx)
 	items.ResourceGroupName = stmtCtx.ResourceGroupName
-	items.RRU = ruDetails.RRU()
-	items.WRU = ruDetails.WRU()
-	items.WaitRUDuration = ruDetails.RUWaitDuration()
+	items.RUDetails = ruDetails
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()

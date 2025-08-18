@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -91,11 +93,40 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
+	var counter atomic.Int32
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish",
+		func() {
+			newVal := counter.Add(1)
+			if newVal == 1 {
+				// show processlist, cloud_storage_uri should be redacted too
+				// we only check cloud_storage_uri here, for the source data path
+				// part, see TestShowJob
+				procRows := tk2.MustQuery("show full processlist").Rows()
+				var got bool
+				for _, r := range procRows {
+					sql := r[7].(string)
+					if strings.Contains(sql, "IMPORT INTO") {
+						index := strings.Index(sql, "cloud_storage_uri")
+						s.Greater(index, 0)
+						sql = sql[index:]
+						s.Contains(sql, "access-key=xxxxxx")
+						s.Contains(sql, "secret-access-key=xxxxxx")
+						s.NotContains(sql, "aaaaaa")
+						s.NotContains(sql, "bbbbbb")
+						got = true
+					}
+				}
+				s.True(got)
+			}
+		},
+	)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	result := s.tk.MustQuery(importSQL).Rows()
+	s.GreaterOrEqual(counter.Load(), int32(1))
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)

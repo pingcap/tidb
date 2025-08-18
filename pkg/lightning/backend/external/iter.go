@@ -535,8 +535,7 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
-			rd.byteReader.readDurHist = metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
-			rd.byteReader.readRateHist = metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
+			rd.byteReader.mergeSortReadCounter = metrics.MergeSortReadBytes
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],

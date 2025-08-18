@@ -319,7 +319,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV).Est
 		}
 
 		if debugTrace {
@@ -343,7 +343,8 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).
 func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
-	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
+	// TODO: Track min/max range for column estimates, currently only used for indexes.
+	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r).Est
 	if c.StatsVer <= statistics.Version1 {
 		return histBetweenCnt
 	}

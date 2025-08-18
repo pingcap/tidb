@@ -25,9 +25,13 @@ go_library(
 go_test(
     name = "vardef_test",
     timeout = "short",
-    srcs = ["tidb_vars_test.go"],
+    srcs = [
+        "runtime_test.go",
+        "tidb_vars_test.go",
+    ],
     embed = [":vardef"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config/kerneltype",
         "@com_github_stretchr_testify//require",
