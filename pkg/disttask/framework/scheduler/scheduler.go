@@ -93,7 +93,7 @@ type BaseScheduler struct {
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
-	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID))
+	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
@@ -670,6 +670,11 @@ func (s *BaseScheduler) WithNewSession(fn func(se sessionctx.Context) error) err
 // WithNewTxn executes the fn in a new transaction.
 func (s *BaseScheduler) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return s.taskMgr.WithNewTxn(ctx, fn)
+}
+
+// GetTaskMgr returns the task manager.
+func (s *BaseScheduler) GetTaskMgr() TaskManager {
+	return s.taskMgr
 }
 
 func (*BaseScheduler) isStepSucceed(cntByStates map[proto.SubtaskState]int64) bool {

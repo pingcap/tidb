@@ -174,7 +174,7 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	// job 4 is matched using WaitVersionSynced
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 	serverInfos := map[string]*serverinfo.ServerInfo{"aa": {StaticInfo: serverinfo.StaticInfo{ID: "aa", IP: "test", Port: 4000}}}
 	bytes, err := json.Marshal(serverInfos)
 	require.NoError(t, err)
@@ -182,10 +182,46 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms))
 	_, err = etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/4/aa", "333")
 	require.NoError(t, err)
-	require.NoError(t, s.WaitVersionSynced(ctx, 4, 333))
+	syncSummary, err := s.WaitVersionSynced(ctx, 4, 333, false)
+	require.NoError(t, err)
+	require.EqualValues(t, &SyncSummary{ServerCount: 1}, syncSummary)
 	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/4/aa")
 	require.NoError(t, err)
 
 	cancel()
 	wg.Wait()
+}
+
+func TestCalculateUpdatedMap(t *testing.T) {
+	updatedMap, summary := calculateUpdatedMap(map[string]*serverinfo.ServerInfo{
+		"a": {StaticInfo: serverinfo.StaticInfo{ID: "a", IP: "a"}},
+		"b": {StaticInfo: serverinfo.StaticInfo{ID: "b", IP: "b"}},
+		"c": {StaticInfo: serverinfo.StaticInfo{ID: "c", IP: "c"}},
+	})
+	require.EqualValues(t, 3, len(updatedMap))
+	require.EqualValues(t, &SyncSummary{ServerCount: 3}, summary)
+
+	updatedMap, summary = calculateUpdatedMap(map[string]*serverinfo.ServerInfo{
+		"a": {StaticInfo: serverinfo.StaticInfo{ID: "a", IP: "a"}},
+		"b": {StaticInfo: serverinfo.StaticInfo{ID: "b", IP: "b"}},
+		"c": {StaticInfo: serverinfo.StaticInfo{ID: "c", IP: "c", AssumedKeyspace: "a"}},
+	})
+	require.EqualValues(t, 3, len(updatedMap))
+	require.EqualValues(t, &SyncSummary{ServerCount: 3, AssumedServerCount: 1}, summary)
+
+	updatedMap, summary = calculateUpdatedMap(map[string]*serverinfo.ServerInfo{
+		"a": {StaticInfo: serverinfo.StaticInfo{ID: "a", IP: "a", StartTimestamp: 100}},
+		"b": {StaticInfo: serverinfo.StaticInfo{ID: "b", IP: "a", StartTimestamp: 200}},
+		"c": {StaticInfo: serverinfo.StaticInfo{ID: "c", IP: "a", StartTimestamp: 300, AssumedKeyspace: "a"}},
+	})
+	require.EqualValues(t, 1, len(updatedMap))
+	require.EqualValues(t, &SyncSummary{ServerCount: 1, AssumedServerCount: 1}, summary)
+
+	updatedMap, summary = calculateUpdatedMap(map[string]*serverinfo.ServerInfo{
+		"a": {StaticInfo: serverinfo.StaticInfo{ID: "a", IP: "a", StartTimestamp: 100}},
+		"b": {StaticInfo: serverinfo.StaticInfo{ID: "b", IP: "a", StartTimestamp: 200, AssumedKeyspace: "a"}},
+		"c": {StaticInfo: serverinfo.StaticInfo{ID: "c", IP: "a", StartTimestamp: 300}},
+	})
+	require.EqualValues(t, 1, len(updatedMap))
+	require.EqualValues(t, &SyncSummary{ServerCount: 1}, summary)
 }

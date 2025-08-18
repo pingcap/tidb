@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -98,6 +99,7 @@ func (sm *Manager) getSchedulers() []Scheduler {
 type Manager struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
+	store       kv.Storage
 	taskMgr     TaskManager
 	wg          tidbutil.WaitGroupWrapper
 	schedulerWG tidbutil.WaitGroupWrapper
@@ -121,7 +123,7 @@ type Manager struct {
 }
 
 // NewManager creates a scheduler struct.
-func NewManager(ctx context.Context, taskMgr TaskManager, serverID string, nodeRes *proto.NodeResource) *Manager {
+func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serverID string, nodeRes *proto.NodeResource) *Manager {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", serverID))
@@ -132,6 +134,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string, nodeR
 	schedulerManager := &Manager{
 		ctx:      subCtx,
 		cancel:   cancel,
+		store:    store,
 		taskMgr:  taskMgr,
 		serverID: serverID,
 		slotMgr:  slotMgr,
@@ -245,7 +248,7 @@ func (sm *Manager) getSchedulableTasks() ([]*proto.TaskBase, error) {
 		// directly.
 		if getSchedulerFactory(task.Type) == nil {
 			sm.logger.Warn("unknown task type", zap.Int64("task-id", task.ID),
-				zap.Stringer("task-type", task.Type))
+				zap.String("task-key", task.Key), zap.Stringer("task-type", task.Type))
 			sm.failTask(task.ID, task.State, errors.New("unknown task type"))
 			continue
 		}
@@ -281,7 +284,8 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		default:
 			allocateSlots = false
 			sm.logger.Info("start scheduler without allocating slots",
-				zap.Int64("task-id", task.ID), zap.Stringer("state", task.State))
+				zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
+				zap.Stringer("state", task.State))
 		}
 		sm.startScheduler(task, allocateSlots, reservedExecID)
 	}
@@ -321,7 +325,8 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool, reservedExecID string) {
 	task, err := sm.taskMgr.GetTaskByID(sm.ctx, basicTask.ID)
 	if err != nil {
-		sm.logger.Error("get task failed", zap.Int64("task-id", basicTask.ID), zap.Error(err))
+		sm.logger.Error("get task failed", zap.Int64("task-id", basicTask.ID),
+			zap.String("task-key", basicTask.Key), zap.Error(err))
 		return
 	}
 
@@ -333,6 +338,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		serverID:       sm.serverID,
 		allocatedSlots: allocateSlots,
 		nodeRes:        sm.nodeRes,
+		Store:          sm.store,
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))
@@ -343,7 +349,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 	if allocateSlots {
 		sm.slotMgr.reserve(basicTask, reservedExecID)
 	}
-	sm.logger.Info("task scheduler started", zap.Int64("task-id", task.ID))
+	sm.logger.Info("task scheduler started", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 	sm.schedulerWG.RunWithLog(func() {
 		defer func() {
 			scheduler.Close()
@@ -352,7 +358,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 				sm.slotMgr.unReserve(basicTask, reservedExecID)
 			}
 			handle.NotifyTaskChange()
-			sm.logger.Info("task scheduler exit", zap.Int64("task-id", task.ID))
+			sm.logger.Info("task scheduler exit", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 		}()
 		scheduler.ScheduleTask()
 		select {
@@ -412,7 +418,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	cleanedTasks := make([]*proto.Task, 0)
 	var firstErr error
 	for _, task := range tasks {
-		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID))
+		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
 		if cleanupFactory != nil {
 			cleanup := cleanupFactory()

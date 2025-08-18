@@ -65,7 +65,7 @@ const (
 	//  - v1: when vardef.SchemaCacheSize is 0, we will load all matched info
 	//    schema objects into memory eagerly.
 	//  - v2: when vardef.SchemaCacheSize is greater than 0, we will load only
-	//    names/IDS and some special tableInfo into memory immediately, and will
+	//    names/IDs and some special tableInfo into memory immediately, and will
 	//    load other info schema objects lazily when they are accessed.
 	//    we will also try to restrict the memory usage of the info schema below
 	//    vardef.SchemaCacheSize.
@@ -87,11 +87,26 @@ type Loader struct {
 	logger  *zap.Logger
 
 	// below fields are set when running background routines
-	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
+	// Note: for cross keyspace loader, we don't set below fields as system tables
+	// are forbidden to use those features.
+	//
+	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the
+	// client to the autoid service.
 	autoidClient *autoid.ClientDiscover
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
+}
+
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn) *Loader {
+	mode := LoadModeAuto
+	return &Loader{
+		mode:      mode,
+		store:     store,
+		infoCache: infoCache,
+		deferFn:   deferFn,
+		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
+	}
 }
 
 // NewLoaderForCrossKS creates a new Loader instance.
@@ -140,10 +155,15 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		return nil, false, 0, nil, err
 	}
 	// fetch the commit timestamp of the schema diff
-	schemaTs, err := l.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
-	if err != nil {
-		l.logger.Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
-		schemaTs = 0
+	var schemaTs uint64
+	// on initial bootstrap, neededSchemaVersion=0, there is no schema diff
+	if neededSchemaVersion > 0 {
+		var err2 error
+		schemaTs, err2 = l.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
+		if err2 != nil {
+			l.logger.Warn("failed to get schema version", zap.Error(err2), zap.Int64("version", neededSchemaVersion))
+			schemaTs = 0
+		}
 	}
 
 	var schemaCacheSize uint64
@@ -193,10 +213,10 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 			l.infoCache.Insert(is, schemaTs)
 			l.logger.Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
-				zap.Int64("currentSchemaVersion", currentSchemaVersion),
-				zap.Int64("neededSchemaVersion", neededSchemaVersion),
+				zap.Int64("currVer", currentSchemaVersion),
+				zap.Int64("neededVer", neededSchemaVersion),
+				zap.Int64("gotVer", is.SchemaMetaVersion()),
 				zap.Duration("elapsed time", time.Since(startTime)),
-				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
 				zap.Strings("diffTypes", diffTypes))
@@ -242,7 +262,8 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		// Not adding snapshot schema to history can avoid such cases.
 		data = infoschema.NewData()
 	}
-	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2)
+	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2).
+		WithCrossKS(l.crossKS)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -264,6 +285,19 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		l.infoCache.Insert(is, schemaTs)
 	}
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+	if !l.crossKS {
+		return false
+	}
+
+	// for cross keyspace loader, we only load diff related to system tables.
+	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
+	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
+	// ExchangePartition, etc.
+	isRelatedToSystemTables := metadef.IsReservedID(diff.TableID) || metadef.IsReservedID(diff.OldTableID)
+	return !isRelatedToSystemTables
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -305,7 +339,8 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 		}
 	})
 
-	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, l.infoCache.Data, useV2)
+	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, l.infoCache.Data, useV2).
+		WithCrossKS(l.crossKS)
 	err := builder.InitWithOldInfoSchema(l.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -316,6 +351,12 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
+		if l.skipLoadingDiff(diff) {
+			// we still need to set the schema version even if we skip loading
+			// the diff to reflect where the I_S has been synced to.
+			builder.SetSchemaVersion(diff.Version)
+			continue
+		}
 		if diff.RegenerateSchemaMap {
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
@@ -358,20 +399,23 @@ func (l *Loader) getTimestampForSchemaVersionWithNonEmptyDiff(m meta.Reader, ver
 }
 
 // fetchAllSchemasWithTables fetches all schemas with their tables.
-func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64) ([]*model.DBInfo, error) {
-	allSchemas, err := m.ListDatabases()
-	if err != nil {
-		return nil, err
-	}
+func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64) (
+	allSchemas []*model.DBInfo, err error) {
 	if l.crossKS {
-		filteredSchemas := make([]*model.DBInfo, 0, 1)
-		for _, di := range allSchemas {
-			if metadef.IsSystemDB(di.Name.L) {
-				filteredSchemas = append(filteredSchemas, di)
-				break
-			}
+		var dbInfo *model.DBInfo
+		dbInfo, err = m.GetDatabase(metadef.SystemDatabaseID)
+		if err != nil {
+			return nil, err
 		}
-		allSchemas = filteredSchemas
+		if dbInfo == nil {
+			return nil, errors.New("system database not found")
+		}
+		allSchemas = []*model.DBInfo{dbInfo}
+	} else {
+		allSchemas, err = m.ListDatabases()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(allSchemas) == 0 {
 		return nil, nil

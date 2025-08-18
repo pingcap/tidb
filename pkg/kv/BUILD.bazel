@@ -23,7 +23,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/errno",
+        "//pkg/keyspace",
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/mysql",
@@ -81,8 +83,9 @@ go_test(
     ],
     embed = [":kv"],
     flaky = True,
-    shard_count = 24,
+    shard_count = 26,
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/keyspace",
         "//pkg/meta/model",
         "//pkg/parser",

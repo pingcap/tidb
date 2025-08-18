@@ -64,12 +64,33 @@ func NewSyncer(
 	etcdCli *clientv3.Client,
 	reporter MinStartTSReporter,
 ) *Syncer {
+	return newSyncer(uuid, serverIDGetter, etcdCli, reporter, "")
+}
+
+// NewCrossKSSyncer creates a new Syncer instance for cross keyspace scenarios.
+func NewCrossKSSyncer(
+	uuid string,
+	serverIDGetter func() uint64,
+	etcdCli *clientv3.Client,
+	reporter MinStartTSReporter,
+	targetKS string,
+) *Syncer {
+	return newSyncer(uuid, serverIDGetter, etcdCli, reporter, targetKS)
+}
+
+func newSyncer(
+	uuid string,
+	serverIDGetter func() uint64,
+	etcdCli *clientv3.Client,
+	reporter MinStartTSReporter,
+	assumedKS string,
+) *Syncer {
 	is := &Syncer{
 		etcdCli:        etcdCli,
 		reporter:       reporter,
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, uuid),
 	}
-	is.info.Store(getServerInfo(uuid, serverIDGetter))
+	is.info.Store(getServerInfo(uuid, serverIDGetter, assumedKS))
 	return is
 }
 
@@ -178,7 +199,7 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
 		info := s.info.Load()
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "")
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
@@ -408,17 +429,19 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
+func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		StaticInfo: StaticInfo{
-			ID:             id,
-			IP:             cfg.AdvertiseAddress,
-			Port:           cfg.Port,
-			StatusPort:     cfg.Status.StatusPort,
-			Lease:          cfg.Lease,
-			StartTimestamp: time.Now().Unix(),
-			ServerIDGetter: serverIDGetter,
+			ID:              id,
+			IP:              cfg.AdvertiseAddress,
+			Port:            cfg.Port,
+			StatusPort:      cfg.Status.StatusPort,
+			Lease:           cfg.Lease,
+			StartTimestamp:  time.Now().Unix(),
+			Keyspace:        config.GetGlobalKeyspaceName(),
+			AssumedKeyspace: assumedKS,
+			ServerIDGetter:  serverIDGetter,
 		},
 		DynamicInfo: DynamicInfo{
 			Labels: maps.Clone(cfg.Labels),
