@@ -610,14 +610,15 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
-	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
-	if p.DataSourceType == DataSourceTypeQuery {
-		threadCnt = 2
-	}
+	var threadCnt int
 	if kerneltype.IsNextGen() {
-		threadCnt = scheduler.CalcConcurrencyByDataSize(ctx, p.TotalFileSize)
+		threadCnt = scheduler.CalcConcurrencyByDataSize(ctx, p.TotalFileSize, targetNodeCPUCnt)
+	} else {
+		threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+		if p.DataSourceType == DataSourceTypeQuery {
+			threadCnt = 2
+		}
 	}
-
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed

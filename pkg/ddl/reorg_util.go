@@ -75,13 +75,19 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 		return nil
 	}
 	var tableSizeInBytes int64
+	var cpuNum int
 	if setReorgParam || setDistTaskParam {
 		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), job.TableID)
+		var err error
+		cpuNum, err = scheduler.GetSystemKeyspaceCPUNode(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	if setReorgParam {
 		if kerneltype.IsNextGen() {
-			autoConc := scheduler.CalcConcurrencyByDataSize(ctx, tableSizeInBytes)
+			autoConc := scheduler.CalcConcurrencyByDataSize(ctx, tableSizeInBytes, cpuNum)
 			m.SetConcurrency(autoConc)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
@@ -99,7 +105,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
 		if kerneltype.IsNextGen() {
-			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(ctx, tableSizeInBytes)
+			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(ctx, tableSizeInBytes, cpuNum)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
