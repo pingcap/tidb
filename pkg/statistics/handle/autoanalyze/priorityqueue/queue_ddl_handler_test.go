@@ -978,7 +978,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testin
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	p0ID := tableInfo.GetPartitionInfo().Definitions[0].ID
@@ -1035,11 +1035,11 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testin
 	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
 
 	// Check the stats of the indexes for each partition.
-	tableStats := h.GetPhysicalTableStats(p0ID, tableInfo)
+	tableStats := h.GetPartitionStats(tableInfo, p0ID)
 	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
-	tableStats = h.GetPhysicalTableStats(p1ID, tableInfo)
+	tableStats = h.GetPartitionStats(tableInfo, p1ID)
 	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
