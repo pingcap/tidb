@@ -1174,6 +1174,8 @@ type SessionVars struct {
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
 
+	// SlowLogRules holds the set of user-defined rules that determine whether a SQL execution should be logged in the slow log.
+	// This allows flexible and fine-grained control over slow logging beyond the traditional single-threshold approach.
 	SlowLogRules *SlowLogRules
 
 	// EnableFastAnalyze indicates whether to take fast analyze.

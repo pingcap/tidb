@@ -16,190 +16,224 @@ package executor
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"reflect"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // SlowLogFieldAccessor defines how to get or set a specific field in SlowQueryLogItems.
 // - Setter is optional and pre-fills the field before matching if it needs explicit preparation.
 // - Getter is required and returns the field value for rule matching.
 type SlowLogFieldAccessor struct {
-	Setter func(ctx sessionctx.Context, items *variable.SlowQueryLogItems)
-	Getter func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{}
+	Setter func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems)
+	Getter func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{}
 }
 
 func makeExecDetailAccessor(getter func(*execdetails.ExecDetails) interface{}) SlowLogFieldAccessor {
 	return SlowLogFieldAccessor{
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			if items.ExecDetail == nil {
-				execDetail := ctx.GetSessionVars().StmtCtx.GetExecDetails()
+				execDetail := seCtx.GetSessionVars().StmtCtx.GetExecDetails()
 				items.ExecDetail = &execDetail
 			}
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return getter(items.ExecDetail)
 		},
 	}
 }
 
-func makeCopDetailAccessor(getter func(*execdetails.CopTasksDetails) interface{}) SlowLogFieldAccessor {
+func makeKVExecDetailAccessor(getter func(*util.ExecDetails) interface{}) SlowLogFieldAccessor {
 	return SlowLogFieldAccessor{
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			if items.CopTasks == nil {
-				copTasksDetail := ctx.GetSessionVars().StmtCtx.CopTasksDetails()
-				items.CopTasks = copTasksDetail
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			if items.KVExecDetail == nil {
+				tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
+				if tikvExecDetailRaw != nil {
+					items.KVExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+				}
 			}
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return getter(items.CopTasks)
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return getter(items.KVExecDetail)
 		},
 	}
 }
 
-// slowLogRuleFieldAccessors defines the set of field accessors for SlowQueryLogItems
+// SlowLogRuleFieldAccessors defines the set of field accessors for SlowQueryLogItems
 // that are relevant to evaluating and triggering SlowLogRules.
-var slowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
+// It's exporting for testing.
+var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 	variable.SlowLogConnIDStr: {
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return ctx.GetSessionVars().ConnectionID
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return seCtx.GetSessionVars().ConnectionID
 		},
 	},
 	variable.SlowLogSessAliasStr: {
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return ctx.GetSessionVars().SessionAlias
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return seCtx.GetSessionVars().SessionAlias
 		},
 	},
 	variable.SlowLogDBStr: {
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return ctx.GetSessionVars().CurrentDB
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return seCtx.GetSessionVars().CurrentDB
 		},
 	},
 	variable.SlowLogExecRetryCount: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.ExecRetryCount = ctx.GetSessionVars().StmtCtx.ExecRetryCount
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			items.ExecRetryCount = seCtx.GetSessionVars().StmtCtx.ExecRetryCount
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.ExecRetryCount
 		},
 	},
 	variable.SlowLogQueryTimeStr: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.TimeTotal = ctx.GetSessionVars().GetTotalCostDuration()
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			items.TimeTotal = seCtx.GetSessionVars().GetTotalCostDuration()
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.TimeTotal
 		},
 	},
 	variable.SlowLogParseTimeStr: {
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return ctx.GetSessionVars().DurationParse
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return seCtx.GetSessionVars().DurationParse
 		},
 	},
 	variable.SlowLogCompileTimeStr: {
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return ctx.GetSessionVars().DurationCompile
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return seCtx.GetSessionVars().DurationCompile
 		},
 	},
 	variable.SlowLogOptimizeTimeStr: {
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return ctx.GetSessionVars().DurationOptimization
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return seCtx.GetSessionVars().DurationOptimization
 		},
 	},
 	variable.SlowLogWaitTSTimeStr: {
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return ctx.GetSessionVars().DurationWaitTS
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return seCtx.GetSessionVars().DurationWaitTS
+		},
+	},
+	variable.SlowLogIsInternalStr: {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return seCtx.GetSessionVars().InRestrictedSQL
 		},
 	},
 	variable.SlowLogDigestStr: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			_, digest := ctx.GetSessionVars().StmtCtx.SQLDigest()
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			_, digest := seCtx.GetSessionVars().StmtCtx.SQLDigest()
 			items.Digest = digest.String()
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.Digest
 		},
 	},
-	variable.SlowLogNumCopTasksStr: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
-		return d.NumCopTasks
-	}),
-	variable.SlowLogCopProcAvg: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
-		return d.ProcessTimeStats.AvgTime
-	}),
-	variable.SlowLogCopProcMax: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
-		return d.ProcessTimeStats.MaxTime
-	}),
-	variable.SlowLogCopProcAddr: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
-		return d.ProcessTimeStats.MaxAddress
-	}),
-	variable.SlowLogCopWaitAvg: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
-		return d.WaitTimeStats.AvgTime
-	}),
-	variable.SlowLogCopWaitMax: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
-		return d.WaitTimeStats.MaxTime
-	}),
-	variable.SlowLogCopWaitAddr: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
-		return d.WaitTimeStats.MaxAddress
-	}),
-	variable.SlowLogMemMax: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.MemMax = ctx.GetSessionVars().MemTracker.MaxConsumed()
+	variable.SlowLogNumCopTasksStr: {
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			copTasksDetail := seCtx.GetSessionVars().StmtCtx.CopTasksDetails()
+			items.CopTasks = copTasksDetail
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return items.CopTasks.NumCopTasks
+		},
+	},
+	variable.SlowLogMemMax: {
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			items.MemMax = seCtx.GetSessionVars().MemTracker.MaxConsumed()
+		},
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.MemMax
 		},
 	},
 	variable.SlowLogDiskMax: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.DiskMax = ctx.GetSessionVars().DiskTracker.MaxConsumed()
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			items.DiskMax = seCtx.GetSessionVars().DiskTracker.MaxConsumed()
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.DiskMax
 		},
 	},
 	variable.SlowLogWriteSQLRespTotal: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			// TODO: ctx is context.Context, not sessionctx.Context, so we need to use Value instead of GetSessionVars().
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 			if stmtDetailRaw != nil {
 				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
 			}
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.WriteSQLRespTotal
 		},
 	},
 	variable.SlowLogSucc: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.Succ = ctx.GetSessionVars().StmtCtx.ExecSucc
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			items.Succ = seCtx.GetSessionVars().StmtCtx.ExecSuccess
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.Succ
 		},
 	},
 	variable.SlowLogPlanDigest: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			_, planDigest := GetPlanDigest(ctx.GetSessionVars().StmtCtx)
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			_, planDigest := GetPlanDigest(seCtx.GetSessionVars().StmtCtx)
 			items.PlanDigest = planDigest.String()
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.PlanDigest
 		},
 	},
 	variable.SlowLogResourceGroup: {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.ResourceGroupName = ctx.GetSessionVars().StmtCtx.ResourceGroupName
+		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			items.ResourceGroupName = seCtx.GetSessionVars().StmtCtx.ResourceGroupName
 		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+		Getter: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return items.ResourceGroupName
 		},
 	},
+	// The following fields are related to util.ExecDetails.
+	variable.SlowLogKVTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return time.Duration(d.WaitKVRespDuration)
+	}),
+	variable.SlowLogPDTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return time.Duration(d.WaitPDRespDuration)
+	}),
+	variable.SlowLogBackoffTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return time.Duration(d.BackoffDuration)
+	}),
+	variable.SlowLogUnpackedBytesSentTiKVTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return d.UnpackedBytesSentKVTotal
+	}),
+	variable.SlowLogUnpackedBytesReceivedTiKVTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return d.UnpackedBytesReceivedKVTotal
+	}),
+	variable.SlowLogUnpackedBytesSentTiKVCrossZone: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return d.UnpackedBytesSentKVCrossZone
+	}),
+	variable.SlowLogUnpackedBytesReceivedTiKVCrossZone: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return d.UnpackedBytesReceivedKVCrossZone
+	}),
+	variable.SlowLogUnpackedBytesSentTiFlashTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return d.UnpackedBytesSentMPPTotal
+	}),
+	variable.SlowLogUnpackedBytesReceivedTiFlashTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return d.UnpackedBytesReceivedMPPTotal
+	}),
+	variable.SlowLogUnpackedBytesSentTiFlashCrossZone: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return d.UnpackedBytesSentMPPCrossZone
+	}),
+	variable.SlowLogUnpackedBytesReceivedTiFlashCrossZone: makeKVExecDetailAccessor(func(d *util.ExecDetails) interface{} {
+		return d.UnpackedBytesReceivedMPPCrossZone
+	}),
 	// The following fields are related to execdetails.ExecDetails.
 	execdetails.ProcessTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
 		return d.TimeDetail.ProcessTime.Seconds()
@@ -232,35 +266,36 @@ var slowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 
 // PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by current session's SlowLogRules.
 // These pre-collected fields are later used for matching SQL execution details against the rules.
-func PrepareSlowLogItemsForRules(ctx sessionctx.Context) *variable.SlowQueryLogItems {
+func PrepareSlowLogItemsForRules(ctx context.Context, seCtx sessionctx.Context) *variable.SlowQueryLogItems {
 	items := &variable.SlowQueryLogItems{}
-	for field := range ctx.GetSessionVars().SlowLogRules.AllConditionFields {
-		gs := slowLogRuleFieldAccessors[field]
+	for field := range seCtx.GetSessionVars().SlowLogRules.AllConditionFields {
+		gs := SlowLogRuleFieldAccessors[field]
 		if gs.Setter != nil {
-			gs.Setter(ctx, items)
+			gs.Setter(ctx, seCtx, items)
 		}
 	}
 
 	return items
 }
 
-// completeSlowLogItemsForRules fills in the remaining SlowQueryLogItems fields
+// CompleteSlowLogItemsForRules fills in the remaining SlowQueryLogItems fields
 // that are relevant to triggering the current session's SlowLogRules.
-func completeSlowLogItemsForRules(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-	for field, sg := range slowLogRuleFieldAccessors {
-		if _, ok := ctx.GetSessionVars().SlowLogRules.AllConditionFields[field]; ok {
+// It's exporting for testing.
+func CompleteSlowLogItemsForRules(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+	for field, sg := range SlowLogRuleFieldAccessors {
+		if _, ok := seCtx.GetSessionVars().SlowLogRules.AllConditionFields[field]; ok {
 			continue
 		}
 
 		if sg.Setter != nil {
-			sg.Setter(ctx, items)
+			sg.Setter(ctx, seCtx, items)
 		}
 	}
 }
 
 // SetSlowLogItems fills the remaining fields of SlowQueryLogItems after SQL execution.
 func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *variable.SlowQueryLogItems) {
-	completeSlowLogItemsForRules(a.Ctx, items)
+	CompleteSlowLogItemsForRules(a.GoCtx, a.Ctx, items)
 
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -285,7 +320,12 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 		indexNames = buf.String()
 	}
 
-	_, tikvExecDetail, ruDetails := execdetails.GetExecDetailsFromContext(a.GoCtx)
+	var ruDetails *util.RUDetails
+	if ruDetailsVal := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
+		ruDetails = ruDetailsVal.(*util.RUDetails)
+	} else {
+		ruDetails = util.NewRUDetails()
+	}
 
 	binaryPlan := ""
 	if variable.GenerateBinaryPlan.Load() {
@@ -313,7 +353,6 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.PlanFromCache = sessVars.FoundInPlanCache
 	items.PlanFromBinding = sessVars.FoundInBinding
 	items.RewriteInfo = sessVars.RewritePhaseInfo
-	items.KVExecDetail = &tikvExecDetail
 	items.ResultRows = stmtCtx.GetResultRowsCount()
 	items.IsExplicitTxn = sessVars.TxnCtx.IsExplicit
 	items.IsWriteCacheTable = stmtCtx.WaitLockLeaseTime > 0
@@ -342,53 +381,70 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 //   - Conditions inside a rule are combined with AND: all conditions must be met for that rule.
 //
 // Returns true if any rule matches, false otherwise.
-func Match(ctx sessionctx.Context, items *variable.SlowQueryLogItems) bool {
-	rules := ctx.GetSessionVars().SlowLogRules
+func Match(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) bool {
+	rules := seCtx.GetSessionVars().SlowLogRules
 	// Or logical relationship
 	for _, rule := range rules.Rules {
 		matched := true
 
+		log.Warn(fmt.Sprintf("xxx--------------------------- %#v", rule.Conditions))
 		// And logical relationship
 		for _, condition := range rule.Conditions {
-			gs := slowLogRuleFieldAccessors[condition.Field]
-			value := gs.Getter(ctx, items)
+			gs := SlowLogRuleFieldAccessors[condition.Field]
+			value := gs.Getter(seCtx, items)
+			log.Warn(fmt.Sprintf("xxx--------------------------- field:%s, val:%v", condition.Field, value))
 
 			switch v := value.(type) {
 			case bool:
 				tv, ok := condition.Threshold.(bool)
+				log.Warn(fmt.Sprintf("xxx-------------------val:%v", tv))
 				if !ok || v != tv {
 					matched = false
 					break
 				}
 			case string:
 				tv, ok := condition.Threshold.(string)
+				log.Warn(fmt.Sprintf("xxx--------------------threshold:%v, tv:%q, v:%q, type:%v, type:%v", condition.Threshold, tv, v, reflect.TypeOf(tv), reflect.TypeOf(condition.Threshold)))
 				if !ok || v != tv {
+					log.Warn(fmt.Sprintf("xxx--------------------v != tv:%v", v != tv))
 					matched = false
 					break
 				}
 			case int64:
 				tv, ok := condition.Threshold.(int64)
+				log.Warn(fmt.Sprintf("xxx--------------------val:%v", tv))
+				if !ok || v < tv {
+					matched = false
+					break
+				}
+			case uint:
+				tv, ok := condition.Threshold.(uint)
+				log.Warn(fmt.Sprintf("xxx--------------------threshold:%v, tv:%v, type:%v, type:%v", condition.Threshold, tv, reflect.TypeOf(tv), reflect.TypeOf(condition.Threshold)))
 				if !ok || v < tv {
 					matched = false
 					break
 				}
 			case uint64:
 				tv, ok := condition.Threshold.(uint64)
+				log.Warn(fmt.Sprintf("xxx--------------------threshold:%v, tv:%v, type:%v, type:%v", condition.Threshold, tv, reflect.TypeOf(tv), reflect.TypeOf(condition.Threshold)))
 				if !ok || v < tv {
 					matched = false
 					break
 				}
 			case time.Duration:
-				tv, ok := condition.Threshold.(time.Duration)
-				if !ok || v < tv {
+				tv, ok := condition.Threshold.(float64)
+				log.Warn(fmt.Sprintf("xxx--------------------val:%v", tv))
+				if !ok || v.Seconds() < tv {
 					matched = false
 					break
 				}
 			default:
+				log.Warn(fmt.Sprintf("xxx--------------------val:%T, type:%v", v, reflect.TypeOf(v)))
 				matched = false
 				break
 			}
 		}
+		log.Warn(fmt.Sprintf("xxx--------------------------- matched:%#v", matched))
 		if matched {
 			return matched
 		}

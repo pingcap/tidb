@@ -28,29 +28,77 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+func TestGetValidValueByName(t *testing.T) {
+	// int64 fields
+	v, err := variable.GetValidValueByName(variable.SlowLogMemMax, "123")
+	require.NoError(t, err)
+	require.Equal(t, int64(123), v)
+
+	_, err = variable.GetValidValueByName(variable.SlowLogMemMax, "abc")
+	require.Error(t, err)
+
+	// uint64 fields
+	v, err = variable.GetValidValueByName(variable.SlowLogConnIDStr, "456")
+	require.NoError(t, err)
+	require.Equal(t, uint64(456), v)
+
+	_, err = variable.GetValidValueByName(variable.SlowLogConnIDStr, "-1") // invalid uint64
+	require.Error(t, err)
+
+	// float64 fields
+	v, err = variable.GetValidValueByName(variable.SlowLogQueryTimeStr, "1.234")
+	require.NoError(t, err)
+	require.Equal(t, 1.234, v)
+
+	_, err = variable.GetValidValueByName(variable.SlowLogQueryTimeStr, "abc")
+	require.Error(t, err)
+
+	// string fields
+	v, err = variable.GetValidValueByName(variable.SlowLogDBStr, "testdb")
+	require.NoError(t, err)
+	require.Equal(t, "testdb", v)
+
+	// bool fields
+	v, err = variable.GetValidValueByName(variable.SlowLogSucc, "true")
+	require.NoError(t, err)
+	require.Equal(t, true, v)
+
+	v, err = variable.GetValidValueByName(variable.SlowLogSucc, "false")
+	require.NoError(t, err)
+	require.Equal(t, false, v)
+
+	_, err = variable.GetValidValueByName(variable.SlowLogSucc, "notabool")
+	require.Error(t, err)
+
+	// unknown field
+	v, err = variable.GetValidValueByName("NonExistField", "xxx")
+	require.NoError(t, err)
+	require.Nil(t, v)
+}
+
 func TestParseSlowLogRules(t *testing.T) {
-	require.Equal(t, len(variable.SlowLogRuleFields), 31)
+	require.Equal(t, len(variable.SlowLogRuleFields), 32)
 
 	// a normal test
-	slowLogRules, err := variable.ParseSlowLogRules(`Conn_ID = 123, DB = 'db1', Succ = true, Query_time = 0.5276, Resource_group = 'rg1';
-		Conn_ID = 124, DB = 'db2', Succ = false, Query_time = 1.5276`)
+	slowLogRules, err := variable.ParseSlowLogRules(`Conn_ID: 123, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1;
+		Conn_ID: 124, DB: db2, Succ: false, Query_time: 1.5276`)
 	require.NoError(t, err)
 	rules := []variable.SlowLogRule{
 		{
 			Conditions: []variable.SlowLogCondition{
-				{Field: "Conn_ID", Threshold: "123"},
-				{Field: "DB", Threshold: "'db1'"},
-				{Field: "Succ", Threshold: "true"},
-				{Field: "Query_time", Threshold: "0.5276"},
-				{Field: "Resource_group", Threshold: "'rg1'"},
+				{Field: "Conn_ID", Threshold: uint64(123)},
+				{Field: "DB", Threshold: "db1"},
+				{Field: "Succ", Threshold: true},
+				{Field: "Query_time", Threshold: 0.5276},
+				{Field: "Resource_group", Threshold: "rg1"},
 			},
 		},
 		{
 			Conditions: []variable.SlowLogCondition{
-				{Field: "Conn_ID", Threshold: "124"},
-				{Field: "DB", Threshold: "'db2'"},
-				{Field: "Succ", Threshold: "false"},
-				{Field: "Query_time", Threshold: "1.5276"},
+				{Field: "Conn_ID", Threshold: uint64(124)},
+				{Field: "DB", Threshold: "db2"},
+				{Field: "Succ", Threshold: false},
+				{Field: "Query_time", Threshold: 1.5276},
 			},
 		},
 	}
@@ -62,7 +110,7 @@ func TestParseSlowLogRules(t *testing.T) {
 		"Resource_group": {},
 	}
 	require.Equal(t, rules, slowLogRules.Rules)
-	require.Equal(t, slowLogRules.AllConditionFields, allConditionFields)
+	require.Equal(t, allConditionFields, slowLogRules.AllConditionFields)
 
 	// return nil
 	slowLogRules, err = variable.ParseSlowLogRules("")
@@ -73,13 +121,13 @@ func TestParseSlowLogRules(t *testing.T) {
 	require.Nil(t, rules)
 
 	// exceeding the limit set by the rules
-	longRules := strings.Repeat("Conn_ID=1;", 11)
+	longRules := strings.Repeat("Conn_ID:1;", 11)
 	_, err = variable.ParseSlowLogRules(longRules)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid slow log rules count")
 
 	// unknown field
-	_, err = variable.ParseSlowLogRules("UnknownField = 1")
+	_, err = variable.ParseSlowLogRules("UnknownField: 1")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown slow log field name")
 
@@ -92,7 +140,7 @@ func TestParseSlowLogRules(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid slow log field format")
 
 	// empty fields in a single rule
-	slowLogRules, err = variable.ParseSlowLogRules("Conn_ID=1,  , DB='db'")
+	slowLogRules, err = variable.ParseSlowLogRules("Conn_ID:1,  , DB:db")
 	require.NoError(t, err)
 	require.Len(t, rules, 1)
 	require.Len(t, rules[0].Conditions, 2)

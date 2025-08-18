@@ -62,18 +62,29 @@ const (
 	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
 	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
 	SlowLogPreProcSubQueryTimeStr = "Preproc_subqueries_time"
-	// SlowLogIsInternalStr is slow log field name.
-	SlowLogIsInternalStr = "Is_internal"
+
 	// SlowLogIndexNamesStr is slow log field name.
 	SlowLogIndexNamesStr = "Index_names"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 	// SlowLogStatsInfoStr is plan stats info.
 	SlowLogStatsInfoStr = "Stats"
+	// SlowLogCopProcAvg is the average process time of all cop-tasks.
+	SlowLogCopProcAvg = "Cop_proc_avg"
 	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
 	SlowLogCopProcP90 = "Cop_proc_p90"
+	// SlowLogCopProcMax is the max process time of all cop-tasks.
+	SlowLogCopProcMax = "Cop_proc_max"
+	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
+	SlowLogCopProcAddr = "Cop_proc_addr"
+	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
+	SlowLogCopWaitAvg = "Cop_wait_avg" // #nosec G101
 	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
 	SlowLogCopWaitP90 = "Cop_wait_p90" // #nosec G101
+	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
+	SlowLogCopWaitMax = "Cop_wait_max"
+	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
+	SlowLogCopWaitAddr = "Cop_wait_addr" // #nosec G101
 	// SlowLogCopBackoffPrefix contains backoff information.
 	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
@@ -98,28 +109,8 @@ const (
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
-	// SlowLogKVTotal is the total time waiting for kv.
-	SlowLogKVTotal = "KV_total"
-	// SlowLogPDTotal is the total time waiting for pd.
-	SlowLogPDTotal = "PD_total"
 	// SlowLogBackoffTotal is the total time doing backoff.
 	SlowLogBackoffTotal = "Backoff_total"
-	// SlowLogUnpackedBytesSentTiKVTotal is the total bytes sent by tikv.
-	SlowLogUnpackedBytesSentTiKVTotal = "Unpacked_bytes_sent_tikv_total"
-	// SlowLogUnpackedBytesReceivedTiKVTotal is the total bytes received by tikv.
-	SlowLogUnpackedBytesReceivedTiKVTotal = "Unpacked_bytes_received_tikv_total"
-	// SlowLogUnpackedBytesSentTiKVCrossZone is the cross zone bytes sent by tikv.
-	SlowLogUnpackedBytesSentTiKVCrossZone = "Unpacked_bytes_sent_tikv_cross_zone"
-	// SlowLogUnpackedBytesReceivedTiKVCrossZone is the cross zone bytes received by tikv.
-	SlowLogUnpackedBytesReceivedTiKVCrossZone = "Unpacked_bytes_received_tikv_cross_zone"
-	// SlowLogUnpackedBytesSentTiFlashTotal is the total bytes sent by tiflash.
-	SlowLogUnpackedBytesSentTiFlashTotal = "Unpacked_bytes_sent_tiflash_total"
-	// SlowLogUnpackedBytesReceivedTiFlashTotal is the total bytes received by tiflash.
-	SlowLogUnpackedBytesReceivedTiFlashTotal = "Unpacked_bytes_received_tiflash_total"
-	// SlowLogUnpackedBytesSentTiFlashCrossZone is the cross zone bytes sent by tiflash.
-	SlowLogUnpackedBytesSentTiFlashCrossZone = "Unpacked_bytes_sent_tiflash_cross_zone"
-	// SlowLogUnpackedBytesReceivedTiFlashCrossZone is the cross zone bytes received by tiflash.
-	SlowLogUnpackedBytesReceivedTiFlashCrossZone = "Unpacked_bytes_received_tiflash_cross_zone"
 	// SlowLogExecRetryTime is the execution retry time.
 	SlowLogExecRetryTime = "Exec_retry_time"
 	// SlowLogBackoffDetail is the detail of backoff.
@@ -169,26 +160,36 @@ const (
 	SlowLogWaitTSTimeStr = "Wait_TS"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
+	// SlowLogIsInternalStr is slow log field name.
+	SlowLogIsInternalStr = "Is_internal"
 	// SlowLogDigestStr is slow log field name.
 	SlowLogDigestStr = "Digest"
 	// SlowLogNumCopTasksStr is the number of cop-tasks.
 	SlowLogNumCopTasksStr = "Num_cop_tasks"
-	// SlowLogCopProcAvg is the average process time of all cop-tasks.
-	SlowLogCopProcAvg = "Cop_proc_avg"
-	// SlowLogCopProcMax is the max process time of all cop-tasks.
-	SlowLogCopProcMax = "Cop_proc_max"
-	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
-	SlowLogCopProcAddr = "Cop_proc_addr"
-	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
-	SlowLogCopWaitAvg = "Cop_wait_avg" // #nosec G101
-	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
-	SlowLogCopWaitMax = "Cop_wait_max"
-	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
-	SlowLogCopWaitAddr = "Cop_wait_addr" // #nosec G101
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 	// SlowLogDiskMax is the max number bytes of disk used in this statement.
 	SlowLogDiskMax = "Disk_max"
+	// SlowLogKVTotal is the total time waiting for kv.
+	SlowLogKVTotal = "KV_total"
+	// SlowLogPDTotal is the total time waiting for pd.
+	SlowLogPDTotal = "PD_total"
+	// SlowLogUnpackedBytesSentTiKVTotal is the total bytes sent by tikv.
+	SlowLogUnpackedBytesSentTiKVTotal = "Unpacked_bytes_sent_tikv_total"
+	// SlowLogUnpackedBytesReceivedTiKVTotal is the total bytes received by tikv.
+	SlowLogUnpackedBytesReceivedTiKVTotal = "Unpacked_bytes_received_tikv_total"
+	// SlowLogUnpackedBytesSentTiKVCrossZone is the cross zone bytes sent by tikv.
+	SlowLogUnpackedBytesSentTiKVCrossZone = "Unpacked_bytes_sent_tikv_cross_zone"
+	// SlowLogUnpackedBytesReceivedTiKVCrossZone is the cross zone bytes received by tikv.
+	SlowLogUnpackedBytesReceivedTiKVCrossZone = "Unpacked_bytes_received_tikv_cross_zone"
+	// SlowLogUnpackedBytesSentTiFlashTotal is the total bytes sent by tiflash.
+	SlowLogUnpackedBytesSentTiFlashTotal = "Unpacked_bytes_sent_tiflash_total"
+	// SlowLogUnpackedBytesReceivedTiFlashTotal is the total bytes received by tiflash.
+	SlowLogUnpackedBytesReceivedTiFlashTotal = "Unpacked_bytes_received_tiflash_total"
+	// SlowLogUnpackedBytesSentTiFlashCrossZone is the cross zone bytes sent by tiflash.
+	SlowLogUnpackedBytesSentTiFlashCrossZone = "Unpacked_bytes_sent_tiflash_cross_zone"
+	// SlowLogUnpackedBytesReceivedTiFlashCrossZone is the cross zone bytes received by tiflash.
+	SlowLogUnpackedBytesReceivedTiFlashCrossZone = "Unpacked_bytes_received_tiflash_cross_zone"
 	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
 	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
@@ -551,20 +552,27 @@ var SlowLogRuleFields = map[string]struct{}{
 	SlowLogCompileTimeStr:    {},
 	SlowLogOptimizeTimeStr:   {},
 	SlowLogWaitTSTimeStr:     {},
+	SlowLogIsInternalStr:     {},
 	SlowLogDigestStr:         {},
 	SlowLogNumCopTasksStr:    {},
-	SlowLogCopProcAvg:        {},
-	SlowLogCopProcMax:        {},
-	SlowLogCopProcAddr:       {},
-	SlowLogCopWaitAvg:        {},
-	SlowLogCopWaitMax:        {},
-	SlowLogCopWaitAddr:       {},
 	SlowLogMemMax:            {},
 	SlowLogDiskMax:           {},
 	SlowLogSucc:              {},
 	SlowLogWriteSQLRespTotal: {},
 	SlowLogPlanDigest:        {},
 	SlowLogResourceGroup:     {},
+	// The following fields are related to util.ExecDetails.
+	SlowLogKVTotal:                               {},
+	SlowLogPDTotal:                               {},
+	SlowLogBackoffTotal:                          {},
+	SlowLogUnpackedBytesSentTiKVTotal:            {},
+	SlowLogUnpackedBytesReceivedTiKVTotal:        {},
+	SlowLogUnpackedBytesSentTiKVCrossZone:        {},
+	SlowLogUnpackedBytesReceivedTiKVCrossZone:    {},
+	SlowLogUnpackedBytesSentTiFlashTotal:         {},
+	SlowLogUnpackedBytesReceivedTiFlashTotal:     {},
+	SlowLogUnpackedBytesSentTiFlashCrossZone:     {},
+	SlowLogUnpackedBytesReceivedTiFlashCrossZone: {},
 	// The following fields are related to execdetails.ExecDetails.
 	execdetails.ProcessTimeStr:    {},
 	execdetails.BackoffTimeStr:    {},
@@ -581,6 +589,7 @@ var SlowLogRuleFields = map[string]struct{}{
 func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 	rawRules = strings.TrimSpace(rawRules)
 	if rawRules == "" {
+
 		return nil, nil
 	}
 
@@ -609,17 +618,22 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 
 		slowLogRule := SlowLogRule{Conditions: make([]SlowLogCondition, 0, len(fields))}
 		for _, field := range fields {
-			kv := strings.Split(field, "=")
+			kv := strings.Split(field, ":")
 			if len(kv) != 2 {
 				return nil, errors.Errorf("invalid slow log field format:%s", field)
 			}
 
+			// check
 			fieldName := strings.TrimSpace(kv[0])
 			if _, ok := SlowLogRuleFields[fieldName]; !ok {
 				return nil, errors.Errorf("unknown slow log field name:%s", fieldName)
 			}
+			value := strings.TrimSpace(kv[1])
+			fieldValue, err := GetValidValueByName(fieldName, strings.Trim(value, "\"'"))
+			if err != nil {
+				return nil, errors.Errorf("invalid slow log value format:%s, err:%s", fieldValue, err)
+			}
 
-			fieldValue := strings.TrimSpace(kv[1])
 			slowLogRule.Conditions = append(slowLogRule.Conditions, SlowLogCondition{
 				Field:     fieldName,
 				Threshold: fieldValue,
@@ -629,4 +643,46 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 		slowLogRules.Rules = append(slowLogRules.Rules, slowLogRule)
 	}
 	return slowLogRules, nil
+}
+
+// GetValidValueByName is exporting for testing.
+func GetValidValueByName(fieldName string, value string) (interface{}, error) {
+	switch fieldName {
+	case SlowLogMemMax, SlowLogDiskMax, SlowLogUnpackedBytesSentTiKVTotal,
+		SlowLogUnpackedBytesReceivedTiKVTotal, SlowLogUnpackedBytesSentTiKVCrossZone, SlowLogUnpackedBytesReceivedTiKVCrossZone,
+		SlowLogUnpackedBytesSentTiFlashTotal, SlowLogUnpackedBytesReceivedTiFlashTotal, SlowLogUnpackedBytesSentTiFlashCrossZone,
+		SlowLogUnpackedBytesReceivedTiFlashCrossZone:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	case SlowLogConnIDStr, SlowLogExecRetryCount, execdetails.WriteKeysStr, execdetails.WriteSizeStr, execdetails.PrewriteRegionStr,
+		execdetails.TotalKeysStr, execdetails.ProcessKeysStr:
+		v, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	case SlowLogQueryTimeStr, SlowLogParseTimeStr, SlowLogCompileTimeStr, SlowLogRewriteTimeStr, SlowLogOptimizeTimeStr,
+		SlowLogWaitTSTimeStr, execdetails.PreWriteTimeStr,
+		execdetails.CommitTimeStr, execdetails.ProcessTimeStr, execdetails.BackoffTimeStr,
+		SlowLogCopProcAvg, SlowLogCopProcMax, SlowLogCopWaitAvg, SlowLogCopWaitMax, SlowLogWriteSQLRespTotal:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	case SlowLogDBStr, SlowLogDigestStr, SlowLogCopProcAddr, SlowLogCopWaitAddr, SlowLogPlanDigest,
+		SlowLogResourceGroup:
+		return value, nil
+	case SlowLogSucc, SlowLogIsInternalStr:
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
+	}
+
+	return nil, nil
 }

@@ -251,8 +251,11 @@ type StatementContext struct {
 	hint.StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
-	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage,
+	// and it can be handled by the DDL worker.
+	// we will use this field to skip connections which are doing DDL when reporting
+	// the min start TS to PD.
+	IsDDLJobInQueue        atomic.Bool
 	DDLJobID               int64
 	InInsertStmt           bool
 	InUpdateStmt           bool
@@ -264,7 +267,6 @@ type StatementContext struct {
 	ExplainFormat          string
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
 	InShowWarning          bool
 
 	contextutil.PlanCacheTracker
@@ -316,6 +318,7 @@ type StatementContext struct {
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
 	RunawayChecker      resourcegroup.RunawayChecker
+	IsTiKV              atomic2.Bool
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
@@ -330,7 +333,9 @@ type StatementContext struct {
 	}
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
-	BindSQL string
+	BindSQL        string
+	ExecRetryCount uint
+	ExecSuccess    bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.

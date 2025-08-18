@@ -1652,7 +1652,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	enable := cfg.Instance.EnableSlowLog.Load()
 	// If the level is Debug, or trace is enabled, print slow logs anyway.
 	force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
-	slowItems := PrepareSlowLogItemsForRules(a.Ctx)
+
+	a.Ctx.GetSessionVars().StmtCtx.ExecSuccess = succ
+	a.Ctx.GetSessionVars().StmtCtx.ExecRetryCount = a.retryCount
+
+	slowItems := PrepareSlowLogItemsForRules(a.GoCtx, a.Ctx)
 	matchRules := Match(a.Ctx, slowItems)
 	if (!enable || !matchRules) && !force {
 		return
