@@ -19,12 +19,15 @@ import (
 	"encoding/binary"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -62,6 +65,9 @@ type OneFileWriter struct {
 	maxKey []byte
 
 	logger *zap.Logger
+
+	onDup   common.OnDuplicateKey
+	lastKey []byte
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
@@ -105,7 +111,11 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	if w.minKey == nil {
 		w.minKey = slices.Clone(idxKey)
 	}
+	if slices.Compare(w.lastKey, idxKey) == 0 && w.onDup == common.OnDuplicateKeyError {
+		return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
+	}
 	// 1. encode data and write to kvStore.
+	writeStartTime := time.Now()
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
@@ -138,6 +148,11 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
+	w.lastKey = slices.Clone(idxKey)
+	writeDuration := time.Since(writeStartTime)
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
+		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
 	return nil
 }
 

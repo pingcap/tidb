@@ -3978,24 +3978,33 @@
                       {
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
-                            "lDatum": "KindBytes \\x01",
+                            "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
-                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
+                            "rDatum": "KindInt64 -1500"
                           },
                           {
                             "commonPrefix": 0,
-                            "lScalar": 72057594037927940,
-                            "rScalar": 252201579132747780,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
                             "unsigned": false
                           },
                           {
-                            "Result": 0
+                            "boundL": -2997,
+                            "boundR": 2997,
+                            "histL": -999,
+                            "histR": 999,
+                            "lPercent": 0.5613744375005636,
+                            "rPercent": 0,
+                            "rowCount": 555.760693125558
+                          },
+                          {
+                            "Result": 100
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 100,
                           "Type": "Range"
                         }
                       }
@@ -4003,7 +4012,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 1
+                    "Result": 100
                   }
                 ]
               },
@@ -4156,11 +4165,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.0003246753246753247,
+                "Selectivity": 0.032467532467532464,
                 "partial cover": false
               },
               {
-                "Result": 1.9066503965832828e-7
+                "Result": 0.000019066503965832824
               }
             ]
           }

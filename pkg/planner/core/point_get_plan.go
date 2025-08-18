@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -349,60 +350,6 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	loadTableStats(ctx, p.TblInfo, tableID)
 }
 
-// needsPartitionPruning checks if IndexValues can be used by GetPartitionIdxByRow() or if they have already been
-// converted to SortKey and would need GetPartitionIdxByRow() to be refactored to work, since it will unconditionally
-// convert it again.
-// Returns:
-// Matching partition
-// if done Partition pruning (else not needed, can use GetPartitionIdxByRow() instead)
-// error
-// TODO: Also supporting BatchPointGet? Problem is that partition ID must be mapped to handle/IndexValue.
-func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt table.PartitionedTable, dbName string, indexInfo *model.IndexInfo, indexCols []*expression.Column, indexValues []types.Datum, conds []expression.Expression, partitionNames []pmodel.CIStr) ([]int, bool, error) {
-	for i := range indexValues {
-		if tblInfo.Columns[indexInfo.Columns[i].Offset].FieldType.EvalType() != types.ETString ||
-			indexValues[i].Collation() == tblInfo.Columns[indexInfo.Columns[i].Offset].GetCollate() {
-			return nil, false, nil
-		}
-	}
-	// convertToPointGet will have the IndexValues already converted to SortKey,
-	// which will be converted again by GetPartitionIdxByRow, so we need to re-run the pruner
-	// with the conditions.
-
-	// TODO: Is there a simpler way, or existing function for this?!?
-	tblCols := make([]*expression.Column, 0, len(indexInfo.Columns))
-	var partNameSlice types.NameSlice
-	for _, tblCol := range tblInfo.Columns {
-		found := false
-		for _, idxCol := range indexCols {
-			if idxCol.ID == tblCol.ID {
-				tblCols = append(tblCols, idxCol)
-				found = true
-				break
-			}
-		}
-		partNameSlice = append(partNameSlice, &types.FieldName{
-			ColName:     tblCol.Name,
-			TblName:     tblInfo.Name,
-			DBName:      pmodel.NewCIStr(dbName),
-			OrigTblName: tblInfo.Name,
-			OrigColName: tblCol.Name,
-		})
-		if !found {
-			tblCols = append(tblCols, &expression.Column{
-				ID:       tblCol.ID,
-				OrigName: tblCol.Name.O,
-				RetType:  tblCol.FieldType.Clone(),
-			})
-		}
-	}
-
-	partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, conds, partitionNames, tblCols, partNameSlice)
-	if err != nil || len(partIdx) != 1 {
-		return nil, true, err
-	}
-	return partIdx, true, nil
-}
-
 // PrunePartitions will check which partition to use
 // returns true if no matching partition
 func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
@@ -447,32 +394,29 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	}
 	row := make([]types.Datum, len(p.TblInfo.Columns))
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
-		partColsNames := pt.Meta().Partition.Columns
-		if len(partColsNames) > 0 {
-			partIdx, done, err := needsPartitionPruning(sctx, p.TblInfo, pt, p.dbName, p.IndexInfo, p.IdxCols, p.IndexValues, p.AccessConditions, p.PartitionNames)
-			if table.ErrNoPartitionForGivenValue.Equal(err) {
-				err = nil
-				partIdx = nil
-			}
-			if err != nil {
-				return false, err
-			}
-			if done {
-				if len(partIdx) == 1 {
-					p.PartitionIdx = &partIdx[0]
-					return false, nil
+		indexValues := p.IndexValues
+		evalCtx := sctx.GetExprCtx().GetEvalCtx()
+		// If the plan is created via the fast path, `IdxCols` will be nil here,
+		// and the fast path does not convert the values to `sortKey`.
+		for _, col := range p.IdxCols {
+			// TODO: We could check whether `col` belongs to the partition columns to avoid unnecessary ranger building.
+			// https://github.com/pingcap/tidb/pull/62002#discussion_r2171420731
+			if !collate.IsBinCollation(col.GetType(evalCtx).GetCollate()) {
+				// If a non-binary collation is used, the values in `p.IndexValues` are sort keys and cannot be used for partition pruning.
+				r, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
+				if err != nil {
+					return false, err
 				}
-				if len(partIdx) == 0 {
-					idx := -1
-					p.PartitionIdx = &idx
-					return true, nil
+				if len(r.Ranges) != 1 || !r.Ranges[0].IsPoint(sctx.GetRangerCtx()) {
+					return false, errors.Errorf("internal error, build ranger for PointGet failed")
 				}
-				return false, errors.Errorf("too many partitions matching for PointGetPlan")
+				indexValues = r.Ranges[0].LowVal
+				break
 			}
 		}
 		for i := range p.IndexInfo.Columns {
 			// TODO: Skip copying non-partitioning columns?
-			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
+			indexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
 		}
 	} else {
 		var dVal types.Datum
@@ -738,6 +682,10 @@ func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []pmodel.CIStr) bool {
 	if len(names) == 0 {
 		return true
+	}
+	// partIdx can be -1 more to check issue #62458
+	if pi == nil || idx < 0 || idx >= len(pi.Definitions) {
+		return false
 	}
 	s := pi.Definitions[idx].Name.L
 	for _, name := range names {
@@ -1922,7 +1870,8 @@ func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblNam
 	if !ok {
 		return nil, false
 	}
-	if binOp.Op == opcode.LogicAnd {
+	switch binOp.Op {
+	case opcode.LogicAnd:
 		nvPairs, isTableDual = getNameValuePairs(ctx, tbl, tblName, nvPairs, binOp.L)
 		if nvPairs == nil || isTableDual {
 			return nil, isTableDual
@@ -1932,7 +1881,7 @@ func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblNam
 			return nil, isTableDual
 		}
 		return nvPairs, isTableDual
-	} else if binOp.Op == opcode.EQ {
+	case opcode.EQ:
 		var (
 			d       types.Datum
 			colName *ast.ColumnNameExpr
@@ -2240,7 +2189,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
+	handleCols := buildHandleCols(dbName, tbl, pointPlan)
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
@@ -2403,7 +2352,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
+	handleCols := buildHandleCols(dbName, tbl, pointPlan)
 	var err error
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(context.Background(), tbl.ID)
@@ -2453,7 +2402,7 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
+func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
 	schema := pointget.Schema()
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
@@ -2466,7 +2415,7 @@ func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, 
 
 	if tbl.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tbl)
-		return util.NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
+		return util.NewCommonHandleCols(tbl, pkIdx, schema.Columns)
 	}
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())

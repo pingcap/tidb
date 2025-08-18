@@ -190,19 +190,25 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 	// the retry is for the temporary network errors during sending request.
 	return utils.WithRetry(ctx, func() error {
 		err := c.tryScatterRegions(ctx, newRegions)
-		if isUnsupportedError(err) {
-			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
+		// if err is unsupported, we need to fallback to the old method.
+		// ErrPDRegionsNotFullyScatter means the regions are not fully scattered,
+		// in new version of PD, the scatter regions API will return the failed regions id,
+		// but the old version of PD will only return the FinishedPercentage.
+		// so we need to retry the regions one by one.
+		if isUnsupportedError(err) || berrors.ErrPDRegionsNotFullyScatter.Equal(err) {
+			log.Warn("failed to batch scatter regions, rollback to sequentially scatter", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
-				// backoff about 6s, or we give up scattering this region.
+				// backoff about 1h total, or we give up scattering this region.
 				&ExponentialBackoffer{
-					Attempts:    7,
+					Attempts:    1800,
 					BaseBackoff: 100 * time.Millisecond,
+					MaxDelay:    2 * time.Second,
 				})
 			return nil
 		}
 		return err
-	}, &ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
+	}, &ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond, MaxDelay: 2 * time.Second})
 }
 
 func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
@@ -221,6 +227,10 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 		return errors.Annotatef(berrors.ErrPDInvalidResponse,
 			"pd returns error during batch scattering: %s", pbErr)
 	}
+	if finished := resp.GetFinishedPercentage(); finished < 100 {
+		return errors.Annotatef(berrors.ErrPDRegionsNotFullyScatter, "scatter finished percentage %d less than 100", finished)
+	}
+
 	return nil
 }
 
@@ -828,6 +838,11 @@ func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []
 					logutil.Region(region.Region),
 				)
 				delete(newRegionSet, region.Region.Id)
+			} else {
+				log.Warn("scatter region meet error, will retry",
+					logutil.ShortError(err),
+					logutil.Region(region.Region),
+				)
 			}
 			errs = multierr.Append(errs, err)
 		}
@@ -1003,6 +1018,7 @@ func CheckRegionEpoch(_new, _old *RegionInfo) bool {
 type ExponentialBackoffer struct {
 	Attempts    int
 	BaseBackoff time.Duration
+	MaxDelay    time.Duration
 }
 
 func (b *ExponentialBackoffer) exponentialBackoff() time.Duration {
@@ -1012,6 +1028,9 @@ func (b *ExponentialBackoffer) exponentialBackoff() time.Duration {
 		return 0
 	}
 	b.BaseBackoff *= 2
+	if b.MaxDelay > 0 && b.BaseBackoff > b.MaxDelay {
+		b.BaseBackoff = b.MaxDelay
+	}
 	return bo
 }
 
@@ -1024,12 +1043,17 @@ func PdErrorCanRetry(err error) bool {
 	//
 	// (2) shouldn't happen in a recently splitted region.
 	// (1) and (3) might happen, and should be retried.
+	//
+	// (4) operator canceled because cannot add an operator to the execute queue [PD:store-limit]
+	// (5) failed to create scatter region operator [PD:schedule:ErrCreateOperator]
 	grpcErr := status.Convert(err)
 	if grpcErr == nil {
 		return false
 	}
 	return strings.Contains(grpcErr.Message(), "is not fully replicated") ||
-		strings.Contains(grpcErr.Message(), "has no leader")
+		strings.Contains(grpcErr.Message(), "has no leader") ||
+		strings.Contains(grpcErr.Message(), "cannot add an operator to the execute queue") ||
+		strings.Contains(grpcErr.Message(), "failed to create scatter region operator")
 }
 
 // NextBackoff returns a duration to wait before retrying again.

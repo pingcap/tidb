@@ -1,6 +1,10 @@
 package variable
 
-import "go.uber.org/atomic"
+import (
+	"time"
+
+	"go.uber.org/atomic"
+)
 
 const (
 	// TiDBXEnableScheduleLeaderRule indicates whether to enable region leader in one store.
@@ -13,12 +17,29 @@ const (
 
 // Default TiDB system variable values.
 const (
-	DefTiDBXEnableLocalRPCOpt        = false
-	DefTiDBXEnableScheduleLeaderRule = false
+	DefTiDBXEnableLocalRPCOpt         = false
+	DefTiDBXEnableScheduleLeaderRule  = false
+	DefTiDBEnableLabelSecurity        = false
+	DefTiDBEnableLoginHistory         = false
+	DefTiDBLoginHistoryRetainDuration = time.Hour * 24 * 90 // default 90 days.
+	DefStoredProgramCacheSize         = 256
+	DefTiDBEnableProcedure            = false
+	DefTiDBEnableDutySeparationMode   = false
+	DefTiDBEnableUDVSubstitute        = false
+	DefTiDBEnableSPParamSubstitute    = false
 )
 
 // Process global variables.
 var (
 	EnableScheduleLeaderRule                = atomic.NewBool(DefTiDBXEnableScheduleLeaderRule)
 	EnableScheduleLeaderRuleFn func(v bool) = nil
+	EnableLabelSecurity                     = atomic.NewBool(DefTiDBEnableLabelSecurity)
+
+	EnableLoginHistory         = atomic.NewBool(DefTiDBEnableLoginHistory)
+	LoginHistoryRetainDuration = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)
+	StoredProgramCacheSize     = atomic.NewInt64(DefStoredProgramCacheSize)
+	TiDBEnableSPAstReuse       = atomic.NewBool(true)
+	TiDBEnableProcedureValue   = atomic.NewBool(DefTiDBEnableProcedure)
+	AutomaticSPPrivileges      = atomic.NewBool(true)
+	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
 )

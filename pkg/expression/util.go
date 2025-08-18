@@ -1409,6 +1409,9 @@ func IsImmutableFunc(expr Expression) bool {
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(exprs []Expression) []Expression {
+	if len(exprs) <= 1 {
+		return exprs
+	}
 	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
 	for _, expr := range exprs {
@@ -1562,6 +1565,12 @@ func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	return containMutableConst(ctx.GetEvalCtx(), exprs)
 }
 
+// MaybeOverOptimized4PlanCacheForMultiExpression is the same as MaybeOverOptimized4PlanCache,
+// but it accepts multiple expressions as input.
+func MaybeOverOptimized4PlanCacheForMultiExpression(ctx BuildContext, exprs ...Expression) bool {
+	return MaybeOverOptimized4PlanCache(ctx, exprs)
+}
+
 // containMutableConst checks if the expressions contain a lazy constant.
 func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 	for _, expr := range exprs {
@@ -1595,7 +1604,10 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 			}
 			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			return RemoveMutableConst(ctx, v.GetArgs())
+			err := RemoveMutableConst(ctx, v.GetArgs())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

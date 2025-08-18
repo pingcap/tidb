@@ -96,7 +96,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		if e.updatedRowKeys[content.Start] == nil {
 			e.updatedRowKeys[content.Start] = kv.NewMemAwareHandleMap[bool]()
 		}
-		handle, err := content.HandleCols.BuildHandleByDatums(row)
+		handle, err := content.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, row)
 		if err != nil {
 			return err
 		}

@@ -48,11 +48,25 @@ func (local *Backend) splitAndScatterRegionInBatches(
 	ctx context.Context,
 	splitKeys [][]byte,
 	batchCnt int,
+	maxCntPerSec float64,
 ) error {
+	var limiter *rate.Limiter
+	if maxCntPerSec > 0 {
+		eventLimit := max(1, int(maxCntPerSec*ratePerSecMultiplier))
+		burstPerSec := getRateBurst(maxCntPerSec)
+		limiter = rate.NewLimiter(rate.Limit(eventLimit), burstPerSec*ratePerSecMultiplier)
+		batchCnt = min(batchCnt, burstPerSec)
+	}
 	for i := 0; i < len(splitKeys); i += batchCnt {
 		batch := splitKeys[i:]
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
+		}
+		if limiter != nil {
+			err := limiter.WaitN(ctx, len(batch)*ratePerSecMultiplier)
+			if err != nil {
+				return err
+			}
 		}
 		if err := local.splitAndScatterRegionByRanges(ctx, batch); err != nil {
 			return errors.Trace(err)

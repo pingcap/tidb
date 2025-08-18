@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/hex"
+	goerrors "errors"
 	"flag"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -267,7 +269,7 @@ func readFileSequential(t *testing.T, s *readTestSuite) {
 				break
 			}
 		}
-		intest.Assert(err == io.EOF)
+		intest.Assert(goerrors.Is(err, io.EOF))
 		totalFileSize.Add(int64(sz))
 		err = reader.Close()
 		intest.AssertNoError(err)
@@ -311,7 +313,7 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 					break
 				}
 			}
-			intest.Assert(err == io.EOF)
+			intest.Assert(goerrors.Is(err, io.EOF))
 			totalFileSize.Add(int64(sz))
 			err = reader.Close()
 			intest.AssertNoError(err)
@@ -505,6 +507,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		onClose,
 		s.concurrency,
 		s.mergeIterHotspot,
+		common.OnDuplicateKeyIgnore,
 	)
 
 	intest.AssertNoError(err)

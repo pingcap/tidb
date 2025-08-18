@@ -175,14 +175,15 @@ it.pk
 LIMIT
 240;
 id	estRows	task	access object	operator info
-Projection	41.67	root		planner__core__casetest__predicate_simplification.dt.a, planner__core__casetest__predicate_simplification.dt.pk, planner__core__casetest__predicate_simplification.dt.b, planner__core__casetest__predicate_simplification.dt.c
-└─IndexHashJoin	41.67	root		left outer join, inner:TableReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk), other cond:or(gt(planner__core__casetest__predicate_simplification.it.a, "a"), and(eq(planner__core__casetest__predicate_simplification.it.a, "a"), gt(planner__core__casetest__predicate_simplification.dt.pk, 1)))
-  ├─Limit(Build)	33.33	root		offset:0, count:240
-  │ └─IndexReader	33.33	root		index:Limit
-  │   └─Limit	33.33	cop[tikv]		offset:0, count:240
-  │     └─IndexRangeScan	33.33	cop[tikv]	table:it, index:f(a, pk)	range:("a" 1,"a" +inf], keep order:true, stats:pseudo
-  └─TableReader(Probe)	33.33	root		data:TableRangeScan
-    └─TableRangeScan	33.33	cop[tikv]	table:dt	range: decided by [planner__core__casetest__predicate_simplification.it.pk], keep order:false, stats:pseudo
+Projection	4.19	root		planner__core__casetest__predicate_simplification.dt.a, planner__core__casetest__predicate_simplification.dt.pk, planner__core__casetest__predicate_simplification.dt.b, planner__core__casetest__predicate_simplification.dt.c
+└─IndexHashJoin	4.19	root		left outer join, inner:TableReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk), other cond:or(gt(planner__core__casetest__predicate_simplification.it.a, "a"), and(eq(planner__core__casetest__predicate_simplification.it.a, "a"), gt(planner__core__casetest__predicate_simplification.dt.pk, 1)))
+  ├─Limit(Build)	3.36	root		offset:0, count:240
+  │ └─IndexReader	3.37	root		index:Limit
+  │   └─Limit	3.37	cop[tikv]		offset:0, count:240
+  │     └─Selection	3.37	cop[tikv]		or(gt(planner__core__casetest__predicate_simplification.it.a, "a"), and(eq(planner__core__casetest__predicate_simplification.it.a, "a"), gt(planner__core__casetest__predicate_simplification.it.pk, 1)))
+  │       └─IndexRangeScan	10.00	cop[tikv]	table:it, index:f(a, pk)	range:["a","a"], keep order:true, stats:pseudo
+  └─TableReader(Probe)	3.36	root		data:TableRangeScan
+    └─TableRangeScan	3.36	cop[tikv]	table:dt	range: decided by [planner__core__casetest__predicate_simplification.it.pk], keep order:false, stats:pseudo
 explain  format='brief' SELECT * FROM
 (
 SELECT
@@ -247,9 +248,9 @@ CREATE TABLE t1 (code varchar(10)) charset utf8mb4;
 CREATE TABLE t2 (id varchar(10) ) charset utf8mb4;
 EXPLAIN format='brief' SELECT * FROM t1 INNER JOIN t2 ON code=id WHERE id='a12' AND (LENGTH(code)=5 OR code < 'a00');
 id	estRows	task	access object	operator info
-HashJoin	10.00	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.t1.code, planner__core__casetest__predicate_simplification.t2.id)], other cond:or(eq(length(planner__core__casetest__predicate_simplification.t1.code), 5), lt(planner__core__casetest__predicate_simplification.t2.id, "a00"))
-├─TableReader(Build)	8.00	root		data:Selection
-│ └─Selection	8.00	cop[tikv]		eq(length(planner__core__casetest__predicate_simplification.t1.code), 5), eq(planner__core__casetest__predicate_simplification.t1.code, "a12"), not(isnull(planner__core__casetest__predicate_simplification.t1.code))
+HashJoin	10.83	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.t1.code, planner__core__casetest__predicate_simplification.t2.id)], other cond:or(eq(length(planner__core__casetest__predicate_simplification.t1.code), 5), lt(planner__core__casetest__predicate_simplification.t2.id, "a00"))
+├─TableReader(Build)	8.66	root		data:Selection
+│ └─Selection	8.66	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.code, "a12"), not(isnull(planner__core__casetest__predicate_simplification.t1.code)), or(eq(length(planner__core__casetest__predicate_simplification.t1.code), 5), lt(planner__core__casetest__predicate_simplification.t1.code, "a00"))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	10.00	root		data:Selection
   └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t2.id, "a12"), not(isnull(planner__core__casetest__predicate_simplification.t2.id))
@@ -292,3 +293,18 @@ HashJoin_9	12.50	root		inner join, equal:[eq(planner__core__casetest__predicate_
 └─TableReader_13(Probe)	10.00	root		data:Selection_12
   └─Selection_12	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
     └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+CREATE TABLE `t910beff5` (
+`col_40` tinyint unsigned DEFAULT '95',
+`col_41` tinytext COLLATE gbk_bin NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;
+INSERT INTO `t910beff5` VALUES(7,'CWHObI8-!amnYA'),(1,'g+!OHa@OTdsA2#JN'),(249,'cwx!P4xaX)U'),(118,'mlDJX^n+'),(0,'EOZ9*QUsH%qi)%'),(183,'9*Lzmwg%pxy'),(139,'!ME5dBDrOG5'),(127,'BNb8SajqZ'),(209,'IWS^j'),(68,'U9v99'),(187,'dE*Zzjz#0&'),(10,'iC'),(87,'jIgUfpWzE9#oQhn&#&'),(4,'BLmM2'),(153,'(BG(8nIFNyE$%i'),(51,'EDhm)%Fie~qReM');
+SELECT AVG(DISTINCT `t910beff5`.`col_40`) AS `r0` FROM `t910beff5` WHERE `t910beff5`.`col_41`>='D1$9+VTpEe)' OR `t910beff5`.`col_41` BETWEEN 'znRD*2pkmtm4' AND 'PBueg(&tWY%dzsT(_' GROUP BY `t910beff5`.`col_40`,`t910beff5`.`col_41` HAVING `t910beff5`.`col_41`='cwx!P4xaX)U';
+r0
+249.0000
+explain format=brief SELECT AVG(DISTINCT `t910beff5`.`col_40`) AS `r0` FROM `t910beff5` WHERE `t910beff5`.`col_41`>='D1$9+VTpEe)' OR `t910beff5`.`col_41` BETWEEN 'znRD*2pkmtm4' AND 'PBueg(&tWY%dzsT(_' GROUP BY `t910beff5`.`col_40`,`t910beff5`.`col_41` HAVING `t910beff5`.`col_41`='cwx!P4xaX)U';
+id	estRows	task	access object	operator info
+HashAgg	8.00	root		group by:Column#7, Column#8, funcs:avg(distinct Column#6)->Column#4
+└─Projection	10.00	root		cast(planner__core__casetest__predicate_simplification.t910beff5.col_40, decimal(3,0) UNSIGNED BINARY)->Column#6, planner__core__casetest__predicate_simplification.t910beff5.col_40->Column#7, planner__core__casetest__predicate_simplification.t910beff5.col_41->Column#8
+  └─TableReader	10.00	root		data:Selection
+    └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t910beff5.col_41, "cwx!P4xaX)U"), or(ge(planner__core__casetest__predicate_simplification.t910beff5.col_41, "D1$9+VTpEe)"), and(ge(planner__core__casetest__predicate_simplification.t910beff5.col_41, "znRD*2pkmtm4"), le(planner__core__casetest__predicate_simplification.t910beff5.col_41, "PBueg(&tWY%dzsT(_")))
+      └─TableFullScan	10000.00	cop[tikv]	table:t910beff5	keep order:false, stats:pseudo
