@@ -158,7 +158,7 @@ var SetPredicatePushDownFlag func(uint64) uint64
 
 // ApplyPredicateSimplification is a hook for other packages to simplify the expression.
 var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
-	propagateConstant bool, filter func(expr expression.Expression) bool) []expression.Expression
+	propagateConstant bool, filter expression.PushDownFuncType) []expression.Expression
 
 // BuildKeyInfoPortal is a hook for other packages to build key info for logical plan.
 var BuildKeyInfoPortal func(lp base.LogicalPlan)
