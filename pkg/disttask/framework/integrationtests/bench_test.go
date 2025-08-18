@@ -121,7 +121,7 @@ func prepareForBenchTest(b *testing.B) {
 	dom, err = session.BootstrapSession(store)
 	defer func() {
 		dom.Close()
-		ddl.CloseOwnerManager()
+		ddl.CloseOwnerManager(store)
 		err := store.Close()
 		require.NoError(b, err)
 		view.Stop()

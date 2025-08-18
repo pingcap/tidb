@@ -53,7 +53,7 @@ type FlatPhysicalPlan struct {
 
 	// The fields below are only used when building the FlatPhysicalPlan.
 	buildSideFirst bool
-	ctesToFlatten  []*PhysicalCTE
+	ctesToFlatten  []*physicalop.PhysicalCTE
 }
 
 // FlatPlanTree is a simplified plan tree.
@@ -208,7 +208,7 @@ func FlattenPhysicalPlan(p base.Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	// nolint:intrange
 	for i := 0; i < len(res.ctesToFlatten); i++ {
 		cte := res.ctesToFlatten[i]
-		cteDef := (*CTEDefinition)(cte)
+		cteDef := (*physicalop.CTEDefinition)(cte)
 		if _, ok := flattenedCTEPlan[cteDef.CTE.IDForStorage]; ok {
 			continue
 		}
@@ -281,7 +281,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		label := make([]OperatorLabel, len(physPlan.Children()))
 
 		switch plan := physPlan.(type) {
-		case *PhysicalApply:
+		case *physicalop.PhysicalApply:
 			label[plan.InnerChildIdx] = ProbeSide
 			label[1-plan.InnerChildIdx] = BuildSide
 		case *physicalop.PhysicalHashJoin:
@@ -389,7 +389,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.isLastChild = true
 		target, childIdx = f.flattenRecursively(plan.DataSource, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		// We shallow copy the PhysicalCTE here because we don't want the probeParents (see comments in PhysicalPlan
 		// for details) to affect the row count display of the independent CTE plan tree.
 		copiedCTE := *plan
@@ -513,7 +513,7 @@ func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascades(childCtx *operator
 	return target, childIdxs
 }
 
-func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *operatorCtx, target FlatPlanTree) FlatPlanTree {
+func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *physicalop.CTEDefinition, info *operatorCtx, target FlatPlanTree) FlatPlanTree {
 	flat := f.flattenSingle(cteDef, info)
 	if flat != nil {
 		target = append(target, flat)

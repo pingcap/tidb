@@ -106,3 +106,30 @@ func (a *IndexAccess) ToPB() *tipb.IndexAccess {
 		IsClusteredIndex: a.IsClusteredIndex,
 	}
 }
+
+// OtherAccessObject represents other kinds of access.
+type OtherAccessObject string
+
+func (o OtherAccessObject) String() string {
+	return string(o)
+}
+
+// NormalizedString implements AccessObject.
+func (o OtherAccessObject) NormalizedString() string {
+	return o.String()
+}
+
+// SetIntoPB implements AccessObject.
+func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
+	if pb == nil {
+		return
+	}
+	if o == "" {
+		return
+	}
+	pb.AccessObjects = []*tipb.AccessObject{
+		{
+			AccessObject: &tipb.AccessObject_OtherObject{OtherObject: string(o)},
+		},
+	}
+}

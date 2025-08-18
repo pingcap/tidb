@@ -67,7 +67,7 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 	switch p := plan.(type) {
 	case *physicalop.PhysicalHashAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
-	case *PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *physicalop.PhysicalSort:
 		plan = InjectProjBelowSort(p, p.ByItems)

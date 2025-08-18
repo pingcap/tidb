@@ -19,15 +19,20 @@ import (
 	"regexp"
 )
 
-var nameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{0,64}$`)
-
 // Check if the name is valid.
 // Valid name must be 64 characters or fewer and consist only of letters (a-z, A-Z),
 // numbers (0-9), hyphens (-), and underscores (_).
 // currently, we enforce this rule to tidb_service_scope and keyspace_name
-func Check(scope string) error {
-	if !nameRe.MatchString(scope) {
-		return fmt.Errorf("the value '%s' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)", scope)
+func Check(name string) error {
+	return CheckWithMaxLen(name, 64)
+}
+
+// CheckWithMaxLen checks if the name is valid with the specified maximum length.
+func CheckWithMaxLen(name string, maxLen int) error {
+	namePattern := fmt.Sprintf(`^[a-zA-Z0-9_-]{0,%d}$`, maxLen)
+	nameRe := regexp.MustCompile(namePattern)
+	if !nameRe.MatchString(name) {
+		return fmt.Errorf("the value '%s' is invalid. It must be %d characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)", name, maxLen)
 	}
 	return nil
 }

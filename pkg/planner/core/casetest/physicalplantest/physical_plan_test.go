@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -64,7 +66,7 @@ func TestRefine(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("input: %s", tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -96,7 +98,7 @@ func TestAggEliminator(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("input: %s", tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -152,7 +154,7 @@ func TestRuleColumnPruningLogicalApply(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@tidb_opt_fix_control = '45822:ON';")
 		for i, tt := range input {
@@ -187,7 +189,7 @@ func TestSemiJoinToInner(t *testing.T) {
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			stmt, err := p.ParseOneStmt(tt, "", "")
 			require.NoError(t, err)
@@ -214,7 +216,7 @@ func TestUnmatchedTableInHint(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, test := range input {
 			testKit.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
 			stmt, err := p.ParseOneStmt(test, "", "")
@@ -650,7 +652,7 @@ func TestHintScope(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 		for i, test := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, test)
@@ -688,7 +690,7 @@ func TestJoinHints(t *testing.T) {
 	planSuiteData.LoadTestCases(t, &input, &output)
 	ctx := context.Background()
 	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 	for i, test := range input {
 		comment := fmt.Sprintf("case:%v sql:%s", i, test)
@@ -749,7 +751,7 @@ func TestAggregationHints(t *testing.T) {
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		ctx := context.Background()
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, test := range input {
 			comment := fmt.Sprintf("case: %v sql: %v", i, test)
 			testKit.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
@@ -800,7 +802,7 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		ctx := context.Background()
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, test := range input {
 			comment := fmt.Sprintf("case: %v sql: %v", i, test)
 			testKit.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
@@ -950,7 +952,7 @@ func TestIndexHint(t *testing.T) {
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		ctx := context.Background()
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 		for i, test := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, test)
@@ -1002,7 +1004,7 @@ func TestIndexMergeHint(t *testing.T) {
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		ctx := context.Background()
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 		for i, test := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, test)
@@ -1054,7 +1056,7 @@ func TestQueryBlockHint(t *testing.T) {
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		ctx := context.TODO()
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql: %s", i, tt)
@@ -1534,7 +1536,7 @@ func TestExplainExpand(t *testing.T) {
 
 func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 	// PhysicalApply is expected not to implement PhysicalJoin.
-	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
+	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(physicalop.PhysicalApply))
 }
 
 func TestRuleAggElimination4Join(t *testing.T) {

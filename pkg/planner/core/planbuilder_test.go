@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -131,7 +132,7 @@ func TestGetPathByIndexName(t *testing.T) {
 }
 
 func TestRewriterPool(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -182,7 +183,7 @@ func TestDisableFold(t *testing.T) {
 		}},
 	}
 
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -305,11 +306,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(tableReader))
 
 	// index scan
-	indexScan := &PhysicalIndexScan{
+	indexScan := &physicalop.PhysicalIndexScan{
 		AccessCondition:  []expression.Expression{col, cst},
 		Table:            tblInfo,
 		Index:            idxInfo,
-		dataSourceSchema: schema,
+		DataSourceSchema: schema,
 	}
 	indexScan = indexScan.Init(ctx, 0)
 	indexScan.SetSchema(schema)
@@ -368,11 +369,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
 	// stream agg
-	streamAgg := &PhysicalStreamAgg{physicalop.BasePhysicalAgg{
+	streamAgg := &physicalop.PhysicalStreamAgg{BasePhysicalAgg: physicalop.BasePhysicalAgg{
 		AggFuncs:     aggDescs,
 		GroupByItems: []expression.Expression{col, cst},
 	}}
-	streamAgg = streamAgg.InitForStream(ctx, stats, 0, schema).(*PhysicalStreamAgg)
+	streamAgg = streamAgg.InitForStream(ctx, stats, 0, schema).(*physicalop.PhysicalStreamAgg)
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
@@ -691,7 +692,7 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 }
 
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -745,7 +746,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 }
 
 func TestRequireInsertAndSelectPriv(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -920,7 +921,7 @@ func TestTraffic(t *testing.T) {
 	}
 
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	for _, test := range tests {
 		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
@@ -937,7 +938,7 @@ func TestTraffic(t *testing.T) {
 
 func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 
@@ -1025,7 +1026,7 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 
 func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 	// random speed value

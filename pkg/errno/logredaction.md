@@ -16,7 +16,7 @@ Query OK, 0 rows affected (0.00 sec)
 
 mysql> insert into t values (1),(1);
 ERROR 1062 (23000): Duplicate entry '1' for key 'a'
-mysql> set @@session.tidb_redact_log=1;
+mysql> set @@global.tidb_redact_log=1;
 Query OK, 0 rows affected (0.00 sec)
 
 mysql> insert into t values (1),(1);

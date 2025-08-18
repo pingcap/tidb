@@ -165,8 +165,9 @@ func attach2Task4PhysicalUnionScan(pp base.PhysicalPlan, tasks ...base.Task) bas
 	return p.BasePhysicalPlan.Attach2Task(task)
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalApply implements PhysicalPlan interface.
+func attach2Task4PhysicalApply(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalApply)
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
@@ -397,11 +398,11 @@ func appendExpr(p *physicalop.PhysicalProjection, expr expression.Expression) *e
 func convertPartitionKeysIfNeed4PhysicalHashJoin(pp base.PhysicalPlan, lTask, rTask *MppTask) (_, _ *MppTask) {
 	p := pp.(*physicalop.PhysicalHashJoin)
 	lp := lTask.p
-	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
+	if _, ok := lp.(*physicalop.PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
 	}
 	rp := rTask.p
-	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
+	if _, ok := rp.(*physicalop.PhysicalExchangeReceiver); ok {
 		rp = rp.Children()[0].Children()[0]
 	}
 	// to mark if any partition key needs to convert
@@ -649,7 +650,7 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	// We need to refactor these logics.
 	aggPushedDown := false
 	switch p.tablePlan.(type) {
-	case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg:
+	case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 		aggPushedDown = true
 	}
 
@@ -1417,23 +1418,6 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 	return attachPlan2Task(p, rootTask)
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
-	t := tasks[0].Copy()
-	// current expand can only be run in MPP TiFlash mode or Root Tidb mode.
-	// if expr inside could not be pushed down to tiFlash, it will error in converting to pb side.
-	if mpp, ok := t.(*MppTask); ok {
-		p.SetChildren(mpp.p)
-		mpp.p = p
-		return mpp
-	}
-	// For root task
-	// since expand should be in root side accordingly, convert to root task now.
-	root := t.ConvertToRootTask(p.SCtx())
-	t = attachPlan2Task(p, root)
-	return t
-}
-
 // attach2Task4PhysicalProjection implements PhysicalPlan interface.
 func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	p := pp.(*physicalop.PhysicalProjection)
@@ -1452,6 +1436,24 @@ func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) ba
 	}
 	t = t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, t)
+	return t
+}
+
+// attach2Task4PhysicalExpand implements PhysicalPlan interface.
+func attach2Task4PhysicalExpand(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalExpand)
+	t := tasks[0].Copy()
+	// current expand can only be run in MPP TiFlash mode or Root Tidb mode.
+	// if expr inside could not be pushed down to tiFlash, it will error in converting to pb side.
+	if mpp, ok := t.(*MppTask); ok {
+		p.SetChildren(mpp.p)
+		mpp.p = p
+		return mpp
+	}
+	// For root task
+	// since expand should be in root side accordingly, convert to root task now.
+	root := t.ConvertToRootTask(p.SCtx())
+	t = attachPlan2Task(p, root)
 	return t
 }
 
@@ -1527,7 +1529,7 @@ func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinI
 		case *physicalop.PhysicalProjection:
 			// mainly about the rowEst, proj doesn't change that.
 			p.SetStats(stats.Scale(1))
-		case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg:
+		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 			// todo: for simplicity, we can just inherit it from child.
 			p.SetStats(stats.Scale(1))
 		case *physicalop.PhysicalUnionScan:
@@ -1552,8 +1554,9 @@ func inheritStatsFromBottomTaskForIndexJoinInner(p base.PhysicalPlan, t base.Tas
 	inheritStatsFromBottomElemForIndexJoinInner(p, indexJoinInfo, t.Plan().StatsInfo())
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalStreamAgg implements PhysicalPlan interface.
+func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalStreamAgg)
 	t := tasks[0].Copy()
 	if cop, ok := t.(*CopTask); ok {
 		// We should not push agg down across
@@ -1809,7 +1812,7 @@ func adjust3StagePhaseAgg(p *physicalop.PhysicalHashAgg, partialAgg, finalAgg ba
 	// scale(len(groupingSets)) will change the NDV, while Expand doesn't change the NDV and groupNDV.
 	stats := mpp.p.StatsInfo().Scale(float64(1))
 	stats.RowCount = stats.RowCount * float64(len(groupingSets))
-	physicalExpand := PhysicalExpand{
+	physicalExpand := physicalop.PhysicalExpand{
 		GroupingSets: groupingSets,
 	}.Init(p.SCtx(), stats, mpp.p.QueryBlockOffset())
 	// generate a new column as groupingID to identify which this row is targeting for.
@@ -2135,8 +2138,9 @@ func attach2Task4PhysicalWindow(pp base.PhysicalPlan, tasks ...base.Task) base.T
 	return attachPlan2Task(p.Self, t)
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalCTEStorage implements the PhysicalPlan interface.
+func attach2Task4PhysicalCTEStorage(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalCTEStorage)
 	t := tasks[0].Copy()
 	if mpp, ok := t.(*MppTask); ok {
 		p.SetChildren(t.Plan())
@@ -2284,7 +2288,7 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 		}
 	}
 	ctx := t.p.SCtx()
-	sender := PhysicalExchangeSender{
+	sender := physicalop.PhysicalExchangeSender{
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.StatsInfo())
@@ -2294,7 +2298,7 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 	}
 
 	sender.SetChildren(t.p)
-	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
+	receiver := physicalop.PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
 	receiver.SetChildren(sender)
 	nt := &MppTask{
 		p:        receiver,

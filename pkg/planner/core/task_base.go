@@ -271,7 +271,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}()
 	// In disaggregated-tiflash mode, need to consider generated column.
 	tryExpandVirtualColumn(t.p)
-	sender := PhysicalExchangeSender{
+	sender := physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}.Init(ctx, t.p.StatsInfo())
 	sender.SetChildren(t.p)
@@ -524,7 +524,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		// Besides, the agg would only be pushed down if it doesn't contain virtual columns, so virtual column should not be affected.
 		aggPushedDown := false
 		switch p.tablePlan.(type) {
-		case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg:
+		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 			aggPushedDown = true
 		}
 

@@ -88,7 +88,7 @@ var (
 
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
-	&ColumnPruner{},
+	&rule.ColumnPruner{},
 	&ResultReorder{},
 	&rule.BuildKeySolver{},
 	&DecorrelateSolver{},
@@ -101,15 +101,15 @@ var optRuleList = []base.LogicalOptRule{
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&OuterJoinEliminator{},
-	&PartitionProcessor{},
-	&CollectPredicateColumnsPoint{},
+	&rule.PartitionProcessor{},
+	&rule.CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
-	&PredicateSimplification{},
+	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
-	&SyncWaitStatsLoadPoint{},
+	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
-	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
@@ -262,6 +262,13 @@ func CheckTableMode(node *resolve.NodeW) error {
 	switch node.Node.(type) {
 	case *ast.ShowStmt, *ast.ExplainStmt:
 	default:
+		// Special handling to the `ADMIN CHECKSUM TABLE`, as `IMPORT INTO` will
+		// executes this statement during post checksum to verify data.
+		// TODO: only allow `ADMIN CHECKSUM TABLE` from import into task
+		adminStmt, ok := node.Node.(*ast.AdminStmt)
+		if ok && adminStmt.Tp == ast.AdminChecksumTable {
+			return nil
+		}
 		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
 			if err := dbutil.CheckTableModeIsNormal(tblNameW.Name, tblNameW.TableInfo.Mode); err != nil {
 				return err
@@ -340,7 +347,6 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
@@ -543,8 +549,8 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 	switch x := plan.(type) {
 	case *physicalop.PhysicalHashAgg:
 		physicalAgg = x.GetPointer()
-	case *PhysicalStreamAgg:
-		physicalAgg = x.getPointer()
+	case *physicalop.PhysicalStreamAgg:
+		physicalAgg = x.GetPointer()
 	default:
 		return
 	}
@@ -637,7 +643,7 @@ func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan b
 
 func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+		if _, isExchangeSender := tableReader.tablePlan.(*physicalop.PhysicalExchangeSender); isExchangeSender {
 			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*physicalop.BasePhysicalPlan, 1)}
 			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
@@ -857,7 +863,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *physicalop.PhysicalProjection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *physicalop.PhysicalHashAgg:
@@ -890,7 +896,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// don't apply fine grained shuffle for probe side
 		helper.clear()
 		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeSender:
+	case *physicalop.PhysicalExchangeSender:
 		if x.ExchangeType == tipb.ExchangeType_Hash {
 			// Set up stream count for all plans based on shuffle target type.
 			var exchangeColCount = x.Schema().Len()
@@ -952,7 +958,8 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalPlan) {
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
-	case *PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
+		*PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
@@ -992,7 +999,7 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
-	if apply, ok := plan.(*PhysicalApply); ok {
+	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
 		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])

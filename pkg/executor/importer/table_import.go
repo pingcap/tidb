@@ -861,6 +861,9 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 	failpoint.Inject("waitCtxDone", func() {
 		<-ctx.Done()
 	})
+	failpoint.Inject("retryableError", func() {
+		failpoint.Return(common.ErrWriteTooSlow)
+	})
 
 	remoteChecksum, err := getRemoteChecksumFn()
 	if err != nil {
