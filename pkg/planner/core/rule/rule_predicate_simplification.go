@@ -181,7 +181,7 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool, filter func(expr expression.Expression) bool) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool, filter expression.PushDownFuncType) []expression.Expression {
 	if len(predicates) == 0 {
 		return predicates
 	}
