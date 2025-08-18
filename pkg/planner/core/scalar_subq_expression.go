@@ -72,6 +72,11 @@ func (ssctx *ScalarSubqueryEvalCtx) selfEval() error {
 	return nil
 }
 
+// ScalarSubQuery returns the physical plan of the subquery
+func (ssctx *ScalarSubqueryEvalCtx) ScalarSubQuery() base.PhysicalPlan {
+	return ssctx.scalarSubQuery
+}
+
 // ScalarSubQueryExpr is a expression placeholder for the non-correlated scalar subqueries which can be evaluated during optimizing phase.
 // TODO: The methods related with evaluate the function will be revised in next step.
 type ScalarSubQueryExpr struct {
@@ -324,14 +329,21 @@ func (*ScalarSubqueryEvalCtx) Schema() *expression.Schema {
 }
 
 // ExplainInfo implements the Plan interface.
-func (ssctx *ScalarSubqueryEvalCtx) ExplainInfo() string {
+func (s *ScalarSubqueryEvalCtx) ExplainInfo() string {
 	builder := &strings.Builder{}
-	fmt.Fprintf(builder, "Output: ")
-	for i, id := range ssctx.outputColIDs {
-		fmt.Fprintf(builder, "ScalarQueryCol#%d", id)
-		if i+1 != len(ssctx.outputColIDs) {
-			fmt.Fprintf(builder, ",")
+
+	// Show output columns in the expected format
+	if len(s.outputColIDs) > 0 {
+		builder.WriteString("Output: ")
+		for i, id := range s.outputColIDs {
+			fmt.Fprintf(builder, "ScalarQueryCol#%d", id)
+			if i+1 != len(s.outputColIDs) {
+				builder.WriteString(", ")
+			}
 		}
+	} else {
+		builder.WriteString("Output: N/A")
 	}
+
 	return builder.String()
 }

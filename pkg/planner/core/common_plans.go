@@ -1189,6 +1189,20 @@ func getRuntimeInfo(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdet
 		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 	}
 	explainID := p.ID()
+	// Special handling for ScalarSubqueryEvalCtx to get runtime info for the subquery's physical plan
+	if scalarSubQ, ok := p.(*ScalarSubqueryEvalCtx); ok {
+		subqueryID := scalarSubQ.ScalarSubQuery().ID()
+		if runtimeStatsColl != nil && runtimeStatsColl.ExistsRootStats(subqueryID) {
+			rootStats = runtimeStatsColl.GetRootStats(subqueryID)
+		}
+		if runtimeStatsColl != nil && runtimeStatsColl.ExistsCopStats(subqueryID) {
+			copStats = runtimeStatsColl.GetCopStats(subqueryID)
+		}
+		memTracker = ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(subqueryID)
+		diskTracker = ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(subqueryID)
+		return rootStats, copStats, memTracker, diskTracker
+	}
+
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 	// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 	if runtimeStatsColl != nil && runtimeStatsColl.ExistsRootStats(explainID) {
@@ -1329,6 +1343,9 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan,
 	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
 	for _, explainedCTE := range flat.CTEs {
 		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan))
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		res.Subqueries = append(res.Subqueries, binaryOpTreeFromFlatOps(explainCtx, subQ, briefBinaryPlan))
 	}
 	return res
 }

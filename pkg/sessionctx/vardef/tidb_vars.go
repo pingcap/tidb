@@ -74,6 +74,10 @@ const (
 
 	TiDBOptExplainNoEvaledSubQuery = "tidb_opt_enable_non_eval_scalar_subquery"
 
+	// TiDBOptPreserveSubqueryPlanInExecution is used to preserve subquery plans during actual execution
+	// This allows slow query logs, statement summary, and EXPLAIN ANALYZE to show complete execution plans including subqueries
+	TiDBOptPreserveSubqueryPlanInExecution = "tidb_opt_preserve_subquery_plan_in_execution"
+
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
@@ -1514,6 +1518,7 @@ const (
 	DefTiDB3StageDistinctAgg                          = true
 	DefTiDB3StageMultiDistinctAgg                     = false
 	DefTiDBOptExplainEvaledSubquery                   = false
+	DefTiDBOptPreserveSubqueryPlanInExecution         = false
 	DefTiDBReadStaleness                              = 0
 	DefTiDBGCMaxWaitTime                              = 24 * 60 * 60
 	DefMaxAllowedPacket                        uint64 = 67108864
