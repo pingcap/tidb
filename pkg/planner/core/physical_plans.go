@@ -51,7 +51,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalLimit{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexScan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableScan{}
-	_ base.PhysicalPlan = &PhysicalTableReader{}
+	_ base.PhysicalPlan = &physicalop.PhysicalTableReader{}
 	_ base.PhysicalPlan = &PhysicalIndexReader{}
 	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
@@ -76,124 +76,6 @@ var (
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
-// ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
-type ReadReqType uint8
-
-const (
-	// Cop means read from storage by cop request.
-	Cop ReadReqType = iota
-	// BatchCop means read from storage by BatchCop request, only used for TiFlash
-	BatchCop
-	// MPP means read from storage by MPP request, only used for TiFlash
-	MPP
-)
-
-// Name returns the name of read request type.
-func (r ReadReqType) Name() string {
-	switch r {
-	case BatchCop:
-		return "batchCop"
-	case MPP:
-		return "mpp"
-	default:
-		// return cop by default
-		return "cop"
-	}
-}
-
-// PhysicalTableReader is the table reader in tidb.
-type PhysicalTableReader struct {
-	physicalop.PhysicalSchemaProducer
-
-	// TablePlans flats the tablePlan to construct executor pb.
-	tablePlan  base.PhysicalPlan
-	TablePlans []base.PhysicalPlan
-
-	// StoreType indicates table read from which type of store.
-	StoreType kv.StoreType
-
-	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
-	// BatchCop and MPP, currently, the latter two are only used in TiFlash
-	ReadReqType ReadReqType
-
-	IsCommonHandle bool
-
-	// Used by partition table.
-	PlanPartInfo *physicalop.PhysPlanPartInfo
-	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
-	TableScanAndPartitionInfos []physicalop.TableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
-}
-
-// LoadTableStats loads the stats of the table read by this plan.
-func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
-	ts := p.TablePlans[0].(*physicalop.PhysicalTableScan)
-	loadTableStats(ctx, ts.Table, ts.PhysicalTableID)
-}
-
-// SetTablePlanForTest sets tablePlan field for test usage only
-func (p *PhysicalTableReader) SetTablePlanForTest(pp base.PhysicalPlan) {
-	p.tablePlan = pp
-}
-
-// GetTablePlan exports the tablePlan.
-func (p *PhysicalTableReader) GetTablePlan() base.PhysicalPlan {
-	return p.tablePlan
-}
-
-// GetTableScans exports the tableScan that contained in tablePlans.
-func (p *PhysicalTableReader) GetTableScans() []*physicalop.PhysicalTableScan {
-	tableScans := make([]*physicalop.PhysicalTableScan, 0, 1)
-	for _, tablePlan := range p.TablePlans {
-		tableScan, ok := tablePlan.(*physicalop.PhysicalTableScan)
-		if ok {
-			tableScans = append(tableScans, tableScan)
-		}
-	}
-	return tableScans
-}
-
-// GetTableScan exports the tableScan that contained in tablePlans and return error when the count of table scan != 1.
-func (p *PhysicalTableReader) GetTableScan() (*physicalop.PhysicalTableScan, error) {
-	tableScans := p.GetTableScans()
-	if len(tableScans) != 1 {
-		return nil, errors.New("the count of table scan != 1")
-	}
-	return tableScans[0], nil
-}
-
-// GetAvgRowSize return the average row size of this plan.
-func (p *PhysicalTableReader) GetAvgRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
-}
-
-// MemoryUsage return the memory usage of PhysicalTableReader
-func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfUint8*2 + size.SizeOfBool + p.PlanPartInfo.MemoryUsage()
-	if p.tablePlan != nil {
-		sum += p.tablePlan.MemoryUsage()
-	}
-	// since TablePlans is the flats of tablePlan, so we don't count it
-	for _, pInfo := range p.TableScanAndPartitionInfos {
-		sum += pInfo.MemoryUsage()
-	}
-	return
-}
-
-// setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
-func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
-	if ts, ok := curPlan.(*physicalop.PhysicalTableScan); ok {
-		ts.IsMPPOrBatchCop = true
-	}
-	children := curPlan.Children()
-	for _, child := range children {
-		setMppOrBatchCopForTableScan(child)
-	}
-}
-
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
 func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
 	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
@@ -204,8 +86,8 @@ func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
+func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *physicalop.PhysicalTableReader {
+	reader := physicalop.PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PlanPartInfo = &physicalop.PhysPlanPartInfo{
 		PruningConds:   sg.Source.AllConds,
 		PartitionNames: sg.Source.PartitionNames,
@@ -216,55 +98,6 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
 	return reader
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalTableReader)
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.StoreType = p.StoreType
-	cloned.ReadReqType = p.ReadReqType
-	cloned.IsCommonHandle = p.IsCommonHandle
-	if cloned.tablePlan, err = p.tablePlan.Clone(newCtx); err != nil {
-		return nil, err
-	}
-	// TablePlans are actually the flattened plans in tablePlan, so can't copy them, just need to extract from tablePlan
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	return cloned, nil
-}
-
-// SetChildren overrides op.PhysicalPlan SetChildren interface.
-func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
-	p.tablePlan = children[0]
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
-	for _, child := range p.TablePlans {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
-	}
-	return corCols
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.tablePlan != nil {
-		rp.Children = append(rp.Children, p.tablePlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	appendChildCandidate(p, p.tablePlan, op)
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -304,7 +137,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
-		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+		p.IndexPlans = physicalop.FlattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
 		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
@@ -448,12 +281,12 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 
 // GetIndexNetDataSize return the estimated total size in bytes via network transfer.
 func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
+	return cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
 }
 
 // GetAvgTableRowSize return the average row size of each final row.
 func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 }
 
 // BuildPlanTrace implements op.PhysicalPlan interface.
@@ -547,7 +380,7 @@ type PhysicalIndexMergeReader struct {
 
 // GetAvgTableRowSize return the average row size of table plan.
 func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -845,8 +678,8 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 		statsInfos = CollectPlanStatsVersion(child, statsInfos)
 	}
 	switch copPlan := plan.(type) {
-	case *PhysicalTableReader:
-		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
+	case *physicalop.PhysicalTableReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.TablePlan, statsInfos)
 	case *PhysicalIndexReader:
 		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
 	case *PhysicalIndexLookUpReader:
