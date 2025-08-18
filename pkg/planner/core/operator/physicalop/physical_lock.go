@@ -113,8 +113,9 @@ func (p *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bo
 	}
 	if p.TblID2PhysTblIDCol != nil {
 		cloned.TblID2PhysTblIDCol = make(map[int64]*expression.Column, len(p.TblID2PhysTblIDCol))
+		cc := make(expression.CloneContext, 2)
 		for k, v := range p.TblID2PhysTblIDCol {
-			cloned.TblID2PhysTblIDCol[k] = v.Clone().(*expression.Column)
+			cloned.TblID2PhysTblIDCol[k] = v.Clone(cc).(*expression.Column)
 		}
 	}
 	return cloned, true

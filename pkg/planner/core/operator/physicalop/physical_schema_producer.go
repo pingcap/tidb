@@ -36,7 +36,8 @@ func (s *PhysicalSchemaProducer) Schema() *expression.Schema {
 		if len(s.Children()) == 1 {
 			// default implementation for plans has only one child: proprgate child schema.
 			// multi-children plans are likely to have particular implementation.
-			s.schema = s.Children()[0].Schema().Clone()
+			cc := make(expression.CloneContext, 2)
+			s.schema = s.Children()[0].Schema().Clone(cc)
 		} else {
 			s.schema = expression.NewSchema()
 		}
@@ -89,9 +90,10 @@ func (s *PhysicalSchemaProducer) CloneWithSelf(newCtx base.PlanContext, newSelf 
 	if err != nil {
 		return nil, err
 	}
+	cc := make(expression.CloneContext, 2)
 	return &PhysicalSchemaProducer{
 		BasePhysicalPlan: *base,
-		schema:           s.Schema().Clone(),
+		schema:           s.Schema().Clone(cc),
 	}, nil
 }
 

@@ -132,9 +132,9 @@ func TestCompare(t *testing.T) {
 		{jsonVal, jsonVal, ast.EQ, mysql.TypeJSON, 1},
 		{jsonVal, jsonVal, ast.NullEQ, mysql.TypeJSON, 1},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
-		bf, err := funcs[test.funcName].getFunction(ctx, primitiveValsToConstants(ctx, []any{test.arg0, test.arg1}))
+		bf, err := funcs[test.funcName].getFunction(ctx, cc, primitiveValsToConstants(ctx, []any{test.arg0, test.arg1}))
 		require.NoError(t, err)
 		args := bf.getArgs()
 		require.Equal(t, test.tp, args[0].GetType(ctx).GetType())
@@ -148,7 +148,7 @@ func TestCompare(t *testing.T) {
 
 	// test <non-const decimal expression> <cmp> <const string expression>
 	decimalCol, stringCon := &Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)}, &Constant{RetType: types.NewFieldType(mysql.TypeVarchar)}
-	bf, err := funcs[ast.LT].getFunction(ctx, []Expression{decimalCol, stringCon})
+	bf, err := funcs[ast.LT].getFunction(ctx, cc, []Expression{decimalCol, stringCon})
 	require.NoError(t, err)
 	args := bf.getArgs()
 	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType(ctx).GetType())
@@ -156,7 +156,7 @@ func TestCompare(t *testing.T) {
 
 	// test <time column> <cmp> <non-time const>
 	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
-	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{timeCol, stringCon})
+	bf, err = funcs[ast.LT].getFunction(ctx, cc, []Expression{timeCol, stringCon})
 	require.NoError(t, err)
 	args = bf.getArgs()
 	require.Equal(t, mysql.TypeDatetime, args[0].GetType(ctx).GetType())
@@ -164,7 +164,7 @@ func TestCompare(t *testing.T) {
 
 	// test <json column> <cmp> <const int expression>
 	jsonCol, intCon := &Column{RetType: types.NewFieldType(mysql.TypeJSON)}, &Constant{RetType: types.NewFieldType(mysql.TypeLong)}
-	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{jsonCol, intCon})
+	bf, err = funcs[ast.LT].getFunction(ctx, cc, []Expression{jsonCol, intCon})
 	require.NoError(t, err)
 	args = bf.getArgs()
 	require.Equal(t, mysql.TypeJSON, args[0].GetType(ctx).GetType())
@@ -199,7 +199,7 @@ func TestCoalesce(t *testing.T) {
 		{[]any{nil, dt, nil}, dt, false, false},
 		{[]any{tm, dt}, tm, false, false},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, test := range cases {
 		f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
@@ -222,7 +222,7 @@ func TestCoalesce(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(ctx, []Expression{NewZero()})
+	_, err := funcs[ast.Length].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -235,7 +235,7 @@ func TestIntervalFunc(t *testing.T) {
 		sc.SetTypeFlags(oldTypeFlags)
 	}()
 	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	cc := make(CloneContext, 2)
 	for _, test := range []struct {
 		args   []types.Datum
 		ret    int64
@@ -268,7 +268,7 @@ func TestIntervalFunc(t *testing.T) {
 		{types.MakeDatums("9007199254740992", "9007199254740993"), 1, false},
 	} {
 		fc := funcs[ast.Interval]
-		f, err := fc.getFunction(ctx, datumsToConstants(test.args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(test.args))
 		require.NoError(t, err)
 		if test.getErr {
 			v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -399,9 +399,10 @@ func TestGreatestLeastFunc(t *testing.T) {
 			}
 		}
 	}
-	_, err := funcs[ast.Greatest].getFunction(ctx, []Expression{NewZero(), NewOne()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Greatest].getFunction(ctx, cc, []Expression{NewZero(), NewOne()})
 	require.NoError(t, err)
-	_, err = funcs[ast.Least].getFunction(ctx, []Expression{NewZero(), NewOne()})
+	_, err = funcs[ast.Least].getFunction(ctx, cc, []Expression{NewZero(), NewOne()})
 	require.NoError(t, err)
 }
 

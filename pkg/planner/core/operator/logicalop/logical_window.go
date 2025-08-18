@@ -194,8 +194,9 @@ func (fb *FrameBound) Clone() *FrameBound {
 	*cloned = *fb
 
 	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
+	cc := make(expression.CloneContext, 2)
 	for _, it := range fb.CalcFuncs {
-		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone(cc))
 	}
 	cloned.CmpFuncs = fb.CmpFuncs
 
@@ -260,7 +261,8 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
 		if fb.CalcFuncs[0].GetType(ectx).EvalType() != orderByCols[0].GetType(ectx).EvalType() {
 			var err error
-			fb.CompareCols[0], err = expression.NewFunctionBase(ctx.GetExprCtx(), ast.Cast, fb.CalcFuncs[0].GetType(ectx), orderByCols[0])
+			cc := make(expression.CloneContext, 2)
+			fb.CompareCols[0], err = expression.NewFunctionBase(ctx.GetExprCtx(), cc, ast.Cast, fb.CalcFuncs[0].GetType(ectx), orderByCols[0])
 			if err != nil {
 				return err
 			}
@@ -347,8 +349,7 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	if err != nil {
 		return nil, err
 	}
-
-	p.SetSchema(p.Children()[0].Schema().Clone())
+	p.SetSchema(p.Children()[0].Schema().Clone(nil))
 	p.Schema().Append(windowColumns...)
 	return p, nil
 }

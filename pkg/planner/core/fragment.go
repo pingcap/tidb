@@ -491,12 +491,12 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *physicalop.Physi
 		}
 	}
 	if inconsistenceNullable {
-		cols := group.CTEStorage.Children()[0].Schema().Clone().Columns
+		cols := group.CTEStorage.Children()[0].Schema().Clone(nil).Columns
 		for i, col := range cols {
 			col.Index = i
 		}
 		proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
-		proj.SetSchema(cteReader.Schema().Clone())
+		proj.SetSchema(cteReader.Schema().Clone(nil))
 		proj.SetChildren(receiver)
 		cteReader.SetChildren(proj)
 	}

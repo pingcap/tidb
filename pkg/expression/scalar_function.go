@@ -161,7 +161,7 @@ func (sf *ScalarFunction) String() string {
 
 // typeInferForNull infers the NULL constants field type and set the field type
 // of NULL constant same as other non-null operands.
-func typeInferForNull(ctx EvalContext, args []Expression) {
+func typeInferForNull(ctx EvalContext, cc CloneContext, args []Expression) {
 	if len(args) < 2 {
 		return
 	}
@@ -189,7 +189,7 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	for i, arg := range args {
 		argflags := arg.GetType(ctx)
 		if isNull(arg) && !(argflags.Equals(retFieldTp) && mysql.HasNotNullFlag(retFieldTp.GetFlag())) {
-			newarg := arg.Clone()
+			newarg := arg.Clone(cc)
 			*newarg.GetType(ctx) = *retFieldTp.Clone()
 			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
 			args[i] = newarg
@@ -200,19 +200,19 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 // newFunctionImpl creates a new scalar function or constant.
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
-func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
+func newFunctionImpl(ctx BuildContext, cc CloneContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
 	switch funcName {
 	case ast.Cast:
-		return BuildCastFunction(ctx, args[0], retType), nil
+		return BuildCastFunction(ctx, cc, args[0], retType), nil
 	case ast.GetVar:
-		return BuildGetVarFunction(ctx, args[0], retType)
+		return BuildGetVarFunction(ctx, cc, args[0], retType)
 	case InternalFuncFromBinary:
-		return BuildFromBinaryFunction(ctx, args[0], retType, false), nil
+		return BuildFromBinaryFunction(ctx, cc, args[0], retType, false), nil
 	case InternalFuncToBinary:
-		return BuildToBinaryFunction(ctx, args[0]), nil
+		return BuildToBinaryFunction(ctx, cc, args[0]), nil
 	case ast.Sysdate:
 		if ctx.GetSysdateIsNow() {
 			funcName = ast.Now
@@ -253,10 +253,10 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		// For example, expression ('abc', 1) = (null, 0). Null's type should be STRING, not INT.
 		// The type infer happens when converting the expression to ('abc' = null) and (1 = 0).
 	default:
-		typeInferForNull(ctx.GetEvalCtx(), funcArgs)
+		typeInferForNull(ctx.GetEvalCtx(), cc, funcArgs)
 	}
 
-	f, err := fc.getFunction(ctx, funcArgs)
+	f, err := fc.getFunction(ctx, cc, funcArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -276,12 +276,12 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		sf = sf2
 	}
 	if fold == 1 {
-		return FoldConstant(ctx, sf), nil
+		return FoldConstant(ctx, cc, sf), nil
 	} else if fold == -1 {
 		// try to fold constants, and return the original function if errors/warnings occur
 		evalCtx := ctx.GetEvalCtx()
 		beforeWarns := evalCtx.WarningCount()
-		newSf := FoldConstant(ctx, sf)
+		newSf := FoldConstant(ctx, cc, sf)
 		afterWarns := evalCtx.WarningCount()
 		if afterWarns > beforeWarns {
 			evalCtx.TruncateWarnings(beforeWarns)
@@ -306,23 +306,23 @@ func defaultScalarFunctionCheck(function *ScalarFunction) (*ScalarFunction, erro
 }
 
 // NewFunctionWithInit creates a new scalar function with callback init function.
-func NewFunctionWithInit(ctx BuildContext, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 1, funcName, retType, init, args...)
+func NewFunctionWithInit(ctx BuildContext, cc CloneContext, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, cc, 1, funcName, retType, init, args...)
 }
 
 // NewFunction creates a new scalar function or constant via a constant folding.
-func NewFunction(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 1, funcName, retType, defaultScalarFunctionCheck, args...)
+func NewFunction(ctx BuildContext, cc CloneContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, cc, 1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
-func NewFunctionBase(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 0, funcName, retType, defaultScalarFunctionCheck, args...)
+func NewFunctionBase(ctx BuildContext, cc CloneContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, cc, 0, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionTryFold creates a new scalar function with trying constant folding.
-func NewFunctionTryFold(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, -1, funcName, retType, defaultScalarFunctionCheck, args...)
+func NewFunctionTryFold(ctx BuildContext, cc CloneContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, cc, -1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionInternal is similar to NewFunction, but do not return error, should only be used internally.
@@ -331,8 +331,8 @@ func NewFunctionTryFold(ctx BuildContext, funcName string, retType *types.FieldT
 // error, collation derivation error, special function with meta doesn't be initialized error and so on.
 // only threw the these internal error out, then we can debug and dig it out quickly rather than in a confusion
 // of index out of range / nil pointer error / function execution error.
-func NewFunctionInternal(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) Expression {
-	expr, err := NewFunction(ctx, funcName, retType, args...)
+func NewFunctionInternal(ctx BuildContext, cc CloneContext, funcName string, retType *types.FieldType, args ...Expression) Expression {
+	expr, err := NewFunction(ctx, cc, funcName, retType, args...)
 	terror.Log(errors.Trace(err))
 	return expr
 }
@@ -347,11 +347,11 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 }
 
 // Clone implements Expression interface.
-func (sf *ScalarFunction) Clone() Expression {
+func (sf *ScalarFunction) Clone(cc CloneContext) Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
-		Function: sf.Function.Clone(),
+		Function: sf.Function.Clone(cc),
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
@@ -360,6 +360,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
+	c.RetType = cc.Clone(sf.RetType)
 	return c
 }
 
@@ -761,8 +762,8 @@ func ReHashCode(sf *ScalarFunction) {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
-	newSf := sf.Clone()
+func (sf *ScalarFunction) ResolveIndices(cc CloneContext, schema *Schema) (Expression, error) {
+	newSf := sf.Clone(cc)
 	err := newSf.resolveIndices(schema)
 	return newSf, err
 }
@@ -778,8 +779,8 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
-	newSf := sf.Clone()
+func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(ctx EvalContext, cc CloneContext, schema *Schema) (Expression, bool) {
+	newSf := sf.Clone(cc)
 	isOK := newSf.resolveIndicesByVirtualExpr(ctx, schema)
 	return newSf, isOK
 }
@@ -796,7 +797,8 @@ func (sf *ScalarFunction) resolveIndicesByVirtualExpr(ctx EvalContext, schema *S
 
 // RemapColumn remaps columns with provided mapping and returns new expression
 func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
-	newSf, ok := sf.Clone().(*ScalarFunction)
+	cc := make(CloneContext, 4)
+	newSf, ok := sf.Clone(cc).(*ScalarFunction)
 	if !ok {
 		return nil, errors.New("failed to cast to scalar function")
 	}

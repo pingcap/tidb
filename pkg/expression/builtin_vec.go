@@ -52,20 +52,20 @@ type builtinVecDimsSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVecDimsSig) Clone() builtinFunc {
+func (b *builtinVecDimsSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVecDimsSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *vecDimsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vecDimsFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETVectorFloat32)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -91,20 +91,20 @@ type builtinVecL1DistanceSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVecL1DistanceSig) Clone() builtinFunc {
+func (b *builtinVecL1DistanceSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVecL1DistanceSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *vecL1DistanceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vecL1DistanceFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETVectorFloat32, types.ETVectorFloat32)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -143,20 +143,20 @@ type builtinVecL2DistanceSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVecL2DistanceSig) Clone() builtinFunc {
+func (b *builtinVecL2DistanceSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVecL2DistanceSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *vecL2DistanceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vecL2DistanceFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETVectorFloat32, types.ETVectorFloat32)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -195,20 +195,20 @@ type builtinVecNegativeInnerProductSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVecNegativeInnerProductSig) Clone() builtinFunc {
+func (b *builtinVecNegativeInnerProductSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVecNegativeInnerProductSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *vecNegativeInnerProductFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vecNegativeInnerProductFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETVectorFloat32, types.ETVectorFloat32)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -247,20 +247,20 @@ type builtinVecCosineDistanceSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVecCosineDistanceSig) Clone() builtinFunc {
+func (b *builtinVecCosineDistanceSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVecCosineDistanceSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *vecCosineDistanceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vecCosineDistanceFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETVectorFloat32, types.ETVectorFloat32)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -299,13 +299,13 @@ type builtinVecL2NormSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVecL2NormSig) Clone() builtinFunc {
+func (b *builtinVecL2NormSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVecL2NormSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *vecL2NormFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vecL2NormFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -313,7 +313,7 @@ func (c *vecL2NormFunctionClass) getFunction(ctx BuildContext, args []Expression
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETVectorFloat32)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -343,20 +343,20 @@ type builtinVecFromTextSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVecFromTextSig) Clone() builtinFunc {
+func (b *builtinVecFromTextSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVecFromTextSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *vecFromTextFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vecFromTextFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETString)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETVectorFloat32, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -390,20 +390,20 @@ type builtinVecAsTextSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVecAsTextSig) Clone() builtinFunc {
+func (b *builtinVecAsTextSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVecAsTextSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *vecAsTextFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vecAsTextFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETVectorFloat32)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}

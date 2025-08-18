@@ -301,7 +301,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			apply.SetChildren(outerPlan, innerPlan)
 			if apply.JoinType != logicalop.SemiJoin && apply.JoinType != logicalop.LeftOuterSemiJoin && apply.JoinType != logicalop.AntiSemiJoin && apply.JoinType != logicalop.AntiLeftOuterSemiJoin {
 				proj.SetSchema(apply.Schema())
-				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
+				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone(nil).Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				np, planChanged, err := s.optimize(ctx, p, opt, groupByColumn)
 				if err != nil {
@@ -341,14 +341,15 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
 
 				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
+				cc := make(expression.CloneContext, 4)
 				for i, col := range outerPlan.Schema().Columns {
-					first, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					first, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 					if err != nil {
 						return nil, planChanged, err
 					}
 					newAggFuncs = append(newAggFuncs, first)
 
-					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
+					outerCol, _ := outerPlan.Schema().Columns[i].Clone(cc).(*expression.Column)
 					outerCol.RetType = first.RetTp
 					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
@@ -372,7 +373,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 							aggArgs = append(aggArgs, expr)
 						}
 					}
-					desc, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), agg.AggFuncs[i].Name, aggArgs, agg.AggFuncs[i].HasDistinct)
+					desc, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), cc, agg.AggFuncs[i].Name, aggArgs, agg.AggFuncs[i].HasDistinct)
 					if err != nil {
 						return nil, planChanged, err
 					}
@@ -416,11 +417,12 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
+						cc := make(expression.CloneContext, 4)
 						for _, eqCond := range eqCondWithCorCol {
 							clonedCol := eqCond.GetArgs()[1].(*expression.Column)
 							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.Schema().ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-								newFunc, err := aggregation.NewAggFuncDesc(apply.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+								newFunc, err := aggregation.NewAggFuncDesc(apply.SCtx().GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
 								if err != nil {
 									return nil, planChanged, err
 								}
@@ -449,7 +451,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 							proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
 							for i, val := range defaultValueMap {
 								pos := proj.Schema().ColumnIndex(agg.Schema().Columns[i])
-								ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
+								ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), cc, ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
 								proj.Exprs[pos] = ifNullFunc
 							}
 							proj.SetChildren(apply)

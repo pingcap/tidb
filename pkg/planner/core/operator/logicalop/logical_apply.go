@@ -248,6 +248,7 @@ func (la *LogicalApply) CanPullUpAgg() bool {
 // column to normal column to make a new equal condition.
 func (la *LogicalApply) DeCorColFromEqExpr(expr expression.Expression) expression.Expression {
 	sf, ok := expr.(*expression.ScalarFunction)
+	cc := make(expression.CloneContext, 4)
 	if !ok || sf.FuncName.L != ast.EQ {
 		return nil
 	}
@@ -258,7 +259,7 @@ func (la *LogicalApply) DeCorColFromEqExpr(expr expression.Expression) expressio
 				return nil
 			}
 			// We should make sure that the equal condition's left side is the join's left join key, right is the right key.
-			return expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
+			return expression.NewFunctionInternal(la.SCtx().GetExprCtx(), cc, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
 		}
 	}
 	if corCol, lOk := sf.GetArgs()[0].(*expression.CorrelatedColumn); lOk {
@@ -268,7 +269,7 @@ func (la *LogicalApply) DeCorColFromEqExpr(expr expression.Expression) expressio
 				return nil
 			}
 			// We should make sure that the equal condition's left side is the join's left join key, right is the right key.
-			return expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
+			return expression.NewFunctionInternal(la.SCtx().GetExprCtx(), cc, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
 		}
 	}
 	return nil

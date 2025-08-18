@@ -147,7 +147,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	// build another projection below.
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, p.Schema().Len()+len(distinctGbyExprs))}.Init(b.ctx, b.getSelectOffset())
 	// project: child's output and distinct GbyExprs in advance. (make every group-by item to be a column)
-	projSchema := p.Schema().Clone()
+	projSchema := p.Schema().Clone(nil)
 	names := p.OutputNames()
 	for _, col := range projSchema.Columns {
 		proj.Exprs = append(proj.Exprs, col)
@@ -181,7 +181,8 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	proj.SetSchema(projSchema)
 	proj.SetChildren(p)
 	proj.Proj4Expand = true
-	newGbyItems := expression.RestoreGbyExpression(distinctGbyCols, gbyExprsRefPos)
+	cc := make(expression.CloneContext, 2)
+	newGbyItems := expression.RestoreGbyExpression(cc, distinctGbyCols, gbyExprsRefPos)
 
 	// build expand.
 	rollupGroupingSets := expression.RollupGroupingSets(newGbyItems)
@@ -192,7 +193,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	//      for grouping set {a,b},   project it as: [a,    b,    null, d,   gid]
 	//      for grouping set {a},     project it as: [a,    null, null, d,   gid]
 	// 		for grouping set {},      project it as: [null, null, null, d,   gid]
-	expandSchema := proj.Schema().Clone()
+	expandSchema := proj.Schema().Clone(nil)
 	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
 	expand := logicalop.LogicalExpand{
 		RollupGroupingSets:  rollupGroupingSets,
@@ -285,6 +286,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	aggIndexMap := make(map[int]int)
 
 	allAggsFirstRow := true
+	cc := make(expression.CloneContext, 2)
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
 		for _, arg := range aggFunc.Args {
@@ -295,7 +297,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 			p = np
 			newArgList = append(newArgList, newArg)
 		}
-		newFunc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), aggFunc.F, newArgList, aggFunc.Distinct)
+		newFunc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), cc, aggFunc.F, newArgList, aggFunc.Distinct)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -362,12 +364,12 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		}
 	}
 	for i, col := range p.Schema().Columns {
-		newFunc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		newFunc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		if err != nil {
 			return nil, nil, err
 		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-		newCol, _ := col.Clone().(*expression.Column)
+		newCol, _ := col.Clone(cc).(*expression.Column)
 		newCol.RetType = newFunc.RetTp
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
@@ -387,12 +389,12 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 			if p.Schema().Contains(col) {
 				continue
 			}
-			newFunc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
+			newFunc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 			if err != nil {
 				return nil, nil, err
 			}
 			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-			newCol, _ := col.Clone().(*expression.Column)
+			newCol, _ := col.Clone(cc).(*expression.Column)
 			newCol.RetType = newFunc.RetTp
 			schema4Agg.Append(newCol)
 			names = append(names, join.FullNames[i])
@@ -742,8 +744,8 @@ func (b *PlanBuilder) buildNaturalJoin(p *logicalop.LogicalJoin, leftPlan, right
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
 func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, rightPlan base.LogicalPlan, joinTp ast.JoinType, filter map[string]bool) error {
-	lsc := leftPlan.Schema().Clone()
-	rsc := rightPlan.Schema().Clone()
+	lsc := leftPlan.Schema().Clone(nil)
+	rsc := rightPlan.Schema().Clone(nil)
 	if joinTp == ast.LeftJoin {
 		util.ResetNotNullFlag(rsc, 0, rsc.Len())
 	} else if joinTp == ast.RightJoin {
@@ -885,9 +887,10 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	copy(names[len(lNames):], rNames[commonLen:])
 
 	conds := make([]expression.Expression, 0, commonLen)
+	cc := make(expression.CloneContext, 2)
 	for i := range commonLen {
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
-		cond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
+		cond, err := expression.NewFunction(b.ctx.GetExprCtx(), cc, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
 		if err != nil {
 			return err
 		}
@@ -972,6 +975,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	}
 	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
 	// check expr field types.
+	cc := make(expression.CloneContext, 2)
 	for i, expr := range cnfExpres {
 		if expr.GetType(evalCtx).EvalType() == types.ETString {
 			tp := &types.FieldType{}
@@ -980,7 +984,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 			tp.SetFlen(mysql.MaxRealWidth)
 			tp.SetDecimal(types.UnspecifiedLength)
 			types.SetBinChsClnFlag(tp)
-			cnfExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx.GetExprCtx(), expr, tp)
+			cnfExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx.GetExprCtx(), cc, expr, tp)
 		}
 	}
 	selection.Conditions = cnfExpres
@@ -1506,21 +1510,22 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 	}
 	plan4Agg := logicalop.LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
-		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
+		GroupByItems: expression.Column2Exprs(child.Schema().Clone(nil).Columns[:length]),
 	}.Init(b.ctx, child.QueryBlockOffset())
 	if hintinfo := b.TableHints(); hintinfo != nil {
 		plan4Agg.PreferAggType = hintinfo.PreferAggType
 		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
+	cc := make(expression.CloneContext, 2)
 	for _, col := range child.Schema().Columns {
-		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		if err != nil {
 			return nil, err
 		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggDesc)
 	}
 	plan4Agg.SetChildren(child)
-	plan4Agg.SetSchema(child.Schema().Clone())
+	plan4Agg.SetSchema(child.Schema().Clone(nil))
 	plan4Agg.SetOutputNames(child.OutputNames())
 	// Distinct will be rewritten as first_row, we reset the type here since the return type
 	// of first_row is not always the same as the column arg of first_row.
@@ -1615,20 +1620,21 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 	u.SetOutputNames(names)
 	// Process each child and add a projection above original child.
 	// So the schema of `UnionAll` can be the same with its children's.
+	cc := make(expression.CloneContext, 2)
 	for childID, child := range u.Children() {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		for i, srcCol := range child.Schema().Columns {
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), srcCol, dstType)
+				exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), cc, srcCol, dstType)
 			} else {
 				exprs[i] = srcCol
 			}
 		}
 		b.optFlag |= rule.FlagEliminateProjection
 		proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
-		proj.SetSchema(u.Schema().Clone())
+		proj.SetSchema(u.Schema().Clone(nil))
 		// reset the schema type to make the "not null" flag right.
 		for i, expr := range exprs {
 			proj.Schema().Columns[i].RetType = expr.GetType(b.ctx.GetExprCtx().GetEvalCtx())
@@ -1719,7 +1725,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	if oldLen != setOprPlan.Schema().Len() {
 		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(setOprPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetChildren(setOprPlan)
-		schema := expression.NewSchema(setOprPlan.Schema().Clone().Columns[:oldLen]...)
+		schema := expression.NewSchema(setOprPlan.Schema().Clone(nil).Columns[:oldLen]...)
 		for _, col := range schema.Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
@@ -1744,10 +1750,11 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(leftPlan.Schema())
 	joinPlan.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()))
+	cc := make(expression.CloneContext, 2)
 	copy(joinPlan.OutputNames(), leftPlan.OutputNames())
 	for j := range rightPlan.Schema().Columns {
 		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
-		eqCond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
+		eqCond, err := expression.NewFunction(b.ctx.GetExprCtx(), cc, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 		if err != nil {
 			return nil, err
 		}
@@ -4042,7 +4049,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	if oldLen != p.Schema().Len() {
 		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetChildren(p)
-		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
+		schema := expression.NewSchema(p.Schema().Clone(nil).Columns[:oldLen]...)
 		for _, col := range schema.Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
@@ -4322,7 +4329,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 			var p base.LogicalPlan
 			lp := logicalop.LogicalCTE{CteAsName: tn.Name, CteName: tn.Name, Cte: cte.cteClass, SeedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
-			prevSchema := cte.seedLP.Schema().Clone()
+			prevSchema := cte.seedLP.Schema().Clone(nil)
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
 			// If current CTE query contain another CTE which 'containRecursiveForbiddenOperator' is true, current CTE 'containRecursiveForbiddenOperator' will be true
@@ -4753,7 +4760,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	setPreferredStoreType(ds, b.TableHints())
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
-
+	cc := make(expression.CloneContext, 2)
 	for i, colExpr := range ds.Schema().Columns {
 		var expr expression.Expression
 		if i < len(columns) {
@@ -4766,7 +4773,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				if err != nil {
 					return nil, err
 				}
-				colExpr.VirtualExpr = expr.Clone()
+				colExpr.VirtualExpr = expr.Clone(cc)
 			}
 		}
 	}
@@ -5120,7 +5127,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 
 func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tableInfo *model.TableInfo, selectLogicalPlan base.Plan) (base.LogicalPlan, error) {
 	columnInfo := tableInfo.Cols()
-	cols := selectLogicalPlan.Schema().Clone().Columns
+	cols := selectLogicalPlan.Schema().Clone(nil).Columns
 	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
 	// In the old version of VIEW implementation, TableInfo.View.Cols is used to
 	// store the origin columns' names of the underlying SelectStmt used when
@@ -5244,7 +5251,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 	joinPlan.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1))
 	copy(joinPlan.OutputNames(), outerPlan.OutputNames())
 	if asScalar {
-		newSchema := outerPlan.Schema().Clone()
+		newSchema := outerPlan.Schema().Clone(nil)
 		newSchema.Append(&expression.Column{
 			RetType:  types.NewFieldType(mysql.TypeTiny),
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -5257,7 +5264,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 			joinPlan.JoinType = logicalop.LeftOuterSemiJoin
 		}
 	} else {
-		joinPlan.SetSchema(outerPlan.Schema().Clone())
+		joinPlan.SetSchema(outerPlan.Schema().Clone(nil))
 		if not {
 			joinPlan.JoinType = logicalop.AntiSemiJoin
 		} else {
@@ -6257,6 +6264,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 	}
 
 	newArgList = make([]expression.Expression, 0, len(args))
+	cc := make(expression.CloneContext, 2)
 	for _, arg := range args {
 		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
 		if err != nil {
@@ -6265,7 +6273,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 		p = np
 		switch newArg.(type) {
 		case *expression.Column, *expression.Constant:
-			newArgList = append(newArgList, newArg.Clone())
+			newArgList = append(newArgList, newArg.Clone(cc))
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, newArg)
@@ -6289,6 +6297,7 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p base.LogicalPl
 	// use below index for created a new col definition
 	// it's okay here because we only want to return the args used in window function
 	newColIndex := 0
+	cc := make(expression.CloneContext, 2)
 	for _, arg := range args {
 		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
 		if err != nil {
@@ -6297,7 +6306,7 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p base.LogicalPl
 		p = np
 		switch newArg.(type) {
 		case *expression.Column, *expression.Constant:
-			newArgList = append(newArgList, newArg.Clone())
+			newArgList = append(newArgList, newArg.Clone(cc))
 			continue
 		}
 		col := &expression.Column{
@@ -6408,6 +6417,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	bound.IsExplicitRange = true
 	desc := orderByItems[0].Desc
 	var funcName string
+	cc := make(expression.CloneContext, 2)
 	if boundClause.Unit != ast.TimeUnitInvalid {
 		// TODO: Perhaps we don't need to transcode this back to generic string
 		unitVal := boundClause.Unit.String()
@@ -6424,7 +6434,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 			funcName = ast.DateSub
 		}
 
-		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx.GetExprCtx(), funcName, col.RetType, col, &expr, &unit)
+		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx.GetExprCtx(), cc, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
@@ -6437,7 +6447,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 			funcName = ast.Minus
 		}
 
-		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx.GetExprCtx(), funcName, col.RetType, col, &expr)
+		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx.GetExprCtx(), cc, funcName, col.RetType, col, &expr)
 		if err != nil {
 			return nil, err
 		}
@@ -6467,6 +6477,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p base.LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	checker := &expression.ParamMarkerInPrepareChecker{}
+	cc := make(expression.CloneContext, 2)
 	for _, windowFuncExpr := range windowFuncExprs {
 		if strings.ToLower(windowFuncExpr.Name) == ast.AggFuncGroupConcat {
 			return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
@@ -6479,7 +6490,7 @@ func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p base.LogicalPla
 		for _, expr := range windowFuncExpr.Args {
 			expr.Accept(checker)
 		}
-		desc, err := aggregation.NewWindowFuncDesc(b.ctx.GetExprCtx(), windowFuncExpr.Name, args, checker.InPrepareStmt)
+		desc, err := aggregation.NewWindowFuncDesc(b.ctx.GetExprCtx(), cc, windowFuncExpr.Name, args, checker.InPrepareStmt)
 		if err != nil {
 			return err
 		}
@@ -6589,16 +6600,17 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPl
 		}.Init(b.ctx, b.getSelectOffset())
 		window.SetOutputNames(make([]*types.FieldName, np.Schema().Len()))
 		copy(window.OutputNames(), np.OutputNames())
-		schema := np.Schema().Clone()
+		schema := np.Schema().Clone(nil)
 		descs := make([]*aggregation.WindowFuncDesc, 0, len(funcs))
 		preArgs := 0
 		checker := &expression.ParamMarkerInPrepareChecker{}
+		cc := make(expression.CloneContext, 2)
 		for _, windowFunc := range funcs {
 			checker.InPrepareStmt = false
 			for _, expr := range windowFunc.Args {
 				expr.Accept(checker)
 			}
-			desc, err := aggregation.NewWindowFuncDesc(b.ctx.GetExprCtx(), windowFunc.Name, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
+			desc, err := aggregation.NewWindowFuncDesc(b.ctx.GetExprCtx(), cc, windowFunc.Name, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -6606,7 +6618,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPl
 				return nil, nil, plannererrors.ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.Name))
 			}
 			preArgs += len(windowFunc.Args)
-			desc.WrapCastForAggArgs(b.ctx.GetExprCtx())
+			desc.WrapCastForAggArgs(b.ctx.GetExprCtx(), cc)
 			descs = append(descs, desc)
 			windowMap[windowFunc] = schema.Len()
 			schema.Append(&expression.Column{
@@ -7507,9 +7519,10 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 	}
 	exprs := make([]expression.Expression, len(seed.Schema().Columns))
 	resSchema := getResultCTESchema(seed.Schema(), b.ctx.GetSessionVars())
+	cc := make(expression.CloneContext, 2)
 	for i, col := range recur.Schema().Columns {
 		if !resSchema.Columns[i].RetType.Equal(col.RetType) {
-			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), col, resSchema.Columns[i].RetType)
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), cc, col, resSchema.Columns[i].RetType)
 		} else {
 			exprs[i] = col
 		}
@@ -7523,7 +7536,8 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 
 // The recursive part/CTE's schema is nullable, and the UID should be unique.
 func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
-	res := seedSchema.Clone()
+	cc := make(expression.CloneContext, 2)
+	res := seedSchema.Clone(cc)
 	for _, col := range res.Columns {
 		col.RetType = col.RetType.Clone()
 		col.UniqueID = svar.AllocPlanColumnID()

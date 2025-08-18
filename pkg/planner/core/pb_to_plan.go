@@ -92,8 +92,9 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 	}
 	// The limit missed its output cols via the protobuf.
 	// We need to add it back and do a ResolveIndicies for the later inline projection.
+	cc := make(expression.CloneContext, 1)
 	if limit, ok := p.(*physicalop.PhysicalLimit); ok {
-		limit.SetSchema(p.Children()[0].Schema().Clone())
+		limit.SetSchema(p.Children()[0].Schema().Clone(cc))
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
 		}
@@ -245,8 +246,9 @@ func (b *PBPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggF
 	var err error
 	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(executor.Aggregation.AggFunc))
 	exprCtx := b.sctx.GetExprCtx()
+	cc := make(expression.CloneContext, 2)
 	for _, expr := range executor.Aggregation.AggFunc {
-		aggFunc, err := aggregation.PBExprToAggFuncDesc(exprCtx, expr, b.tps)
+		aggFunc, err := aggregation.PBExprToAggFuncDesc(exprCtx, cc, expr, b.tps)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

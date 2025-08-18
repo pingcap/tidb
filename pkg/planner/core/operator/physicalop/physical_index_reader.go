@@ -83,7 +83,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
 			p.PhysicalSchemaProducer.SetSchema(is.DataSourceSchema)
 		}
-		p.OutputColumns = p.Schema().Clone().Columns
+		p.OutputColumns = p.Schema().Clone(nil).Columns
 	}
 }
 
@@ -229,12 +229,13 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
+	cc := make(expression.CloneContext, 2)
 	for i, col := range p.OutputColumns {
-		newCol, err := col.ResolveIndices(p.IndexPlan.Schema())
+		newCol, err := col.ResolveIndices(cc, p.IndexPlan.Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
 			sctx := p.SCtx()
-			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx().GetEvalCtx(), p.IndexPlan.Schema())
+			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx().GetEvalCtx(), cc, p.IndexPlan.Schema())
 			if isOK {
 				p.OutputColumns[i] = newExprCol.(*expression.Column)
 				continue

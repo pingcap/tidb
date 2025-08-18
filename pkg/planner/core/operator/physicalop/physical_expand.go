@@ -70,12 +70,13 @@ func (p *PhysicalExpand) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	}
 	np.PhysicalSchemaProducer = *base
 	// clone ID cols.
-	np.GroupingIDCol = p.GroupingIDCol.Clone().(*expression.Column)
+	cc := make(expression.CloneContext, 2)
+	np.GroupingIDCol = p.GroupingIDCol.Clone(cc).(*expression.Column)
 
 	// clone grouping expressions.
 	clonedGroupingSets := make([]expression.GroupingSet, 0, len(p.GroupingSets))
 	for _, one := range p.GroupingSets {
-		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
+		clonedGroupingSets = append(clonedGroupingSets, one.Clone(cc))
 	}
 	np.GroupingSets = clonedGroupingSets
 	return np, nil
@@ -161,10 +162,11 @@ func (p *PhysicalExpand) ExplainInfo() string {
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
 func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
 	// for version 1
+	cc := make(expression.CloneContext, 2)
 	for _, gs := range p.GroupingSets {
 		for _, groupingExprs := range gs {
 			for k, groupingExpr := range groupingExprs {
-				gExpr, err := groupingExpr.ResolveIndices(p.Children()[0].Schema())
+				gExpr, err := groupingExpr.ResolveIndices(cc, p.Children()[0].Schema())
 				if err != nil {
 					return err
 				}
@@ -176,7 +178,7 @@ func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
 	for i, oneLevel := range p.LevelExprs {
 		for j, expr := range oneLevel {
 			// expr in expand level-projections only contains column ref and literal constant projection.
-			p.LevelExprs[i][j], err = expr.ResolveIndices(p.Children()[0].Schema())
+			p.LevelExprs[i][j], err = expr.ResolveIndices(cc, p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}

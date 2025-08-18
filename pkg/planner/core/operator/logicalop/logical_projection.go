@@ -197,7 +197,8 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 		exprCtx := p.SCtx().GetExprCtx()
 		substitutedExprs := make([]expression.Expression, 0, len(topN.ByItems))
 		for _, by := range topN.ByItems {
-			substituted := expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, by.Expr, p.Schema(), p.Exprs))
+			cc := make(expression.CloneContext, 2)
+			substituted := expression.FoldConstant(exprCtx, cc, expression.ColumnSubstitute(exprCtx, cc, by.Expr, p.Schema(), p.Exprs))
 			if !expression.IsImmutableFunc(substituted) {
 				// after substituting, if the order-by expression is un-deterministic like 'order by rand()', stop pushing down.
 				return p.BaseLogicalPlan.PushDownTopN(topN, opt)
@@ -257,6 +258,7 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 	}
 	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
 	for _, predicate := range candidateConstantPredicates {
+		cc := make(expression.CloneContext, 2)
 		// The column of predicate must exist in projection exprs
 		columns := expression.ExtractColumns(predicate)
 		// The number of columns in candidate predicate must be 1.
@@ -269,7 +271,7 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 			// For example: select * from t, (select b from s where s.a=1) tmp where t.b=s.b
 			continue
 		}
-		clonePredicate := predicate.Clone()
+		clonePredicate := predicate.Clone(cc)
 		ruleutil.ResolveExprAndReplace(clonePredicate, replace)
 		result = append(result, clonePredicate)
 	}
@@ -580,7 +582,8 @@ func (p *LogicalProjection) AppendExpr(expr expression.Expression) *expression.C
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
-	expr = expression.ColumnSubstitute(p.SCtx().GetExprCtx(), expr, p.Schema(), p.Exprs)
+	cc := make(expression.CloneContext, 2)
+	expr = expression.ColumnSubstitute(p.SCtx().GetExprCtx(), cc, expr, p.Schema(), p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
 
 	col := &expression.Column{
@@ -602,8 +605,9 @@ func breakDownPredicates(p *LogicalProjection, predicates []expression.Expressio
 	canBePushed = make([]expression.Expression, 0, len(predicates))
 	canNotBePushed = make([]expression.Expression, 0, len(predicates))
 	exprCtx := p.SCtx().GetExprCtx()
+	cc := make(expression.CloneContext, 4)
 	for _, cond := range predicates {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cc, cond, p.Schema(), p.Exprs, true)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {

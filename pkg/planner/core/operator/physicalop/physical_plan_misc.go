@@ -322,12 +322,12 @@ func (rf *RuntimeFilter) Clone() *RuntimeFilter {
 	} else {
 		cloned.targetNodeID = rf.targetNode.ID()
 	}
-
+	cc := make(expression.CloneContext, 2)
 	for _, srcExpr := range rf.srcExprList {
-		cloned.srcExprList = append(cloned.srcExprList, srcExpr.Clone().(*expression.Column))
+		cloned.srcExprList = append(cloned.srcExprList, srcExpr.Clone(cc).(*expression.Column))
 	}
 	for _, targetExpr := range rf.targetExprList {
-		cloned.targetExprList = append(cloned.targetExprList, targetExpr.Clone().(*expression.Column))
+		cloned.targetExprList = append(cloned.targetExprList, targetExpr.Clone(cc).(*expression.Column))
 	}
 	cloned.rfType = rf.rfType
 	cloned.RfMode = rf.RfMode

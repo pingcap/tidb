@@ -177,7 +177,8 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 		newValues = append(newValues, lastValue)
 		specialCase = true
 	}
-	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), v.FuncName.L, v.RetType, newValues...)
+	cc := make(expression.CloneContext, 2)
+	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), cc, v.FuncName.L, v.RetType, newValues...)
 	return newPred, specialCase
 }
 
@@ -297,7 +298,8 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 			!collate.CompatibleCollate(otherValueType.GetCollate(), colCollate) {
 			return false
 		}
-		newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValueConst, otherValueConst)
+		cc := make(expression.CloneContext, 2)
+		newPred, err := expression.NewFunction(ctx.GetExprCtx(), cc, otherValue.FuncName.L, otherValue.RetType, equalValueConst, otherValueConst)
 		if err != nil {
 			return false
 		}
@@ -352,7 +354,8 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 	} else if emptyFirst && emptySecond {
 		return &expression.Constant{Value: types.NewIntDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)}
 	}
-	newPred, err := expression.NewFunction(ctx.GetExprCtx(), ast.LogicOr, v.RetType, firstCondition, secondCondition)
+	cc := make(expression.CloneContext, 2)
+	newPred, err := expression.NewFunction(ctx.GetExprCtx(), cc, ast.LogicOr, v.RetType, firstCondition, secondCondition)
 	if err != nil {
 		return orPredicateList
 	}
@@ -429,7 +432,8 @@ func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expressi
 		return secondCondition, true
 	default:
 		if !firstCondition.Equal(sctx.GetExprCtx().GetEvalCtx(), args[0]) || !secondCondition.Equal(sctx.GetExprCtx().GetEvalCtx(), args[1]) {
-			finalResult := expression.NewFunctionInternal(sctx.GetExprCtx(), con.FuncName.L, con.GetStaticType(), firstCondition, secondCondition)
+			cc := make(expression.CloneContext, 2)
+			finalResult := expression.NewFunctionInternal(sctx.GetExprCtx(), cc, con.FuncName.L, con.GetStaticType(), firstCondition, secondCondition)
 			return finalResult, true
 		}
 		return predicate, false
@@ -504,7 +508,8 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 			andFunc := orItem.(*expression.ScalarFunction)
 			andList := expression.SplitCNFItems(andFunc)
 			removeRedundantORBranch(sctx, andList)
-			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...))
+			cc := make(expression.CloneContext, 2)
+			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), cc, andList...))
 		} else {
 			// 2. Otherwise, we check if it's a duplicate predicate by checking HashCode().
 			hashCode := string(orItem.HashCode())

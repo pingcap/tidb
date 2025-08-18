@@ -134,11 +134,11 @@ type castAsIntFunctionClass struct {
 	inUnion bool
 }
 
-func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	b, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -187,11 +187,11 @@ type castAsRealFunctionClass struct {
 	inUnion bool
 }
 
-func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	b, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +216,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 	case types.ETDecimal:
 		sig = &builtinCastDecimalAsRealSig{bf}
-		PropagateType(ctx.GetEvalCtx(), types.ETReal, sig.getArgs()...)
+		PropagateType(ctx.GetEvalCtx(), cc, types.ETReal, sig.getArgs()...)
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsReal)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsRealSig{bf}
@@ -246,11 +246,11 @@ type castAsDecimalFunctionClass struct {
 	inUnion bool
 }
 
-func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	b, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -304,11 +304,11 @@ type castAsStringFunctionClass struct {
 	isExplicitCharset bool
 }
 
-func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinCastFunc4String(ctx, c.funcName, args, c.tp, c.isExplicitCharset)
+	bf, err := newBaseBuiltinCastFunc4String(ctx, cc, c.funcName, args, c.tp, c.isExplicitCharset)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +325,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		tp.AddFlag(mysql.BinaryFlag)
-		args[0] = BuildCastFunction(ctx, args[0], tp)
+		args[0] = BuildCastFunction(ctx, cc, args[0], tp)
 	}
 	argFt := args[0].GetType(ctx.GetEvalCtx())
 	adjustRetFtForCastString(bf.tp, argFt)
@@ -355,7 +355,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	case types.ETString:
 		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
-		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName, true)
+		bf.args[0] = HandleBinaryLiteral(ctx, cc, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName, true)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
@@ -515,11 +515,11 @@ type castAsTimeFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsTimeFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -561,11 +561,11 @@ type castAsDurationFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsDurationFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsDurationFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +619,7 @@ func (c *castAsArrayFunctionClass) verifyArgs(ctx EvalContext, args []Expression
 	return nil
 }
 
-func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -635,7 +635,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs with unspecified length")
 	}
 
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -647,9 +647,9 @@ type castJSONAsArrayFunctionSig struct {
 	baseBuiltinFunc
 }
 
-func (b *castJSONAsArrayFunctionSig) Clone() builtinFunc {
+func (b *castJSONAsArrayFunctionSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &castJSONAsArrayFunctionSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -764,11 +764,11 @@ type castAsJSONFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsJSONFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsJSONFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -811,11 +811,11 @@ type castAsVectorFloat32FunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsVectorFloat32FunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsVectorFloat32FunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -858,9 +858,9 @@ type builtinCastUnsupportedAsVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastUnsupportedAsVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinCastUnsupportedAsVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastUnsupportedAsVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -877,9 +877,9 @@ type builtinCastVectorFloat32AsUnsupportedSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastVectorFloat32AsUnsupportedSig) Clone() builtinFunc {
+func (b *builtinCastVectorFloat32AsUnsupportedSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastVectorFloat32AsUnsupportedSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -932,9 +932,9 @@ type builtinCastStringAsVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastStringAsVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinCastStringAsVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastStringAsVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -960,9 +960,9 @@ type builtinCastVectorFloat32AsVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastVectorFloat32AsVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinCastVectorFloat32AsVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastVectorFloat32AsVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -984,9 +984,9 @@ type builtinCastIntAsIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastIntAsIntSig) Clone() builtinFunc {
+func (b *builtinCastIntAsIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastIntAsIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1008,9 +1008,9 @@ type builtinCastIntAsRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastIntAsRealSig) Clone() builtinFunc {
+func (b *builtinCastIntAsRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastIntAsRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1041,9 +1041,9 @@ type builtinCastIntAsDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastIntAsDecimalSig) Clone() builtinFunc {
+func (b *builtinCastIntAsDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastIntAsDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1078,9 +1078,9 @@ type builtinCastIntAsStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastIntAsStringSig) Clone() builtinFunc {
+func (b *builtinCastIntAsStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastIntAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1112,9 +1112,9 @@ type builtinCastIntAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastIntAsTimeSig) Clone() builtinFunc {
+func (b *builtinCastIntAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastIntAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1147,9 +1147,9 @@ type builtinCastIntAsDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastIntAsDurationSig) Clone() builtinFunc {
+func (b *builtinCastIntAsDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastIntAsDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1176,9 +1176,9 @@ type builtinCastIntAsJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastIntAsJSONSig) Clone() builtinFunc {
+func (b *builtinCastIntAsJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastIntAsJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1204,9 +1204,9 @@ type builtinCastRealAsJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastRealAsJSONSig) Clone() builtinFunc {
+func (b *builtinCastRealAsJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastRealAsJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1223,9 +1223,9 @@ type builtinCastDecimalAsJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDecimalAsJSONSig) Clone() builtinFunc {
+func (b *builtinCastDecimalAsJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDecimalAsJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1249,9 +1249,9 @@ type builtinCastStringAsJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastStringAsJSONSig) Clone() builtinFunc {
+func (b *builtinCastStringAsJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastStringAsJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1291,9 +1291,9 @@ type builtinCastDurationAsJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDurationAsJSONSig) Clone() builtinFunc {
+func (b *builtinCastDurationAsJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDurationAsJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1313,9 +1313,9 @@ type builtinCastTimeAsJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastTimeAsJSONSig) Clone() builtinFunc {
+func (b *builtinCastTimeAsJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastTimeAsJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1337,9 +1337,9 @@ type builtinCastRealAsRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastRealAsRealSig) Clone() builtinFunc {
+func (b *builtinCastRealAsRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastRealAsRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1358,9 +1358,9 @@ type builtinCastRealAsIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastRealAsIntSig) Clone() builtinFunc {
+func (b *builtinCastRealAsIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastRealAsIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1393,9 +1393,9 @@ type builtinCastRealAsDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastRealAsDecimalSig) Clone() builtinFunc {
+func (b *builtinCastRealAsDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastRealAsDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1431,9 +1431,9 @@ type builtinCastRealAsStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
+func (b *builtinCastRealAsStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastRealAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1465,9 +1465,9 @@ type builtinCastRealAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastRealAsTimeSig) Clone() builtinFunc {
+func (b *builtinCastRealAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastRealAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1499,9 +1499,9 @@ type builtinCastRealAsDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastRealAsDurationSig) Clone() builtinFunc {
+func (b *builtinCastRealAsDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastRealAsDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1529,9 +1529,9 @@ type builtinCastDecimalAsDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDecimalAsDecimalSig) Clone() builtinFunc {
+func (b *builtinCastDecimalAsDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDecimalAsDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1557,9 +1557,9 @@ type builtinCastDecimalAsIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDecimalAsIntSig) Clone() builtinFunc {
+func (b *builtinCastDecimalAsIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDecimalAsIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1602,9 +1602,9 @@ type builtinCastDecimalAsStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDecimalAsStringSig) Clone() builtinFunc {
+func (b *builtinCastDecimalAsStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDecimalAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1641,9 +1641,9 @@ func floatLength(srcDecimal int, decimalPar int) int {
 	return dblDIG + 8
 }
 
-func (b *builtinCastDecimalAsRealSig) Clone() builtinFunc {
+func (b *builtinCastDecimalAsRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDecimalAsRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1667,9 +1667,9 @@ type builtinCastDecimalAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDecimalAsTimeSig) Clone() builtinFunc {
+func (b *builtinCastDecimalAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDecimalAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1696,9 +1696,9 @@ type builtinCastDecimalAsDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDecimalAsDurationSig) Clone() builtinFunc {
+func (b *builtinCastDecimalAsDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDecimalAsDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1724,9 +1724,9 @@ type builtinCastStringAsStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastStringAsStringSig) Clone() builtinFunc {
+func (b *builtinCastStringAsStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastStringAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1749,9 +1749,9 @@ type builtinCastStringAsIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastStringAsIntSig) Clone() builtinFunc {
+func (b *builtinCastStringAsIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastStringAsIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1830,9 +1830,9 @@ type builtinCastStringAsRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastStringAsRealSig) Clone() builtinFunc {
+func (b *builtinCastStringAsRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastStringAsRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1868,9 +1868,9 @@ type builtinCastStringAsDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastStringAsDecimalSig) Clone() builtinFunc {
+func (b *builtinCastStringAsDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastStringAsDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -1908,9 +1908,9 @@ type builtinCastStringAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastStringAsTimeSig) Clone() builtinFunc {
+func (b *builtinCastStringAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastStringAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1940,9 +1940,9 @@ type builtinCastStringAsDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastStringAsDurationSig) Clone() builtinFunc {
+func (b *builtinCastStringAsDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastStringAsDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1966,9 +1966,9 @@ type builtinCastTimeAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastTimeAsTimeSig) Clone() builtinFunc {
+func (b *builtinCastTimeAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastTimeAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1998,9 +1998,9 @@ type builtinCastTimeAsIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastTimeAsIntSig) Clone() builtinFunc {
+func (b *builtinCastTimeAsIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastTimeAsIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2025,9 +2025,9 @@ type builtinCastTimeAsRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastTimeAsRealSig) Clone() builtinFunc {
+func (b *builtinCastTimeAsRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastTimeAsRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2047,9 +2047,9 @@ type builtinCastTimeAsDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastTimeAsDecimalSig) Clone() builtinFunc {
+func (b *builtinCastTimeAsDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastTimeAsDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2071,9 +2071,9 @@ type builtinCastTimeAsStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastTimeAsStringSig) Clone() builtinFunc {
+func (b *builtinCastTimeAsStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastTimeAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2096,9 +2096,9 @@ type builtinCastTimeAsDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastTimeAsDurationSig) Clone() builtinFunc {
+func (b *builtinCastTimeAsDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastTimeAsDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2122,9 +2122,9 @@ type builtinCastDurationAsDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDurationAsDurationSig) Clone() builtinFunc {
+func (b *builtinCastDurationAsDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDurationAsDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2144,9 +2144,9 @@ type builtinCastDurationAsIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDurationAsIntSig) Clone() builtinFunc {
+func (b *builtinCastDurationAsIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDurationAsIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2176,9 +2176,9 @@ type builtinCastDurationAsRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDurationAsRealSig) Clone() builtinFunc {
+func (b *builtinCastDurationAsRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDurationAsRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2201,9 +2201,9 @@ type builtinCastDurationAsDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDurationAsDecimalSig) Clone() builtinFunc {
+func (b *builtinCastDurationAsDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDurationAsDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2228,9 +2228,9 @@ type builtinCastDurationAsStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDurationAsStringSig) Clone() builtinFunc {
+func (b *builtinCastDurationAsStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDurationAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2266,9 +2266,9 @@ type builtinCastDurationAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastDurationAsTimeSig) Clone() builtinFunc {
+func (b *builtinCastDurationAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastDurationAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2297,9 +2297,9 @@ type builtinCastJSONAsJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastJSONAsJSONSig) Clone() builtinFunc {
+func (b *builtinCastJSONAsJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastJSONAsJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2314,9 +2314,9 @@ type builtinCastJSONAsIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastJSONAsIntSig) Clone() builtinFunc {
+func (b *builtinCastJSONAsIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastJSONAsIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2338,9 +2338,9 @@ type builtinCastJSONAsRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastJSONAsRealSig) Clone() builtinFunc {
+func (b *builtinCastJSONAsRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastJSONAsRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2360,9 +2360,9 @@ type builtinCastJSONAsDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastJSONAsDecimalSig) Clone() builtinFunc {
+func (b *builtinCastJSONAsDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastJSONAsDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinCastFunc)
 	return newSig
 }
 
@@ -2388,9 +2388,9 @@ type builtinCastJSONAsStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastJSONAsStringSig) Clone() builtinFunc {
+func (b *builtinCastJSONAsStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastJSONAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2413,9 +2413,9 @@ type builtinCastVectorFloat32AsStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastVectorFloat32AsStringSig) Clone() builtinFunc {
+func (b *builtinCastVectorFloat32AsStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastVectorFloat32AsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2438,9 +2438,9 @@ type builtinCastJSONAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastJSONAsTimeSig) Clone() builtinFunc {
+func (b *builtinCastJSONAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastJSONAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2501,9 +2501,9 @@ type builtinCastJSONAsDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCastJSONAsDurationSig) Clone() builtinFunc {
+func (b *builtinCastJSONAsDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCastJSONAsDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2567,14 +2567,14 @@ func CanImplicitEvalReal(expr Expression) bool {
 
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
-func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true, false)
+func BuildCastFunction4Union(ctx BuildContext, cc CloneContext, expr Expression, tp *types.FieldType) (res Expression) {
+	res, err := BuildCastFunctionWithCheck(ctx, cc, expr, tp, true, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastCollationFunction builds a ScalarFunction which casts the collation.
-func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprCollation, enumOrSetRealTypeIsStr bool) Expression {
+func BuildCastCollationFunction(ctx BuildContext, cc CloneContext, expr Expression, ec *ExprCollation, enumOrSetRealTypeIsStr bool) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).EvalType() != types.ETString {
 		return expr
 	}
@@ -2599,25 +2599,25 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 	}
 	tp.SetCharset(ec.Charset)
 	tp.SetCollate(ec.Collation)
-	newExpr := BuildCastFunction(ctx, expr, tp)
+	newExpr := BuildCastFunction(ctx, cc, expr, tp)
 	return newExpr
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
-func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false, false)
+func BuildCastFunction(ctx BuildContext, cc CloneContext, expr Expression, tp *types.FieldType) (res Expression) {
+	res, err := BuildCastFunctionWithCheck(ctx, cc, expr, tp, false, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool, isExplicitCharset bool) (res Expression, err error) {
+func BuildCastFunctionWithCheck(ctx BuildContext, cc CloneContext, expr Expression, tp *types.FieldType, inUnion bool, isExplicitCharset bool) (res Expression, err error) {
 	argType := expr.GetType(ctx.GetEvalCtx())
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
 		tp.DelFlag(mysql.NotNullFlag)
 	}
-	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
+	expr = TryPushCastIntoControlFunctionForHybridType(ctx, cc, expr, tp)
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
@@ -2646,34 +2646,36 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	default:
 		return nil, errors.Errorf("cannot cast from %s", tp.EvalType())
 	}
-	f, err := fc.getFunction(ctx, []Expression{expr})
+	f, err := fc.getFunction(ctx, cc, []Expression{expr.Clone(cc)})
+	tp = cc.Clone(tp)
 	res = &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
 	}
+	clear(cc)
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson && err == nil {
-		return FoldConstant(ctx, res), nil
+		return FoldConstant(ctx, cc, res), nil
 	}
 	return res, err
 }
 
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not
 // type int, otherwise, returns `expr` directly.
-func WrapWithCastAsInt(ctx BuildContext, expr Expression, targetType *types.FieldType) Expression {
+func WrapWithCastAsInt(ctx BuildContext, cc CloneContext, expr Expression, targetType *types.FieldType) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeEnum {
 		// since column and correlated column may be referred in other places, deep
 		// clone the one out with its field type as well before change the flag inside.
 		if col, ok := expr.(*Column); ok {
-			col = col.Clone().(*Column)
+			col = col.Clone(cc).(*Column)
 			col.RetType = col.RetType.Clone()
 			expr = col
 		}
 		if col, ok := expr.(*CorrelatedColumn); ok {
-			col = col.Clone().(*CorrelatedColumn)
+			col = col.Clone(cc).(*CorrelatedColumn)
 			col.RetType = col.RetType.Clone()
 			expr = col
 		}
@@ -2695,12 +2697,12 @@ func WrapWithCastAsInt(ctx BuildContext, expr Expression, targetType *types.Fiel
 		// otherwise set UnsignedFlag based on targetType
 		tp.AddFlag(targetType.GetFlag() & mysql.UnsignedFlag)
 	}
-	return BuildCastFunction(ctx, expr, tp)
+	return BuildCastFunction(ctx, cc, expr, tp)
 }
 
 // WrapWithCastAsReal wraps `expr` with `cast` if the return type of expr is not
 // type real, otherwise, returns `expr` directly.
-func WrapWithCastAsReal(ctx BuildContext, expr Expression) Expression {
+func WrapWithCastAsReal(ctx BuildContext, cc CloneContext, expr Expression) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).EvalType() == types.ETReal {
 		return expr
 	}
@@ -2709,7 +2711,7 @@ func WrapWithCastAsReal(ctx BuildContext, expr Expression) Expression {
 	tp.SetDecimal(types.UnspecifiedLength)
 	types.SetBinChsClnFlag(tp)
 	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
-	return BuildCastFunction(ctx, expr, tp)
+	return BuildCastFunction(ctx, cc, expr, tp)
 }
 
 func minimalDecimalLenForHoldingInteger(tp byte) int {
@@ -2733,7 +2735,7 @@ func minimalDecimalLenForHoldingInteger(tp byte) int {
 
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
 // not type decimal, otherwise, returns `expr` directly.
-func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
+func WrapWithCastAsDecimal(ctx BuildContext, cc CloneContext, expr Expression) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).EvalType() == types.ETDecimal {
 		return expr
 	}
@@ -2750,7 +2752,7 @@ func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
 	}
 	types.SetBinChsClnFlag(tp)
 	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
-	castExpr := BuildCastFunction(ctx, expr, tp)
+	castExpr := BuildCastFunction(ctx, cc, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
 	if castExpr.ConstLevel() == ConstStrict {
 		val, isnull, err := castExpr.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
@@ -2766,7 +2768,7 @@ func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is
 // not type string, otherwise, returns `expr` directly.
-func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
+func WrapWithCastAsString(ctx BuildContext, cc CloneContext, expr Expression) Expression {
 	exprTp := expr.GetType(ctx.GetEvalCtx())
 	if exprTp.EvalType() == types.ETString {
 		return expr
@@ -2809,12 +2811,12 @@ func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
 	}
 	tp.SetFlen(argLen)
 	tp.SetDecimal(types.UnspecifiedLength)
-	return BuildCastFunction(ctx, expr, tp)
+	return BuildCastFunction(ctx, cc, expr, tp)
 }
 
 // WrapWithCastAsTime wraps `expr` with `cast` if the return type of expr is not
 // same as type of the specified `tp` , otherwise, returns `expr` directly.
-func WrapWithCastAsTime(ctx BuildContext, expr Expression, tp *types.FieldType) Expression {
+func WrapWithCastAsTime(ctx BuildContext, cc CloneContext, expr Expression, tp *types.FieldType) Expression {
 	exprTp := expr.GetType(ctx.GetEvalCtx()).GetType()
 	if tp.GetType() == exprTp {
 		return expr
@@ -2845,12 +2847,12 @@ func WrapWithCastAsTime(ctx BuildContext, expr Expression, tp *types.FieldType) 
 		}
 	}
 	types.SetBinChsClnFlag(tp)
-	return BuildCastFunction(ctx, expr, tp)
+	return BuildCastFunction(ctx, cc, expr, tp)
 }
 
 // WrapWithCastAsDuration wraps `expr` with `cast` if the return type of expr is
 // not type duration, otherwise, returns `expr` directly.
-func WrapWithCastAsDuration(ctx BuildContext, expr Expression) Expression {
+func WrapWithCastAsDuration(ctx BuildContext, cc CloneContext, expr Expression) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
 		return expr
 	}
@@ -2865,27 +2867,27 @@ func WrapWithCastAsDuration(ctx BuildContext, expr Expression) Expression {
 	if tp.GetDecimal() > 0 {
 		tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
 	}
-	return BuildCastFunction(ctx, expr, tp)
+	return BuildCastFunction(ctx, cc, expr, tp)
 }
 
 // WrapWithCastAsJSON wraps `expr` with `cast` if the return type of expr is not
 // type json, otherwise, returns `expr` directly.
-func WrapWithCastAsJSON(ctx BuildContext, expr Expression) Expression {
+func WrapWithCastAsJSON(ctx BuildContext, cc CloneContext, expr Expression) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeJSON && !mysql.HasParseToJSONFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag()) {
 		return expr
 	}
 	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(12582912).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
-	return BuildCastFunction(ctx, expr, tp)
+	return BuildCastFunction(ctx, cc, expr, tp)
 }
 
 // WrapWithCastAsVectorFloat32 wraps `expr` with `cast` if the return type of expr is not
 // type VectorFloat32, otherwise, returns `expr` directly.
-func WrapWithCastAsVectorFloat32(ctx BuildContext, expr Expression) Expression {
+func WrapWithCastAsVectorFloat32(ctx BuildContext, cc CloneContext, expr Expression) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeTiDBVectorFloat32 {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
-	return BuildCastFunction(ctx, expr, tp)
+	return BuildCastFunction(ctx, cc, expr, tp)
 }
 
 // TryPushCastIntoControlFunctionForHybridType try to push cast into control function for Hybrid Type.
@@ -2895,17 +2897,17 @@ func WrapWithCastAsVectorFloat32(ctx BuildContext, expr Expression) Expression {
 // For example, the condition `if(1, e, 'a') = 1`, `if` function will output `e` and compare with `1`.
 // If the evaltype is ETString, it will get wrong result. So we can rewrite the condition to
 // `IfInt(1, cast(e as int), cast('a' as int)) = 1` to get the correct result.
-func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
+func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, cc CloneContext, expr Expression, tp *types.FieldType) (res Expression) {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok {
 		return expr
 	}
 
-	var wrapCastFunc func(ctx BuildContext, expr Expression) Expression
+	var wrapCastFunc func(ctx BuildContext, cc CloneContext, expr Expression) Expression
 	switch tp.EvalType() {
 	case types.ETInt:
-		wrapCastFunc = func(ctx BuildContext, expr Expression) Expression {
-			return WrapWithCastAsInt(ctx, expr, tp)
+		wrapCastFunc = func(ctx BuildContext, cc CloneContext, expr Expression) Expression {
+			return WrapWithCastAsInt(ctx, cc, expr, tp)
 		}
 	case types.ETReal:
 		wrapCastFunc = WrapWithCastAsReal
@@ -2922,9 +2924,9 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 	switch sf.FuncName.L {
 	case ast.If:
 		if isHybrid(args[1].GetType(ctx.GetEvalCtx())) || isHybrid(args[2].GetType(ctx.GetEvalCtx())) {
-			args[1] = wrapCastFunc(ctx, args[1])
-			args[2] = wrapCastFunc(ctx, args[2])
-			f, err := funcs[ast.If].getFunction(ctx, args)
+			args[2] = wrapCastFunc(ctx, cc, args[2])
+			args[1] = wrapCastFunc(ctx, cc, args[1])
+			f, err := funcs[ast.If].getFunction(ctx, cc, args)
 			if err != nil {
 				return expr
 			}
@@ -2944,12 +2946,12 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 		}
 
 		for i := 0; i < len(args)-1; i += 2 {
-			args[i+1] = wrapCastFunc(ctx, args[i+1])
+			args[i+1] = wrapCastFunc(ctx, cc, args[i+1])
 		}
 		if len(args)%2 == 1 {
-			args[len(args)-1] = wrapCastFunc(ctx, args[len(args)-1])
+			args[len(args)-1] = wrapCastFunc(ctx, cc, args[len(args)-1])
 		}
-		f, err := funcs[ast.Case].getFunction(ctx, args)
+		f, err := funcs[ast.Case].getFunction(ctx, cc, args)
 		if err != nil {
 			return expr
 		}
@@ -2965,9 +2967,9 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 		}
 
 		for i := 1; i < len(args); i++ {
-			args[i] = wrapCastFunc(ctx, args[i])
+			args[i] = wrapCastFunc(ctx, cc, args[i])
 		}
-		f, err := funcs[ast.Elt].getFunction(ctx, args)
+		f, err := funcs[ast.Elt].getFunction(ctx, cc, args)
 		if err != nil {
 			return expr
 		}

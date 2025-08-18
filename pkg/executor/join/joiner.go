@@ -342,8 +342,9 @@ func (j *baseJoiner) Clone() baseJoiner {
 		selected:     make([]bool, 0, len(j.selected)),
 		isNull:       make([]bool, 0, len(j.isNull)),
 	}
+	cc := make(expression.CloneContext, 2)
 	for _, con := range j.conditions {
-		base.conditions = append(base.conditions, con.Clone())
+		base.conditions = append(base.conditions, con.Clone(cc))
 	}
 	if j.chk != nil {
 		base.chk = j.chk.CopyConstruct()

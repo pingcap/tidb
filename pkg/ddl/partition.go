@@ -5284,8 +5284,8 @@ func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *mod
 	if err != nil {
 		return 0, err
 	}
-
-	e, err := expression.NewFunctionBase(ctx, ast.EQ, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+	cc := make(expression.CloneContext, 4)
+	e, err := expression.NewFunctionBase(ctx, cc, ast.EQ, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
 	if err != nil {
 		return 0, err
 	}
@@ -5298,7 +5298,7 @@ func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *mod
 		return 0, nil
 	}
 
-	e, err = expression.NewFunctionBase(ctx, ast.GT, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+	e, err = expression.NewFunctionBase(ctx, cc, ast.GT, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
 	if err != nil {
 		return 0, err
 	}

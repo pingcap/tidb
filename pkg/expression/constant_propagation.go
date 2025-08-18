@@ -225,7 +225,8 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 		}
 	}
 	if replaced {
-		return true, false, NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...)
+		cc := make(CloneContext, 4)
+		return true, false, NewFunctionInternal(ctx, cc, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...)
 	}
 	return false, false, cond
 }
@@ -293,7 +294,8 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				cc := make(CloneContext, 4)
+				s.conditions[i] = ColumnSubstitute(s.ctx, cc, cond, NewSchema(cols...), cons)
 			}
 		}
 		cols = cols[:0]
@@ -653,7 +655,8 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				cc := make(CloneContext, 4)
+				s.joinConds[i] = ColumnSubstitute(s.ctx, cc, cond, NewSchema(cols...), cons)
 			}
 		}
 	}
@@ -751,7 +754,8 @@ func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 			// is no row satisfying t2.b = t1.a
 			childCol := s.innerSchema.RetrieveColumn(innerCol)
 			if !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
-				notNullExpr := BuildNotNullExpr(s.ctx, childCol)
+				cc := make(CloneContext, 4)
+				notNullExpr := BuildNotNullExpr(s.ctx, cc, childCol)
 				s.joinConds = append(s.joinConds, notNullExpr)
 			}
 		}
@@ -804,7 +808,7 @@ func propagateConstantDNF(ctx exprctx.ExprContext, filter func(expr Expression) 
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, filter, item)...)
+				dnfItems[j] = ComposeCNFCondition(ctx, nil, PropagateConstant(ctx, filter, item)...)
 			}
 			conds[i] = ComposeDNFCondition(ctx, dnfItems...)
 		}

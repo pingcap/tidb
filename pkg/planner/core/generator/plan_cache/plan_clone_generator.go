@@ -152,7 +152,8 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v.SafeToShareAcrossSession() {", f.Name)
 			c.write("cloned.%v = op.%v", f.Name, f.Name)
 			c.write("} else {")
-			c.write("cloned.%v = op.%v.Clone().(%v)", f.Name, f.Name, f.Type.String())
+			c.write("cc := make(expression.CloneContext, 2)")
+			c.write("cloned.%v = op.%v.Clone(cc).(%v)", f.Name, f.Name, f.Type.String())
 			c.write("}")
 			c.write("}")
 		case "physicalop.PhysicalIndexJoin":

@@ -59,8 +59,9 @@ func (p *PhysicalSort) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error)
 		return nil, err
 	}
 	cloned.BasePhysicalPlan = *base
+	cc := make(expression.CloneContext, 2)
 	for _, it := range p.ByItems {
-		cloned.ByItems = append(cloned.ByItems, it.Clone())
+		cloned.ByItems = append(cloned.ByItems, it.Clone(cc))
 	}
 	return cloned, nil
 }

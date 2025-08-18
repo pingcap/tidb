@@ -99,7 +99,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 		// But we don't need such columns, so we add an extra Projection to prune this column when this happened.
 		for i, child := range p.Children() {
 			if p.Schema().Len() < child.Schema().Len() {
-				schema := p.Schema().Clone()
+				schema := p.Schema().Clone(nil)
 				exprs := make([]expression.Expression, len(p.Schema().Columns))
 				for j, col := range schema.Columns {
 					exprs[j] = col

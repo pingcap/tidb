@@ -109,11 +109,11 @@ type sleepFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sleepFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *sleepFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -127,9 +127,9 @@ type builtinSleepSig struct {
 	expropt.SessionVarsPropReader
 }
 
-func (b *builtinSleepSig) Clone() builtinFunc {
+func (b *builtinSleepSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinSleepSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -175,11 +175,11 @@ type lockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lockFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *lockFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -193,9 +193,9 @@ type builtinLockSig struct {
 	expropt.AdvisoryLockPropReader
 }
 
-func (b *builtinLockSig) Clone() builtinFunc {
+func (b *builtinLockSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLockSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -269,11 +269,11 @@ type releaseLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *releaseLockFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *releaseLockFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -287,9 +287,9 @@ type builtinReleaseLockSig struct {
 	expropt.AdvisoryLockPropReader
 }
 
-func (b *builtinReleaseLockSig) Clone() builtinFunc {
+func (b *builtinReleaseLockSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinReleaseLockSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -333,12 +333,12 @@ type anyValueFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *anyValueFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, argTp, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -390,9 +390,9 @@ type builtinDecimalAnyValueSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinDecimalAnyValueSig) Clone() builtinFunc {
+func (b *builtinDecimalAnyValueSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinDecimalAnyValueSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -410,9 +410,9 @@ type builtinDurationAnyValueSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinDurationAnyValueSig) Clone() builtinFunc {
+func (b *builtinDurationAnyValueSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinDurationAnyValueSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -430,9 +430,9 @@ type builtinIntAnyValueSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinIntAnyValueSig) Clone() builtinFunc {
+func (b *builtinIntAnyValueSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinIntAnyValueSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -450,9 +450,9 @@ type builtinJSONAnyValueSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
+func (b *builtinJSONAnyValueSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONAnyValueSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -470,9 +470,9 @@ type builtinVectorFloat32AnyValueSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinVectorFloat32AnyValueSig) Clone() builtinFunc {
+func (b *builtinVectorFloat32AnyValueSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVectorFloat32AnyValueSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -488,9 +488,9 @@ type builtinRealAnyValueSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinRealAnyValueSig) Clone() builtinFunc {
+func (b *builtinRealAnyValueSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinRealAnyValueSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -508,9 +508,9 @@ type builtinStringAnyValueSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinStringAnyValueSig) Clone() builtinFunc {
+func (b *builtinStringAnyValueSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinStringAnyValueSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -528,9 +528,9 @@ type builtinTimeAnyValueSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinTimeAnyValueSig) Clone() builtinFunc {
+func (b *builtinTimeAnyValueSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinTimeAnyValueSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -544,7 +544,7 @@ type defaultFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *defaultFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *defaultFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "DEFAULT")
 }
 
@@ -552,11 +552,11 @@ type inetAtonFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inetAtonFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *inetAtonFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -575,9 +575,9 @@ type builtinInetAtonSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinInetAtonSig) Clone() builtinFunc {
+func (b *builtinInetAtonSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinInetAtonSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -633,11 +633,11 @@ type inetNtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inetNtoaFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *inetNtoaFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -659,9 +659,9 @@ type builtinInetNtoaSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinInetNtoaSig) Clone() builtinFunc {
+func (b *builtinInetNtoaSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinInetNtoaSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -692,11 +692,11 @@ type inet6AtonFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6AtonFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *inet6AtonFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -716,9 +716,9 @@ type builtinInet6AtonSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinInet6AtonSig) Clone() builtinFunc {
+func (b *builtinInet6AtonSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinInet6AtonSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -769,11 +769,11 @@ type inet6NtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6NtoaFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *inet6NtoaFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -795,9 +795,9 @@ type builtinInet6NtoaSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinInet6NtoaSig) Clone() builtinFunc {
+func (b *builtinInet6NtoaSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinInet6NtoaSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -824,11 +824,11 @@ type isFreeLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isFreeLockFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *isFreeLockFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -842,9 +842,9 @@ type builtinFreeLockSig struct {
 	expropt.AdvisoryLockPropReader
 }
 
-func (b *builtinFreeLockSig) Clone() builtinFunc {
+func (b *builtinFreeLockSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinFreeLockSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -888,11 +888,11 @@ type isIPv4FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *isIPv4FunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -910,9 +910,9 @@ type builtinIsIPv4Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinIsIPv4Sig) Clone() builtinFunc {
+func (b *builtinIsIPv4Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinIsIPv4Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -963,11 +963,11 @@ type isIPv4CompatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4CompatFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *isIPv4CompatFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -985,9 +985,9 @@ type builtinIsIPv4CompatSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinIsIPv4CompatSig) Clone() builtinFunc {
+func (b *builtinIsIPv4CompatSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinIsIPv4CompatSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1019,11 +1019,11 @@ type isIPv4MappedFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4MappedFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *isIPv4MappedFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1041,9 +1041,9 @@ type builtinIsIPv4MappedSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinIsIPv4MappedSig) Clone() builtinFunc {
+func (b *builtinIsIPv4MappedSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinIsIPv4MappedSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1075,11 +1075,11 @@ type isIPv6FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv6FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *isIPv6FunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1097,9 +1097,9 @@ type builtinIsIPv6Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinIsIPv6Sig) Clone() builtinFunc {
+func (b *builtinIsIPv6Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinIsIPv6Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1124,11 +1124,11 @@ type isUsedLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isUsedLockFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *isUsedLockFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1142,9 +1142,9 @@ type builtinUsedLockSig struct {
 	expropt.AdvisoryLockPropReader
 }
 
-func (b *builtinUsedLockSig) Clone() builtinFunc {
+func (b *builtinUsedLockSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinUsedLockSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1185,11 +1185,11 @@ type isUUIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *isUUIDFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1207,9 +1207,9 @@ type builtinIsUUIDSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinIsUUIDSig) Clone() builtinFunc {
+func (b *builtinIsUUIDSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinIsUUIDSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1235,12 +1235,12 @@ type nameConstFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *nameConstFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *nameConstFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTp := args[1].GetType(ctx.GetEvalCtx()).EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, argTp, types.ETString, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -1282,9 +1282,9 @@ type builtinNameConstDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNameConstDecimalSig) Clone() builtinFunc {
+func (b *builtinNameConstDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNameConstDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1300,9 +1300,9 @@ type builtinNameConstIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNameConstIntSig) Clone() builtinFunc {
+func (b *builtinNameConstIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNameConstIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1318,9 +1318,9 @@ type builtinNameConstRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNameConstRealSig) Clone() builtinFunc {
+func (b *builtinNameConstRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNameConstRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1336,9 +1336,9 @@ type builtinNameConstStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNameConstStringSig) Clone() builtinFunc {
+func (b *builtinNameConstStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNameConstStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1354,9 +1354,9 @@ type builtinNameConstJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNameConstJSONSig) Clone() builtinFunc {
+func (b *builtinNameConstJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNameConstJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1372,9 +1372,9 @@ type builtinNameConstVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNameConstVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinNameConstVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNameConstVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1390,9 +1390,9 @@ type builtinNameConstDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNameConstDurationSig) Clone() builtinFunc {
+func (b *builtinNameConstDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNameConstDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1408,9 +1408,9 @@ type builtinNameConstTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNameConstTimeSig) Clone() builtinFunc {
+func (b *builtinNameConstTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNameConstTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1422,11 +1422,11 @@ type releaseAllLocksFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *releaseAllLocksFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *releaseAllLocksFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1440,9 +1440,9 @@ type builtinReleaseAllLocksSig struct {
 	expropt.AdvisoryLockPropReader
 }
 
-func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {
+func (b *builtinReleaseAllLocksSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinReleaseAllLocksSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1465,11 +1465,11 @@ type uuidFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *uuidFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1490,9 +1490,9 @@ type builtinUUIDSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinUUIDSig) Clone() builtinFunc {
+func (b *builtinUUIDSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinUUIDSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1512,7 +1512,7 @@ type uuidShortFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidShortFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *uuidShortFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
 }
 
@@ -1520,11 +1520,11 @@ type vitessHashFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *vitessHashFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *vitessHashFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1546,9 +1546,9 @@ type builtinVitessHashSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinVitessHashSig) Clone() builtinFunc {
+func (b *builtinVitessHashSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinVitessHashSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1569,7 +1569,7 @@ type uuidToBinFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidToBinFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *uuidToBinFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1577,7 +1577,7 @@ func (c *uuidToBinFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if len(args) == 2 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1597,9 +1597,9 @@ type builtinUUIDToBinSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinUUIDToBinSig) Clone() builtinFunc {
+func (b *builtinUUIDToBinSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinUUIDToBinSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1646,7 +1646,7 @@ type binToUUIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1654,7 +1654,7 @@ func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if len(args) == 2 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1676,9 +1676,9 @@ type builtinBinToUUIDSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinBinToUUIDSig) Clone() builtinFunc {
+func (b *builtinBinToUUIDSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinBinToUUIDSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1738,11 +1738,11 @@ type tidbShardFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbShardFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *tidbShardFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1764,9 +1764,9 @@ type builtinTidbShardSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinTidbShardSig) Clone() builtinFunc {
+func (b *builtinTidbShardSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinTidbShardSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1788,6 +1788,6 @@ type tidbRowChecksumFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbRowChecksumFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *tidbRowChecksumFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrNotSupportedYet.GenWithStack("FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan")
 }

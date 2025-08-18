@@ -146,6 +146,7 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 
 	exprCtx := adder.sctx.GetExprCtx()
+	cc := make(expression.CloneContext, 4)
 	for _, item := range dnfItems {
 		if sf, ok := item.(*expression.ScalarFunction); ok {
 			var accesses []expression.Expression
@@ -155,14 +156,14 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 				if err != nil {
 					return []expression.Expression{condition}, err
 				}
-				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(exprCtx, accesses...))
+				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(exprCtx, cc, accesses...))
 			} else if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
 				// only add prefix expression for EQ or IN function
 				accesses, err = adder.addExprPrefix4CNFCond([]expression.Expression{sf})
 				if err != nil {
 					return []expression.Expression{condition}, err
 				}
-				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(exprCtx, accesses...))
+				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(exprCtx, cc, accesses...))
 			} else {
 				newAccessItems = append(newAccessItems, item)
 			}

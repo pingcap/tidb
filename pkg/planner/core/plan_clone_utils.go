@@ -51,11 +51,12 @@ func cloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expre
 	} else {
 		cloned = cloned[:0]
 	}
+	cc := make(expression.CloneContext, 2)
 	for _, e := range exprs {
 		if e.SafeToShareAcrossSession() {
 			cloned = append(cloned, e)
 		} else {
-			cloned = append(cloned, e.Clone())
+			cloned = append(cloned, e.Clone(cc))
 		}
 	}
 	return cloned
@@ -91,11 +92,12 @@ func cloneScalarFunctionsForPlanCache(scalarFuncs, cloned []*expression.ScalarFu
 	} else {
 		cloned = cloned[:0]
 	}
+	cc := make(expression.CloneContext, 2)
 	for _, f := range scalarFuncs {
 		if f.SafeToShareAcrossSession() {
 			cloned = append(cloned, f)
 		} else {
-			cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
+			cloned = append(cloned, f.Clone(cc).(*expression.ScalarFunction))
 		}
 	}
 	return cloned
@@ -120,6 +122,7 @@ func cloneColumnsForPlanCache(cols, cloned []*expression.Column) []*expression.C
 	} else {
 		cloned = cloned[:0]
 	}
+	cc := make(expression.CloneContext, 2)
 	for _, c := range cols {
 		if c == nil {
 			cloned = append(cloned, nil)
@@ -128,7 +131,7 @@ func cloneColumnsForPlanCache(cols, cloned []*expression.Column) []*expression.C
 		if c.SafeToShareAcrossSession() {
 			cloned = append(cloned, c)
 		} else {
-			cloned = append(cloned, c.Clone().(*expression.Column))
+			cloned = append(cloned, c.Clone(cc).(*expression.Column))
 		}
 	}
 	return cloned
@@ -156,11 +159,12 @@ func cloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*exp
 	} else {
 		cloned = cloned[:0]
 	}
+	cc := make(expression.CloneContext, 2)
 	for _, c := range constants {
 		if c.SafeToShareAcrossSession() {
 			cloned = append(cloned, c)
 		} else {
-			cloned = append(cloned, c.Clone().(*expression.Constant))
+			cloned = append(cloned, c.Clone(cc).(*expression.Constant))
 		}
 	}
 	return cloned
@@ -198,7 +202,8 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPl
 		if src.HandleConstant.SafeToShareAcrossSession() {
 			dst.HandleConstant = src.HandleConstant
 		} else {
-			dst.HandleConstant = src.HandleConstant.Clone().(*expression.Constant)
+			cc := make(expression.CloneContext, 2)
+			dst.HandleConstant = src.HandleConstant.Clone(cc).(*expression.Constant)
 		}
 	}
 	dst.handleFieldType = src.handleFieldType

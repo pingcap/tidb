@@ -2710,6 +2710,7 @@ func (b *executorBuilder) buildApply(v *physicalop.PhysicalApply) exec.Executor 
 		innerFilters := make([]expression.CNFExprs, 0, v.Concurrency)
 		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
 		joiners := make([]join.Joiner, 0, v.Concurrency)
+		cc := make(expression.CloneContext, 4)
 		for range v.Concurrency {
 			clonedInnerPlan, err := plannercore.SafeClone(v.SCtx(), innerPlan)
 			if err != nil {
@@ -2724,7 +2725,7 @@ func (b *executorBuilder) buildApply(v *physicalop.PhysicalApply) exec.Executor 
 			}
 			innerExecs = append(innerExecs, clonedInnerExec)
 			corCols = append(corCols, corCol)
-			innerFilters = append(innerFilters, innerFilter.Clone())
+			innerFilters = append(innerFilters, innerFilter.Clone(cc))
 			joiners = append(joiners, join.NewJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 				defaultValues, otherConditions, exec.RetTypes(leftChild), exec.RetTypes(rightChild), nil, false))
 		}
@@ -3309,11 +3310,13 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		autoAnalyze = "auto "
 	}
 	exprCtx := b.ctx.GetExprCtx()
+	cc := make(expression.CloneContext, 4)
 	for _, task := range v.ColTasks {
 		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
 		// so we need to make sure all the columns pass into it.
 		columns, _, err := expression.ColumnInfos2ColumnsAndNames(
 			exprCtx,
+			cc,
 			ast.NewCIStr(task.AnalyzeInfo.DBName),
 			task.TblInfo.Name,
 			append(task.ColsInfo, task.SkipColsInfo...),
@@ -5266,8 +5269,9 @@ func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executo
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
 	exprCtx := b.ctx.GetExprCtx()
+	cc := make(expression.CloneContext, 4)
 	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(exprCtx, desc, false)
+		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(exprCtx, cc, desc, false)
 		if err != nil {
 			b.err = err
 			return nil

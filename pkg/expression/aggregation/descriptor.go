@@ -44,8 +44,8 @@ type AggFuncDesc struct {
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
 // this func cannot be called twice as the TypeInfer has changed the type of args in the first time.
-func NewAggFuncDesc(ctx expression.BuildContext, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
-	b, err := newBaseFuncDesc(ctx, name, args)
+func NewAggFuncDesc(ctx expression.BuildContext, cc expression.CloneContext, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
+	b, err := newBaseFuncDesc(ctx, cc, name, args)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +53,9 @@ func NewAggFuncDesc(ctx expression.BuildContext, name string, args []expression.
 }
 
 // NewAggFuncDescForWindowFunc creates an aggregation function from window functions, where baseFuncDesc may be ready.
-func NewAggFuncDescForWindowFunc(ctx expression.BuildContext, desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
+func NewAggFuncDescForWindowFunc(ctx expression.BuildContext, cc expression.CloneContext, desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
 	if desc.RetTp == nil { // safety check
-		return NewAggFuncDesc(ctx, desc.Name, desc.Args, hasDistinct)
+		return NewAggFuncDesc(ctx, cc, desc.Name, desc.Args, hasDistinct)
 	}
 	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
 }
@@ -138,13 +138,13 @@ func (a *AggFuncDesc) Equal(ctx expression.EvalContext, other *AggFuncDesc) bool
 }
 
 // Clone copies an aggregation function signature totally.
-func (a *AggFuncDesc) Clone() *AggFuncDesc {
+func (a *AggFuncDesc) Clone(cc expression.CloneContext) *AggFuncDesc {
 	clone := *a
-	clone.baseFuncDesc = *a.baseFuncDesc.clone()
 	clone.OrderByItems = make([]*util.ByItems, len(a.OrderByItems))
 	for i, byItem := range a.OrderByItems {
-		clone.OrderByItems[i] = byItem.Clone()
+		clone.OrderByItems[i] = byItem.Clone(cc)
 	}
+	clone.baseFuncDesc = *a.baseFuncDesc.clone(cc)
 	return &clone
 }
 
@@ -153,7 +153,8 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 // This function is only used when executing aggregate function parallelly.
 // ordinal indicates the column ordinal of the intermediate result.
 func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFuncDesc) {
-	partialAggDesc = a.Clone()
+	cc := make(expression.CloneContext, 4)
+	partialAggDesc = a.Clone(cc)
 	if a.Mode == CompleteMode {
 		partialAggDesc.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
@@ -231,19 +232,19 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
 // |    1 |         1 |      95 | 95.0000 |         95 |          95 |         95 |      95 |      95 | NULL |     NULL |
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
-func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
+func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, cc expression.CloneContext, schema *expression.Schema) (types.Datum, bool, error) {
 	switch a.Name {
 	case ast.AggFuncCount:
-		return a.evalNullValueInOuterJoin4Count(ctx, schema)
+		return a.evalNullValueInOuterJoin4Count(ctx, cc, schema)
 	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncFirstRow:
-		return a.evalNullValueInOuterJoin4Sum(ctx, schema)
+		return a.evalNullValueInOuterJoin4Sum(ctx, cc, schema)
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		return types.Datum{}, false, nil
 	case ast.AggFuncBitAnd:
-		return a.evalNullValueInOuterJoin4BitAnd(ctx, schema)
+		return a.evalNullValueInOuterJoin4BitAnd(ctx, cc, schema)
 	case ast.AggFuncBitOr, ast.AggFuncBitXor:
-		return a.evalNullValueInOuterJoin4BitOr(ctx, schema)
+		return a.evalNullValueInOuterJoin4BitOr(ctx, cc, schema)
 	default:
 		panic("unsupported agg function")
 	}
@@ -278,9 +279,9 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 	}
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
+func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext, cc expression.CloneContext, schema *expression.Schema) (types.Datum, bool, error) {
 	for _, arg := range a.Args {
-		result, err := expression.EvaluateExprWithNull(ctx, schema, arg, true)
+		result, err := expression.EvaluateExprWithNull(ctx, cc, schema, arg, true)
 		if err != nil {
 			return types.Datum{}, false, err
 		}
@@ -292,8 +293,8 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext
 	return types.NewDatum(1), true, nil
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
+func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, cc expression.CloneContext, schema *expression.Schema) (types.Datum, bool, error) {
+	result, err := expression.EvaluateExprWithNull(ctx, cc, schema, a.Args[0], true)
 	if err != nil {
 		return types.Datum{}, false, err
 	}
@@ -304,8 +305,8 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, 
 	return con.Value, true, nil
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
+func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContext, cc expression.CloneContext, schema *expression.Schema) (types.Datum, bool, error) {
+	result, err := expression.EvaluateExprWithNull(ctx, cc, schema, a.Args[0], true)
 	if err != nil {
 		return types.Datum{}, false, err
 	}
@@ -316,8 +317,8 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContex
 	return con.Value, true, nil
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
+func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext, cc expression.CloneContext, schema *expression.Schema) (types.Datum, bool, error) {
+	result, err := expression.EvaluateExprWithNull(ctx, cc, schema, a.Args[0], true)
 	if err != nil {
 		return types.Datum{}, false, err
 	}

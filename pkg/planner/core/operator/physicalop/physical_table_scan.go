@@ -164,7 +164,7 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 		TblColHists:     ds.TblColHists,
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
-	ts.SetSchema(schema.Clone())
+	ts.SetSchema(schema.Clone(nil))
 	return ts
 }
 
@@ -187,7 +187,7 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 		Prop:            prop,
 		FilterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	ts.SetSchema(ds.Schema().Clone())
+	ts.SetSchema(ds.Schema().Clone(nil))
 	rowCount := path.CountAfterAccess
 	origRowCount := ds.StatsInfo().RowCount
 	// Add an arbitrary tolerance factor to account for comparison with floating point
@@ -392,8 +392,9 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 	if p.Table.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(p.Table)
 		idxCols, idxColLens := expression.IndexInfo2PrefixCols(p.Columns, p.Schema().Columns, pkIdx)
+		cc := make(expression.CloneContext, 2)
 		for _, cond := range access {
-			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
+			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cc, cond)
 			if err != nil {
 				return nil, err
 			}
@@ -679,11 +680,12 @@ func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
 	for i, column := range p.Schema().Columns {
 		column.Index = i
 	}
+	cc := make(expression.CloneContext, 2)
 	for i, expr := range p.LateMaterializationFilterCondition {
-		p.LateMaterializationFilterCondition[i], err = expr.ResolveIndices(p.Schema())
+		p.LateMaterializationFilterCondition[i], err = expr.ResolveIndices(cc, p.Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
-			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.Schema())
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), cc, p.Schema())
 			if isOk {
 				p.LateMaterializationFilterCondition[i] = newCond
 				continue

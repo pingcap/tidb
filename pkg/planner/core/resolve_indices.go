@@ -25,8 +25,9 @@ import (
 
 // resolveIndicesItself resolve indices for PhysicalPlan itself
 func resolveIndicesItself4PhysicalProjection(p *physicalop.PhysicalProjection) (err error) {
+	cc := make(expression.CloneContext, 4)
 	for i, expr := range p.Exprs {
-		p.Exprs[i], err = expr.ResolveIndices(p.Children()[0].Schema())
+		p.Exprs[i], err = expr.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -89,8 +90,9 @@ func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
 	if err != nil {
 		return err
 	}
+	cc := make(expression.CloneContext, 4)
 	for i, expr := range p.Conditions {
-		p.Conditions[i], err = expr.ResolveIndices(p.Children()[0].Schema())
+		p.Conditions[i], err = expr.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -118,15 +120,16 @@ func resolveIndices4PhysicalIndexLookUpReader(pp base.PhysicalPlan) (err error) 
 	if err != nil {
 		return err
 	}
+	cc := make(expression.CloneContext, 2)
 	if p.ExtraHandleCol != nil {
-		newCol, err := p.ExtraHandleCol.ResolveIndices(p.TablePlan.Schema())
+		newCol, err := p.ExtraHandleCol.ResolveIndices(cc, p.TablePlan.Schema())
 		if err != nil {
 			return err
 		}
 		p.ExtraHandleCol = newCol.(*expression.Column)
 	}
 	for i, commonHandleCol := range p.CommonHandleCols {
-		newCol, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema())
+		newCol, err := commonHandleCol.ResolveIndices(cc, p.TablePlans[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -169,11 +172,12 @@ func resolveIndices4PhysicalSelection(pp base.PhysicalPlan) (err error) {
 	if err != nil {
 		return err
 	}
+	cc := make(expression.CloneContext, 4)
 	for i, expr := range p.Conditions {
-		p.Conditions[i], err = expr.ResolveIndices(p.Children()[0].Schema())
+		p.Conditions[i], err = expr.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
-			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.Children()[0].Schema())
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), cc, p.Children()[0].Schema())
 			if isOk {
 				p.Conditions[i] = newCond
 				continue
@@ -227,8 +231,9 @@ func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
 	default:
 		return errors.Errorf("expect PhysicalSort or NominalSort, but got %s", p.TP())
 	}
+	cc := make(expression.CloneContext, 4)
 	for _, item := range byItems {
-		item.Expr, err = item.Expr.ResolveIndices(p.Children()[0].Schema())
+		item.Expr, err = item.Expr.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -249,12 +254,13 @@ func resolveIndexForInlineProjection(p *physicalop.PhysicalSchemaProducer) error
 	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
+	cc := make(expression.CloneContext, 4)
 	for i, j := 0, 0; i < p.Schema().Len() && j < p.Children()[0].Schema().Len(); {
 		if !p.Schema().Columns[i].Equal(nil, p.Children()[0].Schema().Columns[j]) {
 			j++
 			continue
 		}
-		p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
+		p.Schema().Columns[i] = p.Schema().Columns[i].Clone(cc).(*expression.Column)
 		p.Schema().Columns[i].Index = j
 		i++
 		j++
@@ -273,14 +279,15 @@ func resolveIndices4PhysicalTopN(pp base.PhysicalPlan) (err error) {
 	if err != nil {
 		return err
 	}
+	cc := make(expression.CloneContext, 4)
 	for _, item := range p.ByItems {
-		item.Expr, err = item.Expr.ResolveIndices(p.Children()[0].Schema())
+		item.Expr, err = item.Expr.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
 	}
 	for i, item := range p.PartitionBy {
-		newCol, err := item.Col.ResolveIndices(p.Children()[0].Schema())
+		newCol, err := item.Col.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -299,8 +306,9 @@ func resolveIndices4PhysicalLimit(pp base.PhysicalPlan) (err error) {
 	if err != nil {
 		return err
 	}
+	cc := make(expression.CloneContext, 4)
 	for i, item := range p.PartitionBy {
-		newCol, err := item.Col.ResolveIndices(p.Children()[0].Schema())
+		newCol, err := item.Col.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -319,13 +327,14 @@ func (p *Update) ResolveIndices() (err error) {
 		return err
 	}
 	schema := p.SelectPlan.Schema()
+	cc := make(expression.CloneContext, 4)
 	for _, assign := range p.OrderedList {
-		newCol, err := assign.Col.ResolveIndices(schema)
+		newCol, err := assign.Col.ResolveIndices(cc, schema)
 		if err != nil {
 			return err
 		}
 		assign.Col = newCol.(*expression.Column)
-		assign.Expr, err = assign.Expr.ResolveIndices(schema)
+		assign.Expr, err = assign.Expr.ResolveIndices(cc, schema)
 		if err != nil {
 			return err
 		}
@@ -339,33 +348,34 @@ func (p *Insert) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
+	cc := make(expression.CloneContext, 4)
 	for _, asgn := range p.OnDuplicate {
-		newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
+		newCol, err := asgn.Col.ResolveIndices(cc, p.tableSchema)
 		if err != nil {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
 		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
 		if asgn.Expr != nil {
-			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+			asgn.Expr, err = asgn.Expr.ResolveIndices(cc, p.Schema4OnDuplicate)
 			if err != nil {
 				return err
 			}
 		}
 	}
 	for i, expr := range p.GenCols.Exprs {
-		p.GenCols.Exprs[i], err = expr.ResolveIndices(p.tableSchema)
+		p.GenCols.Exprs[i], err = expr.ResolveIndices(cc, p.tableSchema)
 		if err != nil {
 			return err
 		}
 	}
 	for _, asgn := range p.GenCols.OnDuplicates {
-		newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
+		newCol, err := asgn.Col.ResolveIndices(cc, p.tableSchema)
 		if err != nil {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+		asgn.Expr, err = asgn.Expr.ResolveIndices(cc, p.Schema4OnDuplicate)
 		if err != nil {
 			return err
 		}

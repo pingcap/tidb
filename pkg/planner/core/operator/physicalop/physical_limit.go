@@ -118,8 +118,9 @@ func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (
 		Limit: p.Count,
 	}
 	executorID := ""
+	cc := make(expression.CloneContext, 2)
 	for _, item := range p.PartitionBy {
-		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(), item.Desc))
+		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(cc), item.Desc))
 	}
 	if storeType == kv.TiFlash {
 		var err error

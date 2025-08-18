@@ -724,7 +724,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 // 'points'. `col` is the target column to construct the Equal or In condition.
 // NOTE:
 // 1. 'points' should not be empty.
-func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expression.Column) expression.Expression {
+func points2EqOrInCond(ctx expression.BuildContext, cc expression.CloneContext, points []*point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	// Constant and Column args should have same RetType, simply get from first arg
 	retType := col.GetType(ctx.GetEvalCtx())
@@ -733,7 +733,7 @@ func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expres
 	orArgs := make([]expression.Expression, 0, 2)
 	for i := 0; i < len(points); i = i + 2 {
 		if points[i].value.IsNull() {
-			orArgs = append(orArgs, expression.NewFunctionInternal(ctx, ast.IsNull, retType, col))
+			orArgs = append(orArgs, expression.NewFunctionInternal(ctx, cc, ast.IsNull, retType, col))
 		} else {
 			value := &expression.Constant{
 				Value:   points[i].value,
@@ -748,7 +748,7 @@ func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expres
 		if len(args) > 2 {
 			funcName = ast.In
 		}
-		result = expression.NewFunctionInternal(ctx, funcName, col.GetType(ctx.GetEvalCtx()), args...)
+		result = expression.NewFunctionInternal(ctx, cc, funcName, col.GetType(ctx.GetEvalCtx()), args...)
 	}
 	if len(orArgs) == 0 {
 		return result
@@ -759,7 +759,7 @@ func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expres
 	if len(orArgs) == 1 {
 		return orArgs[0]
 	}
-	return expression.NewFunctionInternal(ctx, ast.LogicOr, col.GetType(ctx.GetEvalCtx()), orArgs...)
+	return expression.NewFunctionInternal(ctx, cc, ast.LogicOr, col.GetType(ctx.GetEvalCtx()), orArgs...)
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.

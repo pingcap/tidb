@@ -151,10 +151,11 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		// For `first_row` which is only used internally by tidb, `first_row(a)` would always return empty for empty input now.
 		var err error
 		var newAgg *aggregation.AggFuncDesc
+		cc := make(expression.CloneContext, 4)
 		if allFirstRow {
-			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
+			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
 		} else {
-			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), cc, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 		}
 		if err != nil {
 			return nil, err
@@ -600,6 +601,7 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
 func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (_, _ []expression.Expression) {
 	subDNFItem := expression.SplitDNFItems(cond)
+	cloneCtx := make(expression.CloneContext, 4)
 	if len(subDNFItem) == 1 {
 		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal)
 	}
@@ -611,9 +613,9 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 		if len(condsToPushForItem) <= 0 {
 			return nil, []expression.Expression{cond}
 		}
-		condsToPush = append(condsToPush, expression.ComposeCNFCondition(exprCtx, condsToPushForItem...))
+		condsToPush = append(condsToPush, expression.ComposeCNFCondition(exprCtx, cloneCtx, condsToPushForItem...))
 		if len(retForItem) > 0 {
-			ret = append(ret, expression.ComposeCNFCondition(exprCtx, retForItem...))
+			ret = append(ret, expression.ComposeCNFCondition(exprCtx, cloneCtx, retForItem...))
 		}
 	}
 	if len(ret) == 0 {
@@ -664,7 +666,8 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 			}
 		}
 		if ok {
-			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
+			cc := make(expression.CloneContext)
+			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cc, cond, la.Schema(), exprsOriginal)
 			condsToPush = append(condsToPush, newFunc)
 		} else {
 			ret = append(ret, cond)
@@ -700,7 +703,8 @@ func (la *LogicalAggregation) CanPullUp() bool {
 	}
 	for _, f := range la.AggFuncs {
 		for _, arg := range f.Args {
-			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg, true)
+			cc := make(expression.CloneContext, 4)
+			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), cc, la.Children()[0].Schema(), arg, true)
 			if err != nil {
 				return false
 			}

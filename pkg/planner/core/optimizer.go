@@ -602,7 +602,8 @@ func rewriteTableScanAndAggArgs(physicalTableScan *physicalop.PhysicalTableScan,
 	physicalTableScan.Columns[0] = resultColumnInfo
 	physicalTableScan.Schema().Columns[0] = resultColumn
 	// agg arg count(1) -> count(not null column)
-	arg := resultColumn.Clone()
+	cc := make(expression.CloneContext, 1)
+	arg := resultColumn.Clone(cc)
 	for _, aggFunc := range aggFuncs {
 		constExpr, ok := aggFunc.Args[0].(*expression.Constant)
 		if !ok {

@@ -1198,7 +1198,7 @@ func constructDS2TableScanTask(
 		TblColHists:     ds.TblColHists,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetIsPartition(ds.PartitionDefIdx != nil)
-	ts.SetSchema(ds.Schema().Clone())
+	ts.SetSchema(ds.Schema().Clone(nil))
 	if rowCount <= 0 {
 		rowCount = float64(1)
 	}
@@ -1270,7 +1270,7 @@ func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.Lo
 		return child
 	}
 	physicalHashAgg := physicalop.NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), prop)
-	physicalHashAgg.SetSchema(logicalAgg.Schema().Clone())
+	physicalHashAgg.SetSchema(logicalAgg.Schema().Clone(nil))
 	return physicalHashAgg
 }
 
@@ -1440,7 +1440,7 @@ func constructDS2IndexScanTask(
 			TblCols:         ds.TblCols,
 			TblColHists:     ds.TblColHists,
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
-		ts.SetSchema(is.DataSourceSchema.Clone())
+		ts.SetSchema(is.DataSourceSchema.Clone(nil))
 		ts.SetIsPartition(ds.PartitionDefIdx != nil)
 		if ds.TableInfo.IsCommonHandle {
 			commonHandle := ds.HandleCols.(*util.CommonHandleCols)
@@ -1661,7 +1661,7 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
 		}
-		streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), la.Schema().Clone(), prop)
+		streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), la.Schema().Clone(nil), prop)
 		// change to keep order for index scan and dsCopTask
 		if dsCopTask.indexPlan != nil {
 			// get the index scan from dsCopTask.indexPlan
@@ -1712,7 +1712,7 @@ buildHashAgg:
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
 		physicalHashAgg := physicalop.NewPhysicalHashAgg(la, stats, prop)
-		physicalHashAgg.SetSchema(la.Schema().Clone())
+		physicalHashAgg.SetSchema(la.Schema().Clone(nil))
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
 	}
 
@@ -3258,7 +3258,7 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
 		}
-		streamAgg := agg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
+		streamAgg := agg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(nil), copiedChildProperty)
 		enforcedAggs = append(enforcedAggs, streamAgg)
 	}
 	return enforcedAggs
@@ -3328,7 +3328,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 				GroupByItems: newGbyItems,
 				AggFuncs:     newAggFuncs,
 			}
-			streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
+			streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(nil), copiedChildProperty)
 			streamAggs = append(streamAggs, streamAgg)
 		}
 	}
@@ -3385,10 +3385,11 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 	// In the traditional case, TiDB take up the final agg role and push partial agg to TiKV,
 	// while TiDB can tell the partialMode and do the sum computation rather than counting but MPP doesn't
 	finalAggAdjust := func(aggFuncs []*aggregation.AggFuncDesc) {
+		cc := make(expression.CloneContext, 2)
 		for i, agg := range aggFuncs {
 			if agg.Mode == aggregation.FinalMode && agg.Name == ast.AggFuncCount {
 				oldFT := agg.RetTp
-				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncSum, agg.Args, false)
+				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), cc, ast.AggFuncSum, agg.Args, false)
 				aggFuncs[i].TypeInfer4FinalCount(oldFT)
 			}
 		}
@@ -3447,7 +3448,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 				NoCopPushDown:     prop.NoCopPushDown,
 			}
 			agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-			agg.SetSchema(la.Schema().Clone())
+			agg.SetSchema(la.Schema().Clone(nil))
 			agg.MppRunMode = physicalop.Mpp1Phase
 			finalAggAdjust(agg.AggFuncs)
 			if validMppAgg(agg) {
@@ -3469,7 +3470,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			NoCopPushDown:     prop.NoCopPushDown,
 		}
 		agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-		agg.SetSchema(la.Schema().Clone())
+		agg.SetSchema(la.Schema().Clone(nil))
 		agg.MppRunMode = physicalop.Mpp2Phase
 		agg.MppPartitionCols = partitionCols
 		if validMppAgg(agg) {
@@ -3485,7 +3486,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 				NoCopPushDown:     prop.NoCopPushDown,
 			}
 			agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-			agg.SetSchema(la.Schema().Clone())
+			agg.SetSchema(la.Schema().Clone(nil))
 			agg.MppRunMode = physicalop.MppTiDB
 			hashAggs = append(hashAggs, agg)
 		}
@@ -3498,7 +3499,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		}
 
 		agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-		agg.SetSchema(la.Schema().Clone())
+		agg.SetSchema(la.Schema().Clone(nil))
 		if la.HasDistinct() || la.HasOrderBy() {
 			// mpp scalar mode means the data will be pass through to only one tiFlash node at last.
 			agg.MppRunMode = physicalop.MppScalar
@@ -3588,7 +3589,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 				continue
 			}
 			agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-			agg.SetSchema(la.Schema().Clone())
+			agg.SetSchema(la.Schema().Clone(nil))
 			hashAggs = append(hashAggs, agg)
 		}
 	}

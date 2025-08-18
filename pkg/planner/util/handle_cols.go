@@ -85,7 +85,8 @@ type CommonHandleCols struct {
 func (cb *CommonHandleCols) Clone() HandleCols {
 	newCols := make([]*expression.Column, len(cb.columns))
 	for i, col := range cb.columns {
-		newCols[i] = col.Clone().(*expression.Column)
+		cc := make(expression.CloneContext, 4)
+		newCols[i] = col.Clone(cc).(*expression.Column)
 	}
 	return &CommonHandleCols{
 		tblInfo: cb.tblInfo.Clone(),
@@ -225,7 +226,8 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 		columns: make([]*expression.Column, len(cb.columns)),
 	}
 	for i, col := range cb.columns {
-		newCol, err := col.ResolveIndices(schema)
+		cc := make(expression.CloneContext, 4)
+		newCol, err := col.ResolveIndices(cc, schema)
 		if err != nil {
 			return nil, err
 		}
@@ -359,7 +361,8 @@ func (ib *IntHandleCols) Equals(other any) bool {
 
 // Clone implements the kv.HandleCols interface.
 func (ib *IntHandleCols) Clone() HandleCols {
-	return &IntHandleCols{col: ib.col.Clone().(*expression.Column)}
+	cc := make(expression.CloneContext, 4)
+	return &IntHandleCols{col: ib.col.Clone(cc).(*expression.Column)}
 }
 
 // IterColumns implements the kv.HandleCols interface.
@@ -398,7 +401,8 @@ func (ib *IntHandleCols) BuildHandleByDatums(_ *stmtctx.StatementContext, row []
 
 // ResolveIndices implements the kv.HandleCols interface.
 func (ib *IntHandleCols) ResolveIndices(schema *expression.Schema) (HandleCols, error) {
-	newCol, err := ib.col.ResolveIndices(schema)
+	cc := make(expression.CloneContext, 4)
+	newCol, err := ib.col.ResolveIndices(cc, schema)
 	if err != nil {
 		return nil, err
 	}

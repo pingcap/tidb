@@ -39,7 +39,8 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 		if op.HandleConstant.SafeToShareAcrossSession() {
 			cloned.HandleConstant = op.HandleConstant
 		} else {
-			cloned.HandleConstant = op.HandleConstant.Clone().(*expression.Constant)
+			cc := make(expression.CloneContext, 2)
+			cloned.HandleConstant = op.HandleConstant.Clone(cc).(*expression.Constant)
 		}
 	}
 	cloned.IndexValues = util.CloneDatums(op.IndexValues)

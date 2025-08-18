@@ -28,6 +28,7 @@ import (
 
 func TestCaseWhen(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tbl := []struct {
 		Arg []any
 		Ret any
@@ -46,13 +47,13 @@ func TestCaseWhen(t *testing.T) {
 	}
 	fc := funcs[ast.Case]
 	for _, tt := range tbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg...)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.Arg...)))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
@@ -60,6 +61,7 @@ func TestCaseWhen(t *testing.T) {
 
 func TestIf(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
@@ -92,22 +94,23 @@ func TestIf(t *testing.T) {
 
 	fc := funcs[ast.If]
 	for _, tt := range tbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg1, tt.Arg2, tt.Arg3)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.Arg1, tt.Arg2, tt.Arg3)))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
-	_, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1, 2)))
+	_, err = fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(1, 2)))
 	require.Error(t, err)
 }
 
 func TestIfNull(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tbl := []struct {
 		arg1     any
 		arg2     any
@@ -144,9 +147,9 @@ func TestIfNull(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Ifnull].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err := funcs[ast.Ifnull].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 
-	_, err = funcs[ast.Ifnull].getFunction(ctx, []Expression{NewZero()})
+	_, err = funcs[ast.Ifnull].getFunction(ctx, cc, []Expression{NewZero()})
 	require.Error(t, err)
 }

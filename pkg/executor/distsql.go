@@ -156,8 +156,9 @@ func closeAll(objs ...Closeable) error {
 // by substituting correlated column with the constant.
 func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerContext, is *physicalop.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
+	cc := make(expression.CloneContext, 4)
 	for _, cond := range is.AccessCondition {
-		newCond, err1 := expression.SubstituteCorCol2Constant(ectx, cond)
+		newCond, err1 := expression.SubstituteCorCol2Constant(ectx, cc, cond)
 		if err1 != nil {
 			return nil, err1
 		}

@@ -2126,13 +2126,14 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		cc := make(expression.CloneContext, 4)
+		expr = expression.BuildCastFunction(ctx.GetExprCtx(), cc, expr, castToTP)
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
 		}
 
-		newAssign.Expr, err = expr.ResolveIndices(plan.Schema())
+		newAssign.Expr, err = expr.ResolveIndices(cc, plan.Schema())
 		if err != nil {
 			return nil, true
 		}

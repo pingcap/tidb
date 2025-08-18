@@ -735,7 +735,8 @@ func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Express
 	cols := make([]*expression.Column, 0, len(exprCols))
 	colLen := make([]int, 0, len(exprCols))
 	for _, c := range exprCols {
-		c = c.Clone().(*expression.Column)
+		cc := make(expression.CloneContext, 4)
+		c = c.Clone(cc).(*expression.Column)
 		cols = append(cols, c)
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
@@ -1473,9 +1474,9 @@ func partitionRangeColumnForInExpr(sctx base.PlanContext, args []expression.Expr
 		default:
 			return pruner.fullRange()
 		}
-
+		cc := make(expression.CloneContext, 4)
 		// convert all elements to EQ-exprs and prune them one by one
-		sf, err := expression.NewFunction(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
+		sf, err := expression.NewFunction(sctx.GetExprCtx(), cc, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
 		if err != nil {
 			return pruner.fullRange()
 		}
@@ -1902,7 +1903,7 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 			// Not a deep copy.
 			newDataSource := *ds
 			newDataSource.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.QueryBlockOffset())
-			newDataSource.SetSchema(ds.Schema().Clone())
+			newDataSource.SetSchema(ds.Schema().Clone(nil))
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
 			newDataSource.PartitionDefIdx = &partIdx
@@ -1938,7 +1939,7 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 	}
 	unionAll := logicalop.LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)
-	unionAll.SetSchema(ds.Schema().Clone())
+	unionAll.SetSchema(ds.Schema().Clone(nil))
 	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)
 	return unionAll, nil
 }
@@ -1978,7 +1979,7 @@ func makeRangeColumnPruner(columns []*expression.Column, pi *model.PartitionInfo
 		colVals := make([]*expression.Expression, 0, len(from.LessThan[i]))
 		for j := range from.LessThan[i] {
 			if from.LessThan[i][j] != nil {
-				tmp := (*from.LessThan[i][j]).Clone()
+				tmp := (*from.LessThan[i][j]).Clone(nil)
 				colVals = append(colVals, &tmp)
 			} else {
 				colVals = append(colVals, nil)
@@ -2080,7 +2081,8 @@ func (p *RangeColumnsPruner) pruneUseBinarySearch(sctx base.PlanContext, op stri
 			if p.LessThan[ith][i] == nil { // MAXVALUE
 				return true
 			}
-			expr, err := expression.NewFunctionBase(sctx.GetExprCtx(), op, types.NewFieldType(mysql.TypeLonglong), *p.LessThan[ith][i], v)
+			cc := make(expression.CloneContext, 4)
+			expr, err := expression.NewFunctionBase(sctx.GetExprCtx(), cc, op, types.NewFieldType(mysql.TypeLonglong), *p.LessThan[ith][i], v)
 			if err != nil {
 				savedError = err
 				return true

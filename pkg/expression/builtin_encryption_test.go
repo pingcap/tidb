@@ -148,7 +148,7 @@ var aesTests = []struct {
 
 func TestAESEncrypt(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
 		err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
@@ -157,7 +157,7 @@ func TestAESEncrypt(t *testing.T) {
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestAESEncrypt(t *testing.T) {
 
 		args := primitiveValsToConstants(ctx, []any{tt.origin})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
-		f, err := fc.getFunction(ctx, args)
+		f, err := fc.getFunction(ctx, cc, args)
 
 		require.NoError(t, err, msg)
 		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -214,7 +214,7 @@ func TestAESEncrypt(t *testing.T) {
 
 func TestAESDecrypt(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
 		msg := fmt.Sprintf("%v", tt)
@@ -224,7 +224,7 @@ func TestAESDecrypt(t *testing.T) {
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err, msg)
 		str, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, msg)
@@ -275,7 +275,7 @@ func TestAESDecrypt(t *testing.T) {
 		// Set charset and collate except first argument
 		args := datumsToConstants([]types.Datum{fromHex(tt.crypt)})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
-		f, err := fc.getFunction(ctx, args)
+		f, err := fc.getFunction(ctx, cc, args)
 		require.NoError(t, err, msg)
 		str, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, msg)
@@ -285,17 +285,18 @@ func TestAESDecrypt(t *testing.T) {
 
 func testNullInput(t *testing.T, ctx *mock.Context, fnName string) {
 	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
+	cc := make(CloneContext, 2)
 	require.NoError(t, err)
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
-	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, argNull}))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg, argNull}))
 	require.NoError(t, err)
 	crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, crypt.IsNull())
 
-	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull, arg}))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull, arg}))
 	require.NoError(t, err)
 	crypt, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -304,13 +305,14 @@ func testNullInput(t *testing.T, ctx *mock.Context, fnName string) {
 
 func testAmbiguousInput(t *testing.T, ctx *mock.Context, fnName string) {
 	fc := funcs[fnName]
+	cc := make(CloneContext, 2)
 	arg := types.NewStringDatum("str")
 	// test for modes that require init_vector
 	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-cbc")
 	require.NoError(t, err)
-	_, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg}))
+	_, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg, arg}))
 	require.Error(t, err)
-	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
@@ -318,7 +320,7 @@ func testAmbiguousInput(t *testing.T, ctx *mock.Context, fnName string) {
 	// test for modes that do not require init_vector
 	err = ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
-	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, arg}))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg, arg, arg}))
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -364,12 +366,12 @@ func TestSha1Hash(t *testing.T) {
 		{"gbk", "一二三123", "1e24acbf708cd889c1d5be90abc1f14eaf14d0b4"},
 		{"gbk", "", "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
 	}
-
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		f, _ := fc.getFunction(ctx, primitiveValsToConstants(ctx, []any{tt.origin}))
+		f, _ := fc.getFunction(ctx, cc, primitiveValsToConstants(ctx, []any{tt.origin}))
 		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		res, err := crypt.ToString()
@@ -378,7 +380,7 @@ func TestSha1Hash(t *testing.T) {
 	}
 	// test NULL input for sha
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, crypt.IsNull())
@@ -435,12 +437,12 @@ func TestSha2Hash(t *testing.T) {
 		{"gbk", "", 384, "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b", true},
 		{"gbk", "", 512, "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e", true},
 	}
-
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, []any{tt.origin, tt.hashLength}))
+		f, err := fc.getFunction(ctx, cc, primitiveValsToConstants(ctx, []any{tt.origin, tt.hashLength}))
 		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -496,7 +498,8 @@ func TestMD5Hash(t *testing.T) {
 			}
 		}
 	}
-	_, err := funcs[ast.MD5].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.MD5].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -521,28 +524,28 @@ func BenchmarkMD5Hash(b *testing.B) {
 
 func TestRandomBytes(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.RandomBytes]
-	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(32)}))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{types.NewDatum(32)}))
 	require.NoError(t, err)
 	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, 32, len(out.GetBytes()))
 
-	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(1025)}))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{types.NewDatum(1025)}))
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
-	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(-32)}))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{types.NewDatum(-32)}))
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
-	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(0)}))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{types.NewDatum(0)}))
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
 
-	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(nil)}))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{types.NewDatum(nil)}))
 	require.NoError(t, err)
 	out, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -573,11 +576,12 @@ func TestCompress(t *testing.T) {
 		{"utf8mb4", "你好", string(decodeHex("06000000789C7AB277C1D3A57B01010000FFFF10450489"))},
 		{"gbk", "你好", string(decodeHex("04000000789C3AF278D76140000000FFFF07F40325"))},
 	}
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, test.chs)
 		require.NoErrorf(t, err, "%v", test)
 		arg := primitiveValsToConstants(ctx, []any{test.in})
-		f, err := fc.getFunction(ctx, arg)
+		f, err := fc.getFunction(ctx, cc, arg)
 		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
@@ -608,11 +612,11 @@ func TestUncompress(t *testing.T) {
 		{12345, nil},
 		{nil, nil},
 	}
-
 	fc := funcs[ast.Uncompress]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
@@ -644,9 +648,10 @@ func TestUncompressLength(t *testing.T) {
 	}
 
 	fc := funcs[ast.UncompressedLength]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
@@ -677,10 +682,11 @@ func TestValidatePasswordStrength(t *testing.T) {
 	}
 
 	fc := funcs[ast.ValidatePasswordStrength]
+	cc := make(CloneContext, 2)
 	// disable password validation
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
@@ -695,7 +701,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 	require.NoError(t, err)
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
@@ -755,7 +761,7 @@ func TestPassword(t *testing.T) {
 			require.Equal(t, warnCount, len(warnings))
 		}
 	}
-
-	_, err := funcs[ast.PasswordFunc].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.PasswordFunc].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }

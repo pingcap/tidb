@@ -55,7 +55,7 @@ type tidbToBinaryFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
@@ -63,7 +63,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -87,9 +87,9 @@ type builtinInternalToBinarySig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinInternalToBinarySig) Clone() builtinFunc {
+func (b *builtinInternalToBinarySig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinInternalToBinarySig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -142,7 +142,7 @@ type tidbFromBinaryFunctionClass struct {
 	cannotConvertStringAsWarning bool
 }
 
-func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
@@ -150,7 +150,7 @@ func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expre
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -170,9 +170,9 @@ type builtinInternalFromBinarySig struct {
 	cannotConvertStringAsWarning bool
 }
 
-func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
+func (b *builtinInternalFromBinarySig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinInternalFromBinarySig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	newSig.cannotConvertStringAsWarning = b.cannotConvertStringAsWarning
 	return newSig
 }
@@ -252,9 +252,9 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 }
 
 // BuildToBinaryFunction builds to_binary function.
-func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
+func BuildToBinaryFunction(ctx BuildContext, cc CloneContext, expr Expression) (res Expression) {
 	fc := &tidbToBinaryFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}}
-	f, err := fc.getFunction(ctx, []Expression{expr})
+	f, err := fc.getFunction(ctx, cc, []Expression{expr})
 	if err != nil {
 		return expr
 	}
@@ -263,13 +263,13 @@ func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 		RetType:  f.getRetTp(),
 		Function: f,
 	}
-	return FoldConstant(ctx, res)
+	return FoldConstant(ctx, cc, res)
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
+func BuildFromBinaryFunction(ctx BuildContext, cc CloneContext, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp, cannotConvertStringAsWarning}
-	f, err := fc.getFunction(ctx, []Expression{expr})
+	f, err := fc.getFunction(ctx, cc, []Expression{expr})
 	if err != nil {
 		return expr
 	}
@@ -278,7 +278,7 @@ func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldT
 		RetType:  tp,
 		Function: f,
 	}
-	return FoldConstant(ctx, res)
+	return FoldConstant(ctx, cc, res)
 }
 
 type funcProp int8
@@ -340,7 +340,7 @@ func init() {
 }
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
-func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
+func HandleBinaryLiteral(ctx BuildContext, cc CloneContext, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
 	argChs, dstChs := expr.GetType(ctx.GetEvalCtx()).GetCharset(), ec.Charset
 	switch convertFuncsMap[funcName] {
 	case funcPropNone:
@@ -349,19 +349,19 @@ func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, f
 		if isLegacyCharset(argChs) {
 			return expr
 		}
-		return BuildToBinaryFunction(ctx, expr)
+		return BuildToBinaryFunction(ctx, cc, expr)
 	case funcPropAuto:
 		if argChs != charset.CharsetBin && dstChs == charset.CharsetBin {
 			if isLegacyCharset(argChs) {
 				return expr
 			}
-			return BuildToBinaryFunction(ctx, expr)
+			return BuildToBinaryFunction(ctx, cc, expr)
 		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin &&
 			expr.GetType(ctx.GetEvalCtx()).GetType() != mysql.TypeNull {
 			ft := expr.GetType(ctx.GetEvalCtx()).Clone()
 			ft.SetCharset(ec.Charset)
 			ft.SetCollate(ec.Collation)
-			return BuildFromBinaryFunction(ctx, expr, ft, explicitCast)
+			return BuildFromBinaryFunction(ctx, cc, expr, ft, explicitCast)
 		}
 	}
 	return expr

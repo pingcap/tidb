@@ -34,12 +34,12 @@ type likeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *likeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *likeFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTp := []types.EvalType{types.ETString, types.ETString, types.ETInt}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTp...)
 	if err != nil {
 		return nil, err
 	}
@@ -56,9 +56,9 @@ type builtinLikeSig struct {
 	patternCache builtinFuncCache[collate.WildcardPattern]
 }
 
-func (b *builtinLikeSig) Clone() builtinFunc {
+func (b *builtinLikeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLikeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 

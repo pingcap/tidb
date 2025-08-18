@@ -173,6 +173,22 @@ type SafeToShareAcrossSession interface {
 	SafeToShareAcrossSession() bool
 }
 
+// CloneContext is to address the issue of correctly cloning `types.FieldType`.
+type CloneContext map[*types.FieldType]*types.FieldType
+
+// Clone is to Clone FieldType with the CloneContext.
+func (c CloneContext) Clone(ft *types.FieldType) *types.FieldType {
+	if c == nil {
+		return ft.Clone()
+	}
+	if old, ok := c[ft]; ok {
+		return old
+	}
+	nft := ft.DeepCopy()
+	c[ft] = nft
+	return nft
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	VecExpr
@@ -213,7 +229,7 @@ type Expression interface {
 	GetType(ctx EvalContext) *types.FieldType
 
 	// Clone copies an expression totally.
-	Clone() Expression
+	Clone(CloneContext) Expression
 
 	// Equal checks whether two expressions are equal.
 	Equal(ctx EvalContext, e Expression) bool
@@ -228,13 +244,13 @@ type Expression interface {
 	Decorrelate(schema *Schema) Expression
 
 	// ResolveIndices resolves indices by the given schema. It will copy the original expression and return the copied one.
-	ResolveIndices(schema *Schema) (Expression, error)
+	ResolveIndices(cc CloneContext, schema *Schema) (Expression, error)
 
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
 	resolveIndices(schema *Schema) error
 
 	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virtual expression. It will copy the original expression and return the copied one.
-	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
+	ResolveIndicesByVirtualExpr(ctx EvalContext, cc CloneContext, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
 	resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool
@@ -273,10 +289,10 @@ type Expression interface {
 type CNFExprs []Expression
 
 // Clone clones itself.
-func (e CNFExprs) Clone() CNFExprs {
+func (e CNFExprs) Clone(cc CloneContext) CNFExprs {
 	cnf := make(CNFExprs, 0, len(e))
 	for _, expr := range e {
-		cnf = append(cnf, expr.Clone())
+		cnf = append(cnf, expr.Clone(cc))
 	}
 	return cnf
 }
@@ -794,7 +810,7 @@ func EvalExpr(ctx EvalContext, vecEnabled bool, expr Expression, evalType types.
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
-func composeConditionWithBinaryOp(ctx BuildContext, conditions []Expression, funcName string) Expression {
+func composeConditionWithBinaryOp(ctx BuildContext, cc CloneContext, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -802,21 +818,21 @@ func composeConditionWithBinaryOp(ctx BuildContext, conditions []Expression, fun
 	if length == 1 {
 		return conditions[0]
 	}
-	expr := NewFunctionInternal(ctx, funcName,
+	expr := NewFunctionInternal(ctx, cc, funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
-		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
+		composeConditionWithBinaryOp(ctx, cc, conditions[:length/2], funcName),
+		composeConditionWithBinaryOp(ctx, cc, conditions[length/2:], funcName))
 	return expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(ctx BuildContext, conditions ...Expression) Expression {
-	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
+func ComposeCNFCondition(ctx BuildContext, cc CloneContext, conditions ...Expression) Expression {
+	return composeConditionWithBinaryOp(ctx, cc, conditions, ast.LogicAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
 func ComposeDNFCondition(ctx BuildContext, conditions ...Expression) Expression {
-	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
+	return composeConditionWithBinaryOp(ctx, nil, conditions, ast.LogicOr)
 }
 
 func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Expression {
@@ -856,11 +872,11 @@ type Assignment struct {
 }
 
 // Clone clones the Assignment.
-func (a *Assignment) Clone() *Assignment {
+func (a *Assignment) Clone(cc CloneContext) *Assignment {
 	return &Assignment{
-		Col:     a.Col.Clone().(*Column),
+		Col:     a.Col.Clone(cc).(*Column),
 		ColName: a.ColName,
-		Expr:    a.Expr.Clone(),
+		Expr:    a.Expr.Clone(cc),
 		LazyErr: a.LazyErr,
 	}
 }
@@ -920,29 +936,29 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 // Set the skip cache to false when the caller will not change the logical plan tree.
 // it is currently closed only by pkg/planner/core.ExtractNotNullFromConds when to extractFD.
-func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
+func EvaluateExprWithNull(ctx BuildContext, cc CloneContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
 	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, expr) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {
-		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
+		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, cc, schema, expr)
 		return res, err
 	}
-	return evaluateExprWithNull(ctx, schema, expr, skipPlanCacheCheck)
+	return evaluateExprWithNull(ctx, cc, schema, expr, skipPlanCacheCheck)
 }
 
-func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCache bool) (Expression, error) {
+func evaluateExprWithNull(ctx BuildContext, cc CloneContext, schema *Schema, expr Expression, skipPlanCache bool) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			res, err := EvaluateExprWithNull(ctx, schema, arg, skipPlanCache)
+			res, err := EvaluateExprWithNull(ctx, cc, schema, arg, skipPlanCache)
 			if err != nil {
 				return nil, err
 			}
 			args[i] = res
 		}
-		return NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		return NewFunction(ctx, cc, x.FuncName.L, x.RetType.Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x, nil
@@ -950,7 +966,7 @@ func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, ski
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(ctx, x), nil
+			return FoldConstant(ctx, cc, x), nil
 		}
 	}
 	return expr, nil
@@ -960,13 +976,13 @@ func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, ski
 // If the Expression is a non-constant value, it means the result is unknown.
 // The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
 // when the value is Null Constant.
-func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool, error) {
+func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, cc CloneContext, schema *Schema, expr Expression) (Expression, bool, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		nullFromSets := make([]bool, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			res, nullFromSet, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+			res, nullFromSet, err := evaluateExprWithNullInNullRejectCheck(ctx, cc, schema, arg)
 			if err != nil {
 				return nil, false, err
 			}
@@ -1007,7 +1023,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			}
 		}
 
-		c, err := NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		c, err := NewFunction(ctx, cc, x.FuncName.L, x.RetType.Clone(), args...)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1022,15 +1038,15 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(ctx, x), false, nil
+			return FoldConstant(ctx, cc, x), false, nil
 		}
 	}
 	return expr, false, nil
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
+func TableInfo2SchemaAndNames(ctx BuildContext, cc CloneContext, dbName ast.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, cc, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1076,7 +1092,7 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.Tab
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+func ColumnInfos2ColumnsAndNames(ctx BuildContext, cc CloneContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1122,9 +1138,9 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 				return nil, nil, errors.Trace(err)
 			}
 			if e != nil {
-				columns[i].VirtualExpr = e.Clone()
+				columns[i].VirtualExpr = e.Clone(cc)
 			}
-			columns[i].VirtualExpr, err = columns[i].VirtualExpr.ResolveIndices(mockSchema)
+			columns[i].VirtualExpr, err = columns[i].VirtualExpr.ResolveIndices(cc, mockSchema)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -1136,7 +1152,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
-	bt, err := fc.getFunction(ctx, nil)
+	bt, err := fc.getFunction(ctx, nil, nil)
 	terror.Log(err)
 	return &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.Values),
@@ -1158,7 +1174,7 @@ func IsBinaryLiteral(expr Expression) bool {
 // 2. keepNull is false and arg is null, the istrue function returns 0.
 // The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
 // TODO: remove this function. ScalarFunction should be newed in one place.
-func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
+func wrapWithIsTrue(ctx BuildContext, cc CloneContext, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
 	if arg.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
 		if !wrapForInt {
 			return arg, nil
@@ -1175,7 +1191,7 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 	} else {
 		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
 	}
-	f, err := fc.getFunction(ctx, []Expression{arg})
+	f, err := fc.getFunction(ctx, cc, []Expression{arg})
 	if err != nil {
 		return nil, err
 	}
@@ -1187,7 +1203,7 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 	if keepNull {
 		sf.FuncName = ast.NewCIStr(ast.IsTruthWithNull)
 	}
-	return FoldConstant(ctx, sf), nil
+	return FoldConstant(ctx, cc, sf), nil
 }
 
 // PropagateType propagates the type information to the `expr`.
@@ -1217,7 +1233,7 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 // +----------------------+
 // The expected `decimal` and `length` of the outer cast_as_double need to be
 // propagated to the inner div.
-func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression) {
+func PropagateType(ctx EvalContext, cc CloneContext, evalType types.EvalType, args ...Expression) {
 	switch evalType {
 	case types.ETReal:
 		expr := args[0]
@@ -1229,14 +1245,16 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 		}
 		if oldFlen != newFlen || oldDecimal != newDecimal {
 			if col, ok := args[0].(*Column); ok {
-				newCol := col.Clone()
-				newCol.(*Column).RetType = col.RetType.Clone()
+				newCol := col.Clone(cc)
 				args[0] = newCol
 			}
 			if col, ok := args[0].(*CorrelatedColumn); ok {
-				newCol := col.Clone()
-				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
+				newCol := col.Clone(cc)
 				args[0] = newCol
+			}
+			if sf, ok := args[0].(*ScalarFunction); ok {
+				nsf := sf.Clone(cc)
+				args[0] = nsf
 			}
 			if args[0].GetType(ctx).GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {

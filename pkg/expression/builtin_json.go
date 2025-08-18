@@ -106,17 +106,17 @@ type builtinJSONTypeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONTypeSig) Clone() builtinFunc {
+func (b *builtinJSONTypeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONTypeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonTypeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonTypeFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +202,7 @@ func (c *jsonSumCRC32FunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 	return nil
 }
 
-func (c *jsonSumCRC32FunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *jsonSumCRC32FunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (c *jsonSumCRC32FunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("calculating json_sum_crc32 on array of char/binary BLOBs with unspecified length")
 	}
 
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinFunc(ctx, cc, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
@@ -230,9 +230,9 @@ type builtinJSONSumCRC32Sig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinJSONSumCRC32Sig) Clone() builtinFunc {
+func (b *builtinJSONSumCRC32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONSumCRC32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -269,20 +269,20 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 
 // BuildJSONSumCrc32FunctionWithCheck builds a JSON_SUM_CRC32 ScalarFunction from the Expression and return error if any.
 // The logic is almost the same as build CAST function, except that the return type is fixed to bigint.
-func BuildJSONSumCrc32FunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
+func BuildJSONSumCrc32FunctionWithCheck(ctx BuildContext, cc CloneContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
 	argType := expr.GetType(ctx.GetEvalCtx())
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
 		tp.DelFlag(mysql.NotNullFlag)
 	}
-	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
+	expr = TryPushCastIntoControlFunctionForHybridType(ctx, cc, expr, tp)
 
 	if tp.EvalType() != types.ETJson || !tp.IsArray() {
 		return nil, errors.Errorf("json_sum_crc32 can only built on JSON array, got type %s", tp.EvalType())
 	}
 
 	fc := &jsonSumCRC32FunctionClass{baseFunctionClass{ast.JSONSumCrc32, 1, 1}, tp}
-	f, err := fc.getFunction(ctx, []Expression{expr})
+	f, err := fc.getFunction(ctx, cc, []Expression{expr})
 	return &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.JSONSumCrc32),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -301,9 +301,9 @@ type builtinJSONExtractSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONExtractSig) Clone() builtinFunc {
+func (b *builtinJSONExtractSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONExtractSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -314,7 +314,7 @@ func (c *jsonExtractFunctionClass) verifyArgs(ctx EvalContext, args []Expression
 	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
 }
 
-func (c *jsonExtractFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonExtractFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -323,7 +323,7 @@ func (c *jsonExtractFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	for range args[1:] {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -368,9 +368,9 @@ type builtinJSONUnquoteSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
+func (b *builtinJSONUnquoteSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONUnquoteSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -381,11 +381,11 @@ func (c *jsonUnquoteFunctionClass) verifyArgs(ctx EvalContext, args []Expression
 	return verifyJSONArgsType(ctx, c.funcName, false, args, 0)
 }
 
-func (c *jsonUnquoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonUnquoteFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -423,13 +423,13 @@ type builtinJSONSetSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONSetSig) Clone() builtinFunc {
+func (b *builtinJSONSetSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONSetSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonSetFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonSetFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -469,13 +469,13 @@ type builtinJSONInsertSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONInsertSig) Clone() builtinFunc {
+func (b *builtinJSONInsertSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONInsertSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonInsertFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonInsertFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -487,7 +487,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -515,13 +515,13 @@ type builtinJSONReplaceSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONReplaceSig) Clone() builtinFunc {
+func (b *builtinJSONReplaceSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONReplaceSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonReplaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonReplaceFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -533,7 +533,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -561,13 +561,13 @@ type builtinJSONRemoveSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONRemoveSig) Clone() builtinFunc {
+func (b *builtinJSONRemoveSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONRemoveSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonRemoveFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonRemoveFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -576,7 +576,7 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	for range args[1:] {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -629,13 +629,13 @@ type builtinJSONMergeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONMergeSig) Clone() builtinFunc {
+func (b *builtinJSONMergeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONMergeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonMergeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonMergeFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -643,7 +643,7 @@ func (c *jsonMergeFunctionClass) getFunction(ctx BuildContext, args []Expression
 	for range args {
 		argTps = append(argTps, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -683,13 +683,13 @@ type builtinJSONObjectSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONObjectSig) Clone() builtinFunc {
+func (b *builtinJSONObjectSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONObjectSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonObjectFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonObjectFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -703,7 +703,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		}
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -761,13 +761,13 @@ type builtinJSONArraySig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONArraySig) Clone() builtinFunc {
+func (b *builtinJSONArraySig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONArraySig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonArrayFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonArrayFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -775,7 +775,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx BuildContext, args []Expression
 	for range args {
 		argTps = append(argTps, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -817,9 +817,9 @@ type builtinJSONContainsPathSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
+func (b *builtinJSONContainsPathSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONContainsPathSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -830,7 +830,7 @@ func (c *jsonContainsPathFunctionClass) verifyArgs(ctx EvalContext, args []Expre
 	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
 }
 
-func (c *jsonContainsPathFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonContainsPathFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -838,7 +838,7 @@ func (c *jsonContainsPathFunctionClass) getFunction(ctx BuildContext, args []Exp
 	for i := 3; i <= len(args); i++ {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -933,9 +933,9 @@ type builtinJSONMemberOfSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONMemberOfSig) Clone() builtinFunc {
+func (b *builtinJSONMemberOfSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONMemberOfSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -946,12 +946,12 @@ func (c *jsonMemberOfFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 	return verifyJSONArgsType(ctx, "member of", true, args, 1)
 }
 
-func (c *jsonMemberOfFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonMemberOfFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := []types.EvalType{types.ETJson, types.ETJson}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -996,9 +996,9 @@ type builtinJSONContainsSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONContainsSig) Clone() builtinFunc {
+func (b *builtinJSONContainsSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONContainsSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1009,7 +1009,7 @@ func (c *jsonContainsFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 	return verifyJSONArgsType(ctx, c.funcName, true, args, 0, 1)
 }
 
-func (c *jsonContainsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonContainsFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -1018,7 +1018,7 @@ func (c *jsonContainsFunctionClass) getFunction(ctx BuildContext, args []Express
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1073,9 +1073,9 @@ type builtinJSONOverlapsSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONOverlapsSig) Clone() builtinFunc {
+func (b *builtinJSONOverlapsSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONOverlapsSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1086,13 +1086,13 @@ func (c *jsonOverlapsFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 	return verifyJSONArgsType(ctx, c.funcName, true, args, 0, 1)
 }
 
-func (c *jsonOverlapsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonOverlapsFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 
 	argTps := []types.EvalType{types.ETJson, types.ETJson}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1119,7 +1119,7 @@ type jsonValidFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1128,21 +1128,21 @@ func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, args []Expression
 	argType := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argType {
 	case types.ETJson:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETJson)
 		if err != nil {
 			return nil, err
 		}
 		sig = &builtinJSONValidJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidJsonSig)
 	case types.ETString:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETString)
 		if err != nil {
 			return nil, err
 		}
 		sig = &builtinJSONValidStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
 	default:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argType)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argType)
 		if err != nil {
 			return nil, err
 		}
@@ -1159,9 +1159,9 @@ type builtinJSONValidJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
+func (b *builtinJSONValidJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONValidJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1179,9 +1179,9 @@ type builtinJSONValidStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONValidStringSig) Clone() builtinFunc {
+func (b *builtinJSONValidStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONValidStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1207,9 +1207,9 @@ type builtinJSONValidOthersSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
+func (b *builtinJSONValidOthersSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONValidOthersSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1238,7 +1238,7 @@ func (c *jsonArrayAppendFunctionClass) verifyArgs(ctx EvalContext, args []Expres
 	return nil
 }
 
-func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -1247,7 +1247,7 @@ func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, args []Expr
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1259,9 +1259,9 @@ func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, args []Expr
 	return sig, nil
 }
 
-func (b *builtinJSONArrayAppendSig) Clone() builtinFunc {
+func (b *builtinJSONArrayAppendSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONArrayAppendSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1338,7 +1338,7 @@ type builtinJSONArrayInsertSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1351,7 +1351,7 @@ func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expr
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1363,9 +1363,9 @@ func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expr
 	return sig, nil
 }
 
-func (b *builtinJSONArrayInsertSig) Clone() builtinFunc {
+func (b *builtinJSONArrayInsertSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONArrayInsertSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1418,7 +1418,7 @@ func (c *jsonMergePatchFunctionClass) verifyArgs(ctx EvalContext, args []Express
 	return verifyJSONArgsType(ctx, c.funcName, true, args)
 }
 
-func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -1426,7 +1426,7 @@ func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, args []Expre
 	for range args {
 		argTps = append(argTps, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1442,9 +1442,9 @@ type builtinJSONMergePatchSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONMergePatchSig) Clone() builtinFunc {
+func (b *builtinJSONMergePatchSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONMergePatchSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1485,7 +1485,7 @@ func (c *jsonMergePreserveFunctionClass) verifyArgs(ctx EvalContext, args []Expr
 	return verifyJSONArgsType(ctx, c.funcName, true, args)
 }
 
-func (c *jsonMergePreserveFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonMergePreserveFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -1493,7 +1493,7 @@ func (c *jsonMergePreserveFunctionClass) getFunction(ctx BuildContext, args []Ex
 	for range args {
 		argTps = append(argTps, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1513,18 +1513,18 @@ type builtinJSONSPrettySig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONSPrettySig) Clone() builtinFunc {
+func (b *builtinJSONSPrettySig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONSPrettySig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonPrettyFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonPrettyFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -1563,9 +1563,9 @@ type builtinJSONQuoteSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONQuoteSig) Clone() builtinFunc {
+func (b *builtinJSONQuoteSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONQuoteSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1579,11 +1579,11 @@ func (c *jsonQuoteFunctionClass) verifyArgs(ctx EvalContext, args []Expression) 
 	return nil
 }
 
-func (c *jsonQuoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonQuoteFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1621,9 +1621,9 @@ type builtinJSONSearchSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONSearchSig) Clone() builtinFunc {
+func (b *builtinJSONSearchSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONSearchSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1634,7 +1634,7 @@ func (c *jsonSearchFunctionClass) verifyArgs(ctx EvalContext, args []Expression)
 	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
 }
 
-func (c *jsonSearchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonSearchFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -1644,7 +1644,7 @@ func (c *jsonSearchFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	for range args[1:] {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1724,18 +1724,18 @@ type builtinJSONStorageFreeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONStorageFreeSig) Clone() builtinFunc {
+func (b *builtinJSONStorageFreeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONStorageFreeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonStorageFreeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonStorageFreeFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -1764,18 +1764,18 @@ type builtinJSONStorageSizeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONStorageSizeSig) Clone() builtinFunc {
+func (b *builtinJSONStorageSizeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONStorageSizeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonStorageSizeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonStorageSizeFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -1805,18 +1805,18 @@ type builtinJSONDepthSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONDepthSig) Clone() builtinFunc {
+func (b *builtinJSONDepthSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONDepthSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonDepthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonDepthFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -1849,7 +1849,7 @@ func (c *jsonKeysFunctionClass) verifyArgs(ctx EvalContext, args []Expression) e
 	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
 }
 
-func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
@@ -1857,7 +1857,7 @@ func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if len(args) == 2 {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1880,9 +1880,9 @@ type builtinJSONKeysSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONKeysSig) Clone() builtinFunc {
+func (b *builtinJSONKeysSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONKeysSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1904,9 +1904,9 @@ type builtinJSONKeys2ArgsSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONKeys2ArgsSig) Clone() builtinFunc {
+func (b *builtinJSONKeys2ArgsSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONKeys2ArgsSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1948,13 +1948,13 @@ type builtinJSONLengthSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinJSONLengthSig) Clone() builtinFunc {
+func (b *builtinJSONLengthSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONLengthSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *jsonLengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonLengthFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1965,7 +1965,7 @@ func (c *jsonLengthFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		argTps = append(argTps, types.ETString)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -2040,11 +2040,11 @@ func (c *jsonSchemaValidFunctionClass) verifyArgs(ctx EvalContext, args []Expres
 	return nil
 }
 
-func (c *jsonSchemaValidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *jsonSchemaValidFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETJson, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -2059,9 +2059,9 @@ type builtinJSONSchemaValidSig struct {
 	schemaCache builtinFuncCache[jsonschema.Schema]
 }
 
-func (b *builtinJSONSchemaValidSig) Clone() builtinFunc {
+func (b *builtinJSONSchemaValidSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinJSONSchemaValidSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 

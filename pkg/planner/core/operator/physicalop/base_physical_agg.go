@@ -107,8 +107,9 @@ func (p *BasePhysicalAgg) CloneForPlanCacheWithSelf(newCtx base.PlanContext, new
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *base
+	cc := make(expression.CloneContext, 2)
 	for _, aggDesc := range p.AggFuncs {
-		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
+		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone(cc))
 	}
 	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
 	cloned.MppRunMode = p.MppRunMode
@@ -126,8 +127,9 @@ func (p *BasePhysicalAgg) CloneWithSelf(newCtx base.PlanContext, newSelf base.Ph
 		return nil, err
 	}
 	cloned.PhysicalSchemaProducer = *base
+	cc := make(expression.CloneContext, 2)
 	for _, aggDesc := range p.AggFuncs {
-		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
+		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone(cc))
 	}
 	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
 	return cloned, nil
@@ -216,9 +218,10 @@ func (p *BasePhysicalAgg) ConvertAvgForMPP() *PhysicalProjection {
 	for i, aggFunc := range p.AggFuncs {
 		if aggFunc.Name == ast.AggFuncAvg {
 			// inset a count(column)
-			avgCount := aggFunc.Clone()
+			cc := make(expression.CloneContext, 2)
+			avgCount := aggFunc.Clone(cc)
 			avgCount.Name = ast.AggFuncCount
-			err := avgCount.TypeInfer(exprCtx)
+			err := avgCount.TypeInfer(exprCtx, cc)
 			if err != nil { // must not happen
 				return nil
 			}
@@ -229,7 +232,7 @@ func (p *BasePhysicalAgg) ConvertAvgForMPP() *PhysicalProjection {
 			}
 			newSchema.Append(avgCountCol)
 			// insert a sum(column)
-			avgSum := aggFunc.Clone()
+			avgSum := aggFunc.Clone(cc)
 			avgSum.Name = ast.AggFuncSum
 			if err = avgSum.TypeInfer4AvgSum(exprCtx.GetEvalCtx(), aggFunc.RetTp); err != nil {
 				return nil
@@ -241,9 +244,9 @@ func (p *BasePhysicalAgg) ConvertAvgForMPP() *PhysicalProjection {
 			}
 			newSchema.Append(avgSumCol)
 			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
-			eq := expression.NewFunctionInternal(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
-			caseWhen := expression.NewFunctionInternal(exprCtx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
-			divide := expression.NewFunctionInternal(exprCtx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
+			eq := expression.NewFunctionInternal(exprCtx, cc, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
+			caseWhen := expression.NewFunctionInternal(exprCtx, cc, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
+			divide := expression.NewFunctionInternal(exprCtx, cc, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
 			divide.(*expression.ScalarFunction).RetType = p.Schema().Columns[i].RetType
 			exprs = append(exprs, divide)
 		} else {
@@ -283,7 +286,7 @@ func (p *BasePhysicalAgg) NewPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.SCtx(), &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
-		Schema:       p.Schema().Clone(),
+		Schema:       p.Schema().Clone(nil),
 	}, true, isMPPTask)
 	if partialPref == nil {
 		return nil, p.Self
@@ -440,7 +443,8 @@ func (p *BasePhysicalAgg) canUse3Stage4SingleDistinctAgg() bool {
 func genFirstRowAggForGroupBy(ctx base.PlanContext, groupByItems []expression.Expression) ([]*aggregation.AggFuncDesc, error) {
 	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(groupByItems))
 	for _, groupBy := range groupByItems {
-		agg, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{groupBy}, false)
+		cc := make(expression.CloneContext, 2)
+		agg, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{groupBy}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -698,12 +702,13 @@ func BuildFinalModeAggregation(
 						// items.
 						// maybe we can unify them sometime.
 						// only add firstrow for order by items of group_concat()
-						firstRow, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{distinctArg}, false)
+						cc := make(expression.CloneContext, 2)
+						firstRow, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{distinctArg}, false)
 						if err != nil {
 							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
 						}
 						partial.AggFuncs = append(partial.AggFuncs, firstRow)
-						newCol, _ := gbyCol.Clone().(*expression.Column)
+						newCol, _ := gbyCol.Clone(cc).(*expression.Column)
 						newCol.RetType = firstRow.RetTp
 						partial.Schema.Append(newCol)
 						if onlyAddFirstRow {
@@ -794,10 +799,11 @@ func BuildFinalModeAggregation(
 				partialCursor++
 			}
 			if aggFunc.Name == ast.AggFuncAvg {
-				cntAgg := aggFunc.Clone()
+				cc := make(expression.CloneContext, 2)
+				cntAgg := aggFunc.Clone(cc)
 				cntAgg.Name = ast.AggFuncCount
 				exprCtx := sctx.GetExprCtx()
-				err := cntAgg.TypeInfer(exprCtx)
+				err := cntAgg.TypeInfer(exprCtx, cc)
 				if err != nil { // must not happen
 					partial = nil
 					final = original
@@ -805,7 +811,7 @@ func BuildFinalModeAggregation(
 				}
 				partial.Schema.Columns[partialCursor-2].RetType = cntAgg.RetTp
 				// we must call deep clone in this case, to avoid sharing the arguments.
-				sumAgg := aggFunc.Clone()
+				sumAgg := aggFunc.Clone(cc)
 				sumAgg.Name = ast.AggFuncSum
 				if err = sumAgg.TypeInfer4AvgSum(exprCtx.GetEvalCtx(), aggFunc.RetTp); err != nil {
 					partial = nil
@@ -815,7 +821,8 @@ func BuildFinalModeAggregation(
 				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
-				newAggFunc := aggFunc.Clone()
+				cc := make(expression.CloneContext, 2)
+				newAggFunc := aggFunc.Clone(cc)
 				newAggFunc.Name = aggFunc.Name
 				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType(ectx)
 				partial.AggFuncs = append(partial.AggFuncs, newAggFunc)
@@ -825,7 +832,8 @@ func BuildFinalModeAggregation(
 				}
 			} else {
 				// other agg desc just split into two parts
-				partialFuncDesc := aggFunc.Clone()
+				cc := make(expression.CloneContext, 2)
+				partialFuncDesc := aggFunc.Clone(cc)
 				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)
 				if aggFunc.Name == ast.AggFuncFirstRow {
 					firstRowFuncMap[partialFuncDesc] = finalAggFunc
@@ -908,21 +916,23 @@ func (p *BasePhysicalAgg) ResolveIndices() (err error) {
 		return err
 	}
 	for _, aggFun := range p.AggFuncs {
+		cc := make(expression.CloneContext, 2)
 		for i, arg := range aggFun.Args {
-			aggFun.Args[i], err = arg.ResolveIndices(p.Children()[0].Schema())
+			aggFun.Args[i], err = arg.ResolveIndices(cc, p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
 		}
 		for _, byItem := range aggFun.OrderByItems {
-			byItem.Expr, err = byItem.Expr.ResolveIndices(p.Children()[0].Schema())
+			byItem.Expr, err = byItem.Expr.ResolveIndices(cc, p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
 		}
 	}
+	cc := make(expression.CloneContext, 2)
 	for i, item := range p.GroupByItems {
-		p.GroupByItems[i], err = item.ResolveIndices(p.Children()[0].Schema())
+		p.GroupByItems[i], err = item.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}

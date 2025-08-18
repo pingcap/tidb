@@ -101,7 +101,8 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func adjustNullFlagForReturnType(ctx EvalContext, funcName string, args []Expression, bf baseBuiltinFunc) {
+func adjustNullFlagForReturnType(ctx EvalContext, cc CloneContext, funcName string, args []Expression, bf baseBuiltinFunc) {
+	bf.tp = cc.Clone(bf.tp)
 	if functionSetForReturnTypeAlwaysNotNull.Exist(funcName) {
 		bf.tp.AddFlag(mysql.NotNullFlag)
 	} else if functionSetForReturnTypeAlwaysNullable.Exist(funcName) {
@@ -122,7 +123,7 @@ func adjustNullFlagForReturnType(ctx EvalContext, funcName string, args []Expres
 	}
 }
 
-func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx BuildContext, cc CloneContext, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
@@ -143,7 +144,7 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
-	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), cc, funcName, args, bf)
 	return bf, nil
 }
 
@@ -182,7 +183,7 @@ func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalTyp
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs to be determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(ctx BuildContext, cc CloneContext, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -200,24 +201,24 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i], nil)
+			args[i] = WrapWithCastAsInt(ctx, cc, args[i], nil)
 		case types.ETReal:
-			args[i] = WrapWithCastAsReal(ctx, args[i])
+			args[i] = WrapWithCastAsReal(ctx, cc, args[i])
 		case types.ETDecimal:
-			args[i] = WrapWithCastAsDecimal(ctx, args[i])
+			args[i] = WrapWithCastAsDecimal(ctx, cc, args[i])
 		case types.ETString:
-			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
+			args[i] = WrapWithCastAsString(ctx, cc, args[i])
+			args[i] = HandleBinaryLiteral(ctx, cc, args[i], ec, funcName, false)
 		case types.ETDatetime:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
+			args[i] = WrapWithCastAsTime(ctx, cc, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
+			args[i] = WrapWithCastAsTime(ctx, cc, args[i], types.NewFieldType(mysql.TypeTimestamp))
 		case types.ETDuration:
-			args[i] = WrapWithCastAsDuration(ctx, args[i])
+			args[i] = WrapWithCastAsDuration(ctx, cc, args[i])
 		case types.ETJson:
-			args[i] = WrapWithCastAsJSON(ctx, args[i])
+			args[i] = WrapWithCastAsJSON(ctx, cc, args[i])
 		case types.ETVectorFloat32:
-			args[i] = WrapWithCastAsVectorFloat32(ctx, args[i])
+			args[i] = WrapWithCastAsVectorFloat32(ctx, cc, args[i])
 		default:
 			return baseBuiltinFunc{}, errors.Errorf("%s is not supported", argTps[i])
 		}
@@ -236,7 +237,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), cc, funcName, args, bf)
 	return bf, nil
 }
 
@@ -244,7 +245,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 // argTps indicates the field types of the args, retType indicates the return type of the built-in function.
 // newBaseBuiltinFuncWithTp and newBaseBuiltinFuncWithFieldTypes are essentially the same, but newBaseBuiltinFuncWithFieldTypes uses FieldType to cast args.
 // If there are specific requirements for decimal/datetime/timestamp, newBaseBuiltinFuncWithFieldTypes should be used, such as if,ifnull and casewhen.
-func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, cc CloneContext, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -266,20 +267,20 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	for i := range args {
 		switch argTps[i].EvalType() {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i], argTps[i])
+			args[i] = WrapWithCastAsInt(ctx, cc, args[i], argTps[i])
 		case types.ETReal:
-			args[i] = WrapWithCastAsReal(ctx, args[i])
+			args[i] = WrapWithCastAsReal(ctx, cc, args[i])
 		case types.ETString:
-			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
+			args[i] = WrapWithCastAsString(ctx, cc, args[i])
+			args[i] = HandleBinaryLiteral(ctx, cc, args[i], ec, funcName, false)
 		case types.ETJson:
-			args[i] = WrapWithCastAsJSON(ctx, args[i])
+			args[i] = WrapWithCastAsJSON(ctx, cc, args[i])
 		// https://github.com/pingcap/tidb/issues/44196
 		// For decimal/datetime/timestamp/duration types, it is necessary to ensure that decimal are consistent with the output type,
 		// so adding a cast function here.
 		case types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
 			if !args[i].GetType(ctx.GetEvalCtx()).Equal(argTps[i]) {
-				args[i] = BuildCastFunction(ctx, args[i], argTps[i])
+				args[i] = BuildCastFunction(ctx, cc, args[i], argTps[i])
 			}
 		}
 	}
@@ -297,7 +298,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), cc, funcName, args, bf)
 	return bf, nil
 }
 
@@ -430,10 +431,10 @@ func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 	return true
 }
 
-func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
+func (b *baseBuiltinFunc) cloneFrom(cc CloneContext, from *baseBuiltinFunc) {
 	b.args = make([]Expression, 0, len(from.args))
 	for _, arg := range from.args {
-		b.args = append(b.args, arg.Clone())
+		b.args = append(b.args, arg.Clone(cc))
 	}
 	b.tp = from.tp
 	b.pbCode = from.pbCode
@@ -444,7 +445,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 }
 
-func (*baseBuiltinFunc) Clone() builtinFunc {
+func (*baseBuiltinFunc) Clone(CloneContext) builtinFunc {
 	panic("you should not call this method.")
 }
 
@@ -464,8 +465,8 @@ func (b *baseBuiltinCastFunc) metadata() proto.Message {
 	return args
 }
 
-func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
-	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
+func (b *baseBuiltinCastFunc) cloneFrom(cc CloneContext, from *baseBuiltinCastFunc) {
+	b.baseBuiltinFunc.cloneFrom(cc, &from.baseBuiltinFunc)
 	b.inUnion = from.inUnion
 }
 
@@ -476,7 +477,7 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 	}
 }
 
-func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharset bool) (baseBuiltinFunc, error) {
+func newBaseBuiltinCastFunc4String(ctx BuildContext, cc CloneContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharset bool) (baseBuiltinFunc, error) {
 	var bf baseBuiltinFunc
 	var err error
 	if isExplicitCharset {
@@ -497,7 +498,7 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 			bf.SetRepertoire(UNICODE)
 		}
 	} else {
-		bf, err = newBaseBuiltinFunc(ctx, funcName, args, tp)
+		bf, err = newBaseBuiltinFunc(ctx, cc, funcName, args, tp)
 		if err != nil {
 			return baseBuiltinFunc{}, err
 		}
@@ -578,7 +579,7 @@ type builtinFunc interface {
 	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
 	metadata() proto.Message
 	// Clone returns a copy of itself.
-	Clone() builtinFunc
+	Clone(ctx CloneContext) builtinFunc
 
 	MemoryUsage() int64
 
@@ -616,7 +617,7 @@ func VerifyArgsWrapper(name string, l int) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(ctx BuildContext, args []Expression) (builtinFunc, error)
+	getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error)
 	// verifyArgsByCount verifies the count of parameters.
 	verifyArgsByCount(l int) error
 }

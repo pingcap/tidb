@@ -40,7 +40,7 @@ func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneR
 
 // Schema implements the Plan.Schema interface.
 func (p *LogicalMaxOneRow) Schema() *expression.Schema {
-	s := p.Children()[0].Schema().Clone()
+	s := p.Children()[0].Schema().Clone(nil)
 	util.ResetNotNullFlag(s, 0, s.Len())
 	return s
 }

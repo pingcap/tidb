@@ -135,8 +135,9 @@ func CloneExprs(exprs []expression.Expression) []expression.Expression {
 		return nil
 	}
 	cloned := make([]expression.Expression, 0, len(exprs))
+	cc := make(expression.CloneContext, 4)
 	for _, e := range exprs {
-		cloned = append(cloned, e.Clone())
+		cloned = append(cloned, e.Clone(cc))
 	}
 	return cloned
 }
@@ -152,8 +153,9 @@ func CloneAssignments(assignments []*expression.Assignment) []*expression.Assign
 		return nil
 	}
 	cloned := make([]*expression.Assignment, 0, len(assignments))
+	cc := make(expression.CloneContext, 4)
 	for _, a := range assignments {
-		cloned = append(cloned, a.Clone())
+		cloned = append(cloned, a.Clone(cc))
 	}
 	return cloned
 }
@@ -181,19 +183,8 @@ func CloneCols(cols []*expression.Column) []*expression.Column {
 			cloned = append(cloned, nil)
 			continue
 		}
-		cloned = append(cloned, c.Clone().(*expression.Column))
-	}
-	return cloned
-}
-
-// CloneConstants uses (*Constant).Clone to clone a slice of *Constant.
-func CloneConstants(constants []*expression.Constant) []*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	cloned := make([]*expression.Constant, 0, len(constants))
-	for _, c := range constants {
-		cloned = append(cloned, c.Clone().(*expression.Constant))
+		cc := make(expression.CloneContext, 4)
+		cloned = append(cloned, c.Clone(cc).(*expression.Column))
 	}
 	return cloned
 }
@@ -252,8 +243,9 @@ func CloneByItemss(byItems []*ByItems) []*ByItems {
 		return nil
 	}
 	cloned := make([]*ByItems, 0, len(byItems))
+	cc := make(expression.CloneContext, 4)
 	for _, item := range byItems {
-		cloned = append(cloned, item.Clone())
+		cloned = append(cloned, item.Clone(cc))
 	}
 	return cloned
 }

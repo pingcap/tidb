@@ -196,14 +196,14 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 }
 
 // Clone implements Expression interface.
-func (c *Constant) Clone() Expression {
+func (c *Constant) Clone(cc CloneContext) Expression {
 	con := *c
-	con.RetType = c.RetType.Clone()
+	con.RetType = cc.Clone(c.RetType)
 	if c.ParamMarker != nil {
 		con.ParamMarker = &ParamMarker{order: c.ParamMarker.order}
 	}
 	if c.DeferredExpr != nil {
-		con.DeferredExpr = c.DeferredExpr.Clone()
+		con.DeferredExpr = c.DeferredExpr.Clone(cc)
 	}
 	if c.hashcode != nil {
 		con.hashcode = slices.Clone(c.hashcode)
@@ -605,7 +605,7 @@ func (c *Constant) getHashCode(canonical bool) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ *Schema) (Expression, error) {
+func (c *Constant) ResolveIndices(CloneContext, *Schema) (Expression, error) {
 	return c, nil
 }
 
@@ -614,7 +614,7 @@ func (c *Constant) resolveIndices(_ *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (c *Constant) ResolveIndicesByVirtualExpr(_ EvalContext, _ *Schema) (Expression, bool) {
+func (c *Constant) ResolveIndicesByVirtualExpr(EvalContext, CloneContext, *Schema) (Expression, bool) {
 	return c, true
 }
 

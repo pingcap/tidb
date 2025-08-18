@@ -52,7 +52,8 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 			newArgs := make([]expression.Expression, 0, 2)
 			newArgs = append(newArgs, expr.GetArgs()[0])
 			newArgs = append(newArgs, arg)
-			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ,
+			cc := make(expression.CloneContext, 4)
+			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), cc, ast.EQ,
 				expr.GetType(ctx.GetExprCtx().GetEvalCtx()), newArgs...)
 			if err != nil {
 				return false
@@ -108,7 +109,8 @@ func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema
 	}
 	exprCtx := ctx.GetNullRejectCheckExprCtx()
 	sc := ctx.GetSessionVars().StmtCtx
-	result, err := expression.EvaluateExprWithNull(exprCtx, schema, expr, skipPlanCacheCheck)
+	cc := make(expression.CloneContext, 4)
+	result, err := expression.EvaluateExprWithNull(exprCtx, cc, schema, expr, skipPlanCacheCheck)
 	if err != nil {
 		return false
 	}

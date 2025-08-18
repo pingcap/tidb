@@ -32,11 +32,11 @@ import (
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is CNF form.
-func detachColumnCNFConditions(sctx expression.BuildContext, conditions []expression.Expression, checker *conditionChecker) (accessConditions, filterConditions []expression.Expression) {
+func detachColumnCNFConditions(sctx expression.BuildContext, cc expression.CloneContext, conditions []expression.Expression, checker *conditionChecker) (accessConditions, filterConditions []expression.Expression) {
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
-			columnDNFItems, hasResidual := detachColumnDNFConditions(sctx, dnfItems, checker)
+			columnDNFItems, hasResidual := detachColumnDNFConditions(sctx, cc, dnfItems, checker)
 			// If this CNF has expression that cannot be resolved as access condition, then the total DNF expression
 			// should be also appended into filter condition.
 			if hasResidual {
@@ -64,7 +64,7 @@ func detachColumnCNFConditions(sctx expression.BuildContext, conditions []expres
 
 // detachColumnDNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is DNF form.
-func detachColumnDNFConditions(sctx expression.BuildContext, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
+func detachColumnDNFConditions(sctx expression.BuildContext, cc expression.CloneContext, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
 	var (
 		hasResidualConditions bool
 		accessConditions      []expression.Expression
@@ -72,7 +72,7 @@ func detachColumnDNFConditions(sctx expression.BuildContext, conditions []expres
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfItems := expression.FlattenCNFConditions(sf)
-			columnCNFItems, others := detachColumnCNFConditions(sctx, cnfItems, checker)
+			columnCNFItems, others := detachColumnCNFConditions(sctx, cc, cnfItems, checker)
 			if len(others) > 0 {
 				hasResidualConditions = true
 			}
@@ -80,7 +80,7 @@ func detachColumnDNFConditions(sctx expression.BuildContext, conditions []expres
 			if len(columnCNFItems) == 0 {
 				return nil, true
 			}
-			rebuildCNF := expression.ComposeCNFCondition(sctx, columnCNFItems...)
+			rebuildCNF := expression.ComposeCNFCondition(sctx, cc, columnCNFItems...)
 			accessConditions = append(accessConditions, rebuildCNF)
 		} else {
 			isAccessCond, shouldReserve := checker.check(cond)
@@ -547,7 +547,8 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			return res, nil
 		}
 		// `eqOrInCount` must be 0 when coming here.
-		res.AccessConds, res.RemainedConds = detachColumnCNFConditions(d.sctx.ExprCtx, newConditions, checker)
+		cc := make(expression.CloneContext, 4)
+		res.AccessConds, res.RemainedConds = detachColumnCNFConditions(d.sctx.ExprCtx, cc, newConditions, checker)
 		ranges, res.AccessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, 0, res.AccessConds)
 		if err != nil {
 			return nil, err
@@ -794,8 +795,8 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			return nil, nil, nil, nil, true
 		} else {
 			// All Intervals are single points
-
-			accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
+			cc := make(expression.CloneContext, 4)
+			accesses[i] = points2EqOrInCond(sctx.ExprCtx, cc, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
 			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
 				// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
@@ -892,7 +893,8 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(
 				d.sctx.RecordRangeFallback(d.rangeMaxSize)
 				return FullRange(), nil, nil, true, -1, nil
 			}
-			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(d.sctx.ExprCtx, accesses...))
+			cc := make(expression.CloneContext, 4)
+			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(d.sctx.ExprCtx, cc, accesses...))
 			if res.ColumnValues != nil {
 				if i == 0 {
 					columnValues = res.ColumnValues
@@ -1171,7 +1173,8 @@ func DetachCondsForColumn(sctx *rangerctx.RangerContext, conds []expression.Expr
 		optPrefixIndexSingleScan: sctx.OptPrefixIndexSingleScan,
 		ctx:                      sctx.ExprCtx.GetEvalCtx(),
 	}
-	return detachColumnCNFConditions(sctx.ExprCtx, conds, checker)
+	cc := make(expression.CloneContext, 4)
+	return detachColumnCNFConditions(sctx.ExprCtx, cc, conds, checker)
 }
 
 // MergeDNFItems4Col receives a slice of DNF conditions, merges some of them which can be built into ranges on a single column, then returns.
@@ -1230,6 +1233,7 @@ func MergeDNFItems4Col(ctx *rangerctx.RangerContext, dnfItems []expression.Expre
 //
 //	error                     if error gernerated, return error
 func AddGcColumnCond(sctx *rangerctx.RangerContext,
+	cc expression.CloneContext,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
@@ -1237,7 +1241,7 @@ func AddGcColumnCond(sctx *rangerctx.RangerContext,
 		if f, ok := cond.(*expression.ScalarFunction); ok {
 			switch f.FuncName.L {
 			case ast.EQ:
-				return AddGcColumn4EqCond(sctx, cols, accessesCond, columnValues)
+				return AddGcColumn4EqCond(sctx, cc, cols, accessesCond, columnValues)
 			case ast.In:
 				return AddGcColumn4InCond(sctx, cols, accessesCond)
 			}
@@ -1258,8 +1262,8 @@ func AddGcColumn4InCond(sctx *rangerctx.RangerContext,
 	var errRes error
 	var newAccessCond []expression.Expression
 	record := make([]types.Datum, 1)
-
-	expr := cols[0].VirtualExpr.Clone()
+	cc := make(expression.CloneContext, 4)
+	expr := cols[0].VirtualExpr.Clone(cc)
 	andType := types.NewFieldType(mysql.TypeTiny)
 
 	sf := accessesCond[1].(*expression.ScalarFunction)
@@ -1283,17 +1287,17 @@ func AddGcColumn4InCond(sctx *rangerctx.RangerContext,
 
 		// tmpArg1 is like `tidb_shard(a) = 8`, tmpArg2 is like `a = 100`
 		exprCon := &expression.Constant{Value: exprVal, RetType: cols[0].RetType}
-		tmpArg1, err := expression.NewFunction(sctx.ExprCtx, ast.EQ, cols[0].RetType, cols[0], exprCon)
+		tmpArg1, err := expression.NewFunction(sctx.ExprCtx, cc, ast.EQ, cols[0].RetType, cols[0], exprCon)
 		if err != nil {
 			return accessesCond, err
 		}
-		tmpArg2, err := expression.NewFunction(sctx.ExprCtx, ast.EQ, c.RetType, c.Clone(), arg)
+		tmpArg2, err := expression.NewFunction(sctx.ExprCtx, cc, ast.EQ, c.RetType, c.Clone(cc), arg)
 		if err != nil {
 			return accessesCond, err
 		}
 
 		// make a LogicAnd, e.g. `tidb_shard(a) = 8 AND a = 100`
-		andExpr, err := expression.NewFunction(sctx.ExprCtx, ast.LogicAnd, andType, tmpArg1, tmpArg2)
+		andExpr, err := expression.NewFunction(sctx.ExprCtx, cc, ast.LogicAnd, andType, tmpArg1, tmpArg2)
 		if err != nil {
 			return accessesCond, err
 		}
@@ -1303,7 +1307,7 @@ func AddGcColumn4InCond(sctx *rangerctx.RangerContext,
 		} else {
 			// if the LogicAnd more than one, make a LogicOr,
 			// e.g. `(tidb_shard(a) = 8 AND a = 100) OR (tidb_shard(a) = 161 AND a = 200)`
-			andOrExpr, errRes = expression.NewFunction(sctx.ExprCtx, ast.LogicOr, andType, andOrExpr, andExpr)
+			andOrExpr, errRes = expression.NewFunction(sctx.ExprCtx, cc, ast.LogicOr, andType, andOrExpr, andExpr)
 			if errRes != nil {
 				return accessesCond, errRes
 			}
@@ -1322,10 +1326,11 @@ func AddGcColumn4InCond(sctx *rangerctx.RangerContext,
 //	[]*valueInfo              the values of every columns in the returned new conditions
 //	error                     if error gernerated, return error
 func AddGcColumn4EqCond(sctx *rangerctx.RangerContext,
+	cc expression.CloneContext,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
-	expr := cols[0].VirtualExpr.Clone()
+	expr := cols[0].VirtualExpr.Clone(cc)
 	record := make([]types.Datum, len(columnValues)-1)
 
 	for i := 1; i < len(columnValues); i++ {
@@ -1345,7 +1350,7 @@ func AddGcColumn4EqCond(sctx *rangerctx.RangerContext,
 	vi := &valueInfo{&evaluated, false}
 	con := &expression.Constant{Value: evaluated, RetType: cols[0].RetType}
 	// make a tidb_shard() function, e.g. `tidb_shard(a) = 8`
-	cond, err := expression.NewFunction(exprCtx, ast.EQ, cols[0].RetType, cols[0], con)
+	cond, err := expression.NewFunction(exprCtx, cc, ast.EQ, cols[0].RetType, cols[0], con)
 	if err != nil {
 		return accessesCond, err
 	}
@@ -1364,8 +1369,10 @@ func AddGcColumn4EqCond(sctx *rangerctx.RangerContext,
 // @param[in] cols        the columns of shard index, such as [tidb_shard(a), a, ...]
 // @param[in] lengths     the length for every column of shard index
 // @retval - the new condition after adding tidb_shard() prefix
-func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext, conditions []expression.Expression,
+func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext,
+	conditions []expression.Expression,
 	cols []*expression.Column) ([]expression.Expression, error) {
+	cc := make(expression.CloneContext, 4)
 	accesses := make([]expression.Expression, len(cols))
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
@@ -1410,7 +1417,7 @@ func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext, conditions []expres
 	newConditions = removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, accesses)
 
 	// add Gc condition for accesses and return new condition to newAccesses
-	newAccesses, err := AddGcColumnCond(sctx, cols, accesses, columnValues)
+	newAccesses, err := AddGcColumnCond(sctx, cc, cols, accesses, columnValues)
 	if err != nil {
 		return conditions, err
 	}

@@ -130,8 +130,9 @@ func (p *PhysicalIndexScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	copy(cloned.IdxColLens, p.IdxColLens)
 	cloned.Ranges = util.CloneRanges(p.Ranges)
 	cloned.Columns = util.CloneColInfos(p.Columns)
+	cc := make(expression.CloneContext, 2)
 	if p.DataSourceSchema != nil {
-		cloned.DataSourceSchema = p.DataSourceSchema.Clone()
+		cloned.DataSourceSchema = p.DataSourceSchema.Clone(cc)
 	}
 
 	return cloned, nil
@@ -391,9 +392,10 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 
 	var extraPhysTblCol *expression.Column
 	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
+	cc := make(expression.CloneContext, 2)
 	for _, col := range p.DataSourceSchema.Columns {
 		if col.ID == model.ExtraPhysTblID {
-			extraPhysTblCol = col.Clone().(*expression.Column)
+			extraPhysTblCol = col.Clone(cc).(*expression.Column)
 			break
 		}
 	}
@@ -435,9 +437,10 @@ func (p *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(ds *logicalop.Da
 		return conditions, nil
 	}
 	args := make([]expression.Expression, 0, len(ds.PartitionNames)+1)
+	cc := make(expression.CloneContext, 2)
 	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraPhysTblID {
-			args = append(args, col.Clone())
+			args = append(args, col.Clone(cc))
 			break
 		}
 	}
@@ -490,12 +493,12 @@ func (p *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(ds *logicalop.Da
 	if len(args) == 1 {
 		return conditions, nil
 	}
-	condition, err := expression.NewFunction(ds.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+	condition, err := expression.NewFunction(ds.SCtx().GetExprCtx(), cc, ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
 	if err != nil {
 		return nil, err
 	}
 	if needNot {
-		condition, err = expression.NewFunction(ds.SCtx().GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeLonglong), condition)
+		condition, err = expression.NewFunction(ds.SCtx().GetExprCtx(), cc, ast.UnaryNot, types.NewFieldType(mysql.TypeLonglong), condition)
 		if err != nil {
 			return nil, err
 		}
@@ -550,11 +553,12 @@ func (p *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 		return nil, false
 	}
 	cloned.ByItems = util.CloneByItemss(p.ByItems)
+	cc := make(expression.CloneContext, 2)
 	if p.PkIsHandleCol != nil {
 		if p.PkIsHandleCol.SafeToShareAcrossSession() {
 			cloned.PkIsHandleCol = p.PkIsHandleCol
 		} else {
-			cloned.PkIsHandleCol = p.PkIsHandleCol.Clone().(*expression.Column)
+			cloned.PkIsHandleCol = p.PkIsHandleCol.Clone(cc).(*expression.Column)
 		}
 	}
 	cloned.ConstColsByCond = make([]bool, len(p.ConstColsByCond))

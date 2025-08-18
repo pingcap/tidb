@@ -258,7 +258,7 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 	cols := make([]*table.Column, 0, len(schemaCols))
 	colMap := make(map[int64]decoder.Column, len(schemaCols))
 	tableCols := s.table.Cols()
-
+	cc := make(expression.CloneContext, 4)
 	for _, schemaCol := range schemaCols {
 		for _, tableCol := range tableCols {
 			if tableCol.ID != schemaCol.ID {
@@ -269,7 +269,7 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 			// indices of column(Column.Index) needs to be resolved against full column's schema.
 			if schemaCol.VirtualExpr != nil {
 				var err error
-				schemaCol.VirtualExpr, err = schemaCol.VirtualExpr.ResolveIndices(s.fullSchema)
+				schemaCol.VirtualExpr, err = schemaCol.VirtualExpr.ResolveIndices(cc, s.fullSchema)
 				if err != nil {
 					return nil, nil, err
 				}

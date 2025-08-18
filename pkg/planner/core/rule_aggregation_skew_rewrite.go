@@ -79,7 +79,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 	if nDistinct != 1 {
 		return nil
 	}
-
+	cc := make(expression.CloneContext, 4)
 	// count(distinct a,b,c) group by d
 	// will generate a bottom agg with group by a,b,c,d
 	bottomAggGroupbyItems := make([]expression.Expression, 0, len(agg.GroupByItems)+len(distinctCols))
@@ -91,7 +91,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 	// aggregate functions for bottom aggregate
 	bottomAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
 	// output schema for top aggregate
-	topAggSchema := agg.Schema().Clone()
+	topAggSchema := agg.Schema().Clone(cc)
 	// output schema for bottom aggregate
 	bottomAggSchema := expression.NewSchema(make([]*expression.Column, 0, agg.Schema().Len())...)
 
@@ -115,7 +115,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 	// except distinct function. each agg function is in COMPLETE mode.
 	for i, aggFunc := range agg.AggFuncs {
 		// have to clone it to avoid unexpected modification by others, (︶︹︺)
-		newAggFunc := aggFunc.Clone()
+		newAggFunc := aggFunc.Clone(cc)
 		if aggFunc.HasDistinct {
 			// TODO: support count(distinct a,b,c)
 			if len(aggFunc.Args) != 1 {
@@ -123,7 +123,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 			}
 
 			for _, arg := range aggFunc.Args {
-				firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow,
+				firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), cc, ast.AggFuncFirstRow,
 					[]expression.Expression{arg}, false)
 				if err != nil {
 					return nil
@@ -159,7 +159,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 
 			if newAggFunc.Name == ast.AggFuncCount {
 				cntIndexes = append(cntIndexes, i)
-				sumAggFunc, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncSum,
+				sumAggFunc, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), cc, ast.AggFuncSum,
 					[]expression.Expression{aggCol}, false)
 				if err != nil {
 					return nil
@@ -170,7 +170,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 					RetType:  sumAggFunc.RetTp,
 				}
 			} else {
-				topAggFunc := aggFunc.Clone()
+				topAggFunc := aggFunc.Clone(cc)
 				topAggFunc.Args = make([]expression.Expression, 0, len(aggFunc.Args))
 				topAggFunc.Args = append(topAggFunc.Args, aggCol)
 				topAggFuncs = append(topAggFuncs, topAggFunc)
@@ -183,7 +183,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 		// SELECT count(DISTINCT a) FROM t GROUP BY b;
 		// column b is not in the output schema, we have to add it to the bottom agg schema
 		if firstRowCols.Has(int(col.UniqueID)) {
-			firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow,
+			firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), cc, ast.AggFuncFirstRow,
 				[]expression.Expression{col}, false)
 			if err != nil {
 				return nil
@@ -221,7 +221,7 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, column := range topAggSchema.Columns {
-		proj.Exprs = append(proj.Exprs, column.Clone())
+		proj.Exprs = append(proj.Exprs, column.Clone(cc))
 	}
 
 	// wrap sum() with cast function to keep output data type same
@@ -229,10 +229,10 @@ func (a *SkewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *logicalop.LogicalA
 		exprType := proj.Exprs[index].GetType(agg.SCtx().GetExprCtx().GetEvalCtx())
 		targetType := agg.Schema().Columns[index].GetStaticType()
 		if !exprType.Equal(targetType) {
-			proj.Exprs[index] = expression.BuildCastFunction(agg.SCtx().GetExprCtx(), proj.Exprs[index], targetType)
+			proj.Exprs[index] = expression.BuildCastFunction(agg.SCtx().GetExprCtx(), cc, proj.Exprs[index], targetType)
 		}
 	}
-	proj.SetSchema(agg.Schema().Clone())
+	proj.SetSchema(agg.Schema().Clone(cc))
 	proj.SetChildren(topAgg)
 	appendSkewDistinctAggRewriteTraceStep(agg, proj, opt)
 	return proj
