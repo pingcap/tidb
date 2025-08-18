@@ -2536,13 +2536,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
 		// TODO: make IndexReader support accessing MVIndex directly.
-		if !ds.EnableMVIndexScan {
-			return base.InvalidTask, nil
-		}
-
-		for _, col := range ds.TblCols {
-			col.RetType.SetArray(false)
-		}
+		return base.InvalidTask, nil
 	}
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.

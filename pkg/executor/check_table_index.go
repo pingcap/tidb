@@ -674,8 +674,6 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		return err
 	}
 
-	indexCtx := w.e.contextCtx
-
 	var (
 		checkTimes         = 0
 		tableRowCntToCheck = int64(0)
@@ -702,8 +700,8 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		tableQuery = fmt.Sprintf(tableChecksumSQL, groupByKey, whereKey, groupByKey)
 		indexQuery = fmt.Sprintf(indexChecksumSQL, groupByKey, whereKey, groupByKey)
 		if idxInfo.MVIndex {
-			verifyCheckQuery(indexCtx, se, tableQuery, true)
-			verifyCheckQuery(indexCtx, se, indexQuery, false)
+			verifyCheckQuery(ctx, se, tableQuery, true)
+			verifyCheckQuery(ctx, se, indexQuery, false)
 		}
 
 		logutil.BgLogger().Info(
@@ -716,13 +714,13 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		)
 
 		// compute table side checksum.
-		tableChecksum, err := getGroupChecksum(indexCtx, se, tableQuery)
+		tableChecksum, err := getGroupChecksum(ctx, se, tableQuery)
 		if err != nil {
 			return err
 		}
 
 		// compute index side checksum.
-		indexChecksum, err := getGroupChecksum(indexCtx, se, indexQuery)
+		indexChecksum, err := getGroupChecksum(ctx, se, indexQuery)
 		if err != nil {
 			return err
 		}
@@ -767,8 +765,8 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		}
 
 		// TODO(joechenrh): remove me after testing.
-		// meetError = true
-		// currentOffset = int(tableChecksum[0].bucket)
+		meetError = true
+		currentOffset = int(tableChecksum[0].bucket)
 		offset += currentOffset * mod
 		mod *= bucketSize
 	}
@@ -785,8 +783,8 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		tableQuery = fmt.Sprintf(tableCheckSQL, groupByKey)
 		indexQuery = fmt.Sprintf(indexCheckSQL, groupByKey)
 		if idxInfo.MVIndex {
-			verifyCheckQuery(indexCtx, se, tableQuery, true)
-			verifyCheckQuery(indexCtx, se, indexQuery, false)
+			verifyCheckQuery(ctx, se, tableQuery, true)
+			verifyCheckQuery(ctx, se, indexQuery, false)
 		}
 
 		var (
@@ -795,11 +793,11 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 			idxRecords      []*recordWithChecksum
 		)
 
-		if idxRecords, err = getRecordWithChecksum(indexCtx, se, indexQuery, tblInfo.IsCommonHandle, pkTypes, indexColTypes); err != nil {
+		if idxRecords, err = getRecordWithChecksum(ctx, se, indexQuery, tblInfo.IsCommonHandle, pkTypes, indexColTypes); err != nil {
 			return err
 		}
 
-		if tblRecords, err = getRecordWithChecksum(indexCtx, se, tableQuery, tblInfo.IsCommonHandle, pkTypes, indexColTypes); err != nil {
+		if tblRecords, err = getRecordWithChecksum(ctx, se, tableQuery, tblInfo.IsCommonHandle, pkTypes, indexColTypes); err != nil {
 			return err
 		}
 
@@ -892,13 +890,10 @@ func verifyCheckQuery(ctx context.Context, se sessionctx.Context, sql string, us
 			isTableScan = true
 		} else if strings.Contains(op, "IndexFullScan") {
 			isIndexScan = true
-		} else if strings.Contains(op, "IndexLookUp") {
-			isIndexScan = false
 		}
 	}
 
 	if (useTableScan && !isTableScan) || (!useTableScan && !isIndexScan) {
-		fmt.Print(rows)
 		panic(fmt.Sprintf("check query %s error, table scan: %t, index scan: %t",
 			sql, isTableScan, isIndexScan))
 	}
