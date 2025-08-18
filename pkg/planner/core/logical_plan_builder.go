@@ -4730,6 +4730,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
+		if col.IsPKHandleColumn(tableInfo) {
+			handleCols = util.NewIntHandleCols(newCol)
+		}
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}

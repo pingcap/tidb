@@ -1165,12 +1165,7 @@ func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *m
 	return indexInfo != nil && !indexInfo.IsColumnarIndex()
 }
 
-func getPossibleAccessPaths(
-	ctx base.PlanContext,
-	tableHints *hint.PlanHints,
-	indexHints []*ast.IndexHint,
-	tbl table.Table, dbName, tblName ast.CIStr,
-	check, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1379,7 +1374,6 @@ func getPossibleAccessPaths(
 			break
 		}
 	}
-
 	if allMVIIndexPath {
 		available = append(available, tablePath)
 	}

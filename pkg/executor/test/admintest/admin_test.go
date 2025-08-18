@@ -2294,7 +2294,10 @@ func TestAdminCheckMVIndex(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("INSERT INTO t(i1, i2, j) VALUES (%d, %d, %s)", i, i, value))
 		}
 
-		tk.MustExec("ADMIN CHECK TABLE t")
+		for _, fastCheck := range []bool{false, true} {
+			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
+			tk.MustExec("ADMIN CHECK TABLE t")
+		}
 
 		// Make some corrupted index. Build the index information
 		// and simulate inconsistent index values on MVI
