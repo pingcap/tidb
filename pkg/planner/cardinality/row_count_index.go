@@ -397,6 +397,66 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
+// estimateRowCountWithUniformDistribution estimates row count using uniform distribution assumption
+// for values not covered by TopN or histograms. This function handles the common logic used by
+// both equalRowCountOnIndex and equalRowCountOnColumn.
+func estimateRowCountWithUniformDistribution(
+	sctx planctx.PlanContext,
+	histNDV float64,
+	histogram *statistics.Histogram,
+	topN *statistics.TopN,
+	totalRowCount float64,
+	realtimeRowCount int64,
+	modifyCount int64,
+	isFullLoad bool,
+	useSkewEstimation bool,
+	increaseFactor float64,
+	columnNotNullCount float64, // For column, this is c.NotNullCount; for index, this is histogram.NotNullCount()
+) statistics.RowEstimate {
+	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
+	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
+	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
+	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
+	if histNDV <= 0 || (isFullLoad && histogram.NotNullCount() == 0) {
+		// branch 1: all NDV's are in TopN, and no histograms
+		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
+		if histNDV > 0 && modifyCount == 0 {
+			return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
+		}
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
+		// The histogram wont have a NotNullCount - so it needs to be derived.
+		notNullCount := columnNotNullCount
+		if notNullCount <= 0 {
+			notNullCount = totalRowCount - float64(histogram.NullCount)
+		}
+		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		return statistics.DefaultRowEst(outOfRangeCnt)
+	}
+	// branch 2: some NDV's are in histograms
+	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+	avgRowEstimate := histogram.NotNullCount() / histNDV
+
+	if useSkewEstimation {
+		skewEstimate := float64(0)
+		// skewRatio determines how much of the potential skew should be considered
+		skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+		if skewRatio > 0 {
+			// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+			skewEstimate = histogram.NotNullCount() - (histNDV - 1)
+			minTopN := topN.MinCount()
+			if minTopN > 0 {
+				// The skewEstimate should not be larger than the minimum TopN value.
+				skewEstimate = min(skewEstimate, float64(minTopN))
+			}
+			return statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
+		}
+	}
+
+	return statistics.DefaultRowEst(avgRowEstimate)
+}
+
+// equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
 func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -445,40 +505,20 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	if histNDV <= 0 || (idx.IsFullLoad() && idx.Histogram.NotNullCount() == 0) {
-		// branch 1: all NDV's are in TopN, and no histograms
-		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
-		if histNDV > 0 && modifyCount == 0 {
-			return statistics.DefaultRowEst(max(float64(idx.TopN.MinCount()-1), 1))
-		}
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
-		// The histogram wont have a NotNullCount - so it needs to be derived.
-		notNullCount := idx.Histogram.NotNullCount()
-		if notNullCount <= 0 {
-			notNullCount = idx.TotalRowCount() - float64(idx.Histogram.NullCount)
-		}
-		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-		outOfRangeCnt := outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-		return statistics.DefaultRowEst(outOfRangeCnt)
-	}
-	// branch 2: some NDV's are in histograms
-	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
-	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
-	skewEstimate := float64(0)
-	// skewRatio determines how much of the potential skew should be considered
-	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
-	if skewRatio > 0 {
-		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate = idx.Histogram.NotNullCount() - (histNDV - 1)
-		minTopN := idx.TopN.MinCount()
-		if minTopN > 0 {
-			// The skewEstimate should not be larger than the minimum TopN value.
-			skewEstimate = min(skewEstimate, float64(minTopN))
-		}
-		return statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
-	}
-	return statistics.DefaultRowEst(avgRowEstimate)
+	increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
+	return estimateRowCountWithUniformDistribution(
+		sctx,
+		histNDV,
+		&idx.Histogram,
+		idx.TopN,
+		idx.TotalRowCount(),
+		realtimeRowCount,
+		modifyCount,
+		idx.IsFullLoad(),
+		true, // useSkewEstimation = true for index
+		increaseFactor,
+		idx.Histogram.NotNullCount(), // For index, use histogram.NotNullCount()
+	)
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.

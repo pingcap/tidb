@@ -180,20 +180,21 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	if histNDV <= 0 || (c.IsFullLoad() && c.Histogram.NotNullCount() == 0) {
-		// branch 1: all NDV's are in TopN, and no histograms
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
-		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
-		// c.Histogram.NDV stores the full NDV regardless of histograms empty or populated.
-		if histNDV > 0 && modifyCount == 0 {
-			return max(float64(c.TopN.MinCount()-1), 1), nil
-		}
-		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
-		return outOfRangeFullNDV(float64(c.Histogram.NDV), c.TotalRowCount(), c.NotNullCount(), float64(realtimeRowCount), increaseFactor, modifyCount), nil
-	}
-	// branch 2: some NDV's are in histograms
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return c.Histogram.NotNullCount() / histNDV, nil
+	increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
+	rowEstimate := estimateRowCountWithUniformDistribution(
+		sctx,
+		histNDV,
+		&c.Histogram,
+		c.TopN,
+		c.TotalRowCount(),
+		realtimeRowCount,
+		modifyCount,
+		c.IsFullLoad(),
+		false, // useSkewEstimation = false for column
+		increaseFactor,
+		c.NotNullCount(), // For column, use c.NotNullCount
+	)
+	return rowEstimate.Est, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
