@@ -403,7 +403,16 @@ func (bc *litBackendCtx) GetImportTS() uint64 {
 }
 
 // AdvanceWatermark implements CheckpointOperator interface.
-func (bc *litBackendCtx) AdvanceWatermark(imported bool) error {
+func (bc *litBackendCtx) AdvanceWatermark(imported bool) (err error) {
+	defer func() {
+		if err == nil {
+			failpoint.Inject("ddlIngestFailOnceAfterCheckpointUpdated", func() {
+				if imported {
+					err = errors.New("failpoint: ddlIngestFailOnceAfterCheckpointUpdated")
+				}
+			})
+		}
+	}()
 	if bc.checkpointMgr != nil {
 		return bc.checkpointMgr.AdvanceWatermark(imported)
 	}
