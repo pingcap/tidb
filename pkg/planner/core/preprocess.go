@@ -270,22 +270,6 @@ func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
 	}
 }
 
-func (p *preprocessor) schemaReadOnlyByTable(name *ast.TableName) {
-	table, err := p.tableByName(name)
-	if err != nil {
-		return
-	}
-	// The database read-only state has no effect on temporary table.
-	if table.Meta().TempTableType != model.TempTableNone {
-		return
-	}
-
-	dbInfo, exists := infoschema.SchemaByTable(p.ensureInfoSchema(), table.Meta())
-	if exists && dbInfo.ReadOnly {
-		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbInfo.Name.L))
-	}
-}
-
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
@@ -331,7 +315,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeDrop
 		p.checkDropTableGrammar(node)
 		for _, tbl := range node.Tables {
-			p.schemaReadOnlyByTable(tbl)
+			table, err := p.tableByName(tbl)
+			if err == nil && table.Meta().TempTableType == model.TempTableNone {
+				p.schemaReadOnly(tbl.Schema)
+			}
 		}
 	case *ast.RenameTableStmt:
 		p.stmtTp = TypeRename
@@ -344,12 +331,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateIndexStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateIndexGrammar(node)
-		p.schemaReadOnlyByTable(node.Table)
+		p.schemaReadOnly(node.Table.Schema)
 	case *ast.AlterTableStmt:
 		p.stmtTp = TypeAlter
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
-		p.schemaReadOnlyByTable(node.Table)
+		p.schemaReadOnly(node.Table.Schema)
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
@@ -424,7 +411,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.ImportIntoStmt:
 		p.stmtTp = TypeImportInto
 		p.flag |= inImportInto
-		p.schemaReadOnlyByTable(node.Table)
+		p.schemaReadOnly(node.Table.Schema)
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -497,11 +484,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			}
 		}
 	case *ast.TruncateTableStmt:
-		p.schemaReadOnlyByTable(node.Table)
+		p.schemaReadOnly(node.Table.Schema)
 	case *ast.DropIndexStmt:
-		p.schemaReadOnlyByTable(node.Table)
+		p.schemaReadOnly(node.Table.Schema)
 	case *ast.LoadDataStmt:
-		p.schemaReadOnlyByTable(node.Table)
+		p.schemaReadOnly(node.Table.Schema)
 	default:
 		p.flag &= ^parentIsJoin
 	}
