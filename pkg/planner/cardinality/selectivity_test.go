@@ -119,26 +119,65 @@ func BenchmarkSelectivity(b *testing.B) {
 }
 
 func TestOutOfRangeEstimation(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int unsigned, index idx(a))")
-	for i := range 3000 {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
 	}
-	testKit.MustExec("analyze table t with 2000 samples")
 
-	h := dom.StatsHandle()
-	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	// Create mock statistics table with 3000 rows
+	statsTbl := mockStatsTable(tblInfo, 3000)
+
+	// Generate mock histogram data for column 'a' with values [300, 900)
+	// Each value appears 5 times (3000/600 = 5)
+	colValues, err := generateIntDatum(1, 600) // 600 values from 0 to 599
 	require.NoError(t, err)
-	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
+
+	// Adjust the values to be in range [300, 900)
+	for i := range colValues {
+		colValues[i].SetInt64(int64(i) + 300)
+	}
+
+	// Create column statistics with uniform distribution
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
 	sctx := mock.NewContext()
-	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
-	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+
+	// Test a specific range first (900, 900) - should be out of range
+	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, 0, false)
 	require.NoError(t, err)
-	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
-	// so we use a range here.
+	// Because the mock data is uniform distribution, the result should be predictable
 	require.Truef(t, count < 5.5, "expected: around 5.0, got: %v", count)
 	require.Truef(t, count > 4.5, "expected: around 5.0, got: %v", count)
 
@@ -153,15 +192,18 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	}
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
+
+	// Use the mock table row count
 	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
 	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
+
 	for i, ran := range input {
 		count, err = cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
 			output[i].End = ran.End
-			output[i].Count = count
+			output[i].Count = math.Round(count*100) / 100 // Round to 2 decimal places
 		})
 		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
@@ -726,22 +768,55 @@ func TestRangeStepOverflow(t *testing.T) {
 }
 
 func TestSmallRangeEstimation(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, index idx(a))")
-	for i := range 400 {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v), (%v), (%v)", i, i, i)) // [0, 400)
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
 	}
-	testKit.MustExec("analyze table t with 0 topn")
 
-	h := dom.StatsHandle()
-	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	// Create mock statistics table with 1200 rows (400 values * 3 each)
+	statsTbl := mockStatsTable(tblInfo, 1200)
+
+	// Generate mock histogram data for column 'a' with values [0, 400)
+	// Each value appears 3 times (1200/400 = 3)
+	colValues, err := generateIntDatum(1, 400) // 400 values from 0 to 399
 	require.NoError(t, err)
-	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
+
+	// Create column statistics with uniform distribution
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 3, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
 	sctx := mock.NewContext()
-	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 
 	var input []struct {
 		Start int64
@@ -760,7 +835,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
 			output[i].End = ran.End
-			output[i].Count = count
+			output[i].Count = math.Round(count*100) / 100 // Round to 2 decimal places
 		})
 		require.Truef(t, math.Abs(count-output[i].Count) < eps, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 	}
