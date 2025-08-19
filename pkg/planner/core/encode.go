@@ -64,7 +64,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	encodeFlatPlanTree(flat.Main, 0, &buf)
 	for _, cte := range flat.CTEs {
 		fop := cte[0]
-		cteDef := cte[0].Origin.(*CTEDefinition)
+		cteDef := cte[0].Origin.(*physicalop.CTEDefinition)
 		id := cteDef.CTE.IDForStorage
 		tp := plancodec.TypeCTEDefinition
 		taskTypeInfo := plancodec.EncodeTaskType(fop.IsRoot, fop.StoreType)
@@ -149,7 +149,7 @@ type planEncoder struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
 
-	ctes []*PhysicalCTE
+	ctes []*physicalop.PhysicalCTE
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
@@ -187,7 +187,7 @@ func (pn *planEncoder) encodeCTEPlan() {
 	}
 	explainedCTEPlan := make(map[int]struct{})
 	for i := range pn.ctes {
-		x := (*CTEDefinition)(pn.ctes[i])
+		x := (*physicalop.CTEDefinition)(pn.ctes[i])
 		// skip if the CTE has been explained, the same CTE has same IDForStorage
 		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
 			continue
@@ -235,8 +235,8 @@ func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, 
 		pn.encodePlan(child, isRoot, store, depth)
 	}
 	switch copPlan := selectPlan.(type) {
-	case *PhysicalTableReader:
-		pn.encodePlan(copPlan.tablePlan, false, copPlan.StoreType, depth)
+	case *physicalop.PhysicalTableReader:
+		pn.encodePlan(copPlan.TablePlan, false, copPlan.StoreType, depth)
 	case *physicalop.PhysicalIndexReader:
 		pn.encodePlan(copPlan.IndexPlan, false, store, depth)
 	case *PhysicalIndexLookUpReader:
@@ -249,7 +249,7 @@ func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, 
 		if copPlan.tablePlan != nil {
 			pn.encodePlan(copPlan.tablePlan, false, store, depth)
 		}
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		pn.ctes = append(pn.ctes, copPlan)
 	}
 }
@@ -350,8 +350,8 @@ func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.
 		d.normalizePlan(child, isRoot, store, depth, isChildOfINL)
 	}
 	switch x := p.(type) {
-	case *PhysicalTableReader:
-		d.normalizePlan(x.tablePlan, false, x.StoreType, depth, false)
+	case *physicalop.PhysicalTableReader:
+		d.normalizePlan(x.TablePlan, false, x.StoreType, depth, false)
 	case *physicalop.PhysicalIndexReader:
 		d.normalizePlan(x.IndexPlan, false, store, depth, false)
 	case *PhysicalIndexLookUpReader:

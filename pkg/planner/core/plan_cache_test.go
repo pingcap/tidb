@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -74,16 +75,16 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 		return plannercore.ToString(p)
 	}
 	defer func() {
-		tk.MustExec("set session tidb_redact_log=MARKER")
+		tk.MustExec("set global tidb_redact_log=MARKER")
 	}()
 	require.Equal(t, planString("select a from t where a < 1"), "IndexReader(Index(t.a)[[-inf,1)])")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
+	tk.MustExec("set global tidb_redact_log=MARKER")
 	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec("set session tidb_redact_log=ON")
+	tk.MustExec("set global tidb_redact_log=ON")
 	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
@@ -91,10 +92,10 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
+	tk.MustExec("set global tidb_redact_log=MARKER")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec("set session tidb_redact_log=ON")
+	tk.MustExec("set global tidb_redact_log=ON")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
@@ -105,7 +106,7 @@ func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
 	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 	stmt, err := p.ParseOneStmt("select avg(a),avg(b),avg(c) from t", "", "")
 	require.NoError(t, err)
@@ -278,7 +279,7 @@ func TestIssue38269(t *testing.T) {
 	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
 	tk.MustExec("execute stmt1 using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
+	tk.MustExec("set global tidb_redact_log=MARKER")
 	tk.MustExec("execute stmt1 using @d, @e, @f")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*sessmgr.ProcessInfo{tkProcess}

@@ -45,8 +45,8 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	tableScan.SetSchema(schema)
 
 	// table reader
-	tableReader := &PhysicalTableReader{
-		tablePlan:  tableScan,
+	tableReader := &physicalop.PhysicalTableReader{
+		TablePlan:  tableScan,
 		TablePlans: []base.PhysicalPlan{tableScan},
 		StoreType:  kv.TiKV,
 	}
@@ -78,7 +78,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	require.Equal(t, task.p, sel)
 	require.Equal(t, task.p.Children()[0], proj)
 	require.Equal(t, task.p.Children()[0].Children()[0], tableReader)
-	require.Equal(t, task.p.Children()[0].Children()[0].(*PhysicalTableReader).TablePlans[0], tableScan)
+	require.Equal(t, task.p.Children()[0].Children()[0].(*physicalop.PhysicalTableReader).TablePlans[0], tableScan)
 
 	task2 := &RootTask{
 		p: proj,
@@ -91,5 +91,5 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	// assert the child task's p is unchanged.
 	require.Equal(t, task2.p, proj)
 	require.Equal(t, task2.p.Children()[0], tableReader)
-	require.Equal(t, task2.p.Children()[0].(*PhysicalTableReader).TablePlans[0], tableScan)
+	require.Equal(t, task2.p.Children()[0].(*physicalop.PhysicalTableReader).TablePlans[0], tableScan)
 }

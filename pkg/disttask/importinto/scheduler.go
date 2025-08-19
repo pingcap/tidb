@@ -151,23 +151,24 @@ func NewImportScheduler(
 	ctx context.Context,
 	task *proto.Task,
 	param scheduler.Param,
-	store kv.Storage,
 ) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
-		store:         store,
+		store:         param.Store,
 		taskKS:        task.Keyspace,
 	}
 	return sch
 }
 
 // NewImportSchedulerForTest creates a new import scheduler for test.
-func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
+func NewImportSchedulerForTest(globalSort bool, task *proto.Task, param scheduler.Param, store kv.Storage) scheduler.Scheduler {
 	return &importScheduler{
-		GlobalSort: globalSort,
-		taskKS:     tidb.GetGlobalKeyspaceName(),
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), task, param),
+		GlobalSort:    globalSort,
+		store:         store,
+		taskKS:        tidb.GetGlobalKeyspaceName(),
 	}
 }
 
@@ -184,7 +185,7 @@ func (sch *importScheduler) Init() (err error) {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
-	if task.Keyspace != tidb.GetGlobalKeyspaceName() {
+	if task.Keyspace != sch.store.GetKeyspace() {
 		if err = sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
 			var err2 error
 			sch.taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(task.Keyspace)
@@ -684,9 +685,9 @@ func (sch *importScheduler) cancelJob(ctx context.Context, task *proto.Task,
 	)
 }
 
-func (sch *importScheduler) getTaskMgrForAccessingImportJob() (*storage.TaskManager, error) {
-	if sch.taskKS == tidb.GetGlobalKeyspaceName() {
-		return storage.GetTaskManager()
+func (sch *importScheduler) getTaskMgrForAccessingImportJob() (scheduler.TaskManager, error) {
+	if sch.taskKS == sch.store.GetKeyspace() {
+		return sch.GetTaskMgr(), nil
 	}
 	return storage.NewTaskManager(sch.taskKSSessPool), nil
 }

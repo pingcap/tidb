@@ -99,7 +99,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, c := range x.Children() {
 			strs, idxs = toString(c, strs, idxs)
 		}
-	case *PhysicalExchangeReceiver: // do nothing
+	case *physicalop.PhysicalExchangeReceiver: // do nothing
 	case base.PhysicalPlan:
 		if needIncludeChildrenString(in) {
 			idxs = append(idxs, len(strs))
@@ -114,7 +114,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case *CheckTable:
 		str = "CheckTable"
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
 	case *physicalop.PhysicalTableScan:
 		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
@@ -260,8 +260,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 		str += ")"
-	case *PhysicalTableReader:
-		str = fmt.Sprintf("TableReader(%s)", ToString(x.tablePlan))
+	case *physicalop.PhysicalTableReader:
+		str = fmt.Sprintf("TableReader(%s)", ToString(x.TablePlan))
 	case *physicalop.PhysicalIndexReader:
 		str = fmt.Sprintf("IndexReader(%s)", ToString(x.IndexPlan))
 	case *PhysicalIndexLookUpReader:
@@ -363,13 +363,13 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
 		}
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		str = "Recv("
 		for _, task := range x.Tasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
 		str += ")"
-	case *PhysicalExchangeSender:
+	case *physicalop.PhysicalExchangeSender:
 		str = "Send("
 		for _, task := range x.TargetTasks {
 			str += fmt.Sprintf("%d, ", task.ID)
@@ -382,7 +382,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			str += ")"
 		}
 		str += ")"
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		str = "CTEReader("
 		str += fmt.Sprintf("%v", x.CTE.IDForStorage)
 		str += ")"

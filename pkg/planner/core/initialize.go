@@ -55,17 +55,11 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalIndexScan.
-func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndexScan {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIdxScan, &p, offset)
-	return &p
-}
-
 // Init initializes PhysicalIndexLookUpReader.
 func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	p.TablePlans = physicalop.FlattenPushDownPlan(p.tablePlan)
+	p.IndexPlans = physicalop.FlattenPushDownPlan(p.indexPlan)
 	p.SetSchema(p.tablePlan.Schema())
 	return &p
 }
@@ -85,11 +79,11 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {
-		tempPlans := flattenPushDownPlan(partialPlan)
+		tempPlans := physicalop.FlattenPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.TablePlans = physicalop.FlattenPushDownPlan(p.tablePlan)
 		p.SetSchema(p.tablePlan.Schema())
 		p.HandleCols = p.TablePlans[0].(*physicalop.PhysicalTableScan).HandleCols
 	} else {
@@ -97,15 +91,15 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 		case *physicalop.PhysicalTableScan:
 			p.SetSchema(p.PartialPlans[0][0].Schema())
 		default:
-			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
-			p.SetSchema(is.dataSourceSchema)
+			is := p.PartialPlans[0][0].(*physicalop.PhysicalIndexScan)
+			p.SetSchema(is.DataSourceSchema)
 		}
 	}
 	if p.KeepOrder {
 		switch x := p.PartialPlans[0][0].(type) {
 		case *physicalop.PhysicalTableScan:
 			p.ByItems = x.ByItems
-		case *PhysicalIndexScan:
+		case *physicalop.PhysicalIndexScan:
 			p.ByItems = x.ByItems
 		}
 	}
@@ -163,6 +157,13 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	return &p
 }
 
+// Init initializes PhysicalIndexReader.
+func (p PhysicalIndexReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexReader {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
+	p.SetSchema(nil)
+	return &p
+}
+
 // Init initializes PhysicalIndexMergeJoin.
 func (p PhysicalIndexMergeJoin) Init(ctx base.PlanContext) *PhysicalIndexMergeJoin {
 	p.SetTP(plancodec.TypeIndexMergeJoin)
@@ -187,46 +188,6 @@ func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offs
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.SetStats(stats)
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalExchangeSender) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeSender {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeReceiver {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
-	plans = append(plans, plan)
-	for _, child := range plan.Children() {
-		plans = flattenTreePlan(child, plans)
-	}
-	return plans
-}
-
-// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
-	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = flattenTreePlan(p, plans)
-	for i := range len(plans) / 2 {
-		j := len(plans) - i - 1
-		plans[i], plans[j] = plans[j], plans[i]
-	}
-	return plans
-}
-
-// Init only assigns type and context.
-func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTE {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeCTE, &p, 0)
-	p.SetStats(stats)
 	return &p
 }
 

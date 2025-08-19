@@ -88,11 +88,11 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	return mockScheduler
 }
 
-func MockSchedulerManager(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, ext scheduler.Extension, cleanup scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
+func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext scheduler.Extension, cleanup scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler := scheduler.NewBaseScheduler(ctx, task, param)
@@ -119,7 +119,7 @@ func TestTaskFailInManager(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
-	schManager, mgr := MockSchedulerManager(t, ctrl, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
+	schManager, mgr := MockSchedulerManager(store, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler := mock.NewMockScheduler(ctrl)
@@ -130,7 +130,7 @@ func TestTaskFailInManager(t *testing.T) {
 	defer schManager.Stop()
 
 	// unknown task type
-	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, "", 0, proto.ExtraParams{}, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", "test-type", "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -140,7 +140,7 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 
 	// scheduler init error
-	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
+	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -172,7 +172,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler")
 
-	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), nil)
+	sch, mgr := MockSchedulerManager(store, pool, getNumberExampleSchedulerExt(ctrl), nil)
 	require.NoError(t, mgr.InitMeta(ctx, ":4000", "background"))
 	sch.Start()
 	defer func() {
@@ -215,7 +215,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := range taskCnt {
-		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, "background", 0, proto.ExtraParams{}, nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, "", 0, "background", 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -225,7 +225,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	checkSubtaskCnt(tasks, taskIDs)
 	// test parallelism control
 	if taskCnt == 1 {
-		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, "background", 0, proto.ExtraParams{}, nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, "", 0, "background", 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.
@@ -460,7 +460,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 		},
 	)
 	for i := range concurrencies {
-		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, concurrencies[i], "", 0, proto.ExtraParams{}, []byte("{}"))
+		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, "", concurrencies[i], "", 0, proto.ExtraParams{}, []byte("{}"))
 		require.NoError(t, err)
 	}
 	getRunningTaskKeys := func() []string {

@@ -103,32 +103,9 @@ func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
 	return
 }
 
-// resolveIndicesForVirtualColumn resolves dependent columns's indices for virtual columns.
-func resolveIndicesForVirtualColumn(result []*expression.Column, schema *expression.Schema) error {
-	for _, col := range result {
-		if col.VirtualExpr != nil {
-			newExpr, err := col.VirtualExpr.ResolveIndices(schema)
-			if err != nil {
-				return err
-			}
-			col.VirtualExpr = newExpr
-		}
-	}
-	return nil
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalTableReader) ResolveIndices() error {
-	err := resolveIndicesForVirtualColumn(p.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	return p.tablePlan.ResolveIndices()
-}
-
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
+	err = physicalop.ResolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}
@@ -159,7 +136,7 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
+	err = physicalop.ResolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}

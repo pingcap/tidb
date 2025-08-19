@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -368,6 +369,7 @@ func main() {
 		logutil.BgLogger().Warn("internal check is enabled, this should NOT happen in the production environment")
 	}
 	setGlobalVars()
+	setupSEM()
 	err = setCPUAffinity()
 	terror.MustNil(err)
 	cgmon.StartCgroupMonitor()
@@ -474,6 +476,9 @@ func registerStores() error {
 }
 
 func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, error) {
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+		kv.StandAloneTiDB = true
+	}
 	storage := kvstore.MustInitStorage(keyspaceName)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
@@ -879,10 +884,6 @@ func setGlobalVars() {
 	}
 	vardef.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
 
-	if cfg.Security.EnableSEM {
-		sem.Enable()
-	}
-
 	// For CI environment we default enable prepare-plan-cache.
 	if config.CheckTableBeforeDrop { // only for test
 		variable.SetSysVar(vardef.TiDBEnablePrepPlanCache, variable.BoolToOnOff(true))
@@ -1006,12 +1007,12 @@ func setupTracing() error {
 func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
-	ddl.CloseOwnerManager()
+	ddl.CloseOwnerManager(storage)
 	copr.GlobalMPPFailedStoreProber.Stop()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
-	if keyspace.IsRunningOnUser() {
+	if kv.IsUserKS(storage) {
 		err = kvstore.GetSystemStorage().Close()
 		terror.Log(errors.Annotate(err, "close system storage"))
 	}
@@ -1095,6 +1096,21 @@ func enablePyroscope() {
 		})
 		if err != nil {
 			log.Fatal("fail to start pyroscope", zap.Error(err))
+		}
+	}
+}
+
+func setupSEM() {
+	cfg := config.GetGlobalConfig()
+
+	if cfg.Security.EnableSEM {
+		if cfg.Security.SEMConfig != "" {
+			err := semv2.Enable(cfg.Security.SEMConfig)
+			if err != nil {
+				logutil.BgLogger().Fatal("failed to enable SEM", zap.Error(err))
+			}
+		} else {
+			sem.Enable()
 		}
 	}
 }

@@ -88,7 +88,7 @@ var (
 
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
-	&ColumnPruner{},
+	&rule.ColumnPruner{},
 	&ResultReorder{},
 	&rule.BuildKeySolver{},
 	&DecorrelateSolver{},
@@ -101,15 +101,15 @@ var optRuleList = []base.LogicalOptRule{
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&OuterJoinEliminator{},
-	&PartitionProcessor{},
-	&CollectPredicateColumnsPoint{},
+	&rule.PartitionProcessor{},
+	&rule.CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
-	&PredicateSimplification{},
+	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
-	&SyncWaitStatsLoadPoint{},
+	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
-	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
@@ -347,7 +347,6 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
@@ -463,10 +462,10 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 		mergeContinuousSelections(child)
 	}
 	// merge continuous selections in a coprocessor task of tiflash
-	tableReader, isTableReader := p.(*PhysicalTableReader)
+	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
-		mergeContinuousSelections(tableReader.tablePlan)
-		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		mergeContinuousSelections(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenPushDownPlan(tableReader.TablePlan)
 	}
 }
 
@@ -535,8 +534,8 @@ Rewritten Query: select count(k1) from table
 */
 func countStarRewrite(plan base.PhysicalPlan) {
 	countStarRewriteInternal(plan)
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		countStarRewrite(tableReader.tablePlan)
+	if tableReader, ok := plan.(*physicalop.PhysicalTableReader); ok {
+		countStarRewrite(tableReader.TablePlan)
 	} else {
 		for _, child := range plan.Children() {
 			countStarRewrite(child)
@@ -643,10 +642,10 @@ func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan b
 }
 
 func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+	if tableReader, ok := plan.(*physicalop.PhysicalTableReader); ok {
+		if _, isExchangeSender := tableReader.TablePlan.(*physicalop.PhysicalExchangeSender); isExchangeSender {
 			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*physicalop.BasePhysicalPlan, 1)}
-			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
+			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.TablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
 	} else {
 		for _, child := range plan.Children() {
@@ -864,7 +863,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *physicalop.PhysicalProjection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *physicalop.PhysicalHashAgg:
@@ -897,7 +896,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// don't apply fine grained shuffle for probe side
 		helper.clear()
 		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeSender:
+	case *physicalop.PhysicalExchangeSender:
 		if x.ExchangeType == tipb.ExchangeType_Hash {
 			// Set up stream count for all plans based on shuffle target type.
 			var exchangeColCount = x.Schema().Len()
@@ -971,8 +970,8 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 			newParents = append(newParents, plan)
 			propagateProbeParents(plan.Children()[join.GetInnerChildIdx()], newParents)
 		}
-	case *PhysicalTableReader:
-		propagateProbeParents(x.tablePlan, probeParents)
+	case *physicalop.PhysicalTableReader:
+		propagateProbeParents(x.TablePlan, probeParents)
 	case *physicalop.PhysicalIndexReader:
 		propagateProbeParents(x.IndexPlan, probeParents)
 	case *PhysicalIndexLookUpReader:
@@ -1299,7 +1298,7 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 		return false
 	}
 	switch plan.(type) {
-	case *PhysicalTableReader, *physicalop.PhysicalIndexReader,
+	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
 		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
 		if existsOverlongType(plan.Schema()) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)

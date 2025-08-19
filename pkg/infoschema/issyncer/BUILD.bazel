@@ -33,6 +33,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
+        "//pkg/util/sqlexec",
         "//pkg/util/syncutil",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
