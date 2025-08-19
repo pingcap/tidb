@@ -81,14 +81,11 @@ var (
 	LookupCheckThreshold = int64(100)
 
 	// CheckTableFastBucketSize is the bucket size of fast check table, exported for test
-	CheckTableFastBucketSize atomic.Int64
+	CheckTableFastBucketSize = 1024
 
+	// castArrayRegexp is the regexp to extract the expression from `cast(EXPR as TYPE array)`.
 	castArrayRegexp = regexp.MustCompile(`(?i)cast\s*\(\s*(.+?)\s+as\s+.+?\s+array\s*\)`)
 )
-
-func init() {
-	CheckTableFastBucketSize.Store(1024)
-}
 
 // Open implements the Executor Open interface.
 func (e *CheckTableExec) Open(ctx context.Context) error {
@@ -412,6 +409,20 @@ func ExtractCastArrayExpr(col *model.ColumnInfo) string {
 	return strings.TrimSpace(matches[1])
 }
 
+/*
+buildChecksumSQLForMVIndex builds the checksum SQL for MVIndex.
+The basic rationale of the checksum SQL (ignore non-int handle processing and overflow handling):
+
+	Table side:
+		SELECT SUM(handle * JSON_SUM_CRC32(array_col)), handle MOD 1024, COUNT(*)
+			FROM table
+			WHERE (JSON_LENGTH(array_col) > 0 OR JSON_LENGTH(array_col) IS NULL)
+			GROUP BY handle MOD 1024
+	Index side:
+		SELECT SUM(handle * array_hidden_col), handle MOD 1024, COUNT(*)
+			FROM table
+			GROUP BY handle MOD 1024",
+*/
 func buildChecksumSQLForMVIndex(
 	tblName string, handleCols []string,
 	idxInfo *model.IndexInfo, tblMeta *model.TableInfo,
@@ -421,7 +432,7 @@ func buildChecksumSQLForMVIndex(
 	var (
 		tableArrayCols string
 		indexArrayCols string
-		tableFilterCol = "true"
+		tableFilterCol string
 		crc32Cols      = handleCols
 	)
 
@@ -432,14 +443,13 @@ func buildChecksumSQLForMVIndex(
 
 		colName := ColumnName(col.Name.O)
 		if len(rawExpr) > 0 {
-			// JSON with zero length array will not create any index entry,
-			// but null JSON will create a null index entry.
-			// So we need to filter them out.
+			// JSON with zero length array (like "[]") doesn't correspond to any index entry,
+			// but null JSON will create a null index entry. So we need to do some filtering.
 			tableFilterCol = fmt.Sprintf("(JSON_LENGTH(%s) > 0 or JSON_LENGTH(%s) is null)", rawExpr, rawExpr)
 			tableArrayCols = strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1)
 			indexArrayCols = fmt.Sprintf("CRC32(%s)", colName)
 		} else {
-			// normal column or generated column
+			// normal columns or generated columns
 			crc32Cols = append(crc32Cols, colName)
 		}
 	}
@@ -452,13 +462,37 @@ func buildChecksumSQLForMVIndex(
 		tblName, tableFilterCol, "%s", "%s",
 	)
 	indexChecksumSQL = fmt.Sprintf(
-		"SELECT /*+ force_index(%s, %s) */ CAST(SUM((%s MOD %d) * (%s MOD %d)) AS SIGNED), %s, COUNT(*) FROM %s WHERE %s = 0 GROUP BY %s",
-		tblName, idxName, md5Handle, expression.JSONCrc32Mod, indexArrayCols, expression.JSONCrc32Mod,
-		"%s", tblName, "%s", "%s",
+		"SELECT CAST(SUM((%s MOD %d) * (%s MOD %d)) AS SIGNED), %s, COUNT(*) FROM %s USE INDEX(%s) WHERE %s = 0 GROUP BY %s",
+		md5Handle, expression.JSONCrc32Mod, indexArrayCols, expression.JSONCrc32Mod,
+		"%s", tblName, idxName, "%s", "%s",
 	)
 	return
 }
 
+/*
+buildCheckRowSQLForMVIndex builds the SQL to check rows for MVIndex.
+The basic rationale of the check row SQL (ignore non-int handle processing and overflow handling):
+
+	Table side:
+		SELECT handle,
+			array_col,
+			handle * JSON_SUM_CRC32(array_col),
+		from   table
+		where  (
+					json_length(array_col) > 0
+			OR     json_length(array_col) IS NULL)
+		AND    handle MOD 1024 = 1
+	Index side:
+		SELECT Min(handle),
+			Json_arrayagg(hidden_col),
+			Sum(handle * crc)
+		FROM   (SELECT handle,
+					hidden_col,
+					Crc32(hidden_col) AS crc
+				FROM   table
+				WHERE  handle MOD 1024 = 1)
+		GROUP  BY handle
+*/
 func buildCheckRowSQLForMVIndex(
 	tblName string, handleCols []string,
 	idxInfo *model.IndexInfo, tblMeta *model.TableInfo,
@@ -466,7 +500,7 @@ func buildCheckRowSQLForMVIndex(
 	idxName := ColumnName(idxInfo.Name.String())
 
 	var (
-		tableFilterCol  = "true"
+		tableFilterCol  string
 		tableSelectCols = handleCols
 		tableHandleCols = handleCols
 		tableArrayCol   string
@@ -521,10 +555,10 @@ func buildCheckRowSQLForMVIndex(
 		tblName, tableFilterCol, "%s", handleColsStr,
 	)
 	indexCheckSQL = fmt.Sprintf(
-		"SELECT %s, %s FROM (select /*+ force_index(%s, %s) */ %s FROM %s WHERE %s = 0) tmp GROUP BY %s ORDER BY %s",
+		"SELECT %s, %s FROM (select %s FROM %s USE INDEX(%s) WHERE %s = 0) tmp GROUP BY %s ORDER BY %s",
 		strings.Join(indexSelectCols, ", "), indexChecksum,
-		tblName, idxName, strings.Join(indexSubqueryCols, ", "), tblName,
-		"%s", handleColsStr, handleColsStr,
+		strings.Join(indexSubqueryCols, ", "), tblName,
+		idxName, "%s", handleColsStr, handleColsStr,
 	)
 	return
 }
@@ -665,6 +699,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		md5Handle, tableChecksumSQL, indexChecksumSQL = buildChecksumSQLForMVIndex(tblName, handleCols, idxInfo, tblInfo)
 		tableCheckSQL, indexCheckSQL = buildCheckRowSQLForMVIndex(tblName, handleCols, idxInfo, tblInfo)
 	} else {
+		// We will add non-array columns of the MV Index into handle too, to simplify the SQL.
 		md5Handle = crc32FromCols(handleCols)
 		tableChecksumSQL, indexChecksumSQL = buildChecksumSQLForNormalIndex(tblName, handleCols, idxInfo, tblInfo)
 		tableCheckSQL, indexCheckSQL = buildCheckRowSQLForNormalIndex(tblName, handleCols, idxInfo, tblInfo)
@@ -679,7 +714,6 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		tableRowCntToCheck = int64(0)
 		offset             = 0
 		mod                = 1
-		bucketSize         = int(CheckTableFastBucketSize.Load())
 
 		meetError = false
 		ir        = w.getReporter(task.indexOffset)
@@ -692,7 +726,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 			break
 		}
 		whereKey := fmt.Sprintf("((CAST(%s AS SIGNED) - %d) MOD %d)", md5Handle, offset, mod)
-		groupByKey := fmt.Sprintf("((CAST(%s AS SIGNED) - %d) DIV %d MOD %d)", md5Handle, offset, mod, bucketSize)
+		groupByKey := fmt.Sprintf("((CAST(%s AS SIGNED) - %d) DIV %d MOD %d)", md5Handle, offset, mod, CheckTableFastBucketSize)
 		if checkTimes == 1 {
 			whereKey = "0"
 		}
@@ -768,7 +802,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		// meetError = true
 		// currentOffset = int(tableChecksum[0].bucket)
 		offset += currentOffset * mod
-		mod *= bucketSize
+		mod *= CheckTableFastBucketSize
 	}
 
 	failpoint.Inject("mockMeetErrorInCheckTable", func(val failpoint.Value) {

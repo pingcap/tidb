@@ -4251,11 +4251,23 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	return version
 }
 
-// buildTableForAdminCheckSQL builds a mock table for ADMIN CHECK SQL statements.
-// Since we want to utilize MVIndex to read the data in FAST ADMIN CHECK, to prevent adding
-// many hacky code in the planner module, here we build a table with all columns treated as
-// non-array types and all indices as non-MVIndex. So optimizer will treat it as a normal table.
+// buildTableForAdminCheckSQL make a copy of table info if necessary.
+// Since we want to utilize MVIndex to read the data in FAST ADMIN CHECK, to prevent from adding
+// many hacky code in the planner module, we craete a new table info with all columns without array
+// type and all indices as non-MVIndex. So optimizer will process it like a normal table.
 func buildTableForAdminCheckSQL(tbl table.Table) (table.Table, error) {
+	hasMVIndex := false
+	for _, idx := range tbl.Meta().Indices {
+		if idx.MVIndex {
+			hasMVIndex = true
+			break
+		}
+	}
+
+	if !hasMVIndex {
+		return tbl, nil
+	}
+
 	mockInfo := tbl.Meta().Clone()
 	for _, col := range mockInfo.Columns {
 		col.FieldType.SetArray(false)
