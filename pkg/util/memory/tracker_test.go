@@ -579,7 +579,7 @@ func TestOOMActionPriority(t *testing.T) {
 	}
 }
 
-func TestRuntimeMemStateRecorder(t *testing.T) {
+func TestGlobalMemArbitrator(t *testing.T) {
 	testDir := t.TempDir()
 	SetupGlobalMemArbitratorForTest(testDir)
 	defer StopGlobalMemArbitratorForTest()
