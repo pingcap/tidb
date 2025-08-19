@@ -175,11 +175,8 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt, nil
 	}
-	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
-	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
-	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
-	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
+	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
+	// or all values assumed to be contained within TopN.
 	increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 	rowEstimate := estimateRowCountWithUniformDistribution(
 		sctx,
@@ -189,7 +186,6 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		c.TotalRowCount(),
 		realtimeRowCount,
 		modifyCount,
-		c.IsFullLoad(),
 		increaseFactor,
 		c.NotNullCount(), // For column, use c.NotNullCount
 	)

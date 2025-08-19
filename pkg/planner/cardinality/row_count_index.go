@@ -408,7 +408,6 @@ func estimateRowCountWithUniformDistribution(
 	totalRowCount float64,
 	realtimeRowCount int64,
 	modifyCount int64,
-	isFullLoad bool,
 	increaseFactor float64,
 	columnNotNullCount float64, // For column, this is c.NotNullCount; for index, this is histogram.NotNullCount()
 ) statistics.RowEstimate {
@@ -508,7 +507,6 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		idx.TotalRowCount(),
 		realtimeRowCount,
 		modifyCount,
-		idx.IsFullLoad(),
 		increaseFactor,
 		idx.Histogram.NotNullCount(), // For index, use histogram.NotNullCount()
 	)
