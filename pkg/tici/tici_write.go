@@ -16,6 +16,7 @@ package tici
 
 import (
 	"context"
+	"encoding/json"
 	"path"
 	"strings"
 	"sync/atomic"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -220,36 +220,17 @@ func (w *DataWriter) WriteHeader(ctx context.Context, commitTS uint64) error {
 		return errors.New("TICIFileWriter is not initialized")
 	}
 
-	if w.tblInfo == nil || w.idxInfo == nil {
-		return errors.New("tblInfo / idxInfo is nil")
+	if w.tblInfo == nil {
+		return errors.New("tblInfo is nil")
 	}
 
-	tblPB := ModelTableToTiCITableInfo(w.tblInfo, w.schema)
-	idxPB := ModelIndexToTiCIIndexInfo(w.idxInfo, w.tblInfo)
-	pkIdxPB := ModelPrimaryKeyToTiCIIndexInfo(w.tblInfo)
-
-	// Use proto.Marshal to serialize TableInfo and IndexInfo.
-	tblBytes, err := proto.Marshal(tblPB)
+	// Serialize TableInfo as JSON.
+	tblJSON, err := json.Marshal(w.tblInfo)
 	if err != nil {
 		return errors.Annotate(err, "marshal TableInfo (proto)")
 	}
-	idxBytes, err := proto.Marshal(idxPB)
-	if err != nil {
-		return errors.Annotate(err, "marshal IndexInfo (proto)")
-	}
 
-	var pkIdxBytes []byte
-	// If the primary key index is nil, we can skip writing it.
-	if pkIdxPB == nil {
-		pkIdxBytes = nil
-	} else {
-		pkIdxBytes, err = proto.Marshal(pkIdxPB)
-		if err != nil {
-			return errors.Annotate(err, "marshal PKIndexInfo (proto)")
-		}
-	}
-
-	return w.ticiFileWriter.WriteHeader(ctx, tblBytes, idxBytes, pkIdxBytes, commitTS)
+	return w.ticiFileWriter.WriteHeader(ctx, tblJSON, commitTS)
 }
 
 // WritePairs writes a batch of KV Pairs to the S3 file using the underlying TICIFileWriter.

@@ -141,16 +141,10 @@ func (w *FileWriter) Close(ctx context.Context) error {
 // [1 byte]  Format version
 // [8 bytes] Length of TableInfo (big endian uint64)
 // [N bytes] TableInfo (serialized)
-// [8 bytes] Length of IndexInfo (big endian uint64)
-// [M bytes] IndexInfo (serialized)
-// [8 bytes] Length of PKIndexInfo (big endian uint64)
-// [P bytes] PKIndexInfo (serialized, may be zero length)
 // [8 bytes] CommitTS (big endian uint64)
 func (w *FileWriter) WriteHeader(
 	ctx context.Context,
 	tblInBytes []byte,
-	idxInBytes []byte,
-	pkIdxInBytes []byte,
 	commitTS uint64,
 ) error {
 	if w.headerWritten {
@@ -160,9 +154,7 @@ func (w *FileWriter) WriteHeader(
 		return errors.New("TICIFileWriter dataWriter is nil")
 	}
 
-	pkLen := len(pkIdxInBytes)
-	headerLen := 1 + 8 + len(tblInBytes) + 8 + len(idxInBytes) +
-		8 + pkLen + 8
+	headerLen := 1 + 8 + len(tblInBytes) + 8
 	header := make([]byte, headerLen)
 	off := 0
 
@@ -173,18 +165,6 @@ func (w *FileWriter) WriteHeader(
 	off += 8
 	copy(header[off:], tblInBytes)
 	off += len(tblInBytes)
-
-	binary.BigEndian.PutUint64(header[off:], uint64(len(idxInBytes)))
-	off += 8
-	copy(header[off:], idxInBytes)
-	off += len(idxInBytes)
-
-	binary.BigEndian.PutUint64(header[off:], uint64(pkLen))
-	off += 8
-	if pkLen > 0 {
-		copy(header[off:], pkIdxInBytes)
-		off += pkLen
-	}
 
 	binary.BigEndian.PutUint64(header[off:], commitTS)
 	// off += 8 // for the commitTS, we are using another 8 bytes
