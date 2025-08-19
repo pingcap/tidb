@@ -190,7 +190,6 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		realtimeRowCount,
 		modifyCount,
 		c.IsFullLoad(),
-		false, // useSkewEstimation = false for column
 		increaseFactor,
 		c.NotNullCount(), // For column, use c.NotNullCount
 	)
