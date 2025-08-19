@@ -21,6 +21,9 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 )
 
+// ScaleNDVFunc is used to avoid cycle import.
+var ScaleNDVFunc func(originalNDV, selectedRows, totalRows float64) (newNDV float64)
+
 // GroupNDV stores the NDV of a group of columns.
 type GroupNDV struct {
 	// Cols are the UniqueIDs of columns.
@@ -61,6 +64,7 @@ func (s *StatsInfo) Count() int64 {
 
 // Scale receives a selectivity and multiplies it with RowCount and NDV.
 func (s *StatsInfo) Scale(factor float64) *StatsInfo {
+	originalRowCount := s.RowCount
 	profile := &StatsInfo{
 		RowCount:     s.RowCount * factor,
 		ColNDVs:      make(map[int64]float64, len(s.ColNDVs)),
@@ -69,11 +73,11 @@ func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 		GroupNDVs:    make([]GroupNDV, len(s.GroupNDVs)),
 	}
 	for id, c := range s.ColNDVs {
-		profile.ColNDVs[id] = c * factor
+		profile.ColNDVs[id] = ScaleNDVFunc(c, originalRowCount, profile.RowCount)
 	}
 	for i, g := range s.GroupNDVs {
 		profile.GroupNDVs[i] = g
-		profile.GroupNDVs[i].NDV = g.NDV * factor
+		profile.GroupNDVs[i].NDV = ScaleNDVFunc(g.NDV, originalRowCount, profile.RowCount)
 	}
 	return profile
 }

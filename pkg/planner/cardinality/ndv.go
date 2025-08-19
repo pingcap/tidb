@@ -24,6 +24,10 @@ import (
 	"go.uber.org/zap"
 )
 
+func init() {
+	property.ScaleNDVFunc = ScaleNDV
+}
+
 const distinctFactor = 0.8
 
 // EstimateColumnNDV computes estimated NDV of specified column using the original
