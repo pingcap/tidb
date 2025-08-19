@@ -47,6 +47,10 @@ func TestExtractCastArrayExpr(t *testing.T) {
 			sql:            "CREATE TABLE t (a int, b int as (a * 2), CAST_AS_ARRAY JSON, KEY mv_idx_binary(b, (a * 2), (( ( CAST(`CAST_AS_ARRAY` AS CHAR(16)) ) ) )))",
 			arrayExprIndex: -1,
 		},
+		{
+			sql:            "CREATE TABLE t (a int, b int as (a * 2), CAST_AS_ARRAY JSON, KEY mv_idx_binary(b, (a * 2), (( ( CAST(CAST_AS_ARRAY AS CHAR(16)  ARRAY ) ) ) )))",
+			arrayExprIndex: 2,
+		},
 	}
 
 	tk := testkit.NewTestKit(t, store)

@@ -2239,7 +2239,7 @@ func TestTopSQLResourceTag(t *testing.T) {
 		isQuery bool
 		reqs    []tikvrpc.CmdType
 	}{
-		// Test for curd.
+		// Test for crud.
 		{"insert into t values (1,1), (3,3)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
 		{"insert into t values (1,2) on duplicate key update a = 2", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
 		{"update t set b=b+1 where a=3", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdGet}},
@@ -2283,10 +2283,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 MOD 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 MOD 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 MOD 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 MOD 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]) */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 MOD 1024), count(*) from `stmtstats`.`t` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 MOD 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 MOD 1024), count(*) from `stmtstats`.`t` use index(`idx`) where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 MOD 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
 		dsn := ts.GetDSN(func(config *mysql.Config) {

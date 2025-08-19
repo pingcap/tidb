@@ -510,35 +510,40 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	}
 }
 
-func colSupportFastCheck(col *model.ColumnInfo) bool {
-	// Not array exprssion, return true
-	if len(ExtractCastArrayExpr(col)) == 0 {
-		return true
+// indexSupportFastCheck checks whether the index supports fast check.
+func indexSupportFastCheck(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) bool {
+	// Columnar index does not support fast check.
+	if idxInfo.IsColumnarIndex() {
+		return false
 	}
 
-	switch col.FieldType.ArrayType().EvalType() {
-	case types.ETDatetime, types.ETDuration, types.ETString, types.ETInt, types.ETReal:
-		return true
+	for _, col := range idxInfo.Columns {
+		// Prefix index does not support fast check.
+		if col.Length != types.UnspecifiedLength {
+			return false
+		}
+
+		// Currently, MV Index only support fast check for part of data types.
+		tblCol := tblInfo.Columns[col.Offset]
+		if len(ExtractCastArrayExpr(tblCol)) > 0 {
+			// TODO(joechenrh): support all data types.
+			switch tblCol.FieldType.ArrayType().EvalType() {
+			case types.ETDatetime, types.ETDuration, types.ETString, types.ETInt, types.ETReal:
+			default:
+				return false
+			}
+		}
 	}
 
-	return false
+	return true
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	supportFastAdminCheck := true
+	tblInfo := v.Table.Meta()
 	for _, idx := range v.IndexInfos {
-		if idx.IsColumnarIndex() {
+		if !indexSupportFastCheck(tblInfo, idx) {
 			supportFastAdminCheck = false
-			break
-		}
-		for _, col := range idx.Columns {
-			tblCol := v.Table.Meta().Columns[col.Offset]
-			if !colSupportFastCheck(tblCol) || col.Length != types.UnspecifiedLength {
-				supportFastAdminCheck = false
-				break
-			}
-		}
-		if !supportFastAdminCheck {
 			break
 		}
 	}
