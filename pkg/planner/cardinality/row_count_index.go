@@ -397,50 +397,42 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
+// StatsProvider defines the interface for statistics that can provide the necessary
+// information for row count estimation with uniform distribution.
+type StatsProvider interface {
+	// GetHistogram returns the histogram for this stats object
+	GetHistogram() *statistics.Histogram
+	// GetTopN returns the TopN for this stats object
+	GetTopN() *statistics.TopN
+	// TotalRowCount returns the total row count
+	TotalRowCount() float64
+	// GetIncreaseFactor returns the increase factor for the given realtime row count
+	GetIncreaseFactor(realtimeRowCount int64) float64
+}
+
 // estimateRowCountWithUniformDistribution estimates row count using uniform distribution assumption
 // for values not covered by TopN or histograms. This function handles the common logic used by
 // both equalRowCountOnIndex and equalRowCountOnColumn.
 func estimateRowCountWithUniformDistribution(
 	sctx planctx.PlanContext,
-	stats any,
+	stats StatsProvider,
 	realtimeRowCount int64,
 	modifyCount int64,
 ) statistics.RowEstimate {
-	var histNDV float64
-	var histogram *statistics.Histogram
-	var topN *statistics.TopN
-	var totalRowCount float64
-	var increaseFactor float64
-	var notNullCount float64
-
-	// Extract values from the stats interface
-	switch s := stats.(type) {
-	case *statistics.Column:
-		if s == nil {
-			// Return a default estimate when column stats are nil
-			return statistics.DefaultRowEst(1)
-		}
-		histNDV = float64(s.Histogram.NDV - int64(s.TopN.Num())) // Exclude TopN from NDV
-		histogram = &s.Histogram
-		topN = s.TopN
-		totalRowCount = s.TotalRowCount()
-		increaseFactor = s.GetIncreaseFactor(realtimeRowCount)
-		notNullCount = s.Histogram.NotNullCount()
-	case *statistics.Index:
-		if s == nil {
-			// Return a default estimate when index stats are nil
-			return statistics.DefaultRowEst(1)
-		}
-		histNDV = float64(s.Histogram.NDV - int64(s.TopN.Num())) // Exclude TopN from NDV
-		histogram = &s.Histogram
-		topN = s.TopN
-		totalRowCount = s.TotalRowCount()
-		increaseFactor = s.GetIncreaseFactor(realtimeRowCount)
-		notNullCount = s.Histogram.NotNullCount()
-	default:
-		// Return a default estimate for unsupported or nil stats
+	if stats == nil {
+		// Return a default estimate when stats are nil
 		return statistics.DefaultRowEst(1)
 	}
+
+	histogram := stats.GetHistogram()
+	topN := stats.GetTopN()
+	
+	// Calculate histNDV excluding TopN from NDV
+	histNDV := float64(histogram.NDV - int64(topN.Num()))
+	totalRowCount := stats.TotalRowCount()
+	increaseFactor := stats.GetIncreaseFactor(realtimeRowCount)
+	notNullCount := histogram.NotNullCount()
+
 	// Branch 1: all NDV's are in TopN, and no histograms.
 	if histNDV <= 0 || notNullCount == 0 {
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
