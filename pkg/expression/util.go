@@ -557,7 +557,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 					// So we need to deep copy RetType.
 					// TODO: Expression interface needs a deep copy method.
 					if newArgFunc, ok := newArg.(*ScalarFunction); ok {
-						newArgFunc.RetType = v.RetType.DeepCopy()
+						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
 						newArg = newArgFunc
 					}
 					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
