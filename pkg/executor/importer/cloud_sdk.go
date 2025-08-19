@@ -83,11 +83,11 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 
 	u, err := storage.ParseBackend(sourcePath, nil)
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to parse storage backend URL")
+		return nil, errors.Annotatef(err, "failed to parse storage backend URL (source=%s). Please verify the URL format and credentials", sourcePath)
 	}
 	store, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to create external storage")
+		return nil, errors.Annotatef(err, "failed to create external storage (source=%s). Check network/connectivity and permissions", sourcePath)
 	}
 
 	ldrCfg := mydump.LoaderConfig{
@@ -100,7 +100,7 @@ func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ..
 
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store)
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to create MyDump loader")
+		return nil, errors.Annotatef(err, "failed to create MyDump loader (source=%s, charset=%s, filter=%v). Please check dump layout and router rules", sourcePath, cfg.charset, cfg.filter)
 	}
 
 	return &ImportSDK{
@@ -187,7 +187,7 @@ func WithCharset(cs string) SDKOption {
 func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 	dbMetas := sdk.loader.GetDatabases()
 	if len(dbMetas) == 0 {
-		return errors.New("no databases found in the source path")
+		return errors.Annotatef(ErrNoDatabasesFound, "source=%s. Ensure the path contains valid dump files (*.sql, *.csv, *.parquet, etc.) and filter rules are correct", sdk.sourcePath)
 	}
 
 	// Create all schemas and tables
@@ -201,7 +201,7 @@ func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 
 	err := importer.Run(ctx, dbMetas)
 	if err != nil {
-		return errors.Annotate(err, "failed to create schemas and tables")
+		return errors.Annotatef(err, "creating schemas and tables failed (source=%s, db_count=%d, concurrency=%d)", sdk.sourcePath, len(dbMetas), sdk.config.concurrency)
 	}
 
 	return nil
@@ -270,10 +270,10 @@ func (sdk *ImportSDK) GetTableMetaByName(_ context.Context, schema, table string
 			return sdk.buildTableMeta(dbMeta, tblMeta, allDataFiles)
 		}
 
-		return nil, errors.Errorf("table '%s' not found in schema '%s'", table, schema)
+		return nil, errors.Annotatef(ErrTableNotFound, "schema=%s, table=%s", schema, table)
 	}
 
-	return nil, errors.Errorf("schema '%s' not found", schema)
+	return nil, errors.Annotatef(ErrSchemaNotFound, "schema=%s", schema)
 }
 
 // GetTotalSize implements CloudImportSDK interface
@@ -305,14 +305,14 @@ func (sdk *ImportSDK) buildTableMeta(
 	// Process data files
 	dataFiles, totalSize, err := processDataFiles(tblMeta.DataFiles)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotatef(err, "failed to process data files (table=%s.%s)", dbMeta.Name, tblMeta.Name)
 	}
 	tableMeta.DataFiles = dataFiles
 	tableMeta.TotalSize = totalSize
 
 	wildcard, err := generateWildcard(tblMeta.DataFiles, allDataFiles)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotatef(err, "failed to build wildcard for table=%s.%s", dbMeta.Name, tblMeta.Name)
 	}
 	tableMeta.WildcardPath = strings.TrimSuffix(sdk.store.URI(), "/") + "/" + wildcard
 
@@ -346,7 +346,7 @@ func processDataFiles(files []mydump.FileInfo) ([]DataFileMeta, int64, error) {
 func createDataFileMeta(file mydump.FileInfo) DataFileMeta {
 	return DataFileMeta{
 		Path:        file.FileMeta.Path,
-		Size:        file.FileMeta.FileSize,
+		Size:        file.FileMeta.RealSize,
 		Format:      file.FileMeta.Type,
 		Compression: file.FileMeta.Compression,
 	}
@@ -363,7 +363,7 @@ func generateWildcard(
 	}
 
 	if len(files) == 0 {
-		return "", errors.New("no data files to generate wildcard pattern")
+		return "", errors.Annotate(ErrNoTableDataFiles, "cannot generate wildcard pattern because the table has no data files")
 	}
 
 	// If there's only one file, we can just return its path
@@ -371,25 +371,22 @@ func generateWildcard(
 		return files[0].FileMeta.Path, nil
 	}
 
-	// Extract file paths
-	paths := make([]string, 0, len(files))
-	for _, file := range files {
-		paths = append(paths, file.FileMeta.Path)
-	}
-
 	// Try Mydumper-specific pattern first
-	p := generateMydumperPattern(paths)
+	p := generateMydumperPattern(files)
 	if p != "" && validatePattern(p, tableFiles, allFiles) {
 		return p, nil
 	}
 
 	// Fallback to generic prefix/suffix pattern
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.FileMeta.Path)
+	}
 	p = generatePrefixSuffixPattern(paths)
 	if p != "" && validatePattern(p, tableFiles, allFiles) {
 		return p, nil
 	}
-
-	return "", errors.New("unable to generate a specific wildcard pattern for this table's data files")
+	return "", errors.Annotatef(ErrWildcardNotSpecific, "failed to find a wildcard that matches all and only the table's files.")
 }
 
 // validatePattern checks if a wildcard pattern matches only the table's files
@@ -419,93 +416,37 @@ func validatePattern(pattern string, tableFiles map[string]struct{}, allFiles ma
 	return true
 }
 
-// generateMydumperPattern creates a pattern optimized for Mydumper naming conventions
-func generateMydumperPattern(paths []string) string {
-	// Check if paths appear to follow Mydumper naming convention
-	if len(paths) == 0 {
+// generateMydumperPattern generates a wildcard pattern for Mydumper-formatted data files
+// belonging to a specific table, based on their naming convention.
+// It returns a pattern string that matches all data files for the table, or an empty string if not applicable.
+func generateMydumperPattern(files []mydump.FileInfo) string {
+	if len(files) == 0 {
 		return ""
 	}
 
-	// Extract common database and table names from filenames
-	dbName, tableName := extractMydumperNames(paths)
+	dbName, tableName := files[0].TableName.Schema, files[0].TableName.Name
 	if dbName == "" || tableName == "" {
-		return "" // Not a Mydumper pattern or inconsistent names
-	}
-
-	// Check if there's a directory component in the paths
-	dirPrefix := extractCommonDirectory(paths)
-	// Determine file extension from first path
-	ext := filepath.Ext(paths[0])
-
-	return dirPrefix + dbName + "." + tableName + ".*" + ext
-}
-
-// extractMydumperNames extracts database and table names from Mydumper-formatted paths
-func extractMydumperNames(paths []string) (dbName, tableName string) {
-	// Extract filenames from paths
-	filenames := make([]string, 0, len(paths))
-	for _, path := range paths {
-		// Get just the filename part
-		lastSlash := strings.LastIndex(path, "/")
-		if lastSlash >= 0 {
-			filenames = append(filenames, path[lastSlash+1:])
-		} else {
-			filenames = append(filenames, path)
-		}
-	}
-
-	for i, filename := range filenames {
-		// Skip schema files
-		if strings.HasSuffix(filename, "-schema.sql") || strings.HasSuffix(filename, "-schema-create.sql") {
-			continue
-		}
-
-		// Mydumper typically produces sql/csv files
-		if !strings.HasSuffix(filename, ".sql") && !strings.HasSuffix(filename, ".csv") {
-			return "", ""
-		}
-
-		// Parse "{db}.{table}.sql|csv" or "{db}.{table}.{part}.sql|csv"
-		parts := strings.Split(filename, ".")
-		if len(parts) < 3 {
-			return "", "" // Not enough parts for Mydumper format
-		}
-
-		currentDB := parts[0]
-		currentTable := parts[1]
-
-		// In first iteration, set the names
-		if i == 0 {
-			dbName = currentDB
-			tableName = currentTable
-			continue
-		}
-
-		// In subsequent iterations, verify consistency
-		if dbName != currentDB || tableName != currentTable {
-			return "", "" // Inconsistent names, not following Mydumper pattern
-		}
-	}
-
-	return dbName, tableName
-}
-
-// extractCommonDirectory gets the common directory prefix from paths
-func extractCommonDirectory(paths []string) string {
-	if len(paths) == 0 {
 		return ""
 	}
 
-	// Find common prefix for all paths
-	prefix := longestCommonPrefix(paths)
-
-	// Find last directory separator in prefix
-	lastSlash := strings.LastIndex(prefix, "/")
-	if lastSlash >= 0 {
-		return prefix[:lastSlash+1]
+	// compute dirPrefix and basename
+	full := files[0].FileMeta.Path
+	dirPrefix, name := "", full
+	if idx := strings.LastIndex(full, "/"); idx >= 0 {
+		dirPrefix = full[:idx+1]
+		name = full[idx+1:]
 	}
 
-	return ""
+	// compression ext from filename when compression exists (last suffix like .gz/.zst)
+	compExt := ""
+	if files[0].FileMeta.Compression != mydump.CompressionNone {
+		compExt = filepath.Ext(name)
+	}
+
+	// data ext after stripping compression ext
+	base := strings.TrimSuffix(name, compExt)
+	dataExt := filepath.Ext(base)
+	return dirPrefix + dbName + "." + tableName + ".*" + dataExt + compExt
 }
 
 // longestCommonPrefix finds the longest string that is a prefix of all strings in the slice
@@ -550,7 +491,8 @@ func longestCommonSuffix(strs []string) string {
 	return suffix
 }
 
-// generatePrefixSuffixPattern creates a wildcard pattern using common prefix and suffix
+// generatePrefixSuffixPattern returns a wildcard pattern that matches all and only the given paths
+// by finding the longest common prefix and suffix among them, and placing a '*' wildcard in between.
 func generatePrefixSuffixPattern(paths []string) string {
 	if len(paths) == 0 {
 		return ""
@@ -575,3 +517,18 @@ func generatePrefixSuffixPattern(paths []string) string {
 
 	return prefix + "*" + suffix
 }
+
+// TODO: add error code and doc for cloud sdk
+// Sentinel errors to categorize common failure scenarios for clearer user messages.
+var (
+	// ErrNoDatabasesFound indicates that the dump source contains no recognizable databases.
+	ErrNoDatabasesFound = errors.New("no databases found in the source path")
+	// ErrSchemaNotFound indicates the target schema doesn't exist in the dump source.
+	ErrSchemaNotFound = errors.New("schema not found")
+	// ErrTableNotFound indicates the target table doesn't exist in the dump source.
+	ErrTableNotFound = errors.New("table not found")
+	// ErrNoTableDataFiles indicates a table has zero data files and thus cannot proceed.
+	ErrNoTableDataFiles = errors.New("no data files for table")
+	// ErrWildcardNotSpecific indicates a wildcard cannot uniquely match the table's files.
+	ErrWildcardNotSpecific = errors.New("cannot generate a unique wildcard pattern for the table's data files")
+)

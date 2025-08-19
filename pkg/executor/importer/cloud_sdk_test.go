@@ -384,19 +384,6 @@ func TestLongestCommonSuffix(t *testing.T) {
 	require.Equal(t, "", longestCommonSuffix([]string{}))
 }
 
-func TestExtractCommonDirectory(t *testing.T) {
-	paths := []string{"s3://bucket/a/b/c1.txt", "s3://bucket/a/b/c2.log"}
-	dir := extractCommonDirectory(paths)
-	require.Equal(t, "s3://bucket/a/b/", dir)
-
-	// no slash
-	require.Equal(t, "", extractCommonDirectory([]string{"foo", "bar"}))
-
-	// empty inputs
-	require.Equal(t, "", extractCommonDirectory(nil))
-	require.Equal(t, "", extractCommonDirectory([]string{}))
-}
-
 func TestGeneratePrefixSuffixPattern(t *testing.T) {
 	paths := []string{"pre_middle_suf", "pre_most_suf"}
 	pattern := generatePrefixSuffixPattern(paths)
@@ -419,22 +406,45 @@ func TestGeneratePrefixSuffixPattern(t *testing.T) {
 	require.Equal(t, "aaa*", generatePrefixSuffixPattern(paths3))
 }
 
+func generateFileMetas(t *testing.T, paths []string) []mydump.FileInfo {
+	files := make([]mydump.FileInfo, 0, len(paths))
+	fileRouter, err := mydump.NewDefaultFileRouter(log.L())
+	require.NoError(t, err)
+	for _, p := range paths {
+		res, err := fileRouter.Route(p)
+		require.NoError(t, err)
+		files = append(files, mydump.FileInfo{
+			TableName: res.Table,
+			FileMeta: mydump.SourceFileMeta{
+				Path:        p,
+				Type:        res.Type,
+				Compression: res.Compression,
+				SortKey:     res.Key,
+			},
+		})
+	}
+	return files
+}
+
 func TestGenerateMydumperPattern(t *testing.T) {
 	paths := []string{"db.tb.0001.sql", "db.tb.0002.sql"}
-	p := generateMydumperPattern(paths)
+	p := generateMydumperPattern(generateFileMetas(t, paths))
 	require.Equal(t, "db.tb.*.sql", p)
 
 	paths2 := []string{"s3://bucket/dir/db.tb.0001.sql", "s3://bucket/dir/db.tb.0002.sql"}
-	p2 := generateMydumperPattern(paths2)
+	p2 := generateMydumperPattern(generateFileMetas(t, paths2))
 	require.Equal(t, "s3://bucket/dir/db.tb.*.sql", p2)
 
 	// empty inputs
 	require.Equal(t, "", generateMydumperPattern(nil))
-	require.Equal(t, "", generateMydumperPattern([]string{}))
+	require.Equal(t, "", generateMydumperPattern([]mydump.FileInfo{}))
 
 	// not mydumper pattern
-	paths3 := []string{"db-tb-sql", "db-tb-0001.sql"}
-	require.Equal(t, "", generateMydumperPattern(paths3))
+	require.Equal(t, "", generateMydumperPattern([]mydump.FileInfo{
+		{
+			TableName: filter.Table{},
+		},
+	}))
 }
 
 func TestCreateDataFileMeta(t *testing.T) {
@@ -448,11 +458,12 @@ func TestCreateDataFileMeta(t *testing.T) {
 			FileSize:    123,
 			Type:        mydump.SourceTypeCSV,
 			Compression: mydump.CompressionGZ,
+			RealSize:    456,
 		},
 	}
 	df := createDataFileMeta(fi)
 	require.Equal(t, "s3://bucket/path/to/f", df.Path)
-	require.Equal(t, int64(123), df.Size)
+	require.Equal(t, int64(456), df.Size)
 	require.Equal(t, mydump.SourceTypeCSV, df.Format)
 	require.Equal(t, mydump.CompressionGZ, df.Compression)
 }
@@ -491,23 +502,4 @@ func TestValidatePattern(t *testing.T) {
 
 	// empty pattern => invalid
 	require.False(t, validatePattern("", tableFiles, smallAll))
-}
-
-func TestExtractMydumperNames(t *testing.T) {
-	paths := []string{
-		"db1.tbl1.0001.sql",
-		"db1.tbl1.0002.sql",
-		"db1.tbl1-schema.sql",
-	}
-	db, tbl := extractMydumperNames(paths)
-	require.Equal(t, "db1", db)
-	require.Equal(t, "tbl1", tbl)
-
-	// inconsistent naming => empty
-	db2, tbl2 := extractMydumperNames([]string{
-		"db.tbl1.0001.sql",
-		"other.tbl1.0002.sql",
-	})
-	require.Equal(t, "", db2)
-	require.Equal(t, "", tbl2)
 }
