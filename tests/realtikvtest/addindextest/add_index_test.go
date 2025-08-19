@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -160,6 +161,25 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
+}
+
+func TestAddIndexWithPartialCleanup(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = 1`)
+	tk.MustExec("set global tidb_enable_dist_task = 0")
+	tk.MustExec("set global tidb_ddl_error_count_limit = 5")
+
+	tk.MustExec("create table t(id int, c1 int)")
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockCleanupDBFolderError", "2*return(true)")
+	tk.MustExec("create index idx_c1 on t(c1)")
 }
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {

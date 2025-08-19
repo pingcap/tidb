@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"slices"
@@ -187,6 +188,27 @@ func CleanupPartialFolders(dataDir, tableName string, indexIDs []int64) error {
 	return nil
 }
 
+func partialCleanupDirectory(dir string) {
+	var allFiles []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			allFiles = append(allFiles, path)
+		}
+		return nil
+	})
+
+	if os.IsNotExist(err) {
+		return
+	}
+
+	toDelete := allFiles[rand.Intn(len(allFiles)+1)]
+	//nolint: errcheck
+	os.Remove(toDelete)
+}
+
 // cleanupDBFolder cleans up the data folder for the given UUID.
 func cleanupDBFolder(dataDir string, uuid string) error {
 	// Mark the folder is being cleaned up.
@@ -194,6 +216,14 @@ func cleanupDBFolder(dataDir string, uuid string) error {
 	if _, err := os.Create(tombstoneFile); err != nil {
 		return errors.Trace(err)
 	}
+
+	failpoint.Inject("mockCleanupDBFolderError", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			// partially cleanup the pebble directory, so we can't open it again.
+			partialCleanupDirectory(filepath.Join(dataDir, uuid))
+			failpoint.Return(errors.New("mock cleanup db folder error"))
+		}
+	})
 
 	for _, dir := range []string{
 		engineSSTDir(dataDir, uuid),
