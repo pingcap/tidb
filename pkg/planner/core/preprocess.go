@@ -252,7 +252,7 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
-func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
+func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
 	if p.err != nil {
 		return
 	}
