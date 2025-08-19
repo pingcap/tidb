@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -967,11 +968,10 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		return
 	}
 	if stmt.Select != nil {
-		// FIXME: a temp error noticing 'not implemented' (issue 4754)
-		// Note: if we implement it later, please clear it's MDL related tables for
-		// it like what CREATE VIEW does.
-		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
-		return
+		if !config.GetGlobalConfig().Experimental.EnableCreateTableAsSelect {
+			p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
+			return
+		}
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = dbterror.ErrTableMustHaveColumns
 		return

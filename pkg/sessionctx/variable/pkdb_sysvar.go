@@ -14,7 +14,7 @@ import (
 )
 
 // FFI-dependent system variables
-var ffiSysVars = []*SysVar{
+var pkdbSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBXEnableTiKVLocalCall, Value: BoolToOnOff(DefTiDBXEnableLocalRPCOpt), Type: TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 			if TiDBOptOn(s) != tikvrpc.EnableTiKVLocalCall.Load() {
@@ -58,6 +58,13 @@ var ffiSysVars = []*SysVar{
 			}
 			return BoolToOnOff((*PDLocalCallVar).Load()), nil
 		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBCreateFromSelectUsingImport, Value: BoolToOnOff(vardef.DefTiDBCreateFromSelectUsingImport), Type: vardef.TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.CreateFromSelectUsingImport = TiDBOptOn(val)
+			return nil
+		},
+		IsHintUpdatableVerified: true,
+	},
 }
 
 // PDLocalCallVar will be set by the upper package tidbx-server to point to pd-server's
@@ -66,5 +73,5 @@ var ffiSysVars = []*SysVar{
 var PDLocalCallVar *atomic.Bool
 
 func init() {
-	defaultSysVars = append(defaultSysVars, ffiSysVars...)
+	defaultSysVars = append(defaultSysVars, pkdbSysVars...)
 }

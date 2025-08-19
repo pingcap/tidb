@@ -1729,6 +1729,8 @@ type SessionVars struct {
 	// EnableSPParamSubstitute indicate whether to enable stored procedure parameter substitute, it is only used to control
 	// the replacement of parameters (in, out, inout) in stored procedures.
 	EnableSPParamSubstitute bool
+	// CreateFromSelectUsingImport indicates whether to use import into to create table as select.
+	CreateFromSelectUsingImport bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.

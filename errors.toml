@@ -2831,6 +2831,11 @@ error = '''
 Variable '%s' might not be affected by SET_VAR hint.
 '''
 
+["planner:3978"]
+error = '''
+Foreign key creation is not allowed with CREATE TABLE as SELECT and CREATE TABLE with START TRANSACTION statement.
+'''
+
 ["planner:4008"]
 error = '''
 The variable "%s" has a non-integer based type
