@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/keyspace"
 )
 
@@ -39,5 +40,6 @@ func UpdateConfigForNextgen(t testing.TB) {
 	})
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = keyspace.System
+		conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
 	})
 }
