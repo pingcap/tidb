@@ -14,7 +14,7 @@ import (
 )
 
 // FFI-dependent system variables
-var pkdbSysVars = []*SysVar{
+var ffiSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBXEnableTiKVLocalCall, Value: BoolToOnOff(DefTiDBXEnableLocalRPCOpt), Type: TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 			if TiDBOptOn(s) != tikvrpc.EnableTiKVLocalCall.Load() {
@@ -73,5 +73,5 @@ var pkdbSysVars = []*SysVar{
 var PDLocalCallVar *atomic.Bool
 
 func init() {
-	defaultSysVars = append(defaultSysVars, pkdbSysVars...)
+	defaultSysVars = append(defaultSysVars, ffiSysVars...)
 }

@@ -3620,6 +3620,13 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCreateFromSelectUsingImport, Value: BoolToOnOff(DefTiDBCreateFromSelectUsingImport), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.CreateFromSelectUsingImport = TiDBOptOn(val)
+			return nil
+		},
+		IsHintUpdatableVerified: true,
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
