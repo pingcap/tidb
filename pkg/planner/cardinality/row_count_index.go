@@ -409,7 +409,7 @@ func estimateRowCountWithUniformDistribution(
 	realtimeRowCount int64,
 	modifyCount int64,
 	increaseFactor float64,
-	columnNotNullCount float64, // For column, this is c.NotNullCount; for index, this is histogram.NotNullCount()
+	notNullCount float64, // For column, this is c.NotNullCount; for index, this is histogram.NotNullCount()
 ) statistics.RowEstimate {
 	// Branch 1: all NDV's are in TopN, and no histograms.
 	if histNDV <= 0 || histogram.NotNullCount() == 0 {
@@ -420,7 +420,6 @@ func estimateRowCountWithUniformDistribution(
 		}
 		// All values are in TopN (and TopN NDV is accurate).
 		// We need to derive a RowCount because the histogram is empty.
-		notNullCount := columnNotNullCount
 		if notNullCount <= 0 {
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
@@ -431,13 +430,12 @@ func estimateRowCountWithUniformDistribution(
 	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 	avgRowEstimate := histogram.NotNullCount() / histNDV
 
-	skewEstimate := float64(0)
 	// skewRatio determines how much of the potential skew should be considered
 	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
 	if skewRatio > 0 {
 		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate = histogram.NotNullCount() - (histNDV - 1)
+		skewEstimate := histogram.NotNullCount() - (histNDV - 1)
 		minTopN := topN.MinCount()
 		if minTopN > 0 {
 			// The skewEstimate should not be larger than the minimum TopN value.
