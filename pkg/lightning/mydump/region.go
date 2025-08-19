@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -412,6 +413,11 @@ func makeParquetFileRegion(
 		}
 	} else if numberRows <= 0 {
 		numberRows = dataFile.FileMeta.FileSize
+		failpoint.Inject("mockParquetRowCount", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				numberRows = int64(v)
+			}
+		})
 	}
 
 	region := &TableRegion{

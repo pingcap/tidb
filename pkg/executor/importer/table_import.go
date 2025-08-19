@@ -445,11 +445,19 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 			chunks = make([]Chunk, 0)
 		}
 
+		// endOffset is used to indicate the read range of the file.
+		// For Parquet files, we always read until the end of the file,
+		// so we set endOffset to math.MaxInt64.
+		endOffset := region.Chunk.EndOffset
+		if region.FileMeta.Type == mydump.SourceTypeParquet {
+			endOffset = math.MaxInt64
+		}
+
 		engineChunks[region.EngineID] = append(chunks, Chunk{
 			Path:         region.FileMeta.Path,
 			FileSize:     region.FileMeta.FileSize,
 			Offset:       region.Chunk.Offset,
-			EndOffset:    region.Chunk.EndOffset,
+			EndOffset:    endOffset,
 			PrevRowIDMax: region.Chunk.PrevRowIDMax,
 			RowIDMax:     region.Chunk.RowIDMax,
 			Type:         region.FileMeta.Type,
