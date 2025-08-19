@@ -1168,13 +1168,11 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use oneValue as lower bound and provide meaningful min/max estimates
 	finalEst := max(avgRowCount, oneValue)
 
-	// For min estimate: assume the out-of-range distribution is more concentrated
-	// This gives a conservative lower bound
-	minEst := max(oneValue, avgRowCount*0.5)
+	// Minimum could be as low as 1.
+	minEst := min(oneValue, 1)
 
-	// For max estimate: assume the out-of-range distribution is more spread out
-	// This gives an upper bound that accounts for potential skew
-	maxEst := max(oneValue, avgRowCount*2.0)
+	// Maximum could be as high as all added rows.
+	maxEst := max(oneValue, addedRows)
 
 	// Ensure min <= est <= max
 	minEst = min(minEst, finalEst)
