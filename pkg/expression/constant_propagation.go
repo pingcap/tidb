@@ -372,7 +372,9 @@ func (s *propConstSolver) propagateColumnEQ() {
 					_, leftCond, rightCond, _ := s.pushDownfilter(cond)
 					if len(leftCond) > 0 || len(rightCond) > 0 {
 						if !isAllBooleanFunctionExpr(cond) {
-							continue
+							if colset := ExtractColumnSet(cond); colset.Len() > 1 {
+								continue
+							}
 						}
 					}
 				}
