@@ -4138,9 +4138,13 @@ func (s *session) shouldUsePessimisticAutoCommit() bool {
 		return false
 	}
 
+	if s.isInternal() {
+		return false
+	}
+
 	// Only apply to specific DML statements: INSERT, UPDATE, DELETE
 	// Note: LOAD DATA and IMPORT are intentionally excluded even though they are DML
-	stmtCtx := s.sessionVars.StmtCtx
+	stmtCtx := s.GetSessionVars().StmtCtx
 	return stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt
 }
 
