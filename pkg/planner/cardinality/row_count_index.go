@@ -423,10 +423,8 @@ func estimateRowCountWithUniformDistribution(
 		// Return a default estimate when stats are nil
 		return statistics.DefaultRowEst(1)
 	}
-
 	histogram := stats.GetHistogram()
 	topN := stats.GetTopN()
-	
 	// Calculate histNDV excluding TopN from NDV
 	histNDV := float64(histogram.NDV - int64(topN.Num()))
 	totalRowCount := stats.TotalRowCount()
