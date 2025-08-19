@@ -239,10 +239,6 @@ var defaultSysVars = []*SysVar{
 		s.ExplainNonEvaledSubQuery = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPreserveSubqueryPlanInExecution, Value: BoolToOnOff(vardef.DefTiDBOptPreserveSubqueryPlanInExecution), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.PreserveSubqueryPlanInExecution = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBOptWriteRowID, Value: BoolToOnOff(vardef.DefOptWriteRowID), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 		return nil

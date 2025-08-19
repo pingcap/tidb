@@ -1349,23 +1349,21 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		return v, true
 	}
 
-	// For actual execution with PreserveSubqueryPlanInExecution, register the subquery plan but continue with normal execution
+	// register the subquery plan but continue with normal execution
 	var subqueryCtx *ScalarSubqueryEvalCtx
-	if planCtx.builder.ctx.GetSessionVars().PreserveSubqueryPlanInExecution {
-		subqueryCtx = ScalarSubqueryEvalCtx{
-			scalarSubQuery: physicalPlan,
-			ctx:            ctx,
-			is:             planCtx.builder.is,
-		}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
-		newColIDs := make([]int64, 0, np.Schema().Len())
-		for range np.Schema().Columns {
-			newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
-			newColIDs = append(newColIDs, newColID)
-		}
-		subqueryCtx.outputColIDs = newColIDs
-
-		planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+	subqueryCtx = ScalarSubqueryEvalCtx{
+		scalarSubQuery: physicalPlan,
+		ctx:            ctx,
+		is:             planCtx.builder.is,
+	}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
+	newColIDs := make([]int64, 0, np.Schema().Len())
+	for range np.Schema().Columns {
+		newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
+		newColIDs = append(newColIDs, newColID)
 	}
+	subqueryCtx.outputColIDs = newColIDs
+
+	planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
 	if err != nil {
 		er.err = err
@@ -1380,21 +1378,18 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 			constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
 
 			// If preserving subquery plan, add reference information to the constant
-			if planCtx.builder.ctx.GetSessionVars().PreserveSubqueryPlanInExecution {
-				// Find the corresponding ScalarSubqueryEvalCtx to get the column ID
-				var matchedSubQ *ScalarSubqueryEvalCtx
-				for _, scalarSubQ := range planCtx.builder.ctx.GetSessionVars().MapScalarSubQ {
-					if subQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx); ok {
-						if subQ.ScalarSubQuery().ID() == physicalPlan.ID() {
-							matchedSubQ = subQ
-							break
-						}
+			var matchedSubQ *ScalarSubqueryEvalCtx
+			for _, scalarSubQ := range planCtx.builder.ctx.GetSessionVars().MapScalarSubQ {
+				if subQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx); ok {
+					if subQ.ScalarSubQuery().ID() == physicalPlan.ID() {
+						matchedSubQ = subQ
+						break
 					}
 				}
+			}
 
-				if matchedSubQ != nil && len(matchedSubQ.outputColIDs) > i {
-					constant.SubqueryRefID = matchedSubQ.outputColIDs[i]
-				}
+			if matchedSubQ != nil && len(matchedSubQ.outputColIDs) > i {
+				constant.SubqueryRefID = matchedSubQ.outputColIDs[i]
 			}
 
 			newCols = append(newCols, constant)
@@ -1413,21 +1408,18 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		constant.SetCoercibility(np.Schema().Columns[0].Coercibility())
 
 		// If preserving subquery plan, add reference information to the constant
-		if planCtx.builder.ctx.GetSessionVars().PreserveSubqueryPlanInExecution {
-			// Find the corresponding ScalarSubqueryEvalCtx to get the column ID
-			var matchedSubQ *ScalarSubqueryEvalCtx
-			for _, scalarSubQ := range planCtx.builder.ctx.GetSessionVars().MapScalarSubQ {
-				if subQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx); ok {
-					if subQ.ScalarSubQuery().ID() == physicalPlan.ID() {
-						matchedSubQ = subQ
-						break
-					}
+		var matchedSubQ *ScalarSubqueryEvalCtx
+		for _, scalarSubQ := range planCtx.builder.ctx.GetSessionVars().MapScalarSubQ {
+			if subQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx); ok {
+				if subQ.ScalarSubQuery().ID() == physicalPlan.ID() {
+					matchedSubQ = subQ
+					break
 				}
 			}
+		}
 
-			if matchedSubQ != nil && len(matchedSubQ.outputColIDs) > 0 {
-				constant.SubqueryRefID = matchedSubQ.outputColIDs[0]
-			}
+		if matchedSubQ != nil && len(matchedSubQ.outputColIDs) > 0 {
+			constant.SubqueryRefID = matchedSubQ.outputColIDs[0]
 		}
 
 		er.ctxStackAppend(constant, types.EmptyName)

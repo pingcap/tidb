@@ -108,9 +108,6 @@ func TestSubqueryInExplainAnalyze(t *testing.T) {
 		testKit.MustExec("insert into t3 values (1,12,121), (2,23,232), (3,34,343), (4,45,454), (5,56,565)")
 		testKit.MustExec("insert into t4 values (1,13,131), (2,24,242), (3,35,353), (4,46,464), (5,57,575)")
 
-		// Enable subquery plan preservation and other optimizations
-		testKit.MustExec("set @@tidb_opt_preserve_subquery_plan_in_execution=1")
-
 		// Test 1: Subquery in WHERE clause
 		sql := "explain analyze select * from t1 where a = (select a from t2 limit 1)"
 		rows := [][]any{

@@ -920,10 +920,6 @@ type SessionVars struct {
 
 	ExplainNonEvaledSubQuery bool
 
-	// PreserveSubqueryPlanInExecution indicates whether to preserve subquery plans during actual execution
-	// This allows slow query logs, statement summary, and EXPLAIN ANALYZE to show complete execution plans including subqueries
-	PreserveSubqueryPlanInExecution bool
-
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
