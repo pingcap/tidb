@@ -76,26 +76,26 @@ type FieldType struct {
 }
 
 // DeepCopy returns a deep copy of the FieldType.
-func (fp *FieldType) DeepCopy() *FieldType {
-	if fp == nil {
+func (ft *FieldType) DeepCopy() *FieldType {
+	if ft == nil {
 		return nil
 	}
 	ret := &FieldType{
-		tp:      fp.tp,
-		flag:    fp.flag,
-		flen:    fp.flen,
-		decimal: fp.decimal,
-		charset: fp.charset,
-		collate: fp.collate,
-		array:   fp.array,
+		tp:      ft.tp,
+		flag:    ft.flag,
+		flen:    ft.flen,
+		decimal: ft.decimal,
+		charset: ft.charset,
+		collate: ft.collate,
+		array:   ft.array,
 	}
-	if len(fp.elems) > 0 {
-		ret.elems = make([]string, len(fp.elems))
-		copy(ret.elems, fp.elems)
+	if len(ft.elems) > 0 {
+		ret.elems = make([]string, len(ft.elems))
+		copy(ret.elems, ft.elems)
 	}
-	if len(fp.elemsIsBinaryLit) > 0 {
-		ret.elemsIsBinaryLit = make([]bool, len(fp.elemsIsBinaryLit))
-		copy(ret.elemsIsBinaryLit, fp.elemsIsBinaryLit)
+	if len(ft.elemsIsBinaryLit) > 0 {
+		ret.elemsIsBinaryLit = make([]bool, len(ft.elemsIsBinaryLit))
+		copy(ret.elemsIsBinaryLit, ft.elemsIsBinaryLit)
 	}
 	return ret
 }
