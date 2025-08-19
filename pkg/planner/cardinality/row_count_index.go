@@ -402,15 +402,37 @@ var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 // both equalRowCountOnIndex and equalRowCountOnColumn.
 func estimateRowCountWithUniformDistribution(
 	sctx planctx.PlanContext,
-	histNDV float64,
-	histogram *statistics.Histogram,
-	topN *statistics.TopN,
-	totalRowCount float64,
+	stats interface{},
 	realtimeRowCount int64,
 	modifyCount int64,
-	increaseFactor float64,
-	notNullCount float64, // For column, this is c.NotNullCount; for index, this is histogram.NotNullCount()
 ) statistics.RowEstimate {
+	var histNDV float64
+	var histogram *statistics.Histogram
+	var topN *statistics.TopN
+	var totalRowCount float64
+	var increaseFactor float64
+	var notNullCount float64
+
+	// Extract values from the stats interface
+	switch s := stats.(type) {
+	case *statistics.Column:
+		histNDV = float64(s.NDV - int64(s.TopN.Num()))
+		histogram = &s.Histogram
+		topN = s.TopN
+		totalRowCount = s.TotalRowCount()
+		increaseFactor = s.GetIncreaseFactor(realtimeRowCount)
+		notNullCount = s.NotNullCount()
+	case *statistics.Index:
+		histNDV = float64(s.Histogram.NDV - int64(s.TopN.Num()))
+		histogram = &s.Histogram
+		topN = s.TopN
+		totalRowCount = s.TotalRowCount()
+		increaseFactor = s.GetIncreaseFactor(realtimeRowCount)
+		notNullCount = s.Histogram.NotNullCount()
+	default:
+		panic("estimateRowCountWithUniformDistribution: unsupported stats type")
+	}
+
 	// Branch 1: all NDV's are in TopN, and no histograms.
 	if histNDV <= 0 || histogram.NotNullCount() == 0 {
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
@@ -496,17 +518,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 	return estimateRowCountWithUniformDistribution(
 		sctx,
-		histNDV,
-		&idx.Histogram,
-		idx.TopN,
-		idx.TotalRowCount(),
+		idx,
 		realtimeRowCount,
 		modifyCount,
-		increaseFactor,
-		idx.Histogram.NotNullCount(), // For index, use histogram.NotNullCount()
 	)
 }
 

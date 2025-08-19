@@ -177,17 +177,11 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	}
 	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
 	// or all values assumed to be contained within TopN.
-	increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 	rowEstimate := estimateRowCountWithUniformDistribution(
 		sctx,
-		histNDV,
-		&c.Histogram,
-		c.TopN,
-		c.TotalRowCount(),
+		c,
 		realtimeRowCount,
 		modifyCount,
-		increaseFactor,
-		c.NotNullCount(), // For column, use c.NotNullCount
 	)
 	return rowEstimate.Est, nil
 }
