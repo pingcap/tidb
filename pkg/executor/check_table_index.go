@@ -458,12 +458,12 @@ func buildChecksumSQLForMVIndex(
 
 	tableChecksumSQL = fmt.Sprintf(
 		"SELECT /*+ read_from_storage(tikv[%s]) */ CAST(SUM((%s MOD %d) * %s) AS SIGNED), %s, COUNT(*) FROM %s USE INDEX() WHERE %s AND %s = 0 GROUP BY %s",
-		tblName, md5Handle, expression.JSONCrc32Mod, tableArrayCols, "%s",
+		tblName, md5Handle, expression.JSONCRC32Mod, tableArrayCols, "%s",
 		tblName, tableFilterCol, "%s", "%s",
 	)
 	indexChecksumSQL = fmt.Sprintf(
 		"SELECT CAST(SUM((%s MOD %d) * (%s MOD %d)) AS SIGNED), %s, COUNT(*) FROM %s USE INDEX(%s) WHERE %s = 0 GROUP BY %s",
-		md5Handle, expression.JSONCrc32Mod, indexArrayCols, expression.JSONCrc32Mod,
+		md5Handle, expression.JSONCRC32Mod, indexArrayCols, expression.JSONCRC32Mod,
 		"%s", tblName, idxName, "%s", "%s",
 	)
 	return
@@ -524,7 +524,7 @@ func buildCheckRowSQLForMVIndex(
 			tableSelectCols = append(tableSelectCols, rawExpr)
 
 			indexSubqueryCols = append(indexSubqueryCols, fmt.Sprintf("CRC32(%s) as %s", colName, alias))
-			indexArrayCol = fmt.Sprintf("CAST(SUM(%s MOD %d) AS SIGNED)", alias, expression.JSONCrc32Mod)
+			indexArrayCol = fmt.Sprintf("CAST(SUM(%s MOD %d) AS SIGNED)", alias, expression.JSONCRC32Mod)
 
 			alias = buildAlias(col.Name, "_array")
 			arrayExpr := strings.Replace(generatedExpr, "array", "", 1)

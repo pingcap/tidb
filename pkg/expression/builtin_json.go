@@ -95,8 +95,8 @@ var (
 	_ builtinFunc = &builtinJSONValidOthersSig{}
 )
 
-// JSONCrc32Mod is the modulus used in JSON_SUM_CRC32 to avoid overflow.
-const JSONCrc32Mod = 1024
+// JSONCRC32Mod is the modulus used in JSON_SUM_CRC32 to avoid result overflow.
+const JSONCRC32Mod = 1024
 
 type jsonTypeFunctionClass struct {
 	baseFunctionClass
@@ -274,7 +274,7 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 
 	var sum int64
 	for k := range s {
-		sum += k % JSONCrc32Mod
+		sum += k % JSONCRC32Mod
 	}
 	return sum, false, err
 }

@@ -968,7 +968,7 @@ func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 
 		sum := int64(0)
 		for k := range s {
-			sum += k % JSONCrc32Mod
+			sum += k % JSONCRC32Mod
 		}
 		i64s[i] = sum
 	}
