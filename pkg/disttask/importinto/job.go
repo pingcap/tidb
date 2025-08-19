@@ -100,6 +100,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			logicalPlan.JobID = jobID
 			planCtx.SessionCtx = se
 			planCtx.TaskKey = TaskKey(jobID)
+			planCtx.Keyspace = plan.Keyspace
 			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, taskManager); err2 != nil {
 				return err2
 			}
@@ -122,6 +123,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			logicalPlan.JobID = jobID
 			planCtx.SessionCtx = se
 			planCtx.TaskKey = TaskKey(jobID)
+			planCtx.Keyspace = plan.Keyspace
 			var err2 error
 			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, dxfTaskMgr); err2 != nil {
 				return err2

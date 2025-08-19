@@ -697,10 +697,12 @@ func (do *Domain) Init(
 		return err
 	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
-	err = do.ddl.SchemaSyncer().Init(ctx)
+	schemaVerSyncer := do.ddl.SchemaSyncer()
+	err = schemaVerSyncer.Init(ctx)
 	if err != nil {
 		return err
 	}
+	schemaVerSyncer.SetServerInfoSyncer(do.info.ServerInfoSyncer())
 
 	// step 2: initialize the global kill, which depends on `globalInfoSyncer`.`
 	if config.GetGlobalConfig().EnableGlobalKill {
@@ -738,7 +740,7 @@ func (do *Domain) Init(
 			}
 			return do.info.GetSessionManager()
 		},
-		do.ddl.SchemaSyncer(),
+		schemaVerSyncer,
 		do.autoidClient,
 		func() (pools.Resource, error) {
 			return do.sysExecutorFactory(do)

@@ -2730,7 +2730,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 		targetScope := reorgInfo.ReorgMeta.TargetScope
 		maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
-		task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, metaData)
+		task, err := handle.SubmitTask(ctx, taskKey, taskType, w.store.GetKeyspace(), concurrency, targetScope, maxNodeCnt, metaData)
 		if err != nil {
 			return err
 		}

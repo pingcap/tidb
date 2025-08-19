@@ -178,7 +178,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
@@ -222,7 +222,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
@@ -289,7 +289,7 @@ func TestShowImportProgress(t *testing.T) {
 		"root", &importer.ImportParameters{}, 1000)
 	require.NoError(t, err)
 
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 
 	subtasks := []struct {
@@ -365,6 +365,74 @@ func TestShowImportProgress(t *testing.T) {
 	checkShowInfo("post-process", "0B", "0B", "N/A", "0B/s", "N/A", 100)
 }
 
+<<<<<<< HEAD
+=======
+func TestShowImportGroup(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	conn := tk.Session().GetSQLExecutor()
+
+	// No groups at start
+	rs := tk.MustQuery(`show import group "group2"`).Rows()
+	require.Len(t, rs, 0)
+	rs = tk.MustQuery(`show import groups`).Rows()
+	require.Len(t, rs, 0)
+
+	importJobs := []struct {
+		SchemaName string
+		TableName  string
+		TableID    int64
+		GroupKey   string
+	}{
+		{"test", "t1", 1, "group1"},
+		{"test", "t2", 2, "group1"},
+		{"test", "t3", 3, "group2"},
+		{"test", "t4", 4, ""}, // not displayed in show import groups
+	}
+
+	for _, job := range importJobs {
+		jobID, err := importer.CreateJob(ctx, conn, job.SchemaName, job.TableName, job.TableID,
+			"root", job.GroupKey, &importer.ImportParameters{}, 1000)
+		require.NoError(t, err)
+
+		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+
+		switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepEncodeAndSort,
+			"", nil, proto.ImportInto, 11)
+	}
+
+	rs = tk.MustQuery("show import groups").Sort().Rows()
+	require.Len(t, rs, 2)
+	require.Equal(t, "group1", rs[0][0])
+	require.Equal(t, "2", rs[0][1])
+	require.Equal(t, "group2", rs[1][0])
+	require.Equal(t, "1", rs[1][1])
+
+	rs = tk.MustQuery(`show import group "nonexist"`).Rows()
+	require.Len(t, rs, 0)
+
+	rs = tk.MustQuery(`show import group "group2"`).Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "group2", rs[0][0])
+	require.Equal(t, "1", rs[0][1])
+}
+
+>>>>>>> 658fa1a43e5 (crossks: add real-tikv tests for info schema sync (#63008))
 func TestFormatTime(t *testing.T) {
 	require.Equal(t, "1 d 00:00:00", importinto.FormatSecondAsTime(86400))
 	require.Equal(t, "2 d 00:00:01", importinto.FormatSecondAsTime(172801))
