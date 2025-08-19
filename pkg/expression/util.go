@@ -1434,9 +1434,7 @@ func isAllBooleanFunctionExpr(expr Expression) bool {
 			}
 		}
 		return true
-	case *Column:
-		return false
-	case *Constant, *CorrelatedColumn:
+	case *Column, *Constant, *CorrelatedColumn:
 		return true
 	}
 	return false
