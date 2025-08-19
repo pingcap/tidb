@@ -12,7 +12,7 @@ go_test(
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/session",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/store/mockstore",
         "//pkg/util/benchdaily",
         "//pkg/util/chunk",

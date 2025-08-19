@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -133,7 +134,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	prepared := &ast.Prepared{
 		Stmt:     paramStmt,
-		StmtType: ast.GetStmtLabel(paramStmt),
+		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
@@ -256,10 +257,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	binding, ignored := bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
-	if ignored {
-		return "", binding, false, "ignore plan cache by binding", nil
-	}
+	binding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
@@ -545,7 +543,7 @@ func NewPlanCacheValue(
 	}
 
 	flat := FlattenPhysicalPlan(plan, false)
-	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat)
+	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat, false)
 
 	// calculate opt env hash using cacheKey and paramTypes
 	// (cacheKey, paramTypes) contains all factors that can affect the plan

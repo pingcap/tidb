@@ -4,8 +4,8 @@ go_test(
     name = "ddltest_test",
     timeout = "short",
     srcs = [
+        "ddl_test.go",
         "main_test.go",
-        "scatter_region_test.go",
     ],
     flaky = True,
     deps = [
@@ -14,7 +14,6 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
-        "//tests/realtikvtest/testutils",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -978,6 +978,7 @@ create table t2(`col_25` set('Alice','Bob','Charlie','David') NOT NULL,`col_26` 
 insert into t2(col_25, col_26) values('Bob', '1989-03-23'),('Alice', '2023-11-24'), ('Charlie', '2023-12-05');
 insert ignore into t2 (col_25,col_26) values ( 'Bob','1977-11-23' ) on duplicate key update col_25 = 'Alice', col_26 = '2036-12-13';
 show warnings;
+--sorted_result
 select * from t2;
 
 drop table if exists t4;

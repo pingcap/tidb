@@ -170,7 +170,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
 	if e.IsFromRemote {
-		// TODO: do the real init stats
+		// TODO: do the real refresh stats
 		return nil
 	}
 	return broadcast(ctx, e.Ctx(), s.Text())
@@ -206,7 +206,7 @@ func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 	}
 
 	logutil.BgLogger().Info("Broadcast query", zap.String("sql", sql))
-	return err
+	return nil
 }
 ```
 

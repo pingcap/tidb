@@ -164,3 +164,11 @@ func TestGetTargetScope(t *testing.T) {
 		require.Equal(t, "test-scope", handle.GetTargetScope())
 	}
 }
+
+func TestHandles(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	uri := "s3://bucket/path/to/folder"
+	vardef.CloudStorageURI.Store(uri)
+	mockURI := handle.GetCloudStorageURI(context.Background(), store)
+	require.Equal(t, mockURI, "s3://bucket/path/to/folder/1") // mock store always get cluster ID 1
+}

@@ -15,9 +15,10 @@
 package implementation
 
 import (
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 // ProjectionImpl is the implementation of PhysicalProjection.
@@ -26,14 +27,16 @@ type ProjectionImpl struct {
 }
 
 // NewProjectionImpl creates a new projection Implementation.
-func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
+func NewProjectionImpl(proj *physicalop.PhysicalProjection) *ProjectionImpl {
 	return &ProjectionImpl{baseImpl{plan: proj}}
 }
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *ProjectionImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	proj := impl.plan.(*plannercore.PhysicalProjection)
-	impl.cost = proj.GetCost(children[0].GetPlan().StatsInfo().RowCount) + children[0].GetCost()
+	proj := impl.plan.(*physicalop.PhysicalProjection)
+	child := children[0]
+	impl.cost = utilfuncp.GetCost4PhysicalProjection(proj,
+		child.GetPlan().StatsInfo().RowCount) + child.GetCost()
 	return impl.cost
 }
 
@@ -43,7 +46,7 @@ type ShowImpl struct {
 }
 
 // NewShowImpl creates a new ShowImpl.
-func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
+func NewShowImpl(show *physicalop.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
 }
 
@@ -60,7 +63,7 @@ func (sel *TiDBSelectionImpl) CalcCost(_ float64, children ...memo.Implementatio
 }
 
 // NewTiDBSelectionImpl creates a new TiDBSelectionImpl.
-func NewTiDBSelectionImpl(sel *plannercore.PhysicalSelection) *TiDBSelectionImpl {
+func NewTiDBSelectionImpl(sel *physicalop.PhysicalSelection) *TiDBSelectionImpl {
 	return &TiDBSelectionImpl{baseImpl{plan: sel}}
 }
 
@@ -77,7 +80,7 @@ func (sel *TiKVSelectionImpl) CalcCost(_ float64, children ...memo.Implementatio
 }
 
 // NewTiKVSelectionImpl creates a new TiKVSelectionImpl.
-func NewTiKVSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVSelectionImpl {
+func NewTiKVSelectionImpl(sel *physicalop.PhysicalSelection) *TiKVSelectionImpl {
 	return &TiKVSelectionImpl{baseImpl{plan: sel}}
 }
 
@@ -88,7 +91,7 @@ type TiDBHashAggImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (agg *TiDBHashAggImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	hashAgg := agg.plan.(*physicalop.PhysicalHashAgg)
 	selfCost := hashAgg.GetCost(children[0].GetPlan().StatsInfo().RowCount, true, false, 0)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
@@ -96,13 +99,13 @@ func (agg *TiDBHashAggImpl) CalcCost(_ float64, children ...memo.Implementation)
 
 // AttachChildren implements Implementation AttachChildren interface.
 func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
-	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	hashAgg := agg.plan.(*physicalop.PhysicalHashAgg)
 	hashAgg.SetChildren(children[0].GetPlan())
 	return agg
 }
 
 // NewTiDBHashAggImpl creates a new TiDBHashAggImpl.
-func NewTiDBHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiDBHashAggImpl {
+func NewTiDBHashAggImpl(agg *physicalop.PhysicalHashAgg) *TiDBHashAggImpl {
 	return &TiDBHashAggImpl{baseImpl{plan: agg}}
 }
 
@@ -113,14 +116,14 @@ type TiKVHashAggImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (agg *TiKVHashAggImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	hashAgg := agg.plan.(*physicalop.PhysicalHashAgg)
 	selfCost := hashAgg.GetCost(children[0].GetPlan().StatsInfo().RowCount, false, false, 0)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
 }
 
 // NewTiKVHashAggImpl creates a new TiKVHashAggImpl.
-func NewTiKVHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiKVHashAggImpl {
+func NewTiKVHashAggImpl(agg *physicalop.PhysicalHashAgg) *TiKVHashAggImpl {
 	return &TiKVHashAggImpl{baseImpl{plan: agg}}
 }
 
@@ -132,7 +135,7 @@ type LimitImpl struct {
 }
 
 // NewLimitImpl creates a new LimitImpl.
-func NewLimitImpl(limit *plannercore.PhysicalLimit) *LimitImpl {
+func NewLimitImpl(limit *physicalop.PhysicalLimit) *LimitImpl {
 	return &LimitImpl{baseImpl{plan: limit}}
 }
 
@@ -143,14 +146,14 @@ type TiDBTopNImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *TiDBTopNImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	topN := impl.plan.(*plannercore.PhysicalTopN)
+	topN := impl.plan.(*physicalop.PhysicalTopN)
 	childCount := children[0].GetPlan().StatsInfo().RowCount
 	impl.cost = topN.GetCost(childCount, true) + children[0].GetCost()
 	return impl.cost
 }
 
 // NewTiDBTopNImpl creates a new TiDBTopNImpl.
-func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
+func NewTiDBTopNImpl(topN *physicalop.PhysicalTopN) *TiDBTopNImpl {
 	return &TiDBTopNImpl{baseImpl{plan: topN}}
 }
 
@@ -161,14 +164,14 @@ type TiKVTopNImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *TiKVTopNImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	topN := impl.plan.(*plannercore.PhysicalTopN)
+	topN := impl.plan.(*physicalop.PhysicalTopN)
 	childCount := children[0].GetPlan().StatsInfo().RowCount
 	impl.cost = topN.GetCost(childCount, false) + children[0].GetCost()
 	return impl.cost
 }
 
 // NewTiKVTopNImpl creates a new TiKVTopNImpl.
-func NewTiKVTopNImpl(topN *plannercore.PhysicalTopN) *TiKVTopNImpl {
+func NewTiKVTopNImpl(topN *physicalop.PhysicalTopN) *TiKVTopNImpl {
 	return &TiKVTopNImpl{baseImpl{plan: topN}}
 }
 
@@ -198,7 +201,7 @@ func (*UnionAllImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) f
 }
 
 // NewUnionAllImpl creates a new UnionAllImpl.
-func NewUnionAllImpl(union *plannercore.PhysicalUnionAll) *UnionAllImpl {
+func NewUnionAllImpl(union *physicalop.PhysicalUnionAll) *UnionAllImpl {
 	return &UnionAllImpl{baseImpl{plan: union}}
 }
 
@@ -209,7 +212,7 @@ type ApplyImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *ApplyImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	apply := impl.plan.(*plannercore.PhysicalApply)
+	apply := impl.plan.(*physicalop.PhysicalApply)
 	impl.cost = apply.GetCost(
 		children[0].GetPlan().StatsInfo().RowCount,
 		children[1].GetPlan().StatsInfo().RowCount,
@@ -229,7 +232,7 @@ func (impl *ApplyImpl) GetCostLimit(costLimit float64, children ...memo.Implemen
 	// we haven't implement the rightChild, we cannot calculate the `selfCost`.
 	// So we just use (costLimit - leftCost)/leftCount here.
 	leftCount, leftCost := children[0].GetPlan().StatsInfo().RowCount, children[0].GetCost()
-	apply := impl.plan.(*plannercore.PhysicalApply)
+	apply := impl.plan.(*physicalop.PhysicalApply)
 	if len(apply.LeftConditions) > 0 {
 		leftCount *= cost.SelectionFactor
 	}
@@ -237,7 +240,7 @@ func (impl *ApplyImpl) GetCostLimit(costLimit float64, children ...memo.Implemen
 }
 
 // NewApplyImpl creates a new ApplyImpl.
-func NewApplyImpl(apply *plannercore.PhysicalApply) *ApplyImpl {
+func NewApplyImpl(apply *physicalop.PhysicalApply) *ApplyImpl {
 	return &ApplyImpl{baseImpl{plan: apply}}
 }
 
@@ -253,7 +256,7 @@ func (impl *MaxOneRowImpl) CalcCost(_ float64, children ...memo.Implementation) 
 }
 
 // NewMaxOneRowImpl creates a new MaxOneRowImpl.
-func NewMaxOneRowImpl(maxOneRow *plannercore.PhysicalMaxOneRow) *MaxOneRowImpl {
+func NewMaxOneRowImpl(maxOneRow *physicalop.PhysicalMaxOneRow) *MaxOneRowImpl {
 	return &MaxOneRowImpl{baseImpl{plan: maxOneRow}}
 }
 
@@ -263,7 +266,7 @@ type WindowImpl struct {
 }
 
 // NewWindowImpl creates a new WindowImpl.
-func NewWindowImpl(window *plannercore.PhysicalWindow) *WindowImpl {
+func NewWindowImpl(window *physicalop.PhysicalWindow) *WindowImpl {
 	return &WindowImpl{baseImpl{plan: window}}
 }
 

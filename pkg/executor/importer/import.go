@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -65,7 +66,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/naming"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -96,6 +98,7 @@ const (
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
 	skipRowsOption            = "skip_rows"
+	groupKeyOption            = "group_key"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
 	threadOption              = "thread"
@@ -114,7 +117,7 @@ const (
 	//
 	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
-	cloudStorageURIOption       = "cloud_storage_uri"
+	cloudStorageURIOption       = ast.CloudStorageURI
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption  = "__max_engine_size"
@@ -133,6 +136,7 @@ var (
 		fieldsDefinedNullByOption:   true,
 		linesTerminatedByOption:     true,
 		skipRowsOption:              true,
+		groupKeyOption:              true,
 		splitFileOption:             false,
 		diskQuotaOption:             true,
 		threadOption:                true,
@@ -271,6 +275,7 @@ type Plan struct {
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
+	GroupKey              string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -306,6 +311,28 @@ type ASTArgs struct {
 	LinesInfo          *ast.LinesClause
 }
 
+// StepSummary records the number of data involved in each step.
+// The data stored might be inaccurate, such as the number of rows in encode step.
+type StepSummary struct {
+	Bytes  int64 `json:"input-bytes,omitempty"`
+	RowCnt int64 `json:"input-rows,omitempty"`
+}
+
+// Summary records the amount of data needed to be processed in each step of the import job.
+// And this information will be saved into tidb_import_jobs table after the job is finished.
+type Summary struct {
+	// EncodeSummary stores the bytes and rows needed to be processed in encode step.
+	// Same for other summaries.
+	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
+
+	MergeSummary StepSummary `json:"merge-summary,omitempty"`
+
+	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// ImportedRows is the number of rows imported into TiKV.
+	ImportedRows int64 `json:"row-count,omitempty"`
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
@@ -321,7 +348,12 @@ type LoadDataController struct {
 	// if there's NO column list clause in SQL statement, then it's table's columns
 	// else it's user defined list.
 	FieldMappings []*FieldMapping
-	// see InsertValues.InsertColumns
+	// InsertColumns the columns stated in the SQL statement to insert.
+	// as IMPORT INTO have 2 place to state columns, in column-vars and in set clause,
+	// so it's computed from both clauses:
+	//  - append columns from column-vars to InsertColumns
+	//  - append columns from left hand fo set clause to InsertColumns
+	// it's similar to InsertValues.InsertColumns.
 	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
@@ -576,7 +608,7 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
+func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
 	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
 		threadCnt = 2
@@ -589,11 +621,18 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
-	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
-	p.CloudStorageURI = vardef.CloudStorageURI.Load()
+	p.MaxEngineSize = getDefMaxEngineSize()
+	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
 
 	v := defaultCharacterSet
 	p.Charset = &v
+}
+
+func getDefMaxEngineSize() config.ByteSize {
+	if kerneltype.IsNextGen() {
+		return config.DefaultBatchSize
+	}
+	return config.ByteSize(defaultMaxEngineSize)
 }
 
 func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
@@ -601,7 +640,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	if err != nil {
 		return err
 	}
-	p.initDefaultOptions(targetNodeCPUCnt)
+	p.initDefaultOptions(ctx, targetNodeCPUCnt, seCtx.GetStore())
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -619,7 +658,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	p.specifiedOptions = specifiedOptions
 
-	if kerneltype.IsNextGen() && sem.IsEnabled() {
+	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
+	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
+	if kerneltype.IsNextGen() && semv1.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
@@ -763,6 +804,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if err = p.Checksum.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+	}
+	if opt, ok := specifiedOptions[groupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.GroupKey = v
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		vInt, err := optAsInt64(opt)
@@ -911,6 +959,21 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	return nil
 }
 
+func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []string) {
+	tableCols := e.Table.VisibleCols()
+	mappings := make([]*FieldMapping, 0, len(tableCols))
+	names := make([]string, 0, len(tableCols))
+	for _, v := range tableCols {
+		// Data for generated column is generated from the other rows rather than from the parsed data.
+		fieldMapping := &FieldMapping{
+			Column: v,
+		}
+		mappings = append(mappings, fieldMapping)
+		names = append(names, v.Name.O)
+	}
+	return mappings, names
+}
+
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
 // the slice's order is the same as the order of the input fields.
 // Returns a slice of same ordered column names without user defined variable names.
@@ -919,14 +982,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 	tableCols := e.Table.VisibleCols()
 
 	if len(e.ColumnsAndUserVars) == 0 {
-		for _, v := range tableCols {
-			// Data for generated column is generated from the other rows rather than from the parsed data.
-			fieldMapping := &FieldMapping{
-				Column: v,
-			}
-			e.FieldMappings = append(e.FieldMappings, fieldMapping)
-			columns = append(columns, v.Name.O)
-		}
+		e.FieldMappings, columns = e.tableVisCols2FieldMappings()
 
 		return columns
 	}
@@ -1057,24 +1113,18 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	} else {
 		u.Path = ""
 	}
-	s, err := e.initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
 	if err != nil {
 		return err
 	}
 	e.dataStore = s
 
 	if e.IsGlobalSort() {
-		target := "cloud storage"
-		cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
 		if err3 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target,
-				err3.Error())
+			return err3
 		}
-		s, err = e.initExternalStore(ctx, cloudStorageURL, target)
-		if err != nil {
-			return err
-		}
-		e.GlobalSortStore = s
+		e.GlobalSortStore = store
 	}
 	return nil
 }
@@ -1089,7 +1139,17 @@ func (e *LoadDataController) Close() {
 	}
 }
 
-func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
+// GetSortStore gets the sort store.
+func GetSortStore(ctx context.Context, url string) (storage.ExternalStorage, error) {
+	u, err := storage.ParseRawURL(url)
+	target := "cloud storage"
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err.Error())
+	}
+	return initExternalStore(ctx, u, target)
+}
+
+func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
@@ -1479,7 +1539,7 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
@@ -1499,7 +1559,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		TiKVWorkerURL:               tidb.GetGlobalConfig().TiKVWorkerURL,
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
-		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
+		KeyspaceName:                keyspace,
 		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
 		DisableAutomaticCompactions: true,
 		BlockSize:                   config.DefaultBlockSize,
@@ -1520,12 +1580,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 		return DataSourceTypeQuery
 	}
 	return DataSourceTypeFile
-}
-
-// JobImportResult is the result of the job import.
-type JobImportResult struct {
-	Affected uint64
-	Warnings []contextutil.SQLWarn
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.

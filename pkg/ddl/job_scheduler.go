@@ -29,7 +29,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -172,7 +172,6 @@ func (s *jobScheduler) start() {
 				return nil, err
 			}
 			wk.seqAllocator = &s.seqAllocator
-			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			wk.sess = sess.NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
@@ -202,7 +201,7 @@ func (s *jobScheduler) close() {
 
 func hasSysDB(job *model.Job) bool {
 	for _, info := range job.GetInvolvingSchemaInfo() {
-		if tidbutil.IsSysDB(info.Database) {
+		if metadef.IsSystemRelatedDB(info.Database) {
 			return true
 		}
 	}
@@ -567,7 +566,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// current owner.
 	job := jobW.Job
 	if jobCtx.isUnSynced(job.ID) || (job.Started() && !jobCtx.maybeAlreadyRunOnce(job.ID)) {
-		if vardef.EnableMDL.Load() {
+		if vardef.IsMDLEnabled() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
 				jobCtx.logger.Info("the job have schema version un-synced",
@@ -581,7 +580,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
-		} else {
+		} else if job.LastSchemaVersion > 0 {
 			err := waitVersionSyncedWithoutMDL(s.schCtx, jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
@@ -625,11 +624,11 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	defer func() {
 		metrics.DDLCleanMDLInfoHist.Observe(time.Since(start).Seconds())
 	}()
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		return
 	}
 	var sql string
-	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+	if metadef.IsSystemRelatedDB(strings.ToLower(job.SchemaName)) {
 		// DDLs that modify system tables could only happen in upgrade process,
 		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
 		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
@@ -639,7 +638,6 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	sctx, _ := s.sessPool.Get()
 	defer s.sessPool.Put(sctx)
 	se := sess.NewSession(sctx)
-	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(s.schCtx, sql, "delete-mdl-info")
 	if err != nil {
 		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
@@ -655,10 +653,10 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	}
 }
 
-func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
+func getTableByTxn(ctx context.Context, store kv.Storage, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
 	var tbl table.Table
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(_ context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
@@ -669,7 +667,10 @@ func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*mod
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		tbl, err1 = getTable(r, schemaID, tblInfo)
+		// This tableInfo should never interact with the autoid allocator,
+		// so we can use the autoid.Allocators{} here.
+		// TODO(tangenta): Use model.TableInfo instead of tables.Table.
+		tbl, err1 = table.TableFromMeta(autoid.Allocators{}, tblInfo)
 		return errors.Trace(err1)
 	})
 	return dbInfo, tbl, err
@@ -807,9 +808,9 @@ func cleanDDLReorgHandles(se *sess.Session, job *model.Job) error {
 func getJobsBySQL(
 	ctx context.Context,
 	se *sess.Session,
-	tbl, condition string,
+	condition string,
 ) ([]*model.Job, error) {
-	rows, err := se.Execute(ctx, fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
+	rows, err := se.Execute(ctx, fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where %s", condition), "get_job")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

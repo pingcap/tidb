@@ -17,7 +17,10 @@ package brietest
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
@@ -65,7 +68,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 	cleanupRegistryTable(tk)
 
 	// Create registry
-	r, err := registry.NewRestoreRegistry(g, dom)
+	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
 	defer r.Close()
 
@@ -84,20 +87,23 @@ func TestRegistryBasicOperations(t *testing.T) {
 		Cmd:               "restore",
 	}
 
-	restoreID, err := r.ResumeOrCreateRegistration(ctx, info)
+	// Test 1: User-specified RestoreTS should be preserved
+	restoreID, resolvedRestoreTS, err := r.ResumeOrCreateRegistration(ctx, info, true) // isRestoredTSUserSpecified = true
 	require.NoError(t, err)
 	require.Greater(t, restoreID, uint64(0))
+	require.Equal(t, uint64(200), resolvedRestoreTS, "User-specified RestoreTS should be preserved")
 
 	// Verify registration exists in the database
 	tk.MustExec(fmt.Sprintf("USE %s", registry.RestoreRegistryDBName))
-	rows := tk.MustQuery(fmt.Sprintf("SELECT id, filter_strings, status FROM %s WHERE id = %d",
+	rows := tk.MustQuery(fmt.Sprintf("SELECT id, filter_strings, status, restored_ts FROM %s WHERE id = %d",
 		registry.RestoreRegistryTableName, restoreID))
 
-	// Check first row has the ID and status "running"
+	// Check first row has the ID, status "running", and correct RestoreTS
 	row := rows.Rows()[0]
 	require.Equal(t, fmt.Sprintf("%d", restoreID), row[0])
 	require.Equal(t, "db.table", row[1])
 	require.Equal(t, "running", row[2])
+	require.Equal(t, "200", row[3])
 
 	// Test pausing a task
 	err = r.PauseTask(ctx, restoreID)
@@ -108,29 +114,225 @@ func TestRegistryBasicOperations(t *testing.T) {
 		registry.RestoreRegistryTableName, restoreID))
 	require.Equal(t, "paused", rows.Rows()[0][0])
 
-	// Test resuming a paused task
-	resumedID, err := r.ResumeOrCreateRegistration(ctx, info)
+	// Test 2: Auto-detected RestoreTS resolution from existing paused task
+	// Create a new info with different RestoreTS but same other parameters
+	infoWithDifferentTS := registry.RegistrationInfo{
+		FilterStrings:     []string{"db.table"},
+		StartTS:           100,
+		RestoredTS:        999, // Different RestoreTS (simulating auto-detected value)
+		UpstreamClusterID: 1,
+		WithSysTable:      true,
+		Cmd:               "restore",
+	}
+
+	// Try to register with auto-detected RestoreTS (isRestoredTSUserSpecified = false)
+	// This should find the existing paused task and reuse its RestoreTS (200)
+	resumedID, resolvedRestoreTS2, err := r.ResumeOrCreateRegistration(ctx, infoWithDifferentTS, false)
 	require.NoError(t, err)
-	require.Equal(t, restoreID, resumedID)
+	require.Equal(t, restoreID, resumedID, "Should resume the existing task")
+	require.Equal(t, uint64(200), resolvedRestoreTS2, "Should resolve to existing task's RestoreTS, not the auto-detected value")
+	require.NotEqual(t, uint64(999), resolvedRestoreTS2, "Should NOT use the auto-detected RestoreTS")
 
 	// Verify task is running again
 	rows = tk.MustQuery(fmt.Sprintf("SELECT status FROM %s WHERE id = %d",
 		registry.RestoreRegistryTableName, restoreID))
 	require.Equal(t, "running", rows.Rows()[0][0])
 
-	// Test conflict detection
-	_, err = r.ResumeOrCreateRegistration(ctx, info)
+	err = r.PauseTask(ctx, restoreID)
+	require.NoError(t, err)
+
+	// Test 3: User explicitly specifies SAME restoredTS as existing paused task
+	// Should reuse the existing task (new behavior test)
+	infoWithSameUserSpecifiedTS := registry.RegistrationInfo{
+		FilterStrings:     []string{"db.table"},
+		StartTS:           100,
+		RestoredTS:        200, // Same RestoreTS as existing task
+		UpstreamClusterID: 1,
+		WithSysTable:      true,
+		Cmd:               "restore",
+	}
+
+	resumedID2, resolvedRestoreTS3, err := r.ResumeOrCreateRegistration(ctx, infoWithSameUserSpecifiedTS, true)
+	require.NoError(t, err)
+	require.Equal(t, restoreID, resumedID2, "Should reuse existing task when user specifies same restoredTS")
+	require.Equal(t, uint64(200), resolvedRestoreTS3, "Should use the same restoredTS")
+
+	// Pause task again for next test
+	err = r.PauseTask(ctx, restoreID)
+	require.NoError(t, err)
+
+	// Test 4: Auto-detected restoredTS is SAME as existing paused task
+	// Should also reuse the existing task
+	infoWithSameAutoDetectedTS := registry.RegistrationInfo{
+		FilterStrings:     []string{"db.table"},
+		StartTS:           100,
+		RestoredTS:        200, // Same RestoreTS (auto-detected)
+		UpstreamClusterID: 1,
+		WithSysTable:      true,
+		Cmd:               "restore",
+	}
+
+	resumedID3, resolvedRestoreTS4, err := r.ResumeOrCreateRegistration(ctx, infoWithSameAutoDetectedTS, false) // false = auto-detected
+	require.NoError(t, err)
+	require.Equal(t, restoreID, resumedID3, "Should reuse existing task when auto-detected restoredTS is same")
+	require.Equal(t, uint64(200), resolvedRestoreTS4, "Should use the same restoredTS")
+
+	// Test 5: Conflict detection - same task already running
+	_, _, err = r.ResumeOrCreateRegistration(ctx, info, true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "already exists and is running")
+
+	// Test 4: New task with different parameters should get its own RestoreTS
+	infoNewTask := registry.RegistrationInfo{
+		FilterStrings:     []string{"different.table"}, // Different filter
+		StartTS:           100,
+		RestoredTS:        888,
+		UpstreamClusterID: 1,
+		WithSysTable:      true,
+		Cmd:               "restore",
+	}
+
+	newTaskID, resolvedRestoreTS3, err := r.ResumeOrCreateRegistration(ctx, infoNewTask, false)
+	require.NoError(t, err)
+	require.NotEqual(t, restoreID, newTaskID, "Should create a new task")
+	require.Equal(t, uint64(888), resolvedRestoreTS3, "Should use the provided RestoreTS since no existing task matches")
 
 	// Test unregistering
 	err = r.Unregister(ctx, restoreID)
 	require.NoError(t, err)
+	err = r.Unregister(ctx, newTaskID)
+	require.NoError(t, err)
 
-	// Verify the specific row is gone from the table
-	rows = tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM %s.%s WHERE id = %d",
-		registry.RestoreRegistryDBName, registry.RestoreRegistryTableName, restoreID))
+	// Verify the rows are gone from the table
+	rows = tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM %s.%s WHERE id IN (%d, %d)",
+		registry.RestoreRegistryDBName, registry.RestoreRegistryTableName, restoreID, newTaskID))
 	require.Equal(t, "0", rows.Rows()[0][0])
+}
+
+func TestRegistryConfigurationOperations(t *testing.T) {
+	tk, dom, g := initRegistryTest(t)
+	cleanupRegistryTable(tk)
+
+	// Create registry
+	r1, err := registry.NewRestoreRegistry(context.Background(), g, dom)
+	require.NoError(t, err)
+	defer r1.Close()
+	r2, err := registry.NewRestoreRegistry(context.Background(), g, dom)
+	require.NoError(t, err)
+	defer r2.Close()
+
+	ctx := context.Background()
+
+	putAndDrop := func() {
+		info1 := registry.RegistrationInfo{
+			FilterStrings:     []string{"db1.table1"},
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               "restore",
+		}
+		info2 := registry.RegistrationInfo{
+			FilterStrings:     []string{"db2.table2"},
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               "restore",
+		}
+		restoreID1, _, err := r1.ResumeOrCreateRegistration(ctx, info1, false)
+		require.NoError(t, err)
+		var restoreID2 uint64
+		var k int = 1
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
+			time.Sleep(sleeptime)
+
+			restoreID2, _, err = r2.ResumeOrCreateRegistration(ctx, info2, false)
+			require.NoError(t, err)
+			r2.OperationAfterWaitIDs(ctx, func() error {
+				k = -1
+				return nil
+			})
+		}()
+
+		go func() {
+			defer wg.Done()
+			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
+			time.Sleep(sleeptime)
+
+			r1.GlobalOperationAfterSetResettingStatus(ctx, restoreID1, func() error {
+				k = 1
+				return nil
+			})
+			r1.Unregister(ctx, restoreID1)
+		}()
+		wg.Wait()
+		require.Equal(t, int(-1), k)
+		// clean the registry
+		err = r2.Unregister(ctx, restoreID2)
+		require.NoError(t, err)
+	}
+
+	putAndDrop()
+
+	dropAndDrop := func() {
+		info1 := registry.RegistrationInfo{
+			FilterStrings:     []string{"db1.table1"},
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               "restore",
+		}
+		info2 := registry.RegistrationInfo{
+			FilterStrings:     []string{"db2.table2"},
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               "restore",
+		}
+		restoreID1, _, err := r1.ResumeOrCreateRegistration(ctx, info1, false)
+		require.NoError(t, err)
+		restoreID2, _, err := r2.ResumeOrCreateRegistration(ctx, info2, false)
+		require.NoError(t, err)
+		var k int = -1
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
+			time.Sleep(sleeptime)
+
+			err = r2.GlobalOperationAfterSetResettingStatus(ctx, restoreID2, func() error {
+				k = 1
+				return nil
+			})
+			err = r2.Unregister(ctx, restoreID2)
+			require.NoError(t, err)
+		}()
+
+		go func() {
+			defer wg.Done()
+			sleeptime := time.Millisecond * time.Duration(100+rand.IntN(200))
+			time.Sleep(sleeptime)
+
+			err := r1.GlobalOperationAfterSetResettingStatus(ctx, restoreID1, func() error {
+				k = 1
+				return nil
+			})
+			r1.Unregister(ctx, restoreID1)
+			require.NoError(t, err)
+		}()
+		wg.Wait()
+		require.Equal(t, int(1), k)
+	}
+
+	dropAndDrop()
 }
 
 func TestRegistryTableConflicts(t *testing.T) {
@@ -138,7 +340,7 @@ func TestRegistryTableConflicts(t *testing.T) {
 	cleanupRegistryTable(tk)
 
 	// Create registry
-	r, err := registry.NewRestoreRegistry(g, dom)
+	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
 	defer r.Close()
 
@@ -164,7 +366,7 @@ func TestRegistryTableConflicts(t *testing.T) {
 	}
 
 	// Register the first task
-	restoreID1, err := r.ResumeOrCreateRegistration(ctx, info1)
+	restoreID1, _, err := r.ResumeOrCreateRegistration(ctx, info1, false)
 	require.NoError(t, err)
 
 	// Create a PiTR tracker with tables that would conflict with info1
@@ -187,7 +389,7 @@ func TestRegistryTableConflicts(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register the second task with non-conflicting table
-	restoreID2, err := r.ResumeOrCreateRegistration(ctx, info2)
+	restoreID2, _, err := r.ResumeOrCreateRegistration(ctx, info2, false)
 	require.NoError(t, err)
 
 	// Clean up
@@ -202,7 +404,7 @@ func TestGetRegistrationsByMaxID(t *testing.T) {
 	cleanupRegistryTable(tk)
 
 	// Create registry
-	r, err := registry.NewRestoreRegistry(g, dom)
+	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
 	defer r.Close()
 
@@ -228,10 +430,10 @@ func TestGetRegistrationsByMaxID(t *testing.T) {
 	}
 
 	// Register the tasks
-	restoreID1, err := r.ResumeOrCreateRegistration(ctx, info1)
+	restoreID1, _, err := r.ResumeOrCreateRegistration(ctx, info1, false)
 	require.NoError(t, err)
 
-	restoreID2, err := r.ResumeOrCreateRegistration(ctx, info2)
+	restoreID2, _, err := r.ResumeOrCreateRegistration(ctx, info2, false)
 	require.NoError(t, err)
 
 	// Get all registrations

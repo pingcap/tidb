@@ -48,7 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
@@ -224,6 +225,11 @@ func TestDropTablePrivileges(t *testing.T) {
 }
 
 func TestAlterUserStmt(t *testing.T) {
+	testAlterUserStmt(t, sem.V1)
+	testAlterUserStmt(t, sem.V2)
+}
+
+func testAlterUserStmt(t *testing.T, semVer string) {
 	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -237,8 +243,7 @@ func TestAlterUserStmt(t *testing.T) {
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3")
 	tk.MustExec("GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
 
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	// When SEM is enabled, even though we have UPDATE privilege on mysql.user, it explicitly
 	// denies writeable privileges to system schemas unless RESTRICTED_TABLES_ADMIN is granted.
@@ -1161,6 +1166,11 @@ func TestDynamicGrantOption(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
+	testSecurityEnhancedModeRestrictedTables(t, sem.V1)
+	testSecurityEnhancedModeRestrictedTables(t, sem.V2)
+}
+
+func testSecurityEnhancedModeRestrictedTables(t *testing.T, semVer string) {
 	store := createStoreAndPrepareDB(t)
 
 	// This provides an integration test of the tests in util/security/security_test.go
@@ -1174,8 +1184,7 @@ func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
 	urootTk := testkit.NewTestKit(t, store)
 	require.NoError(t, urootTk.Session().Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil, nil))
 
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	err := urootTk.ExecToErr("use metrics_schema")
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")
@@ -1203,8 +1212,8 @@ func TestSecurityEnhancedModeInfoschema(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 
-	sem.Enable()
-	defer sem.Disable()
+	semv1.Enable()
+	defer semv1.Disable()
 
 	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
@@ -1242,8 +1251,8 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "RESTORE requires tikv store, not unistore")
 
-	sem.Enable()
-	defer sem.Disable()
+	semv1.Enable()
+	defer semv1.Disable()
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
 	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'local:///tmp/test';")
@@ -1266,6 +1275,11 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeSysVars(t *testing.T) {
+	testSecurityEnhancedModeSysVars(t, sem.V1)
+	testSecurityEnhancedModeSysVars(t, sem.V2)
+}
+
+func testSecurityEnhancedModeSysVars(t *testing.T, semVer string) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1275,8 +1289,8 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2")
 	tk.MustExec("GRANT SELECT ON performance_schema.* to svroot2")
 
-	sem.Enable()
-	defer sem.Disable()
+	cleanup := sem.SwitchToSEMForTest(t, semVer)
+	defer cleanup()
 
 	// svroot1 has SUPER but in SEM will be restricted
 	tk.Session().Auth(&auth.UserIdentity{
@@ -1323,7 +1337,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows("tidb_force_priority NO_PRIORITY"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.variables_info WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows("1"))
 	tk.MustQuery(`SELECT COUNT(*) FROM performance_schema.session_variables WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows("1"))
-	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry OFF"))
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.variables_info WHERE variable_name = 'tidb_enable_telemetry'`).Check(testkit.Rows("1"))
 	tk.MustQuery(`SELECT COUNT(*) FROM performance_schema.session_variables WHERE variable_name = 'tidb_enable_telemetry'`).Check(testkit.Rows("1"))
 
@@ -1332,10 +1346,10 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
 
 	tk.MustQuery(`SELECT @@global.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
-	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(vardef.DefHostname))
-	sem.Disable()
+	cleanup()
 	if hostname, err := os.Hostname(); err == nil {
 		tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(hostname))
 	}
@@ -1372,6 +1386,11 @@ func TestViewDefiner(t *testing.T) {
 }
 
 func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
+	testSecurityEnhancedModeRestrictedUsers(t, sem.V1)
+	testSecurityEnhancedModeRestrictedUsers(t, sem.V2)
+}
+
+func testSecurityEnhancedModeRestrictedUsers(t *testing.T, semVer string) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1382,8 +1401,7 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
 	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
 
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	stmts := []string{
 		"SET PASSWORD for ruroot3 = 'newpassword'",
@@ -1574,9 +1592,9 @@ func createStoreAndPrepareDB(t *testing.T) kv.Storage {
 	tk.MustExec(`CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));`)
 	tk.MustExec(fmt.Sprintf("create database if not exists %s;", mysql.SystemDB))
 	tk.MustExec(session.CreateUserTable)
-	tk.MustExec(session.CreateDBPrivTable)
-	tk.MustExec(session.CreateTablePrivTable)
-	tk.MustExec(session.CreateColumnPrivTable)
+	tk.MustExec(session.CreateDBTable)
+	tk.MustExec(session.CreateTablesPrivTable)
+	tk.MustExec(session.CreateColumnsPrivTable)
 	return store
 }
 
@@ -2083,7 +2101,7 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.ErrorContains(t, err, "Access denied")
 }
 
-func TestNilHandleInConnectionVerification(t *testing.T) {
+func TestNilHandleInSkipWithGrant(t *testing.T) {
 	config.GetGlobalConfig().Security.SkipGrantTable = true
 	privileges.SkipWithGrant = true
 	defer func() {
@@ -2092,7 +2110,13 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// check ConnectionVerification
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
+	// check GetUserResources
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	userLimit, err := pc.GetUserResources("root", "%")
+	require.NoError(t, err)
+	require.EqualValues(t, 0, userLimit)
 }
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
@@ -2196,4 +2220,52 @@ func TestSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
 	handle.CheckFullData(t, true)
 	priv = handle.Get()
 	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+}
+
+func TestGrantOptionWithSEMv2(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec("CREATE USER varuser1")
+	rootTk.MustExec("CREATE USER varuser2")
+	rootTk.MustExec("CREATE USER varuser3")
+	rootTk.MustExec("CREATE USER varuser4")
+	rootTk.MustExec("CREATE USER grantee")
+
+	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, FILE ON *.* TO varuser1")
+	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, FILE ON *.* TO varuser2 WITH GRANT OPTION")
+	rootTk.MustExec("GRANT RESTRICTED_PRIV_ADMIN ON *.* TO varuser3")
+	rootTk.MustExec("GRANT RESTRICTED_PRIV_ADMIN ON *.* TO varuser4")
+	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, FILE ON *.* TO varuser4 WITH GRANT OPTION")
+
+	// SYSTEM_VARIABLES_ADMIN is not restricted, FILE is restricted.
+	defer sem.SwitchToSEMForTest(t, sem.V2)()
+	// try to grant SYSTEM_VARIABLES_ADMIN and FILE privilege to grantee with different user
+	tk1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil, nil))
+	err := tk1.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
+	err = tk1.ExecToErr("GRANT FILE ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil, nil))
+	err = tk2.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO grantee")
+	require.NoError(t, err)
+	err = tk2.ExecToErr("GRANT FILE ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	tk3 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{Username: "varuser3", Hostname: "%"}, nil, nil, nil))
+	err = tk3.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
+	err = tk3.ExecToErr("GRANT FILE ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:8121]privilege check for 'FILE' fail")
+
+	tk4 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk4.Session().Auth(&auth.UserIdentity{Username: "varuser4", Hostname: "%"}, nil, nil, nil))
+	err = tk4.ExecToErr("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO grantee")
+	require.NoError(t, err)
+	err = tk4.ExecToErr("GRANT FILE ON *.* TO grantee")
+	require.NoError(t, err)
 }

@@ -10,6 +10,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/errno",
         "//pkg/expression",

@@ -429,8 +429,7 @@ func handleAnalyzeFullSamplingReq(
 	}
 	colGroups := make([][]int64, 0, len(analyzeReq.ColReq.ColumnGroups))
 	for _, group := range analyzeReq.ColReq.ColumnGroups {
-		colOffsets := make([]int64, len(group.ColumnOffsets))
-		copy(colOffsets, group.ColumnOffsets)
+		colOffsets := slices.Clone(group.ColumnOffsets)
 		colGroups = append(colGroups, colOffsets)
 	}
 	colReq := analyzeReq.ColReq

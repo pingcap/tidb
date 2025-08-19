@@ -669,7 +669,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	// When lite-init-stats is disabled, we cannot store the column info in the ColAndIdxExistenceMap.
 	// Because we don't want to access all table information when init stats.
 	// Therefore, we need to get the column info from the domain on demand.
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := statsHandle.TableInfoByID(is, col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.

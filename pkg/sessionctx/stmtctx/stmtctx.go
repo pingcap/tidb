@@ -16,6 +16,7 @@ package stmtctx
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"maps"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -53,6 +55,10 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/sync/singleflight"
 )
+
+// PlanIDFunc is used to get the plan ID from stmt.plan.
+// This function is used to avoid import cycle between planner and sessionctx.
+var PlanIDFunc func(plan any) (planID int, ok bool)
 
 var taskIDAlloc uint64
 
@@ -245,8 +251,11 @@ type StatementContext struct {
 	hint.StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
-	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage,
+	// and it can be handled by the DDL worker.
+	// we will use this field to skip connections which are doing DDL when reporting
+	// the min start TS to PD.
+	IsDDLJobInQueue        atomic.Bool
 	DDLJobID               int64
 	InInsertStmt           bool
 	InUpdateStmt           bool
@@ -258,7 +267,6 @@ type StatementContext struct {
 	ExplainFormat          string
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
 	InShowWarning          bool
 
 	contextutil.PlanCacheTracker
@@ -310,6 +318,7 @@ type StatementContext struct {
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
 	RunawayChecker      resourcegroup.RunawayChecker
+	IsTiKV              atomic2.Bool
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
@@ -838,15 +847,6 @@ func (sc *StatementContext) SetIndexForce() {
 // PlanCacheType is the flag of plan cache
 type PlanCacheType int
 
-const (
-	// DefaultNoCache no cache
-	DefaultNoCache PlanCacheType = iota
-	// SessionPrepared session prepared plan cache
-	SessionPrepared
-	// SessionNonPrepared session non-prepared plan cache
-	SessionNonPrepared
-)
-
 // SetHintWarning sets the hint warning and records the reason.
 func (sc *StatementContext) SetHintWarning(reason string) {
 	sc.AppendWarning(plannererrors.ErrInternal.FastGen(reason))
@@ -1287,6 +1287,18 @@ func (sc *StatementContext) GetOrInitBuildPBCtxFromCache(create func() any) any 
 	return sc.buildPBCtxCache.bctx
 }
 
+// GetResultRowsCount returns the number of result rows from the runtime stats collection.
+func (sc *StatementContext) GetResultRowsCount() (resultRows int64) {
+	if sc == nil || sc.RuntimeStatsColl == nil {
+		return 0
+	}
+	planID, ok := PlanIDFunc(sc.GetPlan())
+	if !ok {
+		return 0
+	}
+	return sc.RuntimeStatsColl.GetPlanActRows(planID)
+}
+
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnAppender) errctx.Context {
 	l := errctx.LevelError
 	if flags := tc.Flags(); flags.IgnoreTruncateErr() {
@@ -1486,4 +1498,22 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(", err:")
 	b.WriteString(r.Error.Error())
 	return b.String()
+}
+
+type stmtLabelKeyType struct{}
+
+var stmtLabelKey stmtLabelKeyType
+
+// WithStmtLabel sets the label for the statement node.
+func WithStmtLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, stmtLabelKey, label)
+}
+
+// GetStmtLabel returns the label for the statement node.
+// context with stmtLabelKey will return the label if it exists.
+func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
+	if val := ctx.Value(stmtLabelKey); val != nil {
+		return val.(string)
+	}
+	return ast.GetStmtLabel(node)
 }

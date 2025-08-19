@@ -20,13 +20,13 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 )
 
 // Cluster table indicates that these tables need to get data from other tidb nodes, which may get from all other nodes, or may get from the ddl owner.
@@ -106,7 +106,7 @@ func GetClusterTableCopDestination(tableName string) ClusterTableCopDestination 
 }
 
 func init() {
-	var addrCol = columnInfo{name: util.ClusterTableInstanceColumnName, tp: mysql.TypeVarchar, size: 64}
+	var addrCol = columnInfo{name: metadef.ClusterTableInstanceColumnName, tp: mysql.TypeVarchar, size: 64}
 	for memTableName, clusterMemTableName := range memTableToAllTiDBClusterTables {
 		memTableToAllTiDBClusterTablesWithLowerCase[strings.ToLower(memTableName)] = strings.ToLower(clusterMemTableName)
 		memTableCols := tableNameToColumns[memTableName]
@@ -130,7 +130,7 @@ func IsClusterTableByName(dbName, tableName string) bool {
 		return dbName == strings.ToLower(dbName)
 	})
 	switch dbName {
-	case util.InformationSchemaName.L, util.PerformanceSchemaName.L:
+	case metadef.InformationSchemaName.L, metadef.PerformanceSchemaName.L:
 		intest.AssertFunc(func() bool {
 			return tableName == strings.ToLower(tableName)
 		})

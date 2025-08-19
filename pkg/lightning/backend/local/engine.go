@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -88,23 +89,6 @@ type engineMeta struct {
 	Length atomic.Int64 `json:"length"`
 	// TotalSize is the total pre-compressed KV byte size stored by engine.
 	TotalSize atomic.Int64 `json:"total_size"`
-}
-
-type syncedRanges struct {
-	sync.Mutex
-	ranges []engineapi.Range
-}
-
-func (r *syncedRanges) add(g engineapi.Range) {
-	r.Lock()
-	r.ranges = append(r.ranges, g)
-	r.Unlock()
-}
-
-func (r *syncedRanges) reset() {
-	r.Lock()
-	r.ranges = r.ranges[:0]
-	r.Unlock()
 }
 
 // Engine is a local engine.
@@ -1015,7 +999,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *m
 		}
 		return &pebbleIter{Iterator: iter, buf: buf}
 	}
-	logger := log.FromContext(ctx).With(
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))

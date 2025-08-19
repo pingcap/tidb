@@ -110,7 +110,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -119,6 +118,8 @@ const (
 	connStatusReading
 	connStatusShutdown     = variable.ConnStatusShutdown // Closed by server.
 	connStatusWaitShutdown = 3                           // Notified by server to close.
+
+	tidbGatewayAttrsConnKey = "TiDB-Gateway-ConnID"
 )
 
 var (
@@ -382,6 +383,7 @@ func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
+	metrics.DDLClearTempIndexWrite(cc.connectionID)
 	return closeConn(cc)
 }
 
@@ -541,13 +543,13 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	var pos int
 
 	if len(data) < 2 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Warn("got malformed handshake response", zap.ByteString("packetData", data))
 		return mysql.ErrMalformPacket
 	}
 
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
 	if capability&mysql.ClientProtocol41 <= 0 {
-		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
+		logutil.Logger(ctx).Warn("ClientProtocol41 flag is not set, please upgrade client")
 		return servererr.ErrNotSupportedAuthMode
 	}
 	pos, err = parse.HandshakeResponseHeader(ctx, &resp, data)
@@ -707,18 +709,18 @@ func (cc *clientConn) authSha(ctx context.Context, resp handshake.Response41) ([
 	// This triggers the client to send the full response.
 	err := cc.writePacket([]byte{0, 0, 0, 0, shaCommand, fastAuthFail})
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet write failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet write failed", zap.Error(err))
 		return nil, err
 	}
 	err = cc.flush(ctx)
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet flush failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet flush failed", zap.Error(err))
 		return nil, err
 	}
 
 	data, err := cc.readPacket()
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet read failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet read failed", zap.Error(err))
 		return nil, err
 	}
 	return bytes.Trim(data, "\x00"), nil
@@ -1111,6 +1113,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
 					} else {
 						idleTime := time.Since(start)
+						tidbGatewayConnID := cc.attrs[tidbGatewayAttrsConnKey]
+						cc.server.SetNormalClosedConn(keyspace.GetKeyspaceNameBySettings(), tidbGatewayConnID, "read packet timeout")
 						logutil.Logger(ctx).Info("read packet timeout, close this connection",
 							zap.Duration("idle", idleTime),
 							zap.Uint64("waitTimeout", waitTimeout),
@@ -1344,6 +1348,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 		cc.server.releaseToken(token)
 		cc.lastActive = time.Now()
+		if cc.server.StandbyController != nil {
+			cc.server.StandbyController.OnConnActive()
+		}
 	}()
 
 	vars := cc.ctx.GetSessionVars()
@@ -2020,9 +2027,7 @@ func (cc *clientConn) handleStmt(
 	ctx context.Context, stmt ast.StmtNode,
 	warns []contextutil.SQLWarn, lastStmt bool,
 ) (bool, error) {
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
-	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(plugin.Starting)
 

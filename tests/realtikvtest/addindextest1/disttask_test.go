@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,11 +32,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -414,10 +417,24 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task = off;")
 	})
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("insert into t values (1, 1);")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
-	tk.MustExec("alter table t add index idx(b);")
+	retryableErrs := []string{
+		"requested lease not found",
+		"mvcc: required revision has been compacted",
+	}
+	for _, errStr := range retryableErrs {
+		t.Run(errStr, func(t *testing.T) {
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec("create table t (a int, b int);")
+			tk.MustExec("insert into t values (1, 1);")
+			var once sync.Once
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", func(errP *error) {
+				once.Do(func() {
+					*errP = errors.New(errStr)
+				})
+			})
+			tk.MustExec("alter table t add index idx(b);")
+		})
+	}
 }
 
 func TestAddIndexScheduleAway(t *testing.T) {
@@ -501,4 +518,17 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	}
 	wg.Wait()
 	close(ch)
+}
+
+func TestUseClusterIdInGlobalSortPath(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	s, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	vardef.CloudStorageURI.Store("s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws")
+	path := handle.GetCloudStorageURI(context.Background(), store)
+	require.Equal(t, "s3://bucket/path/to/folder/"+
+		strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)+
+		"?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", path)
+	// without cluster id
+	require.Equal(t, "s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", handle.GetCloudStorageURI(context.Background(), nil))
 }

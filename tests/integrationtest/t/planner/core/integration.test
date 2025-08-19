@@ -1580,6 +1580,7 @@ drop table if exists t;
 create table t (a int);
 insert into t values (1);
 analyze table t all columns;
+select @@tidb_opt_limit_push_down_threshold;
 set tidb_opt_limit_push_down_threshold=0;
 explain format=brief select a from t order by a desc limit 10;
 set tidb_opt_limit_push_down_threshold=10;
@@ -2372,3 +2373,8 @@ select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
   case when (
     t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
   ) then 1 else 2 end;
+
+# TestIssue62350
+drop table if exists t;
+create table t (col timestamp);
+explain format='brief' select cast(col as char) from t group by cast(col as char);

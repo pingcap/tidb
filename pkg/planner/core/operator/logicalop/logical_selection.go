@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -95,35 +95,44 @@ func (p *LogicalSelection) HashCode() []byte {
 }
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	predicates = constraint.DeleteTrueExprs(p, predicates)
-	p.Conditions = constraint.DeleteTrueExprs(p, p.Conditions)
+func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+	exprCtx := p.SCtx().GetExprCtx()
+	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
+	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
+	// Apply predicate simplification to the conditions. because propagateConstant has been dealed in the ConstantPropagationSolver
+	// so we don't need to do it again.
+	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
 	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
 	originConditions = canBePushDown
-	retConditions, child = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	var err error
+	retConditions, child, err = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	retConditions = append(retConditions, canNotBePushDown...)
-	exprCtx := p.SCtx().GetExprCtx()
+	sctx := p.SCtx()
 	if len(retConditions) > 0 {
-		p.Conditions = expression.PropagateConstant(exprCtx, retConditions)
+		p.Conditions = ruleutil.ApplyPredicateSimplification(sctx, retConditions, true, nil)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, p.Conditions, opt)
-			return nil, dual
+			return nil, dual, nil
 		}
-		return nil, p
+		return nil, p, nil
 	}
+	p.Conditions = p.Conditions[:0]
 	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
-	return nil, child
+	return nil, child, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	child := p.Children()[0]
-	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
+	parentUsedCols = append(parentUsedCols, expression.ExtractColumnsFromExpressions(p.Conditions, nil)...)
 	var err error
 	p.Children()[0], err = child.PruneColumns(parentUsedCols, opt)
 	if err != nil {
@@ -185,6 +194,24 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 }
 
 // PredicateSimplification inherits BaseLogicalPlan.<7th> implementation.
+func (p *LogicalSelection) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	// it is only test
+	pp := p.Self().(*LogicalSelection)
+	intest.AssertFunc(func() bool {
+		ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+		expected := make([]string, 0, len(pp.Conditions))
+		for _, cond := range pp.Conditions {
+			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		actualExprs := ruleutil.ApplyPredicateSimplification(p.SCtx(), pp.Conditions, false, nil)
+		actual := make([]string, 0, len(actualExprs))
+		for _, cond := range actualExprs {
+			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		return slices.Equal(expected, actual)
+	})
+	return pp.BaseLogicalPlan.PredicateSimplification(opt)
+}
 
 // ConstantPropagation inherits BaseLogicalPlan.<8th> implementation.
 
@@ -304,13 +331,6 @@ func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expre
 }
 
 // *************************** end implementation of logicalPlan interface ***************************
-
-// CanPushDown is utility function to check whether we can push down Selection to TiKV or TiFlash
-func (p *LogicalSelection) CanPushDown(storeTp kv.StoreType) bool {
-	return !expression.ContainVirtualColumn(p.Conditions) &&
-		p.CanPushToCop(storeTp) &&
-		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
-}
 
 func splitSetGetVarFunc(filters []expression.Expression) (canBePushDown, canNotBePushDown []expression.Expression) {
 	canBePushDown = make([]expression.Expression, 0, len(filters))

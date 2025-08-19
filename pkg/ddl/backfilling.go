@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -158,15 +157,17 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	warnings      contextutil.WarnHandlerExt
-	loc           *time.Location
-	exprCtx       exprctx.BuildContext
-	tblCtx        table.MutateContext
-	schemaName    string
-	table         table.Table
-	batchCnt      int
-	jobContext    *ReorgContext
-	metricCounter prometheus.Counter
+	warnings   contextutil.WarnHandlerExt
+	loc        *time.Location
+	exprCtx    exprctx.BuildContext
+	tblCtx     table.MutateContext
+	schemaName string
+	table      table.Table
+	batchCnt   int
+	jobContext *ReorgContext
+
+	metricCounter   prometheus.Counter
+	conflictCounter prometheus.Counter
 }
 
 func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isUpdateColumn bool) (*backfillCtx, error) {
@@ -211,17 +212,20 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
 	return &backfillCtx{
-		id:            id,
-		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
-		warnings:      warnHandler,
-		exprCtx:       exprCtx,
-		tblCtx:        tblCtx,
-		loc:           exprCtx.GetEvalCtx().Location(),
-		schemaName:    schemaName,
-		table:         tbl,
-		batchCnt:      batchCnt,
-		jobContext:    jobCtx,
-		metricCounter: metrics.GetBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		id:         id,
+		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
+		warnings:   warnHandler,
+		exprCtx:    exprCtx,
+		tblCtx:     tblCtx,
+		loc:        exprCtx.GetEvalCtx().Location(),
+		schemaName: schemaName,
+		table:      tbl,
+		batchCnt:   batchCnt,
+		jobContext: jobCtx,
+		metricCounter: metrics.GetBackfillTotalByLabel(
+			label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		conflictCounter: metrics.GetBackfillTotalByLabel(
+			fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
 }
 
@@ -246,7 +250,7 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 }
 
 type backfiller interface {
-	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
+	BackfillData(ctx context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
 	GetCtx() *backfillCtx
 	String() string
@@ -357,7 +361,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(handleRange)
+		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -707,25 +711,6 @@ func sendTasks(
 	return nil
 }
 
-var (
-	// TestCheckWorkerNumCh use for test adjust backfill worker.
-	TestCheckWorkerNumCh = make(chan *sync.WaitGroup)
-	// TestCheckWorkerNumber use for test adjust backfill worker.
-	TestCheckWorkerNumber = int32(vardef.DefTiDBDDLReorgWorkerCount)
-	// TestCheckReorgTimeout is used to mock timeout when reorg data.
-	TestCheckReorgTimeout = int32(0)
-)
-
-func loadDDLReorgVars(ctx context.Context, sessPool *sess.Pool) error {
-	// Get sessionctx from context resource pool.
-	sCtx, err := sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer sessPool.Put(sCtx)
-	return ddlutil.LoadDDLReorgVars(ctx, sCtx)
-}
-
 func makeupDecodeColMap(dbName ast.CIStr, t table.Table) (map[int64]decoder.Column, error) {
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
@@ -803,7 +788,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	defer bcCtx.Close()
 
 	reorgCtx := dc.getReorgCtx(job.ID)
-	rowCntListener := &localRowCntListener{
+	rowCntListener := &localRowCntCollector{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
 		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
@@ -920,8 +905,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	return err
 }
 
-type localRowCntListener struct {
-	EmptyRowCntListener
+type localRowCntCollector struct {
 	reorgCtx *reorgCtx
 	counter  prometheus.Counter
 
@@ -934,15 +918,15 @@ type localRowCntListener struct {
 	}
 }
 
-func (s *localRowCntListener) Written(rowCnt int) {
+func (s *localRowCntCollector) Add(_, rowCnt int64) {
 	s.curPhysicalRowCnt.mu.Lock()
-	s.curPhysicalRowCnt.cnt += int64(rowCnt)
+	s.curPhysicalRowCnt.cnt += rowCnt
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)
 	s.curPhysicalRowCnt.mu.Unlock()
 	s.counter.Add(float64(rowCnt))
 }
 
-func (s *localRowCntListener) SetTotal(total int) {
+func (s *localRowCntCollector) SetTotal(total int) {
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + int64(total))
 }
 
@@ -1130,28 +1114,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	})
 
 	return eg.Wait()
-}
-
-func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
-	if isMergeWorker {
-		return nil
-	}
-	failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
-			if num != 0 {
-				if num != curWorkerSize {
-					failpoint.Return(errors.Errorf("expected backfill worker num: %v, actual record num: %v", num, curWorkerSize))
-				}
-				var wg sync.WaitGroup
-				wg.Add(1)
-				TestCheckWorkerNumCh <- &wg
-				wg.Wait()
-			}
-		}
-	})
-	return nil
 }
 
 // recordIterFunc is used for low-level record iteration.

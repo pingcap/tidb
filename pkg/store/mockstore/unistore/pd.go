@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,7 +31,6 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/clients/tso"
 	"github.com/tikv/pd/client/constants"
@@ -48,8 +46,6 @@ type pdClient struct {
 	*us.MockPD
 	pd.ResourceManagerClient
 
-	serviceSafePoints map[string]uint64
-	gcSafePointMu     sync.Mutex
 	globalConfig      map[string]string
 	externalTimestamp atomic.Uint64
 
@@ -68,7 +64,6 @@ func newPDClient(pd *us.MockPD, addrs []string, keyspaceMeta *keyspacepb.Keyspac
 	return &pdClient{
 		MockPD:                pd,
 		ResourceManagerClient: infosync.NewMockResourceManagerClient(keyspaceID),
-		serviceSafePoints:     make(map[string]uint64),
 		globalConfig:          make(map[string]string),
 		addrs:                 addrs,
 		keyspaceMeta:          keyspaceMeta,
@@ -271,35 +266,6 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 
 func (c *pdClient) GetLeaderURL() string { return "mockpd" }
 
-func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	c.gcSafePointMu.Lock()
-	defer c.gcSafePointMu.Unlock()
-
-	if ttl == 0 {
-		delete(c.serviceSafePoints, serviceID)
-	} else {
-		var minSafePoint uint64 = math.MaxUint64
-		for _, ssp := range c.serviceSafePoints {
-			if ssp < minSafePoint {
-				minSafePoint = ssp
-			}
-		}
-
-		if len(c.serviceSafePoints) == 0 || minSafePoint <= safePoint {
-			c.serviceSafePoints[serviceID] = safePoint
-		}
-	}
-
-	// The minSafePoint may have changed. Reload it.
-	var minSafePoint uint64 = math.MaxUint64
-	for _, ssp := range c.serviceSafePoints {
-		if ssp < minSafePoint {
-			minSafePoint = ssp
-		}
-	}
-	return minSafePoint, nil
-}
-
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
@@ -334,6 +300,9 @@ func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit ui
 
 // LoadKeyspace loads and returns target keyspace's metadata.
 func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
+	if c.keyspaceMeta == nil {
+		return nil, errors.New("keyspace is unsupported")
+	}
 	if c.keyspaceMeta.Name != name {
 		return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 	}
@@ -430,12 +399,4 @@ func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan
 
 func (c *pdClient) WithCallerComponent(component caller.Component) pd.Client {
 	return c
-}
-
-func (c *pdClient) GetGCInternalController(keyspaceID uint32) gc.InternalController {
-	return nil
-}
-
-func (c *pdClient) GetGCStatesClient(keyspaceID uint32) gc.GCStatesClient {
-	return nil
 }

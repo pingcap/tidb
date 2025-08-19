@@ -196,6 +196,11 @@ error = '''
 PD leader not found
 '''
 
+["BR:PD:ErrPDNotFullyScatter"]
+error = '''
+pd not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
 failed to wait region splitted
@@ -3278,7 +3283,7 @@ Region is unavailable
 
 ["tikv:9006"]
 error = '''
-GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v
+GC life time is shorter than transaction duration, transaction start ts is %v (%v), txn safe point is %v (%v)
 '''
 
 ["tikv:9008"]

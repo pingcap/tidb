@@ -641,12 +641,33 @@ func TestHandleTiKVAddress(t *testing.T) {
 			store: &metapb.Store{
 				Id:            1,
 				State:         metapb.StoreState_Up,
+				Address:       "[::1]:20160",
+				StatusAddress: "[::1]:20180",
+			},
+			httpPrefix: "http://",
+			result:     "http://[::1]:20180",
+		},
+		{
+			store: &metapb.Store{
+				Id:            1,
+				State:         metapb.StoreState_Up,
 				Address:       "192.168.1.5:20160",
 				StatusAddress: "0.0.0.0:20180",
 			},
 			httpPrefix: "https://",
 			// if status address and node address not match, we use node address as default host name.
 			result: "https://192.168.1.5:20180",
+		},
+		{
+			store: &metapb.Store{
+				Id:            1,
+				State:         metapb.StoreState_Up,
+				Address:       "[fd00::1:5]:20160",
+				StatusAddress: "[::]:20180",
+			},
+			httpPrefix: "https://",
+			// if status address and node address not match, we use node address as default host name.
+			result: "https://[fd00::1:5]:20180",
 		},
 	}
 	for _, ca := range cases {

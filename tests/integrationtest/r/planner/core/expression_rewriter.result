@@ -297,7 +297,7 @@ a	c
 c	D
 explain select * from t1 where 'a' between 'g' and 'f';
 id	estRows	task	access object	operator info
-TableDual_6	0.00	root		rows:0
+TableDual_7	0.00	root		rows:0
 select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;
 Error 1270 (HY000): Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'BETWEEN'
 DROP TABLE if exists t1, t2, source;

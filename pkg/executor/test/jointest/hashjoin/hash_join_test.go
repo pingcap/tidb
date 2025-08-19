@@ -34,7 +34,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
