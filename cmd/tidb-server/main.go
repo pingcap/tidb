@@ -417,7 +417,14 @@ func registerStores() {
 	terror.MustNil(err)
 }
 
+<<<<<<< HEAD
 func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
+=======
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, error) {
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+		kv.StandAloneTiDB = true
+	}
+>>>>>>> ec45f18b5d1 (test: fix standalone TiDB of next-gen report 'invalid key' (#63043))
 	storage := kvstore.MustInitStorage(keyspaceName)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
