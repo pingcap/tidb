@@ -3051,6 +3051,15 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
+
+	oriNAEQConds := la.LogicalJoin.NAEQConditions
+	oriOtherConds := la.LogicalJoin.OtherConditions
+	la.LogicalJoin.DisableNAJoinForLeftOuterSemi()
+	defer func() {
+		la.LogicalJoin.NAEQConditions = oriNAEQConds
+		la.LogicalJoin.OtherConditions = oriOtherConds
+	}()
+
 	join := GetHashJoin(ge, la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
