@@ -75,6 +75,31 @@ type FieldType struct {
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
+// DeepCopy returns a deep copy of the FieldType.
+func (fp *FieldType) DeepCopy() *FieldType {
+	if fp == nil {
+		return nil
+	}
+	ret := &FieldType{
+		tp:      fp.tp,
+		flag:    fp.flag,
+		flen:    fp.flen,
+		decimal: fp.decimal,
+		charset: fp.charset,
+		collate: fp.collate,
+		array:   fp.array,
+	}
+	if len(fp.elems) > 0 {
+		ret.elems = make([]string, len(fp.elems))
+		copy(ret.elems, fp.elems)
+	}
+	if len(fp.elemsIsBinaryLit) > 0 {
+		ret.elemsIsBinaryLit = make([]bool, len(fp.elemsIsBinaryLit))
+		copy(ret.elemsIsBinaryLit, fp.elemsIsBinaryLit)
+	}
+	return ret
+}
+
 // Hash64 implements the cascades/base.Hasher.<0th> interface.
 func (ft *FieldType) Hash64(h IHasher) {
 	h.HashByte(ft.tp)
