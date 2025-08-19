@@ -34,6 +34,22 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
+// Some functions are not suitable for constant propagation. After constant propagation,
+// these functions will only become a projection, increasing the computational load without
+// being able to filter data directly from the data source.
+func exprNeedToPropagationContant(pushDownFunc PushDownFuncType, cond Expression) bool {
+	_, leftCond, rightCond, _ := pushDownFunc(cond)
+	// If a function always returns a bool type, then we can consider it as a function worth pushing down.
+	if (len(leftCond) > 0 || len(rightCond) > 0) && !isAllBooleanFunctionExpr(cond) {
+		if colset := ExtractColumnSet(cond); colset.Len() > 1 {
+			// If it's a single-column function, there is also a point in pushing it down.
+			// like cast(col1)
+			return false
+		}
+	}
+	return true
+}
+
 type basePropConstSolver struct {
 	colMapper map[int64]int             // colMapper maps column to its index
 	eqMapper  map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
@@ -243,10 +259,13 @@ var propConstSolverPool = sync.Pool{
 type propConstSolver struct {
 	basePropConstSolver
 	conditions []Expression
-	// When performing constant propagation, if the newly created expression cannot be pushed down,
-	// we might consider this expression to be invalid. We use the pushDownFunc here to determine
+	// When performing constant propagation, We use the pushDownFunc here to determine
 	// whether it can be pushed down.
-	pushDownfilter PushDownFuncType
+	// if a expression is a left condition or right condition, we use exprNeedToPropagationContant to
+	// judge whether it can propagate constant.
+	// a new expression which is created by constant propagation, is a other condtion, we don't put it
+	// into our final result.
+	pushDownFunc PushDownFuncType
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -256,9 +275,9 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, pushDownfilter PushDownFuncType, conditions []Expression) []Expression {
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, pushDownFunc PushDownFuncType, conditions []Expression) []Expression {
 	s.ctx = ctx
-	s.pushDownfilter = pushDownfilter
+	s.pushDownFunc = pushDownFunc
 	return s.solve(conditions)
 }
 
@@ -266,7 +285,7 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, pushDownfil
 func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	s.conditions = s.conditions[:0]
-	s.pushDownfilter = nil
+	s.pushDownFunc = nil
 	propConstSolverPool.Put(s)
 }
 
@@ -354,21 +373,15 @@ func (s *propConstSolver) propagateColumnEQ() {
 					continue
 				}
 				cond := s.conditions[k]
-				if s.pushDownfilter != nil {
-					_, leftCond, rightCond, _ := s.pushDownfilter(cond)
-					if (len(leftCond) > 0 || len(rightCond) > 0) && !isAllBooleanFunctionExpr(cond) {
-						if colset := ExtractColumnSet(cond); colset.Len() > 1 {
-							// If it's a single-column function, there is also a point in pushing it down.
-							// like cast(col1)
-							continue
-						}
+				if s.pushDownFunc != nil {
+					if !exprNeedToPropagationContant(s.pushDownFunc, cond) {
+						continue
 					}
 				}
-
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
-					if s.pushDownfilter != nil {
-						_, _, _, otherCondition := s.pushDownfilter(newExpr)
+					if s.pushDownFunc != nil {
+						_, _, _, otherCondition := s.pushDownFunc(newExpr)
 						if len(otherCondition) > 0 {
 							continue
 						}
@@ -377,8 +390,8 @@ func (s *propConstSolver) propagateColumnEQ() {
 				}
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
-					if s.pushDownfilter != nil {
-						_, _, _, otherCondition := s.pushDownfilter(newExpr)
+					if s.pushDownFunc != nil {
+						_, _, _, otherCondition := s.pushDownFunc(newExpr)
 						if len(otherCondition) > 0 {
 							continue
 						}
@@ -460,7 +473,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.conditions = propagateConstantDNF(s.ctx, s.pushDownfilter, s.conditions...)
+	s.conditions = propagateConstantDNF(s.ctx, s.pushDownFunc, s.conditions...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return slices.Clone(s.conditions)
 }
