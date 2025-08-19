@@ -39,36 +39,6 @@ var (
 
 	// MppCoordinatorLatency records latencies of mpp coordinator operations.
 	MppCoordinatorLatency *prometheus.HistogramVec
-<<<<<<< HEAD
-=======
-
-	// AffectedRowsCounter records the number of affected rows.
-	AffectedRowsCounter *prometheus.CounterVec
-
-	// AffectedRowsCounterInsert records the number of insert affected rows.
-	AffectedRowsCounterInsert prometheus.Counter
-
-	// AffectedRowsCounterUpdate records the number of update affected rows.
-	AffectedRowsCounterUpdate prometheus.Counter
-
-	// AffectedRowsCounterDelete records the number of delete affected rows.
-	AffectedRowsCounterDelete prometheus.Counter
-
-	// AffectedRowsCounterReplace records the number of replace affected rows.
-	AffectedRowsCounterReplace prometheus.Counter
-
-	// AffectedRowsCounterNTDMLUpdate records the number of NT-DML update affected rows.
-	AffectedRowsCounterNTDMLUpdate prometheus.Counter
-	// AffectedRowsCounterNTDMLDelete records the number of NT-DML delete affected rows.
-	AffectedRowsCounterNTDMLDelete prometheus.Counter
-	// AffectedRowsCounterNTDMLInsert records the number of NT-DML insert affected rows.
-	AffectedRowsCounterNTDMLInsert prometheus.Counter
-	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
-	AffectedRowsCounterNTDMLReplace prometheus.Counter
-
-	// NetworkTransmissionStats records the network transmission for queries
-	NetworkTransmissionStats *prometheus.CounterVec
->>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -131,32 +101,4 @@ func InitExecutorMetrics() {
 			Help:      "Bucketed histogram of processing time (ms) of mpp coordinator operations.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
-<<<<<<< HEAD
-=======
-
-	AffectedRowsCounter = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "executor",
-			Name:      "affected_rows",
-			Help:      "Counters of server affected rows.",
-		}, []string{LblSQLType})
-
-	AffectedRowsCounterInsert = AffectedRowsCounter.WithLabelValues("Insert")
-	AffectedRowsCounterUpdate = AffectedRowsCounter.WithLabelValues("Update")
-	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
-	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
-	AffectedRowsCounterNTDMLUpdate = AffectedRowsCounter.WithLabelValues("NTDML-Update")
-	AffectedRowsCounterNTDMLDelete = AffectedRowsCounter.WithLabelValues("NTDML-Delete")
-	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
-	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
-
-	NetworkTransmissionStats = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "executor",
-			Name:      "network_transmission",
-			Help:      "Counter of network transmission bytes.",
-		}, []string{LblType})
->>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 }

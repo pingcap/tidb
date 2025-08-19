@@ -1423,35 +1423,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
 		}
 	}
-<<<<<<< HEAD
-=======
-
-	a.Ctx.ReportUsageStats()
-}
-
-func (a *ExecStmt) recordAffectedRows2Metrics() {
-	sessVars := a.Ctx.GetSessionVars()
-	if affectedRows := sessVars.StmtCtx.AffectedRows(); affectedRows > 0 {
-		switch sessVars.StmtCtx.StmtType {
-		case "Insert":
-			metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
-		case "Replace":
-			metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
-		case "Delete":
-			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
-		case "Update":
-			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
-		case "NTDML-Delete":
-			metrics.AffectedRowsCounterNTDMLDelete.Add(float64(affectedRows))
-		case "NTDML-Update":
-			metrics.AffectedRowsCounterNTDMLUpdate.Add(float64(affectedRows))
-		case "NTDML-Insert":
-			metrics.AffectedRowsCounterNTDMLInsert.Add(float64(affectedRows))
-		case "NTDML-Replace":
-			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
-		}
-	}
->>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837))
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
