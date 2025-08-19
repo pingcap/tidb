@@ -2045,9 +2045,9 @@ func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *
 	}
 
 	virtualExprs := columnSelector(columns)
-	relatedCols := make(map[int64]*expression.Column, len(tblInfo.Columns))
+	relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
 	for len(virtualExprs) > 0 {
-		expression.ExtractColumnsMapFromExpressionsWithReusedMap(relatedCols, nil, virtualExprs...)
+		relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
 		virtualExprs = virtualExprs[:0]
 		for _, col := range relatedCols {
 			cols.data[col.ID] = struct{}{}
@@ -2055,7 +2055,7 @@ func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *
 				virtualExprs = append(virtualExprs, col.VirtualExpr)
 			}
 		}
-		clear(relatedCols)
+		relatedCols = relatedCols[:0]
 	}
 	return nil
 }
