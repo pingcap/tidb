@@ -165,6 +165,7 @@ go_test(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/executor",
