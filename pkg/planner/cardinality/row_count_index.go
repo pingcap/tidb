@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
