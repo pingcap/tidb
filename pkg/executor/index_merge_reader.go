@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -221,7 +220,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 	for i, plan := range e.partialPlans {
 		if e.isCorColInPartialAccess[i] {
 			switch x := plan[0].(type) {
-			case *plannercore.PhysicalIndexScan:
+			case *physicalop.PhysicalIndexScan:
 				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
 			case *physicalop.PhysicalTableScan:
 				e.ranges[i], err = x.ResolveCorrelatedColumns()
@@ -239,7 +238,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (ranges [][]kv.KeyRange, err error) {
 	dctx := e.Ctx().GetDistSQLCtx()
 	for i, plan := range e.partialPlans {
-		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
+		_, ok := plan[0].(*physicalop.PhysicalIndexScan)
 		if !ok {
 			firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges[i], false, e.descs[i], tbl.Meta().IsCommonHandle)
 			firstKeyRanges, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, firstPartRanges)
@@ -361,7 +360,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialIndexWorker", nil)
-				is := e.partialPlans[workID][0].(*plannercore.PhysicalIndexScan)
+				is := e.partialPlans[workID][0].(*physicalop.PhysicalIndexScan)
 				worker := &partialIndexWorker{
 					stats:              e.stats,
 					idxID:              e.getPartitalPlanID(workID),
@@ -934,7 +933,7 @@ func (e *IndexMergeReaderExecutor) Close() error {
 			switch p := p[0].(type) {
 			case *physicalop.PhysicalTableScan:
 				e.indexUsageReporter.ReportCopIndexUsageForHandle(e.table, p.ID())
-			case *plannercore.PhysicalIndexScan:
+			case *physicalop.PhysicalIndexScan:
 				e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, p.Index.ID, p.ID())
 			}
 		}
@@ -1710,7 +1709,7 @@ func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	outputOffsets := w.dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 
-	is := w.plan[0].(*plannercore.PhysicalIndexScan)
+	is := w.plan[0].(*physicalop.PhysicalIndexScan)
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0 || is.Index.Global
 	hasExtraCol := col.ID == model.ExtraPhysTblID
 

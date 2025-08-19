@@ -34,7 +34,7 @@ func TestManageTaskExecutor(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
-	m, err := NewManager(context.Background(), "test", mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(context.Background(), nil, "test", mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 
 	// add executor 1
@@ -95,7 +95,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 	task := &proto.TaskBase{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", Concurrency: 6}
 	mockInternalExecutor.EXPECT().GetTaskBase().Return(task).AnyTimes()
 
-	m, err := NewManager(ctx, id, mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(ctx, nil, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
 
@@ -164,7 +164,7 @@ func TestManager(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(context.Background(), nil, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 
 	task1 := &proto.TaskBase{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
@@ -205,7 +205,7 @@ func TestManagerHandleTasks(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(context.Background(), nil, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(16)
 
@@ -286,7 +286,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		})
 	id := "test"
 
-	m, err := NewManager(context.Background(), id, mockTaskTable, proto.NodeResourceForTest)
+	m, err := NewManager(context.Background(), nil, id, mockTaskTable, proto.NodeResourceForTest)
 	require.NoError(t, err)
 	m.slotManager.available.Store(10)
 

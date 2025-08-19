@@ -19,61 +19,9 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexScan)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
-	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	if op.GenExprs != nil {
-		return nil, false
-	}
-	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	if op.pkIsHandleCol != nil {
-		if op.pkIsHandleCol.SafeToShareAcrossSession() {
-			cloned.pkIsHandleCol = op.pkIsHandleCol
-		} else {
-			cloned.pkIsHandleCol = op.pkIsHandleCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
-	copy(cloned.constColsByCond, op.constColsByCond)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableReader)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if op.tablePlan != nil {
-		tablePlan, ok := op.tablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
-	if op.TableScanAndPartitionInfos != nil {
-		return nil, false
-	}
-	return cloned, true
-}
 
 // CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
@@ -91,7 +39,7 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		}
 		cloned.indexPlan = indexPlan.(base.PhysicalPlan)
 	}
-	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
+	cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)
 	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
@@ -174,8 +122,8 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 		}
 		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
 	}
-	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
+	cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)
+	cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)
 	if op.ExtraHandleCol != nil {
 		if op.ExtraHandleCol.SafeToShareAcrossSession() {
 			cloned.ExtraHandleCol = op.ExtraHandleCol
@@ -214,9 +162,9 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	}
 	cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))
 	for i, plan := range cloned.partialPlans {
-		cloned.PartialPlans[i] = flattenPushDownPlan(plan)
+		cloned.PartialPlans[i] = physicalop.FlattenPushDownPlan(plan)
 	}
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
+	cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone()
