@@ -407,6 +407,8 @@ func TestGeneratePrefixSuffixPattern(t *testing.T) {
 }
 
 func generateFileMetas(t *testing.T, paths []string) []mydump.FileInfo {
+	t.Helper()
+
 	files := make([]mydump.FileInfo, 0, len(paths))
 	fileRouter, err := mydump.NewDefaultFileRouter(log.L())
 	require.NoError(t, err)
