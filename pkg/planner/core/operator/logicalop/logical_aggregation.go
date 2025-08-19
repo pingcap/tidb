@@ -632,6 +632,8 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
+	AggFuncsCols := la.getAggFuncsCols()
+	groupByColumns.Columns = append(groupByColumns.Columns, AggFuncsCols...)
 	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
 		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal)
@@ -643,6 +645,17 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 		}
 	}
 	return condsToPush, ret
+}
+
+// getAggFuncsCols returns the columns used by firstrow aggregate functions.
+func (la *LogicalAggregation) getAggFuncsCols() (aggFuncsCols []*expression.Column) {
+	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.Name == "firstrow" {
+			aggFuncsCols = append(aggFuncsCols, aggFunc.Args[0].(*expression.Column))
+		}
+	}
+	return aggFuncsCols
 }
 
 // pushDownPredicatesForAggregation split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
