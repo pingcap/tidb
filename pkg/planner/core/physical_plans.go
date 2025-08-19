@@ -1661,7 +1661,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
+	cloned.CompareFilters = p.CompareFilters.Copy()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
 	return cloned, nil
