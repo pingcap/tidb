@@ -455,7 +455,7 @@ func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 				<-modifySyncCh
 			})
 		})
-		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, 3, "", 1, nil)
+		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, "", 3, "", 1, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.Concurrency)
 		require.EqualValues(t, 1, task.MaxNodeCount)
@@ -504,7 +504,7 @@ func TestModifyTaskMaxNodeCountForSubtaskBalance(t *testing.T) {
 				<-modifySyncCh
 			})
 		})
-		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, 3, "", 1, nil)
+		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, "", 3, "", 1, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.Concurrency)
 		require.EqualValues(t, 1, task.MaxNodeCount)
