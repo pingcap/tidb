@@ -579,7 +579,7 @@ func TestOOMActionPriority(t *testing.T) {
 	}
 }
 
-func TestRuntimeMemStateRecorder(t *testing.T) {
+func TestGlobalMemArbitrator(t *testing.T) {
 	testDir := t.TempDir()
 	SetupGlobalMemArbitratorForTest(testDir)
 	defer StopGlobalMemArbitratorForTest()
@@ -669,7 +669,7 @@ func TestRuntimeMemStateRecorder(t *testing.T) {
 		t1.InitMemArbitrator(m, 1<<30, nil, ("test sql 1"), ArbitrationPriorityHigh, false, 1+byteSizeKB)
 		require.True(t, t1.MemArbitrator != nil)
 		require.True(t, t1.MemArbitrator.MemArbitrator == m)
-		require.True(t, t1.MemArbitrator.budget.big.init.Load())
+		require.True(t, t1.MemArbitrator.budget.useBig.Load())
 
 		expectCap := int64(1+byteSizeKB) * 1053 / 1000
 		require.True(t, m.FindRootPool(t1.MemArbitrator.uid).entry.pool.Capacity() == expectCap)
@@ -707,7 +707,7 @@ func TestRuntimeMemStateRecorder(t *testing.T) {
 		require.True(t, t1.bytesConsumed == 0)
 		require.True(t, t1.MemArbitrator.useBigBudget())
 		require.True(t, t1.MemArbitrator.bigBudgetUsed() == 0)
-		require.True(t, t1.MemArbitrator.bigBudgetCap() == t1.MemArbitrator.budget.big.b.Pool.capacity())
+		require.True(t, t1.MemArbitrator.bigBudgetCap() == t1.MemArbitrator.budget.mu.bigB.Pool.capacity())
 		require.True(t, t1.MaxConsumed() == byteSizeKB+byteSizeMB)
 		require.True(t, m.Allocated() == expectCap)
 		require.True(t, m.TaskNum() == 0)

@@ -108,7 +108,7 @@ var EnableGCAwareMemoryTrack = atomicutil.NewBool(false)
 // https://golang.google.cn/pkg/runtime/#SetFinalizer
 // It is not guaranteed that a finalizer will run if the size of *obj is zero bytes.
 type finalizerRef struct {
-	byte //nolint:unused
+	_ byte //nolint:unused
 }
 
 // softScale means the scale of the soft limit to the hard limit.
@@ -929,25 +929,23 @@ type memArbitrator struct {
 	ctx    *ArbitrationContext
 	killer *sqlkiller.SQLKiller
 	budget struct {
-		small struct {
-			b     *TrackedConcurrentBudget
-			used  atomic.Int64
-			limit int64
+		smallB *TrackedConcurrentBudget
+		mu     struct {
+			bigB      ConcurrentBudget // bigB.Used (aks growThreshold): threshold to pull from upstream (95% * bigB.Capacity)
+			bigUsed   atomic.Int64     // bigUsed <= growThreshold <= bigB.Capacity
+			smallUsed atomic.Int64
+			_         holder64Bytes
 		}
-		big struct { // used <= b.Used <= b.Capacity
-			b    ConcurrentBudget // b.Used (aks growThreshold): threshold to pull from upstream (95% * b.Capacity)
-			used atomic.Int64
-			init struct {
-				sync.Mutex
-				atomic.Bool
-			}
+		smallLimit int64
+		useBig     struct {
+			sync.Mutex
+			atomic.Bool
 		}
 	}
-	uid         uint64
-	digestID    uint64 // identify the digest profile of root-pool / SQL
-	reserveSize int64
-	finished    atomic.Bool
-
+	uid               uint64
+	digestID          uint64 // identify the digest profile of root-pool / SQL
+	reserveSize       int64
+	finished          atomic.Bool
 	TotalAwaitDurNano atomic.Int64 // total time spent waiting for memory allocation in nanoseconds
 	AwaitAllocState   struct {
 		StartUtimeNano int64 // start time of the last allocation attempt in nanoseconds.
@@ -955,40 +953,48 @@ type memArbitrator struct {
 	}
 }
 
+func (m *memArbitrator) bigBudget() *ConcurrentBudget {
+	return &m.budget.mu.bigB
+}
+
+func (m *memArbitrator) smallBudget() *TrackedConcurrentBudget {
+	return m.budget.smallB
+}
+
 func (m *memArbitrator) bigBudgetGrowThreshold() int64 {
-	return m.budget.big.b.Used.Load()
+	return m.bigBudget().Used.Load()
 }
 
 func (m *memArbitrator) bigBudgetCap() int64 {
-	return m.budget.big.b.Capacity.Load()
+	return m.bigBudget().Capacity.Load()
 }
 
 func (m *memArbitrator) bigBudgetUsed() int64 {
-	return m.budget.big.used.Load()
+	return m.budget.mu.bigUsed.Load()
 }
 
 func (m *memArbitrator) setBigBudgetGrowThreshold(x int64) {
-	m.budget.big.b.Used.Store(x)
+	m.bigBudget().Used.Store(x)
 }
 
 func (m *memArbitrator) setBigBudgetCap(x int64) {
-	m.budget.big.b.Capacity.Store(x)
+	m.bigBudget().Capacity.Store(x)
 }
 
 func (m *memArbitrator) addBigBudgetUsed(d int64) int64 {
-	return m.budget.big.used.Add(d)
+	return m.budget.mu.bigUsed.Add(d)
 }
 
 func (m *memArbitrator) smallBudgetUsed() int64 {
-	return m.budget.small.used.Load()
+	return m.budget.mu.smallUsed.Load()
 }
 
 func (m *memArbitrator) addSmallBudgetUnderLimit(inc int64) bool {
-	if m.addSmallBudget(inc) > m.budget.small.limit {
+	if m.addSmallBudget(inc) > m.budget.smallLimit {
 		m.addSmallBudget(-inc)
 		return false
 	}
-	b := m.budget.small.b
+	b := m.smallBudget()
 	if t := m.UnixTimeSec.Load(); b.LastUsedTimeSec != t {
 		b.LastUsedTimeSec = t
 	}
@@ -999,20 +1005,20 @@ func (m *memArbitrator) addSmallBudgetUnderLimit(inc int64) bool {
 }
 
 func (m *memArbitrator) addSmallBudget(d int64) int64 {
-	m.budget.small.b.HeapInuse.Add(d)
-	m.budget.small.b.Used.Add(d)
-	return m.budget.small.used.Add(d)
+	m.smallBudget().HeapInuse.Add(d)
+	m.smallBudget().Used.Add(d)
+	return m.budget.mu.smallUsed.Add(d)
 }
 
 func (m *memArbitrator) cleanSmallBudget() (res int64) {
-	res = m.budget.small.used.Swap(0)
-	m.budget.small.b.HeapInuse.Add(-res)
-	m.budget.small.b.Used.Add(-res)
+	res = m.budget.mu.smallUsed.Swap(0)
+	m.smallBudget().HeapInuse.Add(-res)
+	m.smallBudget().Used.Add(-res)
 	return res
 }
 
 func (m *memArbitrator) useBigBudget() bool {
-	return m.budget.big.init.Load()
+	return m.budget.useBig.Load()
 }
 
 // MemArbitrationTime returns the time cost of memory arbitration in nanoseconds
@@ -1042,7 +1048,7 @@ func (t *Tracker) WaitArbitrate() (ts time.Time, size int64) {
 func (m *memArbitrator) growBigBudget() {
 	duration := int64(0)
 	{
-		upper := &m.budget.big.b
+		upper := m.bigBudget()
 		upper.Lock()
 
 		used, growThreshold, capacity := m.bigBudgetUsed(), m.bigBudgetGrowThreshold(), m.bigBudgetCap()
@@ -1073,8 +1079,8 @@ func (m *memArbitrator) growBigBudget() {
 }
 
 func (m *memArbitrator) initBigBudget() {
-	m.budget.big.init.Lock()
-	defer m.budget.big.init.Unlock()
+	m.budget.useBig.Lock()
+	defer m.budget.useBig.Unlock()
 
 	if m.useBigBudget() {
 		return
@@ -1096,7 +1102,7 @@ func (m *memArbitrator) initBigBudget() {
 
 	globalArbitrator.metrics.smallPool.Add(-1)
 	globalArbitrator.metrics.bigPool.into.Add(1)
-	m.budget.big.b.Pool = root.entry.pool
+	m.bigBudget().Pool = root.entry.pool
 
 	if m.reserveSize > 0 {
 		m.reserveBigBudget(m.reserveSize)
@@ -1115,7 +1121,7 @@ func (m *memArbitrator) initBigBudget() {
 		metrics.GlobalMemArbitratorAction.PoolInitNone.Inc()
 	}
 
-	m.budget.big.init.Store(true)
+	m.budget.useBig.Store(true)
 	globalArbitrator.metrics.bigPool.into.Add(-1)
 	globalArbitrator.metrics.bigPool.Add(1)
 }
@@ -1123,7 +1129,7 @@ func (m *memArbitrator) initBigBudget() {
 func (m *memArbitrator) reserveBigBudget(newCap int64) {
 	duration := int64(0)
 	{
-		upper := &m.budget.big.b
+		upper := m.bigBudget()
 		upper.Lock()
 
 		capacity := m.bigBudgetCap()
@@ -1159,7 +1165,7 @@ func (t *Tracker) resetMemArbitrator() {
 		m.cleanSmallBudget()
 	}
 	if m.useBigBudget() {
-		m.budget.big.b.Clear()
+		m.bigBudget().Clear()
 		m.ResetRootPoolByID(m.uid, 0, false)
 	}
 }
@@ -1189,7 +1195,7 @@ func (t *Tracker) detachMemArbitrator() bool {
 	}
 
 	if m.useBigBudget() {
-		m.budget.big.b.Clear()
+		m.bigBudget().Clear()
 		m.ResetRootPoolByID(m.uid, maxConsumed, !killed)
 		globalArbitrator.metrics.bigPool.Add(-1)
 	} else {
@@ -1260,8 +1266,8 @@ func (t *Tracker) InitMemArbitrator(
 	if explicitReserveSize > 0 || prevMaxMem > g.poolAllocStats.SmallPoolLimit {
 		m.initBigBudget()
 	} else {
-		m.budget.small.b = g.GetAwaitFreeBudgets(uid)
-		m.budget.small.limit = g.poolAllocStats.SmallPoolLimit
+		m.budget.smallB = g.GetAwaitFreeBudgets(uid)
+		m.budget.smallLimit = g.poolAllocStats.SmallPoolLimit
 	}
 
 	return true

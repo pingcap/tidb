@@ -296,14 +296,9 @@ func (p *ResourcePool) MaxAllocated() (res int64) {
 // Allocated returns the allocated bytes
 func (p *ResourcePool) Allocated() (res int64) {
 	p.mu.Lock()
-	res = p.mu.allocated
+	res = p.allocated()
 	p.mu.Unlock()
 	return
-}
-
-// ApproxAllocated returns the approximate allocated bytes
-func (p *ResourcePool) ApproxAllocated() int64 {
-	return p.allocated()
 }
 
 // Budget represents the budget of a resource pool
@@ -514,16 +509,11 @@ func (p *ResourcePool) allocate(request int64) error {
 }
 
 func (p *ResourcePool) allocated() int64 {
-	return atomic.LoadInt64(&p.mu.allocated)
+	return p.mu.allocated
 }
 
 func (p *ResourcePool) capacity() int64 {
 	return p.mu.budget.cap
-}
-
-// ApproxAvailable returns the approximate available budget
-func (p *ResourcePool) ApproxAvailable() int64 {
-	return p.mu.budget.available()
 }
 
 // ApproxCap returns the approximate capacity of the resource pool

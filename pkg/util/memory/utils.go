@@ -19,6 +19,8 @@ import (
 	"math/bits"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/pkg/util/israce"
 )
 
 const (
@@ -58,10 +60,18 @@ func (l *wrapList[V]) moveToFront(e wrapListElement) {
 	l.base.MoveToFront(e.base)
 }
 
+func (l *wrapList[V]) doAddNum(x int64) {
+	if israce.RaceEnabled {
+		atomic.AddInt64(&l.num, x)
+		return
+	}
+	l.num += x
+}
+
 func (l *wrapList[V]) remove(e wrapListElement) {
 	e.base.Value = nil
 	l.base.MoveToBack(e.base)
-	atomic.AddInt64(&l.num, -1)
+	l.doAddNum(-1)
 }
 
 func (l *wrapList[V]) front() (res V) {
@@ -98,7 +108,7 @@ func (l *wrapList[V]) pushBack(v V) wrapListElement {
 		l.base.MoveBefore(x, l.end.base)
 		x.Value = v
 	}
-	atomic.AddInt64(&l.num, 1)
+	l.doAddNum(1)
 	return wrapListElement{x}
 }
 
@@ -228,3 +238,8 @@ func intoRatio(x float64) (zMilli int64) {
 	zMilli = int64(x * kilo)
 	return
 }
+
+// Prevent false sharing of cache lines.
+// The typical cache line size is 64 bytes on most architectures, including x86 and ARM.
+// `cpu.CacheLinePad`(128-byte) will be a good option for other platforms, such as Apple Silicon.
+type holder64Bytes struct{ _ [64]byte }

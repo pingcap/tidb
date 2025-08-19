@@ -2177,7 +2177,6 @@ func (do *Domain) gcStatsWorker() {
 			do.CheckAutoAnalyzeWindows()
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
-			memory.HandleGlobalMemArbitratorRuntime(memory.ReadMemStats())
 			do.StatsHandle().StatsCache.TriggerEvict()
 		case <-updateStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()

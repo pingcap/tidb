@@ -110,8 +110,8 @@ func reportGlobalMemArbitratorMetrics() {
 		setQuota("buffer", m.reservedBuffer())
 		setQuota("tracked-heap", m.avoidance.heapTracked.Load())
 		setQuota("awaitfree-pool-cap", m.awaitFreePoolCap())
-		setQuota("awaitfree-pool-allocated", m.awaitFree.lastQuotaUsage.quota)
-		setQuota("awaitfree-pool-tracked-heap", m.awaitFree.lastQuotaUsage.trackedHeap)
+		setQuota("awaitfree-pool-used", m.approxAwaitFreePoolUsed().quota)
+		setQuota("awaitfree-pool-tracked-heap", m.approxAwaitFreePoolUsed().trackedHeap)
 		setQuota("mem-inuse", m.heapController.memInuse.Load())
 		setQuota("soft-limit", m.softLimit())
 		setQuota("wait-alloc", m.WaitingAllocSize())
@@ -129,7 +129,7 @@ func reportGlobalMemArbitratorMetrics() {
 		memMagnif := int64(0)
 		if quota := m.allocated(); quota > 0 {
 			memMagnif = calcRatio(m.heapController.lastGC.heapAlloc.Load(), quota)
-			memMagnif = min(memMagnif, kilo*10)
+			memMagnif = min(memMagnif, defMaxMagnif)
 		}
 		metrics.GlobalMemArbitratorRuntimeMemMagnifi.Set(float64(memMagnif))
 	}
@@ -182,6 +182,7 @@ func reportGlobalMemArbitratorMetrics() {
 		addActionCount("awaitfree-pool-grow-succ", (newExecMetrics.AwaitFree.Succ - oriExecMetrics.AwaitFree.Succ))
 		addActionCount("awaitfree-pool-grow-fail", (newExecMetrics.AwaitFree.Fail - oriExecMetrics.AwaitFree.Fail))
 		addActionCount("awaitfree-pool-shrink", (newExecMetrics.AwaitFree.Shrink - oriExecMetrics.AwaitFree.Shrink))
+		addActionCount("awaitfree-pool-force-shrink", (newExecMetrics.AwaitFree.ForceShrink - oriExecMetrics.AwaitFree.ForceShrink))
 		addActionCount("gc", (newExecMetrics.Action.GC - oriExecMetrics.Action.GC))
 		addActionCount("update-memstats", (newExecMetrics.Action.UpdateRuntimeMemStats - oriExecMetrics.Action.UpdateRuntimeMemStats))
 		addActionCount("record-memstate-succ", (newExecMetrics.Action.RecordMemState.Succ - oriExecMetrics.Action.RecordMemState.Succ))
@@ -194,12 +195,10 @@ func reportGlobalMemArbitratorMetrics() {
 
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
 func HandleGlobalMemArbitratorRuntime(s *runtime.MemStats) {
-	m := globalArbitrator.v.Load()
+	defer recover()
+
+	m := GlobalMemArbitrator()
 	if m == nil {
-		return
-	}
-	workMode := m.WorkMode()
-	if workMode == ArbitratorModeDisable {
 		return
 	}
 	m.HandleRuntimeStats(intoRuntimeMemStats(s))
