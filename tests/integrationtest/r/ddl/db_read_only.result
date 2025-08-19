@@ -5,6 +5,7 @@ create database db_read_only_1;
 use db_read_only;
 create table s(a int primary key);
 create table t(id int primary key auto_increment, a int, b int, c varchar(1), index b(b), foreign key fk_a(b) references s(a));
+create table db_read_only_1.s(a int primary key);
 create view v1 as select * from t;
 create table members (
 id int,
@@ -61,6 +62,8 @@ Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t drop foreign key fk_a;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t add foreign key fk_a1(b) references s(a);
+Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
+alter table t add foreign key fk_a2(b) references db_read_only_1.s(a);
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t partition by hash(a) partitions 4;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
