@@ -190,7 +190,7 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
+	rpcClient, pdClient, cluster, err := unistore.NewClassic("", nil)
 	require.NoError(t, err)
 	defer func() {
 		rpcClient.Close()
@@ -587,7 +587,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
+	rpcClient, pdClient, cluster, err := unistore.NewClassic("", nil)
 	defer func() {
 		rpcClient.Close()
 		pdClient.Close()
