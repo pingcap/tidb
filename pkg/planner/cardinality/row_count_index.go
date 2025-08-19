@@ -16,7 +16,6 @@ package cardinality
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -405,6 +404,7 @@ func estimateRowCountWithUniformDistribution(
 	sctx planctx.PlanContext,
 	stats any,
 	realtimeRowCount int64,
+	modifyCount int64,
 ) statistics.RowEstimate {
 	var histNDV float64
 	var histogram *statistics.Histogram
@@ -429,16 +429,12 @@ func estimateRowCountWithUniformDistribution(
 		totalRowCount = s.TotalRowCount()
 		increaseFactor = s.GetIncreaseFactor(realtimeRowCount)
 		notNullCount = s.Histogram.NotNullCount()
-	default:
-		panic(fmt.Sprintf("estimateRowCountWithUniformDistribution: unsupported stats type %T", stats))
 	}
-	// Instead of using modifyCount - we are using the difference of added rows vs original rows.
-	addedRowCount := realtimeRowCount - int64(totalRowCount)
 	// Branch 1: all NDV's are in TopN, and no histograms.
 	if histNDV <= 0 || histogram.NotNullCount() == 0 {
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
-		if histNDV > 0 && addedRowCount == 0 {
+		if histNDV > 0 && modifyCount == 0 {
 			return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
 		}
 		// All values are in TopN (and TopN NDV is accurate).
@@ -446,7 +442,7 @@ func estimateRowCountWithUniformDistribution(
 		if notNullCount <= 0 {
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
-		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, addedRowCount)
+		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 		return statistics.DefaultRowEst(outOfRangeCnt)
 	}
 	// branch 2: some NDV's are in histograms
@@ -519,11 +515,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	return estimateRowCountWithUniformDistribution(
-		sctx,
-		idx,
-		realtimeRowCount,
-	)
+	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
