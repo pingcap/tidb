@@ -402,7 +402,7 @@ var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 // both equalRowCountOnIndex and equalRowCountOnColumn.
 func estimateRowCountWithUniformDistribution(
 	sctx planctx.PlanContext,
-	stats interface{},
+	stats any,
 	realtimeRowCount int64,
 ) statistics.RowEstimate {
 	var histNDV float64
