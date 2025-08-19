@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"fmt"
 	"slices"
 	"sync"
 
@@ -247,8 +246,7 @@ type propConstSolver struct {
 	// When performing constant propagation, if the newly created expression cannot be pushed down,
 	// we might consider this expression to be invalid. We use the pushDownFunc here to determine
 	// whether it can be pushed down.
-	pushDownfilter      PushDownFuncType
-	equalConditionCount int64
+	pushDownfilter PushDownFuncType
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -261,17 +259,6 @@ func newPropConstSolver() PropagateConstantSolver {
 func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, pushDownfilter PushDownFuncType, conditions []Expression) []Expression {
 	s.ctx = ctx
 	s.pushDownfilter = pushDownfilter
-	if s.pushDownfilter != nil {
-		for _, condition := range conditions {
-			equalConditions, _, _, _ := s.pushDownfilter(condition)
-			if len(equalConditions) > 0 {
-				s.equalConditionCount++
-			}
-		}
-	}
-	if s.pushDownfilter != nil {
-		fmt.Println("wwz")
-	}
 	return s.solve(conditions)
 }
 
@@ -280,7 +267,6 @@ func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	s.conditions = s.conditions[:0]
 	s.pushDownfilter = nil
-	s.equalConditionCount = 0
 	propConstSolverPool.Put(s)
 }
 
@@ -371,10 +357,8 @@ func (s *propConstSolver) propagateColumnEQ() {
 				if s.pushDownfilter != nil {
 					_, leftCond, rightCond, _ := s.pushDownfilter(cond)
 					if len(leftCond) > 0 || len(rightCond) > 0 {
-						if !isAllBooleanFunctionExpr(cond) {
-							if colset := ExtractColumnSet(cond); colset.Len() > 1 {
-								continue
-							}
+						if colset := ExtractColumnSet(cond); colset.Len() > 1 {
+							continue
 						}
 					}
 				}
@@ -741,6 +725,14 @@ func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, sch
 			visited[k+offset] = true
 			continue
 		}
+		if s.pushDownFunc != nil {
+			_, leftCond, rightCond, _ := s.pushDownFunc(cond)
+			if len(leftCond) > 0 || len(rightCond) > 0 {
+				if colset := ExtractColumnSet(cond); colset.Len() > 1 {
+					continue
+				}
+			}
+		}
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
 			if s.pushDownFunc != nil {
@@ -814,9 +806,6 @@ func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 }
 
 func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
-	if s.pushDownFunc != nil {
-		fmt.Println("wwz")
-	}
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
