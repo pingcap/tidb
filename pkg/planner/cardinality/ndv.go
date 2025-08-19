@@ -87,14 +87,25 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 // This method is primarily used by join operations.
 func EstimateColsNDVWithMatchedLen(sctx SessionVarProvider, cols []*expression.Column, schema *expression.Schema,
 	profile *property.StatsInfo) (float64, int) {
+	// Early return for empty columns - no NDV estimation needed
+	if len(cols) == 0 {
+		return 1.0, 1
+	}
+
 	// First try exact match from existing GroupNDVs
 	if groupNDV := profile.GetGroupNDV4Cols(cols); groupNDV != nil {
 		exact := math.Max(groupNDV.NDV, 1.0)
 		return exact, len(groupNDV.Cols)
 	}
 
-	// Calculate both estimates
 	conservativeNDV := estimateNaiveNDV(cols, schema, profile)
+
+	// For single column, conservative and exponential are the same - return early
+	if len(cols) == 1 {
+		return conservativeNDV, 1
+	}
+
+	// Multi-column case: calculate exponential estimate
 	exponentialNDV := estimateNDVWithExponentialBackoff(cols, schema, profile)
 
 	// Check if risk-based estimation is enabled

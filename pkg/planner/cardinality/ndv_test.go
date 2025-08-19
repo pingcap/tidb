@@ -151,4 +151,16 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 	expectedABCNoGroup := 1000 * math.Sqrt(500) * math.Sqrt(math.Sqrt(10))
 	require.InDelta(t, expectedABCNoGroup, ndv, 0.1)
 	require.Equal(t, 1, matchedLen)
+
+	// Test empty columns - should return 1.0 and not record the opt variable
+	var emptyTargetCols []*expression.Column
+	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, emptyTargetCols, schema, statsInfoNoGroup)
+	require.Equal(t, 1.0, ndv)
+	require.Equal(t, 1, matchedLen)
+
+	// Test single column - should use conservative estimate only (no exponential backoff)
+	singleTargetCol := []*expression.Column{colA}
+	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, singleTargetCol, schema, statsInfoNoGroup)
+	require.Equal(t, 1000.0, ndv) // Should be exactly colA's NDV
+	require.Equal(t, 1, matchedLen)
 }
