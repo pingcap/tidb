@@ -181,7 +181,6 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		sctx,
 		c,
 		realtimeRowCount,
-		modifyCount,
 	)
 	return rowEstimate.Est, nil
 }

@@ -404,7 +404,6 @@ func estimateRowCountWithUniformDistribution(
 	sctx planctx.PlanContext,
 	stats interface{},
 	realtimeRowCount int64,
-	modifyCount int64,
 ) statistics.RowEstimate {
 	var histNDV float64
 	var histogram *statistics.Histogram
@@ -432,12 +431,13 @@ func estimateRowCountWithUniformDistribution(
 	default:
 		panic("estimateRowCountWithUniformDistribution: unsupported stats type")
 	}
-
+	// Instead of using modifyCount - we are using the different of added rows vs original rows.
+	addedRowCount := realtimeRowCount - int64(totalRowCount)
 	// Branch 1: all NDV's are in TopN, and no histograms.
 	if histNDV <= 0 || histogram.NotNullCount() == 0 {
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
-		if histNDV > 0 && modifyCount == 0 {
+		if histNDV > 0 && addedRowCount == 0 {
 			return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
 		}
 		// All values are in TopN (and TopN NDV is accurate).
@@ -445,7 +445,7 @@ func estimateRowCountWithUniformDistribution(
 		if notNullCount <= 0 {
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
-		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, addedRowCount)
 		return statistics.DefaultRowEst(outOfRangeCnt)
 	}
 	// branch 2: some NDV's are in histograms
@@ -522,7 +522,6 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		sctx,
 		idx,
 		realtimeRowCount,
-		modifyCount,
 	)
 }
 
