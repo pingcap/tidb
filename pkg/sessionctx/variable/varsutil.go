@@ -283,16 +283,26 @@ func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue stri
 		}
 	}()
 
-	// 1. Try parse percentage format: x%
-	if total := memory.GetMemTotalIgnoreErr(); total != 0 {
-		perc, str := parsePercentage(normalizedValue)
+	total := memory.GetMemTotalIgnoreErr()
+	if total != 0 {
+		perc := uint64(0)
+		str := ""
+		if strings.ToLower(normalizedValue) == vardef.DefTiDBServerMemoryLimit {
+			if memory.GlobalMemArbitrator() != nil {
+				perc = 95
+			} else {
+				perc = 80
+			}
+			str = vardef.DefTiDBServerMemoryLimit
+		} else {
+			perc, str = parsePercentage(normalizedValue)
+		}
 		if perc != 0 {
-			intVal := total / 100 * perc
+			intVal := total * perc / 100
 			return intVal, str, nil
 		}
 	}
 
-	// 2. Try parse byteSize format: xKB/MB/GB/TB or byte number
 	bt, str := parseByteSize(normalizedValue)
 	if str != "" {
 		return bt, str, nil

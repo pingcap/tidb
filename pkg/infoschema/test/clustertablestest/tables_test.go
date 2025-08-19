@@ -170,6 +170,9 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `INFO` longtext DEFAULT NULL,\n" +
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
+			"  `MEM_ARBITRATION` double DEFAULT NULL,\n" +
+			"  `MEM_WAIT_ARBITRATE_START_TIME` varchar(32) DEFAULT NULL,\n" +
+			"  `MEM_WAIT_ARBITRATE_BYTES` bigint(21) DEFAULT NULL,\n" +
 			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT '',\n" +
@@ -241,11 +244,11 @@ func TestSomeTables(t *testing.T) {
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 0"+
 				"  rg1 alias1 0 0 0", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0  rg2  0 0 0",
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 0  rg2  0 0 0",
 				"autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0  rg3"+
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0 0  rg3"+
 				" 中文alias 0 0 0", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
@@ -289,9 +292,9 @@ func TestSomeTables(t *testing.T) {
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 0"+
 				"  rg1  <nil> 0 0", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26"+
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 0 07-29 03:26"+
 				":05.158(410090409861578752) rg2 alias3 0 0 0", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
@@ -306,13 +309,13 @@ func TestSomeTables(t *testing.T) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26"+
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 0 07-29 03:26"+
 				":05.158(410090409861578752) rg2 alias3 0 0 0", "autocommit", strings.Repeat("x",
 				101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 0"+
 				"  rg1  <nil> 0 0", "in transaction", "<nil>"),
 		))
 }
@@ -436,6 +439,7 @@ func TestSlowQuery(t *testing.T) {
 			"0.8",
 			"0.0.0.0:20160",
 			"70724",
+			"23333",
 			"65536",
 			"0",
 			"0",
@@ -528,6 +532,7 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"",
 			"856544",
+			"856547",
 			"0",
 			"86.635049185",
 			"0.015486658",

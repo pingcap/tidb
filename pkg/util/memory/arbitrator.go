@@ -970,6 +970,7 @@ func (x *mapEntryWithMem) delete(entry *rootPoolEntry) {
 	delete(x.entries, entry.pool.uid)
 	atomic.AddInt64(&x.num, -1)
 }
+
 func (x *mapEntryWithMem) init() {
 	x.entries = make(mapUIDEntry)
 }

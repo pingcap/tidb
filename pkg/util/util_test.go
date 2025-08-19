@@ -31,8 +31,16 @@ import (
 )
 
 func TestLogFormat(t *testing.T) {
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
+	defer memory.StopGlobalMemArbitratorForTest()
+
 	mem := memory.NewTracker(-1, -1)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
+	mem.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0)
+	mem.MemArbitrator.TotalAwaitDurNano.Add(2e9 + 1e8)
+	mem.MemArbitrator.AwaitAllocState.Size = 123456789123
+	mem.MemArbitrator.AwaitAllocState.StartUtimeNano = 123456789123456
 	mockTooLongQuery := make([]byte, 1024*9)
 
 	var refCount stmtctx.ReferenceCount = 0
@@ -52,6 +60,7 @@ func TestLogFormat(t *testing.T) {
 		RedactSQL:         "",
 		SessionAlias:      "alias123",
 	}
+	info.StmtCtx.MemTracker = mem
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8
 	logFields := GenLogFields(costTime, info, true)
@@ -67,8 +76,8 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, "Database", logFields[3].String)
 	assert.Equal(t, "txn_start_ts", logFields[4].Key)
 	assert.Equal(t, int64(23333), logFields[4].Integer)
-	assert.Equal(t, "mem_max", logFields[5].Key)
-	assert.Equal(t, "2013265920 Bytes (1.88 GB)", logFields[5].String)
+	assert.Equal(t, "mem", logFields[5].Key)
+	assert.Equal(t, "max 2013265920 Bytes (1.88 GB), arbitration_time 2.1s, wait_arbitrate_start 1970-01-02 18:17:36.789, wait_arbitrate_bytes 123456789123", logFields[5].String)
 	assert.Equal(t, "sql", logFields[6].Key)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
 

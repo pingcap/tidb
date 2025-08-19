@@ -136,6 +136,11 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 	if bt == 0 {
 		return
 	}
+
+	if memory.UsingGlobalMemArbitration() {
+		return
+	}
+
 	failpoint.Inject("issue42662_2", func(val failpoint.Value) {
 		if val.(bool) {
 			bt = 1
@@ -239,7 +244,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 			types.NewDatum(info.memoryCurrent), // MEMORY_CURRENT
 			info.processInfoDatum[0],           // PROCESSID
 			info.processInfoDatum[9],           // MEM
-			info.processInfoDatum[10],          // DISK
+			info.processInfoDatum[11],          // DISK
 			info.processInfoDatum[2],           // CLIENT
 			info.processInfoDatum[3],           // DB
 			info.processInfoDatum[1],           // USER

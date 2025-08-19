@@ -22,8 +22,11 @@ import (
 )
 
 const (
-	byteSize = 1
-	kilo     = 1000
+	byteSize   = 1
+	byteSizeKB = 1 << 10
+	byteSizeMB = 1 << 20
+	byteSizeGB = 1 << 30
+	kilo       = 1000
 )
 
 // list with cache to avoid the cost of allocating and deallocating list elements.

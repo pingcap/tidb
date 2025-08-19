@@ -1159,6 +1159,7 @@ const (
 	ErrResourceGroupQueryRunawayInterrupted   = 8253
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
+	ErrQueryExecStopped                       = 8267
 	ErrResourceGroupInvalidForRole            = 8257
 
 	// Reserved for future use.

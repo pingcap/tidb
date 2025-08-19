@@ -1128,6 +1128,14 @@ const (
 	TiDBServerMemoryLimitSessMinSize = "tidb_server_memory_limit_sess_min_size"
 	// TiDBServerMemoryLimitGCTrigger indicates the gc percentage of the TiDBServerMemoryLimit.
 	TiDBServerMemoryLimitGCTrigger = "tidb_server_memory_limit_gc_trigger"
+	// TiDBMemArbitratorSoftLimit indicates the soft memory quota limit of the global memory arbitrator
+	TiDBMemArbitratorSoftLimit = "tidb_mem_arbitrator_soft_limit"
+	// TiDBMemArbitratorMode indicates work modes of the global memory arbitrator
+	TiDBMemArbitratorMode = "tidb_mem_arbitrator_mode"
+	// TiDBMemArbitratorQueryReserved indicates the memory quota query needs to subscribe from the global memory arbitrator before execution
+	TiDBMemArbitratorQueryReserved = "tidb_mem_arbitrator_query_reserved"
+	// TiDBMemArbitratorWaitAverse indicates whether the query is wait averse
+	TiDBMemArbitratorWaitAverse = "tidb_mem_arbitrator_wait_averse"
 	// TiDBEnableGOGCTuner is to enable GOGC tuner. it can tuner GOGC
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
@@ -1673,6 +1681,10 @@ const (
 	DefTiDBEnableTSValidation                         = true
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
+	DefTiDBMemArbitratorSoftLimitText                 = memory.ArbitratorSoftLimitModDisableName
+	DefTiDBMemArbitratorModeText                      = memory.ArbitratorModeDisableName
+	DefTiDBMemArbitratorQueryReservedText             = "0"
+	DefTiDBMemArbitratorWaitAverse                    = "0"
 )
 
 // Process global variables.
@@ -1750,9 +1762,8 @@ var (
 	EnableRowLevelChecksum         = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
 	LowResolutionTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)
 
-	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
-	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit           = serverMemoryLimitDefaultValue()
+	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit: 80% (NO global mem-arbitrator)
+	DefTiDBServerMemoryLimit           = "auto"
 	GOGCTunerThreshold                 = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 	PasswordValidationLength           = atomic.NewInt32(8)
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
@@ -1805,14 +1816,6 @@ var (
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 )
-
-func serverMemoryLimitDefaultValue() string {
-	total, err := memory.MemTotal()
-	if err == nil && total != 0 {
-		return "80%"
-	}
-	return "0"
-}
 
 func mustParseDuration(str string) time.Duration {
 	duration, err := time.ParseDuration(str)

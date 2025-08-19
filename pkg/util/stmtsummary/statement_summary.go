@@ -240,8 +240,10 @@ type stmtSummaryStats struct {
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
 
-	storageKV  bool // query read from TiKV
-	storageMPP bool // query read from TiFlash
+	storageKV             bool // query read from TiKV
+	storageMPP            bool // query read from TiFlash
+	sumMemArbitrationTime float64
+	maxMemArbitrationTime float64
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -283,6 +285,8 @@ type StmtExecInfo struct {
 	PlanCacheUnqualified string
 
 	LazyInfo StmtExecLazyInfo
+
+	MemArbitrationTime time.Duration
 }
 
 // StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
@@ -877,6 +881,12 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
 	}
+	memArbitrationTime := sei.MemArbitrationTime.Seconds()
+	ssStats.sumMemArbitrationTime += memArbitrationTime
+	if memArbitrationTime > ssStats.maxMemArbitrationTime {
+		ssStats.maxMemArbitrationTime = memArbitrationTime
+	}
+
 	ssStats.sumDisk += sei.DiskMax
 	if sei.DiskMax > ssStats.maxDisk {
 		ssStats.maxDisk = sei.DiskMax

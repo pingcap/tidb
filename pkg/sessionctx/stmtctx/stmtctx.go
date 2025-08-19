@@ -269,6 +269,8 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InShowWarning          bool
 
+	MemSensitive bool
+
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
 

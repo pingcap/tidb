@@ -37,19 +37,26 @@ const (
 	QueryMemoryExceeded
 	ServerMemoryExceeded
 	RunawayQueryExceeded
+	KilledByMemArbitrator
 	// When you add a new signal, you should also modify store/driver/error/ToTidbErr,
 	// so that errors in client can be correctly converted to tidb errors.
 )
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
-	Signal killSignal
+	Finish          func()
+	killSignalEvent struct {
+		ch   chan struct{}
+		desc string
+		sync.Mutex
+		triggered bool
+	}
 	ConnID atomic.Uint64
 	// FinishFuncLock is used to ensure that Finish is not called and modified at the same time.
 	// An external call to the Finish function only allows when the main goroutine to be in the writeResultSet process.
 	// When the main goroutine exits the writeResultSet process, the Finish function will be cleared.
 	FinishFuncLock sync.Mutex
-	Finish         func()
+	Signal         killSignal
 	// InWriteResultSet is used to indicate whether the query is currently calling clientConn.writeResultSet().
 	// If the query is in writeResultSet and Finish() can acquire rs.finishLock, we can assume the query is waiting for the client to receive data from the server over network I/O.
 	InWriteResultSet atomic.Bool
@@ -58,8 +65,61 @@ type SQLKiller struct {
 	IsConnectionAlive atomic.Pointer[func() bool]
 }
 
-// SendKillSignal sends a kill signal to the query.
-func (killer *SQLKiller) SendKillSignal(reason killSignal) {
+// ChanKillSignalEvent returns a recv chan which will be closed when the kill signal is sent.
+func (killer *SQLKiller) ChanKillSignalEvent() <-chan struct{} {
+	killer.killSignalEvent.Lock()
+	defer killer.killSignalEvent.Unlock()
+
+	if killer.killSignalEvent.ch != nil {
+		return killer.killSignalEvent.ch
+	}
+
+	killer.killSignalEvent.ch = make(chan struct{})
+	if killer.killSignalEvent.triggered {
+		close(killer.killSignalEvent.ch)
+	}
+
+	return killer.killSignalEvent.ch
+}
+
+func (killer *SQLKiller) triggerKillSignalEvent() {
+	killer.killSignalEvent.Lock()
+	defer killer.killSignalEvent.Unlock()
+
+	if killer.killSignalEvent.triggered {
+		return
+	}
+
+	if killer.killSignalEvent.ch != nil {
+		close(killer.killSignalEvent.ch)
+	}
+	killer.killSignalEvent.triggered = true
+}
+
+func (killer *SQLKiller) resetKillSignalEvent() {
+	killer.killSignalEvent.Lock()
+	defer killer.killSignalEvent.Unlock()
+
+	if !killer.killSignalEvent.triggered && killer.killSignalEvent.ch != nil {
+		close(killer.killSignalEvent.ch)
+	}
+	killer.killSignalEvent.ch = nil
+	killer.killSignalEvent.triggered = false
+	killer.killSignalEvent.desc = ""
+}
+
+// SendKillSignalWithKillEventReason sets the reason for the kill event and sends a kill signal.
+func (killer *SQLKiller) SendKillSignalWithKillEventReason(killSignal killSignal, desc string) {
+	{
+		killer.killSignalEvent.Lock()
+		killer.killSignalEvent.desc = desc
+		killer.killSignalEvent.Unlock()
+	}
+	killer.sendKillSignal(killSignal)
+	killer.triggerKillSignalEvent()
+}
+
+func (killer *SQLKiller) sendKillSignal(reason killSignal) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
 		status := atomic.LoadUint32(&killer.Signal)
 		err := killer.getKillError(status)
@@ -67,9 +127,24 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	}
 }
 
+// SendKillSignal sends a kill signal to the query.
+func (killer *SQLKiller) SendKillSignal(reason killSignal) {
+	killer.sendKillSignal(reason)
+	killer.triggerKillSignalEvent()
+}
+
 // GetKillSignal gets the kill signal.
 func (killer *SQLKiller) GetKillSignal() killSignal {
 	return atomic.LoadUint32(&killer.Signal)
+}
+
+func (killer *SQLKiller) getKillEventReason() (res string) {
+	killer.killSignalEvent.Lock()
+	//
+	res = killer.killSignalEvent.desc
+	//
+	killer.killSignalEvent.Unlock()
+	return res
 }
 
 // getKillError gets the error according to the kill signal.
@@ -85,6 +160,8 @@ func (killer *SQLKiller) getKillError(status killSignal) error {
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID.Load())
 	case RunawayQueryExceeded:
 		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs("runaway exceed tidb side")
+	case KilledByMemArbitrator:
+		return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(killer.getKillEventReason(), killer.ConnID.Load())
 	default:
 	}
 	return nil
@@ -162,6 +239,8 @@ func (killer *SQLKiller) Reset() {
 	if atomic.LoadUint32(&killer.Signal) != 0 {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
+
 	atomic.StoreUint32(&killer.Signal, 0)
+	killer.resetKillSignalEvent()
 	killer.lastCheckTime.Store(nil)
 }
