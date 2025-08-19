@@ -741,13 +741,8 @@ func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, sch
 			continue
 		}
 		if s.pushDownFunc != nil {
-			_, leftCond, rightCond, _ := s.pushDownFunc(cond)
-			if (len(leftCond) > 0 || len(rightCond) > 0) && !isAllBooleanFunctionExpr(cond) {
-				if colset := ExtractColumnSet(cond); colset.Len() > 1 {
-					// If it's a single-column function, there is also a point in pushing it down.
-					// like cast(col1)
-					continue
-				}
+			if !exprNeedToPropagationContant(s.pushDownFunc, cond) {
+				continue
 			}
 		}
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
