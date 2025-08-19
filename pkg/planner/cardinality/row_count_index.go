@@ -582,8 +582,6 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	maxSel = max(idxLowBound, singleColumnEstResults[0])
 	// minSel assumes independence between columns, so is the product of all single column selectivities.
 	minSel = max(idxLowBound, minSel)
-	// corrSel is the selectivity of the most filtering column
-	corrSel = max(idxLowBound, singleColumnEstResults[0])
 
 	// Calculate minimum bound: take minimum of all selectivities (up to limit) and index bound
 	maxCols := min(MaxExponentialBackoffCols, l)

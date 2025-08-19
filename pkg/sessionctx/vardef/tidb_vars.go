@@ -330,6 +330,11 @@ const (
 	// TiDBOptRiskRangeSkewRatio controls the amount of skew that is applied to range predicate estimation when a range falls within a bucket or outside the histogram bucket range.
 	TiDBOptRiskRangeSkewRatio = "tidb_opt_risk_range_skew_ratio"
 
+	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for GROUP BY operations.
+	// When 0: uses conservative risk-selected estimate (production default)
+	// When > 0: enables exponential backoff with risk adjustment (0.1=conservative, 1.0=full exponential)
+	TiDBOptRiskGroupNDVSkewRatio = "tidb_opt_group_ndv_skew_ratio"
+
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// TiDBOptCopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -1337,6 +1342,7 @@ const (
 	DefOptCorrelationExpFactor              = 1
 	DefOptRiskEqSkewRatio                   = 0.0
 	DefOptRiskRangeSkewRatio                = 0.0
+	DefOptRiskGroupNDVSkewRatio             = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0
