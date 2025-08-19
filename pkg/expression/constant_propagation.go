@@ -482,10 +482,11 @@ type PushDownFuncType func(Expression) (eqCond []*ScalarFunction, leftCond []Exp
 
 type propSpecialJoinConstSolver struct {
 	basePropConstSolver
-	joinConds   []Expression
-	filterConds []Expression
-	outerSchema *Schema
-	innerSchema *Schema
+	joinConds        []Expression
+	filterConds      []Expression
+	eqConditionCount int64
+	outerSchema      *Schema
+	innerSchema      *Schema
 	// When performing constant propagation, if the newly created expression cannot be pushed down,
 	// we might consider this expression to be invalid. We use the pushDownFunc here to determine
 	// whether it can be pushed down.
@@ -510,6 +511,7 @@ func (s *propSpecialJoinConstSolver) Clear() {
 	s.innerSchema = nil
 	s.nullSensitive = false
 	s.pushDownFunc = nil
+	s.eqConditionCount = 0
 	propSpecialJoinConstSolverPool.Put(s)
 }
 
@@ -717,7 +719,11 @@ func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, sch
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
 			if s.pushDownFunc != nil {
-				if _, _, _, otherCondition := s.pushDownFunc(newExpr); len(otherCondition) > 1 {
+				equalCondtions, _, _, otherConditions := s.pushDownFunc(newExpr)
+				if len(otherConditions) > 0 {
+					continue
+				}
+				if len(equalCondtions) > 0 && s.eqConditionCount > 0 {
 					continue
 				}
 			}
@@ -840,6 +846,13 @@ func PropConstOverSpecialJoin(ctx exprctx.ExprContext, joinConds, filterConds []
 	solver.nullSensitive = nullSensitive
 	solver.ctx = ctx
 	solver.pushDownFunc = pushDownFunc
+	if solver.pushDownFunc != nil {
+		for _, expr := range joinConds {
+			if eqConditions, _, _, _ := solver.pushDownFunc(expr); len(eqConditions) > 0 {
+				solver.eqConditionCount++
+			}
+		}
+	}
 	return solver.solve(joinConds, filterConds)
 }
 
