@@ -256,7 +256,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
+		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.extractOnConditionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -272,7 +272,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		rightCond = rightPushCond
 	case AntiSemiJoin:
 		predicates = p.joinPropConst(predicates)
-		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, p.extractOnConditionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -1263,20 +1263,20 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 	return false
 }
 
-// canPropagateConstantWithInnerJoinOrSemiJoin is to It is used to determine whether the newly created expression
+// extractOnConditionWithInnerJoinOrSemiJoin is used to determine whether the newly created expression
 // during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
 // we will remove it.
 // This function is only used with inner join and semi join.
-func (p *LogicalJoin) canPropagateConstantWithInnerJoinOrSemiJoin(expr expression.Expression) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+func (p *LogicalJoin) extractOnConditionWithInnerJoinOrSemiJoin(expr expression.Expression) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
 	return p.extractOnCondition([]expression.Expression{expr}, true, true)
 }
 
-// canPropagateConstantForJoinPropConst is to It is used to determine whether the newly created expression
+// extractOnConditionForJoinPropConst is used to determine whether the newly created expression
 // during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
 // we will remove it.
 // This function is only used in LogicalJoin.joinPropConst.
-func (p *LogicalJoin) canPropagateConstantForJoinPropConst(expr expression.Expression) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+func (p *LogicalJoin) extractOnConditionForJoinPropConst(expr expression.Expression) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
 	return p.extractOnCondition([]expression.Expression{expr}, false, false)
 }
@@ -1721,7 +1721,7 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expres
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
 	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema,
-		innerTableSchema, nullSensitive, p.canPropagateConstantForJoinPropConst)
+		innerTableSchema, nullSensitive, p.extractOnConditionForJoinPropConst)
 	p.AttachOnConds(joinConds)
 	return predicates
 }
