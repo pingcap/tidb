@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/cpu"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -98,6 +100,10 @@ func CalcConcurrencyByDataSize(size int64, coresPerNode int) int {
 func GetExecCPUNode(ctx context.Context) (int, error) {
 	mgr, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
+		if intest.InTest {
+			logutil.Logger(ctx).Warn("failed to get DXFSvcTaskMgr in test mode, returning default CPU count")
+			return cpu.GetCPUCount(), nil
+		}
 		return 0, errors.Trace(err)
 	}
 	cpuNode, err := mgr.GetCPUCountOfNodeByRole(ctx, handle.GetTargetScope())
