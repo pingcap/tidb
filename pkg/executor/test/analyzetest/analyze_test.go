@@ -3192,11 +3192,11 @@ func TestGeneratedColumns(t *testing.T) {
 	tk.MustExec("ANALYZE TABLE test_gen_cols")
 
 	h := dom.StatsHandle()
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gen_cols"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_gen_cols"))
 	require.NoError(t, err)
 
 	// Get the table statistics
-	tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	tblStats := h.GetTableStats(tbl.Meta())
 	require.NotNil(t, tblStats)
 	require.True(t, tblStats.IsAnalyzed())
 
@@ -3243,10 +3243,10 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	// Analyze the table with all columns
 	tk.MustExec("ANALYZE TABLE test_gen_cols all columns")
 	h := dom.StatsHandle()
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gen_cols"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_gen_cols"))
 	require.NoError(t, err)
 	// Get the table statistics
-	tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	tblStats := h.GetTableStats(tbl.Meta())
 	require.NotNil(t, tblStats)
 	require.True(t, tblStats.IsAnalyzed())
 	// For JSON column, it should not collect statistics because we skip it
@@ -3267,7 +3267,7 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	require.Equal(t, "stored_col", rows[2][3])
 
 	tk.MustExec("ANALYZE TABLE test_gen_cols")
-	tblStats = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	tblStats = h.GetTableStats(tbl.Meta())
 	require.NotNil(t, tblStats)
 	require.True(t, tblStats.IsAnalyzed())
 	// For JSON column, it should not collect statistics because we skip it
@@ -3281,7 +3281,7 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	tk.MustExec("set @@tidb_analyze_skip_column_types = 'text, blob'")
 	tk.MustQuery("select @@tidb_analyze_skip_column_types").Check(testkit.Rows("text,blob"))
 	tk.MustExec("ANALYZE TABLE test_gen_cols")
-	tblStats = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	tblStats = h.GetTableStats(tbl.Meta())
 	require.NotNil(t, tblStats)
 	require.True(t, tblStats.IsAnalyzed())
 	// For JSON column, it should be analyzed now
