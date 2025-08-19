@@ -4095,22 +4095,53 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		return nil
 	}
 
-	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || (config.GetGlobalConfig().PessimisticTxn.
-		PessimisticAutoCommit.Load() && !s.GetSessionVars().BulkDMLEnabled) {
-		if s.sessionVars.TxnMode == ast.Pessimistic {
-			txnMode = ast.Pessimistic
-		}
-	}
-
-	if s.sessionVars.RetryInfo.Retrying {
-		txnMode = ast.Pessimistic
-	}
+	txnMode := s.decideTxnMode()
 
 	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
 		Type:    sessiontxn.EnterNewTxnBeforeStmt,
 		TxnMode: txnMode,
 	})
+}
+
+// decideTxnMode determines whether to use pessimistic or optimistic transaction mode
+// based on the current session state and configuration.
+func (s *session) decideTxnMode() string {
+	if s.sessionVars.RetryInfo.Retrying {
+		return ast.Pessimistic
+	}
+
+	if s.sessionVars.TxnMode != ast.Pessimistic {
+		return ast.Optimistic
+	}
+
+	if !s.sessionVars.IsAutocommit() {
+		return s.sessionVars.TxnMode
+	}
+
+	if s.shouldUsePessimisticAutoCommit() {
+		return ast.Pessimistic
+	}
+
+	return ast.Optimistic
+}
+
+// shouldUsePessimisticAutoCommit checks if pessimistic-auto-commit should be applied
+// for the current statement.
+func (s *session) shouldUsePessimisticAutoCommit() bool {
+	// Check if pessimistic-auto-commit is enabled globally
+	if !config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+		return false
+	}
+
+	// Disabled for bulk DML operations
+	if s.GetSessionVars().BulkDMLEnabled {
+		return false
+	}
+
+	// Only apply to specific DML statements: INSERT, UPDATE, DELETE
+	// Note: LOAD DATA and IMPORT are intentionally excluded even though they are DML
+	stmtCtx := s.sessionVars.StmtCtx
+	return stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt
 }
 
 // PrepareTSFuture uses to try to get ts future.
