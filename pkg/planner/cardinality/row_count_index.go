@@ -407,7 +407,6 @@ func estimateRowCountWithUniformDistribution(
 	modifyCount int64,
 ) statistics.RowEstimate {
 	var histNDV float64
-	var fullNDV float64
 	var histogram *statistics.Histogram
 	var topN *statistics.TopN
 	var totalRowCount float64
@@ -422,19 +421,17 @@ func estimateRowCountWithUniformDistribution(
 			return statistics.DefaultRowEst(1)
 		}
 		histNDV = float64(s.Histogram.NDV - int64(s.TopN.Num())) // Exclude TopN from NDV
-		fullNDV = float64(s.Histogram.NDV)
 		histogram = &s.Histogram
 		topN = s.TopN
 		totalRowCount = s.TotalRowCount()
 		increaseFactor = s.GetIncreaseFactor(realtimeRowCount)
-		notNullCount = s.NotNullCount()
+		notNullCount = s.Histogram.NotNullCount()
 	case *statistics.Index:
 		if s == nil {
 			// Return a default estimate when index stats are nil
 			return statistics.DefaultRowEst(1)
 		}
 		histNDV = float64(s.Histogram.NDV - int64(s.TopN.Num())) // Exclude TopN from NDV
-		fullNDV = float64(s.Histogram.NDV)
 		histogram = &s.Histogram
 		topN = s.TopN
 		totalRowCount = s.TotalRowCount()
@@ -445,7 +442,7 @@ func estimateRowCountWithUniformDistribution(
 		return statistics.DefaultRowEst(1)
 	}
 	// Branch 1: all NDV's are in TopN, and no histograms.
-	if histNDV <= 0 || histogram.NotNullCount() == 0 {
+	if histNDV <= 0 || notNullCount == 0 {
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
@@ -456,7 +453,7 @@ func estimateRowCountWithUniformDistribution(
 		if notNullCount <= 0 {
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
-		outOfRangeCnt := outOfRangeFullNDV(fullNDV, totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 		return statistics.DefaultRowEst(outOfRangeCnt)
 	}
 	// branch 2: some NDV's are in histograms
