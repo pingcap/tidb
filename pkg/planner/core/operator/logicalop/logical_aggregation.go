@@ -631,8 +631,8 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
-    cols := append(la.GetGroupByCols(), la.getAggFuncsCols()...)
-	groupByColumns := expression.NewSchema(cols)
+	cols := append(la.GetGroupByCols(), la.getAggFuncsCols()...)
+	groupByColumns := expression.NewSchema(cols...)
 	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
 		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal)
@@ -650,8 +650,9 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 func (la *LogicalAggregation) getAggFuncsCols() (aggFuncsCols []*expression.Column) {
 	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
 	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.Name == "firstrow" {
-			aggFuncsCols = append(aggFuncsCols, aggFunc.Args[0].(*expression.Column))
+		if aggFunc.Name == ast.AggFuncFirstRow {
+			cols := expression.ExtractColumns(aggFunc.Args[0])
+			aggFuncsCols = append(aggFuncsCols, cols...)
 		}
 	}
 	return aggFuncsCols
