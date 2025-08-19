@@ -7283,7 +7283,7 @@ def go_deps():
     )
     go_repository(
         name = "com_github_tikv_pd_client",
-        build_tags = ["nextgen"],
+        build_tags = ["nextgen","intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
         sha256 = "f5e502897005e01f77da34f6a687a584bf11bad405a2d6ff94e1fe0225925bd1",
