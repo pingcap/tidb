@@ -66,7 +66,7 @@ type TableReaderImpl struct {
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *logicalop.DataSource) *TableReaderImpl {
+func NewTableReaderImpl(reader *physicalop.PhysicalTableReader, source *logicalop.DataSource) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
@@ -78,7 +78,7 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *logical
 
 // CalcCost calculates the cost of the table reader Implementation.
 func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	reader := impl.plan.(*physicalop.PhysicalTableReader)
 	width := cardinality.GetAvgRowSize(impl.plan.SCtx(), impl.tblColHists, reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
 	// TableReaderImpl don't have tableInfo property, so using nil to replace it.
@@ -95,7 +95,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 
 // GetCostLimit implements Implementation interface.
 func (impl *TableReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	reader := impl.plan.(*physicalop.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {

@@ -143,11 +143,15 @@ func init() {
 	// for physical cte
 	utilfuncp.GetPlanCostVer24PhysicalCTE = getPlanCostVer24PhysicalCTE
 	utilfuncp.Attach2Task4PhysicalCTEStorage = attach2Task4PhysicalCTEStorage
+	// for table reader
+	utilfuncp.GetPlanCostVer14PhysicalTableReader = getPlanCostVer14PhysicalTableReader
+	utilfuncp.GetPlanCostVer24PhysicalTableReader = getPlanCostVer24PhysicalTableReader
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
 	utilfuncp.IsSingleScan = isSingleScan
 	utilfuncp.WindowIsTopN = windowIsTopN
+	utilfuncp.LoadTableStats = loadTableStats
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost

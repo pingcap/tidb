@@ -139,7 +139,7 @@ func TestModifyTask(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
-	id, err := gm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err := gm.CreateTask(ctx, "key1", "test", "", 4, "", 1, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 
 	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
@@ -165,6 +165,7 @@ func TestModifyTask(t *testing.T) {
 	task, err := gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStatePending, task.State)
+	require.EqualValues(t, 1, task.MaxNodeCount)
 	subtasks := make([]*proto.Subtask, 0, 4)
 	for i := range 4 {
 		subtasks = append(subtasks, proto.NewSubtask(proto.StepOne, task.ID, task.Type,
@@ -188,6 +189,7 @@ func TestModifyTask(t *testing.T) {
 		PrevState: proto.TaskStateRunning,
 		Modifications: []proto.Modification{
 			{Type: proto.ModifyConcurrency, To: 2},
+			{Type: proto.ModifyMaxNodeCount, To: 3},
 		},
 	}
 	require.NoError(t, gm.ModifyTaskByID(ctx, id, &param))
@@ -211,10 +213,11 @@ func TestModifyTask(t *testing.T) {
 		return err
 	}))
 	task.Concurrency = 2
+	task.MaxNodeCount = 3
 	task.Meta = []byte("modified")
 	require.NoError(t, gm.ModifiedTask(ctx, task))
 	checkTaskAfterModify(ctx, t, gm, task.ID,
-		2, []byte("modified"), []int{4, 2, 2, 2},
+		2, 3, []byte("modified"), []int{4, 2, 2, 2},
 	)
 
 	// task state changed before move to 'modified'
@@ -248,26 +251,29 @@ func TestModifyTask(t *testing.T) {
 		// here just to show that if another client finishes modifying, our modify
 		// will skip silently.
 		taskClone.Concurrency = 5
+		taskClone.MaxNodeCount = 50
 		taskClone.Meta = []byte("modified-other")
 		require.NoError(t, gm.ModifiedTask(ctx, &taskClone))
 		ch <- struct{}{}
 	})
 	task.Concurrency = 3
+	task.MaxNodeCount = 30
 	task.Meta = []byte("modified2")
 	require.NoError(t, gm.ModifiedTask(ctx, task))
 	wg.Wait()
 	checkTaskAfterModify(ctx, t, gm, task.ID,
-		5, []byte("modified-other"), []int{4, 5, 5, 5},
+		5, 50, []byte("modified-other"), []int{4, 5, 5, 5},
 	)
 }
 
 func checkTaskAfterModify(
 	ctx context.Context, t *testing.T, gm *storage.TaskManager, taskID int64,
-	expectConcurrency int, expectedMeta []byte, expectedSTConcurrencies []int) {
+	expectConcurrency, expectMaxNode int, expectedMeta []byte, expectedSTConcurrencies []int) {
 	task, err := gm.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateRunning, task.State)
 	require.Equal(t, expectConcurrency, task.Concurrency)
+	require.EqualValues(t, expectMaxNode, task.MaxNodeCount)
 	require.Equal(t, expectedMeta, task.Meta)
 	require.Equal(t, proto.ModifyParam{}, task.ModifyParam)
 	gotSubtasks, err := gm.GetSubtasksWithHistory(ctx, task.ID, proto.StepOne)
