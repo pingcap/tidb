@@ -3162,6 +3162,9 @@ drop table if exists t;
 create table t (a int);
 insert into t values (1);
 analyze table t all columns;
+select @@tidb_opt_limit_push_down_threshold;
+@@tidb_opt_limit_push_down_threshold
+5000
 set tidb_opt_limit_push_down_threshold=0;
 explain format=brief select a from t order by a desc limit 10;
 id	estRows	task	access object	operator info

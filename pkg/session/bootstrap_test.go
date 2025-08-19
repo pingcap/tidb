@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
@@ -2411,9 +2412,12 @@ func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 }
 
 func TestKeyspaceEtcdNamespace(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("keyspace is not supported in classic kernel")
+	}
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
 	keyspaceMeta.Id = 2
-	keyspaceMeta.Name = "test_ks_name2"
+	keyspaceMeta.Name = keyspace.System
 	makeStore(t, &keyspaceMeta, true)
 }
 
