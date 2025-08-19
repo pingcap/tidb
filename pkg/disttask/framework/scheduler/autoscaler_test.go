@@ -91,10 +91,10 @@ func TestCalcConcurrencyByDataSize(t *testing.T) {
 		{25 * units.GiB, 5, 1},
 		{25 * units.GiB, 1, 1},
 		{50 * units.GiB, 4, 2},
-		{100 * units.GiB, 3, 2},
+		{100 * units.GiB, 3, 3},
 		{50 * units.GiB, 10, 2},
 		{75 * units.GiB, 4, 3},
-		{25 * 1000 * units.GiB, 16, 15},
+		{25 * 1000 * units.GiB, 16, 16},
 		{1, 5, 1},
 	}
 	for _, tt := range tests {
