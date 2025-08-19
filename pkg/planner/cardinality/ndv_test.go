@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cardinality
+package cardinality_test
 
 import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +42,29 @@ func TestScaleNDV(t *testing.T) {
 		{10, 100, 90, 10.00},
 	}
 	for _, tc := range cases {
-		newNDV := ScaleNDV(tc.OriginalNDV, tc.OriginalRows, tc.SelectedRows)
+		newNDV := cardinality.ScaleNDV(tc.OriginalNDV, tc.OriginalRows, tc.SelectedRows)
 		require.Equal(t, fmt.Sprintf("%.2f", tc.NewNDV), fmt.Sprintf("%.2f", newNDV), tc)
 	}
+}
+
+func TestIssue54812(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a int, b int, key(a), key(b));`)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, 1))
+	}
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", 100, 2))
+	}
+	tk.MustExec("analyze table t")
+	tk.MustExec(`set @@tidb_stats_load_sync_wait=100`)
+	tk.MustQuery(`explain select distinct(a) from t where b=1`).Check(testkit.Rows(
+		"HashAgg_15 65.23 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+		"└─TableReader_16 65.23 root  data:HashAgg_5",
+		"  └─HashAgg_5 65.23 cop[tikv]  group by:test.t.a, ",
+		"    └─Selection_14 100.00 cop[tikv]  eq(test.t.b, 1)",
+		"      └─TableFullScan_13 1100.00 cop[tikv] table:t keep order:false"))
 }
