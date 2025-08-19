@@ -431,7 +431,7 @@ func estimateRowCountWithUniformDistribution(
 	default:
 		panic("estimateRowCountWithUniformDistribution: unsupported stats type")
 	}
-	// Instead of using modifyCount - we are using the different of added rows vs original rows.
+	// Instead of using modifyCount - we are using the difference of added rows vs original rows.
 	addedRowCount := realtimeRowCount - int64(totalRowCount)
 	// Branch 1: all NDV's are in TopN, and no histograms.
 	if histNDV <= 0 || histogram.NotNullCount() == 0 {
