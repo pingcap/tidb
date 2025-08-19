@@ -453,4 +453,3 @@ func TestNonTransactionalMetrics(t *testing.T) {
 		tk.MustExec("BATCH LIMIT 10 REPLACE INTO t2 SELECT * FROM t1")
 	})
 }
->>>>>>> 742b8e0306a (txn: tag non-transcational DML's metrics with `NTDml` (#62837)):pkg/session/test/nontransactionaltest/nontransactional_test.go
