@@ -1660,6 +1660,7 @@ func (p *LogicalJoin) updateEQCond() {
 	// todo: by now, when there is already a normal EQ condition, just keep NA-EQ as other-condition filters above it.
 	// eg: select * from stu where stu.name not in (select name from exam where exam.stu_id = stu.id);
 	// combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id> for join key is little complicated for now.
+	// NOTE: tidb executor doesn't NAAJ for LeftOuterSemiJoin, so NAAJ will be disabled in exhaustPhysicalPlans4LogicalJoin.
 	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin) && len(p.EqualConditions) == 0
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		var otherCond expression.CNFExprs
@@ -1731,6 +1732,8 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expres
 	return predicates
 }
 
+// DisableNAJoinForLeftOuterSemi move all eq_cond from NAEQConditions to OtherConditions.
+// This is used to disable NAAJ for LeftOuterSemiJoin.
 func (p *LogicalJoin) DisableNAJoinForLeftOuterSemi() {
 	if p.JoinType == LeftOuterSemiJoin && len(p.NAEQConditions) > 0 {
 		for _, eqCond := range p.NAEQConditions {
