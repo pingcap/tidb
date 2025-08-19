@@ -562,7 +562,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 		usage, err = telemetry.GetFeatureUsage(tk.Session())
 		require.NoError(t, err)
 		expectedCnt++
-		require.Equal(t, int64(expectedCnt), usage.DDLUsageCounter.AddIndexIngestUsed)
+		require.Equal(t, expectedCnt, usage.DDLUsageCounter.AddIndexIngestUsed)
 		require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
 		tk.MustExec("set global tidb_enable_metadata_lock = 1")
 	}
