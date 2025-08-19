@@ -38,7 +38,7 @@ create table t2 like t;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 create table pt (a int, b int) partition by hash(a) partitions 4;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
-alter table t add column c int not null;
+alter table t add column cc int not null;
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t add index (a);
 Error 3809 (HY000): Schema 'db_read_only' is in read only mode.

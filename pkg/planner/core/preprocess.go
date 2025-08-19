@@ -252,7 +252,61 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
-func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
+// extractTableName extracts the db name from the ast.Node for checking database read only.
+func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0, 1)
+	switch node := in.(type) {
+	case *ast.CreateTableStmt:
+		if node.TemporaryKeyword == ast.TemporaryNone {
+			dbNames = append(dbNames, node.Table.Schema)
+		}
+	case *ast.CreateViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.DropTableStmt:
+		for _, tbl := range node.Tables {
+			table, err := p.tableByName(tbl)
+			if err == nil && table.Meta().TempTableType == model.TempTableNone {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.RenameTableStmt:
+		for _, tbl := range node.TableToTables {
+			dbNames = append(dbNames, tbl.OldTable.Schema)
+			dbNames = append(dbNames, tbl.NewTable.Schema)
+
+		}
+	case *ast.AlterDatabaseStmt:
+		for _, opt := range node.Options {
+			if opt.Tp != ast.DatabaseOptionReadOnly {
+				dbNames = append(dbNames, node.Name)
+			}
+		}
+	case *ast.DropDatabaseStmt:
+		dbNames = append(dbNames, node.Name)
+	case *ast.CreateIndexStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AlterTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.ImportIntoStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.TruncateTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.DropIndexStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.LoadDataStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	}
+	return dbNames
+}
+
+func (p *preprocessor) checkSchemaReadOnly(in ast.Node) {
+	dbNames := p.extractSchema(in)
+	for _, dbName := range dbNames {
+		p.schemaReadOnly(dbName)
+	}
+}
+
+func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
 	if p.err != nil {
 		return
 	}
@@ -301,57 +355,35 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
-		if node.TemporaryKeyword == ast.TemporaryNone {
-			p.schemaReadOnly(node.Table.Schema)
-		}
 	case *ast.CreateViewStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
-		p.schemaReadOnly(node.ViewName.Schema)
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeDrop
 		p.checkDropTableGrammar(node)
-		for _, tbl := range node.Tables {
-			table, err := p.tableByName(tbl)
-			if err == nil && table.Meta().TempTableType == model.TempTableNone {
-				p.schemaReadOnly(tbl.Schema)
-			}
-		}
 	case *ast.RenameTableStmt:
 		p.stmtTp = TypeRename
 		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
-		for _, tbl := range node.TableToTables {
-			p.schemaReadOnly(tbl.OldTable.Schema)
-			p.schemaReadOnly(tbl.NewTable.Schema)
-		}
 	case *ast.CreateIndexStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateIndexGrammar(node)
-		p.schemaReadOnly(node.Table.Schema)
 	case *ast.AlterTableStmt:
 		p.stmtTp = TypeAlter
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
-		p.schemaReadOnly(node.Table.Schema)
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
 	case *ast.AlterDatabaseStmt:
 		p.stmtTp = TypeAlter
 		p.checkAlterDatabaseGrammar(node)
-		for _, opt := range node.Options {
-			if opt.Tp != ast.DatabaseOptionReadOnly {
-				p.schemaReadOnly(node.Name)
-			}
-		}
 	case *ast.DropDatabaseStmt:
 		p.stmtTp = TypeDrop
 		p.checkDropDatabaseGrammar(node)
-		p.schemaReadOnly(node.Name)
 	case *ast.ShowStmt:
 		p.stmtTp = TypeShow
 		p.showTp = node.Tp
@@ -408,7 +440,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.ImportIntoStmt:
 		p.stmtTp = TypeImportInto
 		p.flag |= inImportInto
-		p.schemaReadOnly(node.Table.Schema)
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -480,12 +511,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.varsReadonly[node.Name] = struct{}{}
 			}
 		}
-	case *ast.TruncateTableStmt:
-		p.schemaReadOnly(node.Table.Schema)
-	case *ast.DropIndexStmt:
-		p.schemaReadOnly(node.Table.Schema)
-	case *ast.LoadDataStmt:
-		p.schemaReadOnly(node.Table.Schema)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -748,6 +773,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
 	}
+
+	p.checkSchemaReadOnly(in)
 
 	return in, p.err == nil
 }

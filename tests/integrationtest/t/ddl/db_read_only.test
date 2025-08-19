@@ -48,7 +48,7 @@ create table pt (a int, b int) partition by hash(a) partitions 4;
 
 # alter table
 -- error 3809
-alter table t add column c int not null;
+alter table t add column cc int not null;
 -- error 3809
 alter table t add index (a);
 -- error 3809
