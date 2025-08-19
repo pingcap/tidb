@@ -104,3 +104,35 @@ func EstimateColsDNVWithMatchedLenFromUniqueIDs(ids []int64, schema *expression.
 	}
 	return EstimateColsNDVWithMatchedLen(cols, schema, profile)
 }
+
+/*
+ScaleNDV scales the original NDV based on the selectivity of the rows.
+
+This function is based on the uniform assumption:
+1. each value appears the same number of times in total rows.
+2. each row has the same probability to be selected.
+
+For example, if originalNDV is 5, selectedRows is 6 and totalRows is 10.
+Then we assume that each value appears 10/5 = 2 times (assumption 1).
+For each row, the probability of being selected is 6/10 = 0.6 (assumption 2).
+Then for each value, the probability of not being selected is (1-0.6)^2 = 0.16.
+Finally, the new NDV should be 5 * (1-0.16) = 4.2.
+*/
+func ScaleNDV(originalNDV, selectedRows, totalRows float64) (newNDV float64) {
+	if totalRows <= 0 || selectedRows <= 0 || originalNDV <= 0 {
+		return 0
+	}
+	newNDV = originalNDV
+	if selectedRows >= totalRows {
+		return
+	}
+	selectivity := selectedRows / totalRows
+	// uniform assumption that each value appears the same number of times
+	rowsPerValue := totalRows / originalNDV
+	// the probability that a value is not selected
+	notSelectedPossPerRow := 1 - selectivity
+	notSelectedPossPerValue := math.Pow(notSelectedPossPerRow, rowsPerValue)
+	newNDV = originalNDV * (1 - notSelectedPossPerValue)
+	newNDV = max(newNDV, 1.0) // at lease 1 value
+	return
+}
