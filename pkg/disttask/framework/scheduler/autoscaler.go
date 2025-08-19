@@ -94,13 +94,13 @@ func CalcConcurrencyByDataSize(size int64, coresPerNode int) int {
 	return int(concurrency)
 }
 
-// GetSystemKeyspaceCPUNode returns the number of CPU cores on the system keyspace node.
-func GetSystemKeyspaceCPUNode(ctx context.Context) (int, error) {
+// GetExecCPUNode returns the number of CPU cores on the system keyspace node.
+func GetExecCPUNode(ctx context.Context) (int, error) {
 	mgr, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	cpuNode, err := mgr.GetCPUCountOfNodeByRole(ctx, handle.NextGenTargetScope)
+	cpuNode, err := mgr.GetCPUCountOfNodeByRole(ctx, handle.GetTargetScope())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

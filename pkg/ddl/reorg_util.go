@@ -79,7 +79,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 	if setReorgParam || setDistTaskParam {
 		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), job.TableID)
 		var err error
-		cpuNum, err = scheduler.GetSystemKeyspaceCPUNode(ctx)
+		cpuNum, err = scheduler.GetExecCPUNode(ctx)
 		if err != nil {
 			return err
 		}
