@@ -35,7 +35,7 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{core.PhysicalTableReader{},
+	var structures = []any{
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
 		core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}}
@@ -79,10 +79,11 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 
 		fullFieldName := fmt.Sprintf("%v.%v", vType.String(), vType.Field(i).Name)
 		switch fullFieldName { // handle some fields specially
-		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexMergeReader.TablePlans":
+		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
+			"core.PhysicalIndexMergeReader.TablePlans":
 			c.write("cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)")
 			continue
-		case "core.PhysicalIndexReader.IndexPlans":
+		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
 			c.write("cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)")
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":

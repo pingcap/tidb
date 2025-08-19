@@ -157,10 +157,6 @@ var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInf
 var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
 	conds []expression.Expression) []expression.Expression
 
-// ApplyPredicateSimplification will be called by LogicalSelection in logicalOp pkg.
-var ApplyPredicateSimplification func(base.PlanContext, []expression.Expression,
-	bool, func(expression2 expression.Expression) bool) []expression.Expression
-
 // IsSingleScan check whether the data source is a single scan.
 var IsSingleScan func(ds base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool
 
@@ -437,6 +433,24 @@ var ResolveIndices4PhysicalIndexLookUpReader func(pp base.PhysicalPlan) (err err
 // Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// GetPlanCostVer24PhysicalCTE will be called by PhysicalCTE in physicalOp pkg.
+var GetPlanCostVer24PhysicalCTE func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
+// Attach2Task4PhysicalCTEStorage will be called in physicalOp pkg.
+var Attach2Task4PhysicalCTEStorage func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer24PhysicalTableReader get the cost v2 for table reader.
+var GetPlanCostVer24PhysicalTableReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
+// GetPlanCostVer14PhysicalTableReader get the cost v1 for table reader.
+var GetPlanCostVer14PhysicalTableReader func(pp base.PhysicalPlan,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// LoadTableStats will be called in physicalOp pkg.
+var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
@@ -480,12 +494,3 @@ var DoOptimize func(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error)
-
-// ****************************************** index related ***********************************************
-
-// GetAccessObjectFromIndexScan is used to get access object from index scan.
-var GetAccessObjectFromIndexScan func(sctx base.PlanContext, is base.PhysicalPlan,
-	physPlanPartInfo any) base.AccessObject
-
-// LoadTableStats is used to load table stats.
-var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)

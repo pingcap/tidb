@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -174,7 +175,19 @@ func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
 
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	return utilfuncp.GetAccessObjectFromIndexScan(sctx, p.IndexPlans[0], p.PlanPartInfo)
+	is := p.IndexPlans[0].(*PhysicalIndexScan)
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return access.DynamicPartitionAccessObjects(nil)
+	}
+	asName := ""
+	if is.TableAsName != nil && len(is.TableAsName.O) > 0 {
+		asName = is.TableAsName.O
+	}
+	res := GetDynamicAccessPartition(sctx, is.Table, p.PlanPartInfo, asName)
+	if res == nil {
+		return access.DynamicPartitionAccessObjects(nil)
+	}
+	return access.DynamicPartitionAccessObjects{res}
 }
 
 // ExplainInfo implements Plan interface.
