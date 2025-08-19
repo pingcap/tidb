@@ -22,7 +22,7 @@ import (
 )
 
 // ScaleNDVFunc is used to avoid cycle import.
-var ScaleNDVFunc func(originalNDV, selectedRows, totalRows float64) (newNDV float64)
+var ScaleNDVFunc func(originalNDV, originalRows, selectedRows float64) (newNDV float64)
 
 // GroupNDV stores the NDV of a group of columns.
 type GroupNDV struct {
