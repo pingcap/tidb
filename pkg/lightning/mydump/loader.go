@@ -470,6 +470,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 			pinfo, _ := v.([]float64)
 			rowSize, ratio := pinfo[0], pinfo[1]
 			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * ratio)
+			// Postpone reading the row count to `MakeTableRegion` if necessary.
 			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / rowSize)
 
 			if m, ok := metric.FromContext(ctx); ok {
