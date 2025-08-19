@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -152,11 +151,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		)
 	}
 
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	return taskManager.WithNewSession(func(se sessionctx.Context) error {
+	return p.taskTbl.WithNewSession(func(se sessionctx.Context) error {
 		err = importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
 			func() (*local.RemoteChecksum, error) {
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)

@@ -19,7 +19,7 @@ go_test(
         "//pkg/parser/format",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/planner/core",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

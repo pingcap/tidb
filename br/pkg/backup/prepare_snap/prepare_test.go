@@ -266,7 +266,7 @@ func (m *mockStores) AssertIsNormalMode(t *testing.T) {
 
 func fakeCluster(t *testing.T, nodes int, keys ...[]byte) pd.Client {
 	tmp := t.TempDir()
-	_, pdc, cluster, err := unistore.New(tmp, nil, constants.NullKeyspaceID, nil)
+	_, pdc, cluster, err := unistore.NewClassic(tmp, nil)
 	unistore.BootstrapWithMultiStores(cluster, nodes)
 	require.NoError(t, err)
 	cluster.SplitArbitrary(keys...)

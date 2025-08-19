@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,7 @@ func TestFlatPhysicalPlan(t *testing.T) {
 		planSuiteData := GetFlatPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 		for i, test := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, test)

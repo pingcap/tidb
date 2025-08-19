@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -212,33 +211,6 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 		return tbl, true
 	}
 	return nil, false
-}
-
-// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
-func (h *Handle) GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
-	return h.getPartitionStatsByID(is, pid)
-}
-
-func (h *Handle) getPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
-	var statsTbl *statistics.Table
-	intest.Assert(h != nil, "stats handle is nil")
-	tbl, ok := h.Get(pid)
-	if !ok {
-		tbl, ok := h.TableInfoByID(is, pid)
-		if !ok {
-			return nil
-		}
-		// TODO: it's possible don't rely on the full table meta to do it here.
-		statsTbl = statistics.PseudoTable(tbl.Meta(), false, true)
-		statsTbl.PhysicalID = pid
-		if tbl.Meta().GetPartitionInfo() == nil || h.Len() < 64 {
-			h.UpdateStatsCache(types.CacheUpdate{
-				Updated: []*statistics.Table{statsTbl},
-			})
-		}
-		return nil
-	}
-	return tbl
 }
 
 // FlushStats flushes the cached stats update into store.

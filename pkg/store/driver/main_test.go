@@ -84,7 +84,7 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 
 	t.Cleanup(func() {
 		dom.Close()
-		ddl.CloseOwnerManager()
+		ddl.CloseOwnerManager(store)
 		require.NoError(t, store.Close())
 	})
 
@@ -92,7 +92,7 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 }
 
 func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
-	client, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
+	client, pdClient, cluster, err := unistore.NewClassic("", nil)
 	require.NoError(t, err)
 
 	unistore.BootstrapWithSingleStore(cluster)

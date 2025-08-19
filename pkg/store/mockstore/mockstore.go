@@ -210,8 +210,13 @@ func WithMockTiFlash(nodes int) MockTiKVStoreOption {
 func WithCurrentKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.keyspaceSpecified = true
-		c.clusterKeyspaces = []*keyspacepb.KeyspaceMeta{keyspaceMeta}
-		c.currentKeyspaceID = keyspaceMeta.Id
+		if keyspaceMeta != nil {
+			c.clusterKeyspaces = []*keyspacepb.KeyspaceMeta{keyspaceMeta}
+			c.currentKeyspaceID = keyspaceMeta.Id
+		} else {
+			c.clusterKeyspaces = nil
+			c.currentKeyspaceID = constants.NullKeyspaceID
+		}
 	}
 }
 
@@ -223,6 +228,18 @@ func WithKeyspacesAndCurrentKeyspaceID(clusterKeyspaces []*keyspacepb.KeyspaceMe
 		c.clusterKeyspaces = clusterKeyspaces
 		c.currentKeyspaceID = currentKeyspaceID
 	}
+}
+
+func (o *mockOptions) currentKeyspaceMeta() *keyspacepb.KeyspaceMeta {
+	if o.currentKeyspaceID != constants.NullKeyspaceID {
+		for _, meta := range o.clusterKeyspaces {
+			if meta.Id == o.currentKeyspaceID {
+				return meta
+			}
+		}
+		panic("currentKeyspaceID and clusterKeyspaces mismatches")
+	}
+	return nil
 }
 
 // DDLCheckerInjector is used to break import cycle.
@@ -244,7 +261,8 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	}
 	if kerneltype.IsNextGen() {
 		// in nextgen, all stores must have a keyspace meta set. to simplify the
-		// test, we set the default keyspace meta to system keyspace.
+		// test, we set the default keyspace meta to system keyspace, unless
+		// manually specified for special test purposes.
 		if !opt.keyspaceSpecified {
 			meta := &keyspacepb.KeyspaceMeta{
 				Id:   constants.MaxKeyspaceID - 1,

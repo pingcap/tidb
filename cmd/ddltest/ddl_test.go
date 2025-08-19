@@ -123,7 +123,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
 	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
-	ddl.CloseOwnerManager()
+	ddl.CloseOwnerManager(s.store)
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())

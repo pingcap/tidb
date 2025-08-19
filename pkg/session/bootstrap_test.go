@@ -2447,7 +2447,11 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
 	etcdClient := cluster.RandClient()
 
-	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, ddl.StartOwnerManager(ctx, mockStore))
+	t.Cleanup(func() {
+		ddl.CloseOwnerManager(mockStore)
+	})
 	dom, err := domap.getWithEtcdClient(mockStore, etcdClient)
 	require.NoError(t, err)
 	defer dom.Close()
