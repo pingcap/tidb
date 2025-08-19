@@ -356,7 +356,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 				cond := s.conditions[k]
 				if s.pushDownfilter != nil {
 					_, leftCond, rightCond, _ := s.pushDownfilter(cond)
-					if len(leftCond) > 0 || len(rightCond) > 0 {
+					if (len(leftCond) > 0 || len(rightCond) > 0) && isAllBooleanFunctionExpr(cond) {
 						if colset := ExtractColumnSet(cond); colset.Len() > 1 {
 							continue
 						}
@@ -727,7 +727,7 @@ func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, sch
 		}
 		if s.pushDownFunc != nil {
 			_, leftCond, rightCond, _ := s.pushDownFunc(cond)
-			if len(leftCond) > 0 || len(rightCond) > 0 {
+			if (len(leftCond) > 0 || len(rightCond) > 0) && isAllBooleanFunctionExpr(cond) {
 				if colset := ExtractColumnSet(cond); colset.Len() > 1 {
 					continue
 				}
