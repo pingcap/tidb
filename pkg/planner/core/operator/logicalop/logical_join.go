@@ -1267,8 +1267,8 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 // during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
 // we will remove it.
 // This function is only used with inner join and semi join.
-func (p *LogicalJoin) canPropagateConstantWithInnerJoinOrSemiJoin(expr expression.Expression) ([]*expression.ScalarFunction, []expression.Expression,
-	[]expression.Expression, []expression.Expression) {
+func (p *LogicalJoin) canPropagateConstantWithInnerJoinOrSemiJoin(expr expression.Expression) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+	rightCond []expression.Expression, otherCond []expression.Expression) {
 	return p.extractOnCondition([]expression.Expression{expr}, true, true)
 }
 
@@ -1276,8 +1276,8 @@ func (p *LogicalJoin) canPropagateConstantWithInnerJoinOrSemiJoin(expr expressio
 // during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
 // we will remove it.
 // This function is only used in LogicalJoin.joinPropConst.
-func (p *LogicalJoin) canPropagateConstantForJoinPropConst(expr expression.Expression) ([]*expression.ScalarFunction, []expression.Expression,
-	[]expression.Expression, []expression.Expression) {
+func (p *LogicalJoin) canPropagateConstantForJoinPropConst(expr expression.Expression) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+	rightCond []expression.Expression, otherCond []expression.Expression) {
 	return p.extractOnCondition([]expression.Expression{expr}, false, false)
 }
 
