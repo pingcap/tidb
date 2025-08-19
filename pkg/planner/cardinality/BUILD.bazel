@@ -51,6 +51,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "ndv_test.go",
         "row_count_test.go",
         "row_size_test.go",
         "selectivity_test.go",
@@ -59,7 +60,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
-    shard_count = 37,
+    shard_count = 38,
     deps = [
         "//pkg/config",
         "//pkg/domain",
