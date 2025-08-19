@@ -429,7 +429,7 @@ func estimateRowCountWithUniformDistribution(
 		increaseFactor = s.GetIncreaseFactor(realtimeRowCount)
 		notNullCount = s.Histogram.NotNullCount()
 	default:
-		panic("estimateRowCountWithUniformDistribution: unsupported stats type")
+		panic(fmt.Sprintf("estimateRowCountWithUniformDistribution: unsupported stats type %T", stats))
 	}
 	// Instead of using modifyCount - we are using the difference of added rows vs original rows.
 	addedRowCount := realtimeRowCount - int64(totalRowCount)
