@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1300,8 +1302,10 @@ func TestIndexUsageWithData(t *testing.T) {
 }
 
 func TestKeyspaceMeta(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Keyspace is not supported in classic mode")
+	}
 	keyspaceID := rand.Uint32() >> 8
-	keyspaceName := fmt.Sprintf("keyspace-%d", keyspaceID)
 	cfg := map[string]string{
 		"key_a": "a",
 		"key_b": "b",
@@ -1309,7 +1313,7 @@ func TestKeyspaceMeta(t *testing.T) {
 
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
 		Id:     keyspaceID,
-		Name:   keyspaceName,
+		Name:   keyspace.System,
 		Config: cfg,
 	}
 

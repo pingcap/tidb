@@ -418,6 +418,9 @@ func registerStores() {
 }
 
 func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+		kv.StandAloneTiDB = true
+	}
 	storage := kvstore.MustInitStorage(keyspaceName)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
