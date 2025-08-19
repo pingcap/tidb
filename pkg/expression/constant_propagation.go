@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"fmt"
 	"slices"
 	"sync"
 
@@ -246,7 +247,8 @@ type propConstSolver struct {
 	// When performing constant propagation, if the newly created expression cannot be pushed down,
 	// we might consider this expression to be invalid. We use the pushDownFunc here to determine
 	// whether it can be pushed down.
-	pushDownfilter PushDownFuncType
+	pushDownfilter      PushDownFuncType
+	equalConditionCount int64
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -259,6 +261,17 @@ func newPropConstSolver() PropagateConstantSolver {
 func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, pushDownfilter PushDownFuncType, conditions []Expression) []Expression {
 	s.ctx = ctx
 	s.pushDownfilter = pushDownfilter
+	if s.pushDownfilter != nil {
+		for _, condition := range conditions {
+			equalConditions, _, _, _ := s.pushDownfilter(condition)
+			if len(equalConditions) > 0 {
+				s.equalConditionCount++
+			}
+		}
+	}
+	if s.pushDownfilter != nil {
+		fmt.Println("wwz")
+	}
 	return s.solve(conditions)
 }
 
@@ -267,6 +280,7 @@ func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	s.conditions = s.conditions[:0]
 	s.pushDownfilter = nil
+	s.equalConditionCount = 0
 	propConstSolverPool.Put(s)
 }
 
@@ -354,10 +368,20 @@ func (s *propConstSolver) propagateColumnEQ() {
 					continue
 				}
 				cond := s.conditions[k]
+				if s.pushDownfilter != nil {
+					_, leftCond, rightCond, _ := s.pushDownfilter(cond)
+					if len(leftCond) > 0 || len(rightCond) > 0 {
+						if !isAllBooleanFunctionExpr(cond) {
+							continue
+						}
+					}
+				}
+
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
 					if s.pushDownfilter != nil {
-						if _, _, _, otherCondition := s.pushDownfilter(newExpr); len(otherCondition) > 0 {
+						_, _, _, otherCondition := s.pushDownfilter(newExpr)
+						if len(otherCondition) > 0 {
 							continue
 						}
 					}
@@ -366,7 +390,8 @@ func (s *propConstSolver) propagateColumnEQ() {
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
 					if s.pushDownfilter != nil {
-						if _, _, _, otherCondition := s.pushDownfilter(newExpr); len(otherCondition) > 0 {
+						_, _, _, otherCondition := s.pushDownfilter(newExpr)
+						if len(otherCondition) > 0 {
 							continue
 						}
 					}
@@ -482,11 +507,10 @@ type PushDownFuncType func(Expression) (eqCond []*ScalarFunction, leftCond []Exp
 
 type propSpecialJoinConstSolver struct {
 	basePropConstSolver
-	joinConds        []Expression
-	filterConds      []Expression
-	eqConditionCount int64
-	outerSchema      *Schema
-	innerSchema      *Schema
+	joinConds   []Expression
+	filterConds []Expression
+	outerSchema *Schema
+	innerSchema *Schema
 	// When performing constant propagation, if the newly created expression cannot be pushed down,
 	// we might consider this expression to be invalid. We use the pushDownFunc here to determine
 	// whether it can be pushed down.
@@ -511,7 +535,6 @@ func (s *propSpecialJoinConstSolver) Clear() {
 	s.innerSchema = nil
 	s.nullSensitive = false
 	s.pushDownFunc = nil
-	s.eqConditionCount = 0
 	propSpecialJoinConstSolverPool.Put(s)
 }
 
@@ -719,11 +742,8 @@ func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, sch
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
 			if s.pushDownFunc != nil {
-				equalCondtions, _, _, otherConditions := s.pushDownFunc(newExpr)
+				_, _, _, otherConditions := s.pushDownFunc(newExpr)
 				if len(otherConditions) > 0 {
-					continue
-				}
-				if len(equalCondtions) > 0 && s.eqConditionCount > 0 {
 					continue
 				}
 			}
@@ -792,6 +812,9 @@ func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 }
 
 func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
+	if s.pushDownFunc != nil {
+		fmt.Println("wwz")
+	}
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
@@ -846,13 +869,6 @@ func PropConstOverSpecialJoin(ctx exprctx.ExprContext, joinConds, filterConds []
 	solver.nullSensitive = nullSensitive
 	solver.ctx = ctx
 	solver.pushDownFunc = pushDownFunc
-	if solver.pushDownFunc != nil {
-		for _, expr := range joinConds {
-			if eqConditions, _, _, _ := solver.pushDownFunc(expr); len(eqConditions) > 0 {
-				solver.eqConditionCount++
-			}
-		}
-	}
 	return solver.solve(joinConds, filterConds)
 }
 
