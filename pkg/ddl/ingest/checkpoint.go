@@ -136,7 +136,7 @@ func (s *DistTaskStorageStrategy) LoadCheckpoint(ctx context.Context) (*ReorgChe
 		return nil, err
 	}
 
-	if checkpointJSON == "" {
+	if checkpointJSON == "" || checkpointJSON == "{}" {
 		return nil, nil
 	}
 

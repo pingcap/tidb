@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -109,7 +110,9 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
-	tk.MustExec("set global tidb_ddl_disk_quota = 1048576") // 1 MiB
+	tk.MustExec("set global tidb_enable_dist_task = 0")
+	ingest.ForceSyncFlagForTest.Store(true)
+
 	tk.Session().Close()
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

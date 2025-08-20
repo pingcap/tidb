@@ -137,23 +137,21 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	// Create checkpoint manager based on the configuration
 	if b.useDistTask {
 		// Use distributed task checkpoint manager
-		if b.updateFunc != nil || b.getFunc != nil {
-			cpOp, err = NewCheckpointManagerForDistTask(
-				ctx,
-				b.subtaskID,
-				b.physicalID,
-				jobSortPath,
-				pdCli,
-				b.updateFunc,
-				b.getFunc,
-			)
-			if err != nil {
-				logutil.Logger(ctx).Warn("create distributed task checkpoint manager failed",
-					zap.Int64("jobID", job.ID),
-					zap.Int64("subtaskID", b.subtaskID),
-					zap.Error(err))
-				return nil, err
-			}
+		cpOp, err = NewCheckpointManagerForDistTask(
+			ctx,
+			b.subtaskID,
+			b.physicalID,
+			jobSortPath,
+			pdCli,
+			b.updateFunc,
+			b.getFunc,
+		)
+		if err != nil {
+			logutil.Logger(ctx).Warn("create distributed task checkpoint manager failed",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("subtaskID", b.subtaskID),
+				zap.Error(err))
+			return nil, err
 		}
 	} else {
 		// Use normal checkpoint manager
