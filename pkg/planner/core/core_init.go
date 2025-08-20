@@ -194,4 +194,8 @@ func init() {
 	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
+
+	// for physical index merge reader.
+	utilfuncp.GetPlanCostVer14PhysicalIndexMergeReader = GetPlanCostVer14PhysicalIndexMergeReader
+	utilfuncp.GetPlanCostVer24PhysicalIndexMergeReader = GetPlanCostVer24PhysicalIndexMergeReader
 }
