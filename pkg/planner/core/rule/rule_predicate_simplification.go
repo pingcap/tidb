@@ -302,7 +302,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 		if err != nil {
 			return false
 		}
-		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), nil, nil, newPred)
+		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), nil, newPred)
 		return unsatisfiableExpression(ctx, newPredList[0])
 	}
 	return false
