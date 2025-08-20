@@ -242,13 +242,7 @@ var propConstSolverPool = sync.Pool{
 
 type propConstSolver struct {
 	basePropConstSolver
-	conditions []Expression
-	// When performing constant propagation, We use the vaildExprFunc here to determine
-	// whether it can be pushed down.
-	// if a expression is a left condition or right condition, we use exprNeedToPropagationContant to
-	// judge whether it can propagate constant.
-	// a new expression which is created by constant propagation, is a other condtion, we don't put it
-	// into our final result.
+	conditions    []Expression
 	vaildExprFunc VaildConstantPropagationExpressionFuncType
 }
 
@@ -479,18 +473,15 @@ var propSpecialJoinConstSolverPool = sync.Pool{
 	},
 }
 
-// VaildConstantPropagationExpressionFuncType is to filter the unsuitable expression when to propagate the const.
+// VaildConstantPropagationExpressionFuncType is to filter the unsuitable expression when to propagate the constant.
 type VaildConstantPropagationExpressionFuncType func(Expression) bool
 
 type propSpecialJoinConstSolver struct {
 	basePropConstSolver
-	joinConds   []Expression
-	filterConds []Expression
-	outerSchema *Schema
-	innerSchema *Schema
-	// When performing constant propagation, if the newly created expression cannot be pushed down,
-	// we might consider this expression to be invalid. We use the vaildExprFunc here to determine
-	// whether it can be pushed down.
+	joinConds     []Expression
+	filterConds   []Expression
+	outerSchema   *Schema
+	innerSchema   *Schema
 	vaildExprFunc VaildConstantPropagationExpressionFuncType
 
 	// nullSensitive indicates if this outer join is null sensitive, if true, we cannot generate
