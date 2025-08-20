@@ -758,68 +758,6 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 	}
 }
 
-// part of the logic is copied from builtinCastXXXAsStringFunctionSig
-func convertJSON2String(evalType types.EvalType) func(*stmtctx.StatementContext, types.BinaryJSON, *types.FieldType) (string, error) {
-	switch evalType {
-	case types.ETString:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
-			if item.TypeCode != types.JSONTypeCodeString {
-				return "", ErrInvalidJSONForFuncIndex
-			}
-			return types.ProduceStrWithSpecifiedTp(string(item.GetString()), tp, sc.TypeCtx(), false)
-		}
-	case types.ETInt:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
-			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
-				return "", ErrInvalidJSONForFuncIndex
-			}
-			jsonToInt, err := types.ConvertJSONToInt(sc.TypeCtx(), item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
-			err = sc.HandleError(err)
-			return strconv.Itoa(int(jsonToInt)), err
-		}
-	case types.ETReal:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
-			if item.TypeCode != types.JSONTypeCodeFloat64 && item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
-				return "", ErrInvalidJSONForFuncIndex
-			}
-			digit := 64
-			if tp.GetType() == mysql.TypeFloat {
-				digit = 32
-			}
-			val, err := types.ConvertJSONToFloat(sc.TypeCtx(), item)
-			if err != nil {
-				return "", err
-			}
-			return strconv.FormatFloat(val, 'f', -1, digit), nil
-		}
-	case types.ETDatetime:
-		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
-			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
-				return "", ErrInvalidJSONForFuncIndex
-			}
-			res := item.GetTimeWithFsp(tp.GetDecimal())
-			res.SetType(tp.GetType())
-			if tp.GetType() == mysql.TypeDate {
-				// Truncate hh:mm:ss part if the type is Date.
-				res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
-			}
-			res.SetFsp(tp.GetDecimal())
-			return res.String(), nil
-		}
-	case types.ETDuration:
-		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
-			if item.TypeCode != types.JSONTypeCodeDuration {
-				return "", ErrInvalidJSONForFuncIndex
-			}
-			dur := item.GetDuration()
-			dur.Fsp = tp.GetDecimal()
-			return dur.String(), nil
-		}
-	default:
-		return nil
-	}
-}
-
 type castAsJSONFunctionClass struct {
 	baseFunctionClass
 
