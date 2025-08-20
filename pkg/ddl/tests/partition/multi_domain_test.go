@@ -766,23 +766,6 @@ func getTableAndPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) 
 	return originalIDs
 }
 
-func getAddingPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) {
-	ctx := tk.Session()
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	if tbl.Meta().Partition == nil {
-		return nil
-	}
-	ids := make([]int64, 0, len(tbl.Meta().Partition.AddingDefinitions))
-	if tbl.Meta().Partition != nil {
-		for _, def := range tbl.Meta().Partition.AddingDefinitions {
-			ids = append(ids, def.ID)
-		}
-	}
-	return ids
-}
-
 func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []int64) {
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
