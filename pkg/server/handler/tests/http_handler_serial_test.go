@@ -761,32 +761,34 @@ func TestIngestParam(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		resp, err := ts.FetchStatus(tc.url)
-		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		decoder := json.NewDecoder(resp.Body)
-		var payload struct {
-			Value  float64 `json:"value"`
-			IsNull bool    `json:"is_null"`
-		}
-		err = decoder.Decode(&payload)
-		require.NoError(t, err)
-		require.Equal(t, tc.defaultVal, payload.Value)
+		t.Run(tc.url, func(t *testing.T) {
+			resp, err := ts.FetchStatus(tc.url)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			decoder := json.NewDecoder(resp.Body)
+			var payload struct {
+				Value  float64 `json:"value"`
+				IsNull bool    `json:"is_null"`
+			}
+			err = decoder.Decode(&payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.defaultVal, payload.Value)
 
-		resp, err = ts.PostStatus(tc.url, "", bytes.NewBuffer([]byte(fmt.Sprintf(`{"value": %v}`, tc.modVal))))
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
+			resp, err = ts.PostStatus(tc.url, "", bytes.NewBuffer([]byte(fmt.Sprintf(`{"value": %v}`, tc.modVal))))
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		resp, err = ts.FetchStatus(tc.url)
-		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		decoder = json.NewDecoder(resp.Body)
-		err = decoder.Decode(&payload)
-		require.NoError(t, err)
-		require.Equal(t, tc.expectedVal, payload.Value)
+			resp, err = ts.FetchStatus(tc.url)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			decoder = json.NewDecoder(resp.Body)
+			err = decoder.Decode(&payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedVal, payload.Value)
+		})
 	}
 }
