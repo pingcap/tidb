@@ -60,7 +60,7 @@ func TestSchemaClone(t *testing.T) {
 	}
 	schema.SetUniqueKeys(uniKeys)
 
-	clonedSchema := schema.Clone()
+	clonedSchema := schema.Clone(nil)
 	require.Equal(t, schema.String(), clonedSchema.String())
 
 	require.NotSame(t, unsafe.SliceData(schema.PKOrUK), unsafe.SliceData(clonedSchema.PKOrUK))
