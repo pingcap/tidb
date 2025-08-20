@@ -377,6 +377,12 @@ const (
 	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
 	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
 
+	// The following selectivity factors represent a multiplier for the selectivity of each predicate.
+	// These factors are used to determine the selectivity of predicates in the optimizer's cost model.
+	// TiDBOptSelectivityFactor: If one condition can't be calculated,
+	// we will assume that the selectivity of this condition is 0.8 by default.
+	TiDBOptSelectivityFactor = "tidb_opt_selectivity_factor"
+
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
@@ -1371,6 +1377,7 @@ const (
 	DefOptMergeJoinCostFactor               = 1.0
 	DefOptHashJoinCostFactor                = 1.0
 	DefOptIndexJoinCostFactor               = 1.0
+	DefOptSelectivityFactor                 = 0.8
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
