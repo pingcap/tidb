@@ -60,10 +60,11 @@ func TestAggFunc2Pb(t *testing.T) {
 		`{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary","array":false},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary","array":false},"has_distinct":%v,"aggFuncMode":0}`,
 		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary","array":false},"has_distinct":false}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":-63,"charset":"binary","array":false},"has_distinct":%v,"aggFuncMode":0}`,
 	}
+	cc := make(expression.CloneContext, 2)
 	for i, funcName := range funcNames {
 		for _, hasDistinct := range []bool{true, false} {
 			args := []expression.Expression{genColumn(mysql.TypeDouble, 1)}
-			aggFunc, err := NewAggFuncDesc(ctx, funcName, args, hasDistinct)
+			aggFunc, err := NewAggFuncDesc(ctx, cc, funcName, args, hasDistinct)
 			require.NoError(t, err)
 			aggFunc.RetTp = funcTypes[i]
 			pushCtx := expression.NewPushDownContextFromSessionVars(
