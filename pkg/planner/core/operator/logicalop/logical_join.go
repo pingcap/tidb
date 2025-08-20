@@ -1268,28 +1268,29 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 	return false
 }
 
-// isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin is used to determine whether the newly created expression
-// during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
-// we will remove it.
 // This function is only used with inner join and semi join.
 func (p *LogicalJoin) isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin(expr expression.Expression) bool {
 	return p.isVaildConstantPropagationExpression(expr, true, true)
 }
 
-// isVaildConstantPropagationExpressionForJoinPropConst is used to determine whether the newly created expression
-// during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
-// we will remove it.
 // This function is only used in LogicalJoin.joinPropConst.
 func (p *LogicalJoin) isVaildConstantPropagationExpressionForJoinPropConst(expr expression.Expression) bool {
 	return p.isVaildConstantPropagationExpression(expr, false, false)
 }
 
+// isVaildConstantPropagationExpression is to judge whether the expression is created by PropagationContant is vaild.
+//
+// Some expressions are not suitable for constant propagation. After constant propagation,
+// these expressions will only become a projection, increasing the computational load without
+// being able to filter data directly from the data source.
 func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expression, deriveLeft bool, deriveRight bool) bool {
 	_, leftCond, rightCond, otherCond := p.extractOnCondition([]expression.Expression{cond}, deriveLeft, deriveRight)
 	if len(otherCond) > 0 {
+		// a new expression which is created by constant propagation, is a other condtion, we don't put it
+		// into our final result.
 		return false
 	}
-	// If a function always returns a bool type, then we can consider it as a function worth pushing down.
+	// When the expression is a left/right condition, we want it to filter more of the underlying data.
 	if len(leftCond) > 0 || len(rightCond) > 0 {
 		colset := expression.ExtractColumnsUniqueIDFromExpressions(cond)
 		if len(colset) <= 1 {
@@ -1297,9 +1298,11 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 			// like cast(col1)
 			return true
 		} else {
+			// This expression only use bool function. there is also a point in pushing it down.
 			if expression.IsAllBooleanFunctionExpr(cond) {
 				return true
 			}
+			// If this expression's columns is in the same table. We will push it down.
 			if p.isAllUniqueIDInTheSameTable(colset) {
 				return true
 			}
