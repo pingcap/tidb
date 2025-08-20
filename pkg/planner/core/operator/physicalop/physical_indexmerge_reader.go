@@ -234,36 +234,36 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexMergeReader)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *p
+	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.PushedLimit = op.PushedLimit.Clone()
-	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	partialPlans, ok := ClonePhysicalPlansForPlanCache(newCtx, op.PartialPlansRaw)
+	cloned.PushedLimit = p.PushedLimit.Clone()
+	cloned.ByItems = util.CloneByItemss(p.ByItems)
+	partialPlans, ok := ClonePhysicalPlansForPlanCache(newCtx, p.PartialPlansRaw)
 	if !ok {
 		return nil, false
 	}
 	cloned.PartialPlansRaw = partialPlans
-	if op.TablePlan != nil {
-		tablePlan, ok := op.TablePlan.CloneForPlanCache(newCtx)
+	if p.TablePlan != nil {
+		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
 		if !ok {
 			return nil, false
 		}
 		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
 	}
-	cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))
+	cloned.PartialPlans = make([][]base.PhysicalPlan, len(p.PartialPlans))
 	for i, plan := range cloned.PartialPlansRaw {
 		cloned.PartialPlans[i] = FlattenPushDownPlan(plan)
 	}
 	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
-	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
-	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone()
+	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
+	if p.HandleCols != nil {
+		cloned.HandleCols = p.HandleCols.Clone()
 	}
 	return cloned, true
 }

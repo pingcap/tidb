@@ -147,6 +147,7 @@ func ResolveIndicesForVirtualColumn(result []*expression.Column, schema *express
 	return nil
 }
 
+// ClonePhysicalPlansForPlanCache clones physical plans for plan cache usage.
 func ClonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
 	clonedPlans := make([]base.PhysicalPlan, len(plans))
 	for i, plan := range plans {
