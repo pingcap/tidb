@@ -225,13 +225,8 @@ func CheckParquetDataType(
 	sch := res.Footer.Schema
 	schemaHandler := schema.NewSchemaHandlerFromSchemaList(sch)
 
-	columns := make([]string, 0, len(sch)-1)
-	columnMetas := make([]*parquet.SchemaElement, 0, len(sch)-1)
-	for i, c := range schemaHandler.SchemaElements {
+	for _, c := range schemaHandler.SchemaElements {
 		if c.GetNumChildren() == 0 {
-			// we need to use the raw name, SchemaElement.Name might be prefixed with PARGO_PERFIX_
-			columns = append(columns, strings.ToLower(schemaHandler.GetExName(i)))
-			// transfer old ConvertedType to LogicalType
 			columnMeta := c
 			if c.ConvertedType != nil && c.LogicalType == nil {
 				newMeta := *c
@@ -240,7 +235,15 @@ func CheckParquetDataType(
 					return false, err
 				}
 			}
-			columnMetas = append(columnMetas, columnMeta)
+
+			// TODO(joechenrh): since we don't have the struct of table at this moment,
+			// we can't check if the logical type is compatible with the column type.
+			// For example, importing ConvertedType_DATE into a double column is quite strange.
+			// Maybe we can output some warning log here in the future.
+			switch *columnMeta.ConvertedType {
+			case parquet.ConvertedType_INTERVAL, parquet.ConvertedType_MAP, parquet.ConvertedType_MAP_KEY_VALUE, parquet.ConvertedType_LIST:
+				return false, errors.Errorf("unsupported type: '%s'", *columnMeta.ConvertedType)
+			}
 		}
 	}
 
