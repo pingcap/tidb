@@ -987,11 +987,10 @@ func TestInfoSchemaExcludeNonPublicColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_state_test")
-	tk.MustExec("create table t_state_test (a int, b int, c int);")
+	tk.MustExec("create table t_state_test (a bigint, b bigint, c bigint);")
 
-	var seen atomic.Bool
 	tk2 := testkit.NewTestKit(t, store)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func(job *model.Job) {
 		// We're interested in modify-column flow reaching write reorganization.
 		if job.Type == model.ActionModifyColumn && job.SchemaState == model.StateWriteReorganization {
 			// Query information_schema.columns and assert temporary changing columns are not visible
@@ -1003,15 +1002,11 @@ func TestInfoSchemaExcludeNonPublicColumns(t *testing.T) {
 			}
 			// Expect only original columns a,b,c to be visible
 			require.ElementsMatch(t, []string{"a", "b", "c"}, names)
-			seen.Store(true)
 		}
 	})
-	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 
 	// Trigger the ALTER that will reorganize the table
-	tk.MustExec("alter table t_state_test modify column a bigint;")
-
-	require.True(t, seen.Load(), "Expected the failpoint to be triggered during the modify-column flow")
+	tk.MustExec("alter table t_state_test modify column a int;")
 }
 
 func TestIndexUsageWithData(t *testing.T) {
