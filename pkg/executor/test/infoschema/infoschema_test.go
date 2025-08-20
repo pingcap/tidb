@@ -990,19 +990,16 @@ func TestInfoSchemaExcludeNonPublicColumns(t *testing.T) {
 	tk.MustExec("create table t_state_test (a bigint, b bigint, c bigint);")
 
 	tk2 := testkit.NewTestKit(t, store)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func(job *model.Job) {
-		// We're interested in modify-column flow reaching write reorganization.
-		if job.Type == model.ActionModifyColumn && job.SchemaState == model.StateWriteReorganization {
-			// Query information_schema.columns and assert temporary changing columns are not visible
-			rows := tk2.MustQuery("select COLUMN_NAME from information_schema.columns where table_schema='test' and table_name='t_state_test'").Sort().Rows()
-			// collect column names
-			names := make([]string, 0, len(rows))
-			for _, r := range rows {
-				names = append(names, strings.ToLower(r[0].(string)))
-			}
-			// Expect only original columns a,b,c to be visible
-			require.ElementsMatch(t, []string{"a", "b", "c"}, names)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
+		// Query information_schema.columns
+		rows := tk2.MustQuery("select COLUMN_NAME from information_schema.columns where table_schema='test' and table_name='t_state_test'").Sort().Rows()
+		// Collect column names
+		names := make([]string, 0, len(rows))
+		for _, r := range rows {
+			names = append(names, strings.ToLower(r[0].(string)))
 		}
+		// Assert temporary changing columns are not visible
+		require.ElementsMatch(t, []string{"a", "b", "c"}, names)
 	})
 
 	// Trigger the ALTER that will reorganize the table
