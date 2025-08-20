@@ -54,12 +54,13 @@ func createAggFuncSuite() (s *mockAggFuncSuite) {
 
 func TestAvg(t *testing.T) {
 	s := createAggFuncSuite()
+	cc := make(expression.CloneContext, 2)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncAvg, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	avgFunc := desc.GetAggFunc(ctx)
 	evalCtx := avgFunc.CreateContext(s.ctx)
@@ -79,7 +80,7 @@ func TestAvg(t *testing.T) {
 	result = avgFunc.GetResult(evalCtx)
 	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
 
-	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
+	desc, err = NewAggFuncDesc(s.ctx, cc, ast.AggFuncAvg, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctAvgFunc := desc.GetAggFunc(ctx)
 	evalCtx = distinctAvgFunc.CreateContext(s.ctx)
@@ -98,6 +99,7 @@ func TestAvg(t *testing.T) {
 
 func TestAvgFinalMode(t *testing.T) {
 	s := createAggFuncSuite()
+	cc := make(expression.CloneContext, 2)
 	rows := make([][]types.Datum, 0, 100)
 	for i := 1; i <= 100; i++ {
 		rows = append(rows, types.MakeDatums(i, types.NewDecFromInt(int64(i*i))))
@@ -111,7 +113,7 @@ func TestAvgFinalMode(t *testing.T) {
 		Index:   1,
 		RetType: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	aggFunc, err := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{cntCol, sumCol}, false)
+	aggFunc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncAvg, []expression.Expression{cntCol, sumCol}, false)
 	require.NoError(t, err)
 	aggFunc.Mode = FinalMode
 	avgFunc := aggFunc.GetAggFunc(ctx)
@@ -128,12 +130,13 @@ func TestAvgFinalMode(t *testing.T) {
 
 func TestSum(t *testing.T) {
 	s := createAggFuncSuite()
+	cc := make(expression.CloneContext, 2)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncSum, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	sumFunc := desc.GetAggFunc(ctx)
 	evalCtx := sumFunc.CreateContext(s.ctx)
@@ -155,7 +158,7 @@ func TestSum(t *testing.T) {
 	partialResult := sumFunc.GetPartialResult(evalCtx)
 	require.True(t, partialResult[0].GetMysqlDecimal().Compare(needed) == 0)
 
-	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, true)
+	desc, err = NewAggFuncDesc(s.ctx, cc, ast.AggFuncSum, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctSumFunc := desc.GetAggFunc(ctx)
 	evalCtx = distinctSumFunc.CreateContext(s.ctx)
@@ -175,7 +178,8 @@ func TestBitAnd(t *testing.T) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitAnd, []expression.Expression{col}, false)
+	cc := make(expression.CloneContext, 2)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncBitAnd, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitAndFunc := desc.GetAggFunc(ctx)
 	evalCtx := bitAndFunc.CreateContext(s.ctx)
@@ -254,7 +258,8 @@ func TestBitOr(t *testing.T) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitOr, []expression.Expression{col}, false)
+	cc := make(expression.CloneContext, 2)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncBitOr, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitOrFunc := desc.GetAggFunc(ctx)
 	evalCtx := bitOrFunc.CreateContext(s.ctx)
@@ -341,7 +346,8 @@ func TestBitXor(t *testing.T) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitXor, []expression.Expression{col}, false)
+	cc := make(expression.CloneContext, 2)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncBitXor, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitXorFunc := desc.GetAggFunc(ctx)
 	evalCtx := bitXorFunc.CreateContext(s.ctx)
@@ -420,7 +426,8 @@ func TestCount(t *testing.T) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, false)
+	cc := make(expression.CloneContext, 2)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncCount, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	countFunc := desc.GetAggFunc(ctx)
 	evalCtx := countFunc.CreateContext(s.ctx)
@@ -441,7 +448,7 @@ func TestCount(t *testing.T) {
 	partialResult := countFunc.GetPartialResult(evalCtx)
 	require.Equal(t, int64(5050), partialResult[0].GetInt64())
 
-	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, true)
+	desc, err = NewAggFuncDesc(s.ctx, cc, ast.AggFuncCount, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctCountFunc := desc.GetAggFunc(ctx)
 	evalCtx = distinctCountFunc.CreateContext(s.ctx)
@@ -465,7 +472,8 @@ func TestConcat(t *testing.T) {
 		RetType: types.NewFieldType(mysql.TypeVarchar),
 	}
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false)
+	cc := make(expression.CloneContext, 2)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false)
 	require.NoError(t, err)
 	concatFunc := desc.GetAggFunc(ctx)
 	evalCtx := concatFunc.CreateContext(s.ctx)
@@ -493,7 +501,7 @@ func TestConcat(t *testing.T) {
 	partialResult := concatFunc.GetPartialResult(evalCtx)
 	require.Equal(t, "1x2", partialResult[0].GetString())
 
-	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true)
+	desc, err = NewAggFuncDesc(s.ctx, cc, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true)
 	require.NoError(t, err)
 	distinctConcatFunc := desc.GetAggFunc(ctx)
 	evalCtx = distinctConcatFunc.CreateContext(s.ctx)
@@ -519,7 +527,8 @@ func TestFirstRow(t *testing.T) {
 	}
 
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+	cc := make(expression.CloneContext, 2)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	firstRowFunc := desc.GetAggFunc(ctx)
 	evalCtx := firstRowFunc.CreateContext(s.ctx)
@@ -547,10 +556,11 @@ func TestMaxMin(t *testing.T) {
 	}
 
 	ctx := mock.NewContext()
-	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{col}, false)
+	cc := make(expression.CloneContext, 2)
+	desc, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncMax, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	maxFunc := desc.GetAggFunc(ctx)
-	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncMin, []expression.Expression{col}, false)
+	desc, err = NewAggFuncDesc(s.ctx, cc, ast.AggFuncMin, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	minFunc := desc.GetAggFunc(ctx)
 	maxEvalCtx := maxFunc.CreateContext(s.ctx)
@@ -606,13 +616,14 @@ func TestMaxMin(t *testing.T) {
 
 func TestAggFuncDesc(t *testing.T) {
 	s := createAggFuncSuite()
+	cc := make(expression.CloneContext, 2)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	desc1, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
+	desc1, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncSum, []expression.Expression{col}, false)
 	require.NoError(t, err)
-	desc2, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
+	desc2, err := NewAggFuncDesc(s.ctx, cc, ast.AggFuncSum, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
