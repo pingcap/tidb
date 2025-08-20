@@ -7,6 +7,9 @@ import (
 )
 
 const (
+	// TiDBCreateFromSelectUsingImport indicates whether to use import into to create table as select.
+	TiDBCreateFromSelectUsingImport = "tidb_create_from_select_using_import"
+
 	// TiDBXEnableScheduleLeaderRule indicates whether to enable region leader in one store.
 	TiDBXEnableScheduleLeaderRule = "tidbx_enable_schedule_leader_rule"
 	// TiDBXEnableTiKVLocalCall indicates whether to enable TiKV local calls.
@@ -17,16 +20,17 @@ const (
 
 // Default TiDB system variable values.
 const (
-	DefTiDBXEnableLocalRPCOpt         = false
-	DefTiDBXEnableScheduleLeaderRule  = false
-	DefTiDBEnableLabelSecurity        = false
-	DefTiDBEnableLoginHistory         = false
-	DefTiDBLoginHistoryRetainDuration = time.Hour * 24 * 90 // default 90 days.
-	DefStoredProgramCacheSize         = 256
-	DefTiDBEnableProcedure            = false
-	DefTiDBEnableDutySeparationMode   = false
-	DefTiDBEnableUDVSubstitute        = false
-	DefTiDBEnableSPParamSubstitute    = false
+	DefTiDBXEnableLocalRPCOpt          = false
+	DefTiDBXEnableScheduleLeaderRule   = false
+	DefTiDBEnableLabelSecurity         = false
+	DefTiDBEnableLoginHistory          = false
+	DefTiDBLoginHistoryRetainDuration  = time.Hour * 24 * 90 // default 90 days.
+	DefStoredProgramCacheSize          = 256
+	DefTiDBEnableProcedure             = false
+	DefTiDBEnableDutySeparationMode    = false
+	DefTiDBEnableUDVSubstitute         = false
+	DefTiDBEnableSPParamSubstitute     = false
+	DefTiDBCreateFromSelectUsingImport = false
 )
 
 // Process global variables.
