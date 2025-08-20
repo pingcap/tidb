@@ -1133,20 +1133,19 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
-	sum := accessResult + scanResult + matchResult + globalResult
+	eqOrInResult := compareEqOrIn(lhs, rhs)
+	sum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
-		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
-			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount &&
+		if !lhsPseudo && globalResult >= 0 && sum >= 0 && eqOrInResult > 0 &&
 			// if rhs's maxCount hasn't been adjusted or its adjusted max risk is greater than than lhs's regular count, then lhs can win
 			(rhs.path.MaxCountAfterAccess <= rhs.path.CountAfterAccess || lhs.path.CountAfterAccess < rhs.path.MaxCountAfterAccess) {
 			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
-		if !rhsPseudo && globalResult <= 0 && sum <= 0 &&
-			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount &&
+		if !rhsPseudo && globalResult <= 0 && sum <= 0 && eqOrInResult < 0 &&
 			// if lhs's maxCount hasn't been adjusted or its adjusted max risk is greater than rhs's regular count, then rhs can win
 			(lhs.path.MaxCountAfterAccess <= lhs.path.CountAfterAccess || rhs.path.CountAfterAccess < lhs.path.MaxCountAfterAccess) {
 			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
@@ -1155,11 +1154,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			// keep an index without statistics if that index has more equal/IN predicates, AND:
 			// 1) there are at least 2 equal/INs
 			// 2) OR - it's a full index match for all index predicates
-			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
+			if lhsPseudo && eqOrInResult > 0 && globalResult >= 0 && sum >= 0 &&
 				(lhs.path.EqOrInCondCount > 1 || isFullIndexMatch(lhs)) {
 				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
-			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 && sum <= 0 &&
+			if rhsPseudo && eqOrInResult < 0 && globalResult <= 0 && sum <= 0 &&
 				(rhs.path.EqOrInCondCount > 1 || isFullIndexMatch(rhs)) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
@@ -1226,6 +1225,26 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 		}
 	}
 	return lhsPseudo, rhsPseudo
+}
+
+func compareEqOrIn(lhs, rhs *candidatePath) int {
+	lhsEqOrIn := lhs.path.EqOrInCondCount
+	rhsEqOrIn := rhs.path.EqOrInCondCount
+	if lhs.path.IsDNFCond && lhs.path.MinAccessCondsForDNFCond > lhsEqOrIn &&
+		lhs.hasOnlyEqualPredicatesInDNF(false) {
+		lhsEqOrIn = lhs.path.MinAccessCondsForDNFCond
+	}
+	if rhs.path.IsDNFCond && rhs.path.MinAccessCondsForDNFCond > rhsEqOrIn &&
+		rhs.hasOnlyEqualPredicatesInDNF(false) {
+		rhsEqOrIn = rhs.path.MinAccessCondsForDNFCond
+	}
+	if lhsEqOrIn > rhsEqOrIn {
+		return 1
+	}
+	if lhsEqOrIn < rhsEqOrIn {
+		return -1
+	}
+	return 0
 }
 
 func isFullIndexMatch(candidate *candidatePath) bool {
