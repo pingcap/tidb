@@ -97,16 +97,6 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
-		case "[][]base.PhysicalPlan":
-			c.write("cloned.%v = make([][]base.PhysicalPlan, len(op.%v))", f.Name, f.Name)
-			c.write("for i, plans := range op.%v {", f.Name)
-			c.write("cloned.%v[i] = make([]base.PhysicalPlan, len(plans))", f.Name)
-			c.write("for j, plan := range plans {")
-			c.write("clonedPlan, ok := plan.CloneForPlanCache(newCtx)")
-			c.write("if !ok {return nil, false}")
-			c.write("cloned.%v[i][j] = clonedPlan.(base.PhysicalPlan)", f.Name)
-			c.write("}")
-			c.write("}")
 		case "physicalop.BasePhysicalAgg":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
 			c.write(`basePlan, baseOK := op.%v.CloneForPlanCacheWithSelf(newCtx, cloned)
