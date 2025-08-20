@@ -159,6 +159,7 @@ func NewRestoreCommand() *cobra.Command {
 			logutil.LogEnvVariables()
 			task.LogArguments(c)
 			session.DisableStats4Test()
+			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
 
 			summary.SetUnit(summary.RestoreUnit)
 			return nil
