@@ -85,6 +85,7 @@ func TestGroupSetsTargetOne(t *testing.T) {
 
 func TestGroupSetsTargetOneCompoundArgs(t *testing.T) {
 	defer view.Stop()
+	cc := make(CloneContext, 2)
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -116,25 +117,25 @@ func TestGroupSetsTargetOneCompoundArgs(t *testing.T) {
 	require.Equal(t, offset, 0) // default
 
 	// mock normal agg count(d+1)
-	normalAggArgs = newFunctionWithMockCtx(ast.Plus, d, newLonglong(1))
+	normalAggArgs = newFunctionWithMockCtx(ast.Plus, cc, d, newLonglong(1))
 	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
 	require.NotEqual(t, offset, -1)
 	require.Equal(t, offset, 0) // default
 
 	// mock normal agg count(d+c)
-	normalAggArgs = newFunctionWithMockCtx(ast.Plus, d, c)
+	normalAggArgs = newFunctionWithMockCtx(ast.Plus, cc, d, c)
 	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
 	require.NotEqual(t, offset, -1)
 	require.Equal(t, offset, 1) // only {c} can supply d and c
 
 	// mock normal agg count(d+a)
-	normalAggArgs = newFunctionWithMockCtx(ast.Plus, d, a)
+	normalAggArgs = newFunctionWithMockCtx(ast.Plus, cc, d, a)
 	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
 	require.NotEqual(t, offset, -1)
 	require.Equal(t, offset, 0) // only {a,b} can supply d and a
 
 	// mock normal agg count(d+a+c)
-	normalAggArgs = newFunctionWithMockCtx(ast.Plus, d, newFunctionWithMockCtx(ast.Plus, a, c))
+	normalAggArgs = newFunctionWithMockCtx(ast.Plus, cc, d, newFunctionWithMockCtx(ast.Plus, cc, a, c))
 	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
 	require.Equal(t, offset, -1) // couldn't find a group that supply d, a and c simultaneously.
 }
@@ -188,6 +189,7 @@ func TestGroupingSetsMergeOneUnitTest(t *testing.T) {
 
 func TestRollupGroupingSets(t *testing.T) {
 	defer view.Stop()
+	cc := make(CloneContext, 2)
 	aTp := types.NewFieldType(mysql.TypeLong)
 	aTp.SetFlag(mysql.NotNullFlag)
 	a := &Column{
@@ -230,7 +232,7 @@ func TestRollupGroupingSets(t *testing.T) {
 	require.Equal(t, len(rollupGroupingSets[3][0]), 3)
 
 	expandSchema := NewSchema(a, b, c, d)
-	expandSchema2 := expandSchema.Clone()
+	expandSchema2 := expandSchema.Clone(cc)
 	// remove the first grouping set {}
 	// so the {a,b,c},{a,b},{a}, a is every grouping set, and it should be changed as nullable.
 	rollupGroupingSets2 := rollupGroupingSets[1:]
@@ -312,6 +314,7 @@ func TestGroupingSetsMergeUnitTest(t *testing.T) {
 
 func TestDistinctGroupingSets(t *testing.T) {
 	defer view.Stop()
+	cc := make(CloneContext, 2)
 	ctx := exprstatic.NewEvalContext()
 
 	// premise: every grouping item in grouping sets should be a col.
@@ -374,7 +377,7 @@ func TestDistinctGroupingSets(t *testing.T) {
 	// GBY: a+b, b+a, c  ==>  Expand:  rollup with (column#1, column#1, c)
 	//                          +-----  proj: (a+b) as column#1
 	// so that why restore gby expression according to their pos is necessary.
-	restoreGbyExpressions := RestoreGbyExpression(deduplicateColumns, pos)
+	restoreGbyExpressions := RestoreGbyExpression(cc, deduplicateColumns, pos)
 	require.Equal(t, len(restoreGbyExpressions), 4)
 	require.Equal(t, restoreGbyExpressions[0].StringWithCtx(ctx, errors.RedactLogDisable), "Column#1")
 	require.Equal(t, restoreGbyExpressions[1].StringWithCtx(ctx, errors.RedactLogDisable), "Column#2")
