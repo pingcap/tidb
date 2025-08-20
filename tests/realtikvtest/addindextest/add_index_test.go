@@ -15,14 +15,12 @@
 package addindextest
 
 import (
-<<<<<<< HEAD
 	"fmt"
-=======
 	"sync"
->>>>>>> master
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -164,6 +162,9 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 }
 
 func TestAddIndexWithPartialCleanup(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add index with local sort is not used in the next-gen TiDB")
+	}
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
