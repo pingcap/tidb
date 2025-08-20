@@ -92,10 +92,10 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 	pitrTaskInfo := brpb.StreamBackupTaskInfo{Name: "dummy-task"}
 	data, err := pitrTaskInfo.Marshal()
 	s.NoError(err)
-	_, err = client.GetClient().Put(context.Background(), pitrKey, string(data))
+	_, err = client.Put(context.Background(), pitrKey, string(data))
 	s.NoError(err)
 	s.T().Cleanup(func() {
-		_, err2 := client.GetClient().Delete(context.Background(), pitrKey)
+		_, err2 := client.Delete(context.Background(), pitrKey)
 		s.NoError(err2)
 	})
 	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-cdc-pitr/file.csv?endpoint=%s'`, gcsEndpoint)
@@ -116,13 +116,13 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 	s.tk.MustExec("import into dst from select * from t with disable_precheck")
 	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 test1 11"))
 
-	_, err2 := client.GetClient().Delete(context.Background(), pitrKey)
+	_, err2 := client.Delete(context.Background(), pitrKey)
 	s.NoError(err2)
 	cdcKey := "/tidb/cdc/cluster-123/test/changefeed/info/feed-test"
-	_, err = client.GetClient().Put(context.Background(), cdcKey, `{"state": "normal"}`)
+	_, err = client.Put(context.Background(), cdcKey, `{"state": "normal"}`)
 	s.NoError(err)
 	s.T().Cleanup(func() {
-		_, err2 := client.GetClient().Delete(context.Background(), cdcKey)
+		_, err2 := client.Delete(context.Background(), cdcKey)
 		s.NoError(err2)
 	})
 	s.tk.MustExec("truncate table t")

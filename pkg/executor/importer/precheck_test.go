@@ -127,23 +127,15 @@ func TestCheckRequirements(t *testing.T) {
 		embedEtcd.Close()
 	})
 	backup := importer.GetEtcdClient
-<<<<<<< HEAD
-	importer.GetEtcdClient = func() (*etcd.Client, error) {
-=======
 	importer.GetEtcdClient = func(kv.Storage) (*clientv3.Client, error) {
->>>>>>> e2c6a416b43 (importinto: use etcd client with keyspace during precheck and register task on nextgen (#63101))
 		etcdCli, err := clientv3.New(clientv3.Config{
 			Endpoints: []string{clientAddr},
 		})
 		require.NoError(t, err)
-<<<<<<< HEAD
-		return etcd.NewClient(etcdCli, ""), nil
-=======
 		if len(store.GetCodec().GetKeyspace()) > 0 {
 			etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
 		}
 		return etcdCli, nil
->>>>>>> e2c6a416b43 (importinto: use etcd client with keyspace during precheck and register task on nextgen (#63101))
 	}
 	t.Cleanup(func() {
 		importer.GetEtcdClient = backup

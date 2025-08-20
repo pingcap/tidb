@@ -1047,20 +1047,12 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		func() {
 			// cannot run 2 import job to the same target table.
 			tk2 := testkit.NewTestKit(s.T(), s.store)
-<<<<<<< HEAD
 			err = tk2.QueryToErr(sql)
 			s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
 			s.ErrorContains(err, "there is active job on the target table already")
-=======
-			if kerneltype.IsClassic() {
-				err := tk2.ExecToErr(sql)
-				s.ErrorIs(err, infoschema.ErrProtectedTableMode)
-				s.ErrorContains(err, "Table register_task is in mode Import")
-			}
->>>>>>> e2c6a416b43 (importinto: use etcd client with keyspace during precheck and register task on nextgen (#63101))
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
-				resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+				resp, err2 := client.Get(context.Background(), etcdKey)
 				s.NoError(err2)
 				return len(resp.Kvs) == 1
 			}, maxWaitTime, 300*time.Millisecond)
@@ -1077,7 +1069,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 
 	// the task should be unregistered
-	resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+	resp, err2 := client.Get(context.Background(), etcdKey)
 	s.NoError(err2)
 	s.Len(resp.Kvs, 0)
 }
@@ -1325,135 +1317,3 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *mockGCSSuite) TestTableMode() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("switching table mode is not supported in nextgen")
-	}
-	content := []byte(`1,1
-	2,2`)
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "table-mode-test",
-			Name:       "data.csv",
-		},
-		Content: content,
-	})
-	dbName := "import_into"
-	s.prepareAndUseDB(dbName)
-	tk2 := testkit.NewTestKit(s.T(), s.store)
-	tk2.MustExec("use " + dbName)
-	createTableSQL := "create table table_mode (id int primary key, fk int);"
-	s.tk.MustExec(createTableSQL)
-	loadDataSQL := fmt.Sprintf(`IMPORT INTO table_mode
-		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
-	query := "SELECT * FROM table_mode"
-
-	// Test import into clean up can alter table mode to Normal finally.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/skipPostProcessAlterTableMode", `return`)
-	s.tk.MustQuery(loadDataSQL)
-	s.checkMode(s.tk, query, "table_mode", true)
-	s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/skipPostProcessAlterTableMode")
-
-	// Test import into post process will alter table mode to Normal.
-	s.tk.MustExec("truncate table table_mode")
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	go func() {
-		defer func() {
-			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess")
-			wg.Done()
-		}()
-		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return")
-		s.tk.MustQuery(loadDataSQL)
-	}()
-	go func() {
-		defer wg.Done()
-		// Make sure table mode is Import.
-		s.checkMode(tk2, query, "table_mode", false)
-		s.checkMode(tk2, query, "table_mode", true)
-		tk2.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
-	}()
-	wg.Wait()
-
-	// Test occur retryable error when checksum
-	s.tk.MustExec("truncate table table_mode")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError", `return`)
-	getError := false
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
-		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
-			if errP != nil && *errP == common.ErrWriteTooSlow {
-				getError = true
-				testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError")
-			}
-		},
-	)
-	s.tk.MustQuery(loadDataSQL)
-	s.tk.MustQuery(query).Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
-	require.True(s.T(), getError)
-
-	// Test import into check table is empty get error.
-	s.tk.MustExec("truncate table table_mode")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
-	err := s.tk.QueryToErr(loadDataSQL)
-	s.ErrorContains(err, "check is empty get error")
-	s.checkMode(s.tk, query, "table_mode", true)
-	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
-
-	// Test import into check table is not empty between precheck and
-	// alter table mode to Import.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("notEmpty")`)
-	err = s.tk.QueryToErr(loadDataSQL)
-	s.ErrorContains(err, "PreCheck failed: target table is not empty")
-	s.checkMode(s.tk, query, "table_mode", true)
-	s.tk.MustQuery(query).Sort().Check(testkit.Rows([]string{}...))
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
-
-	// Test admin repair table can reset table mode to normal.
-	wg = sync.WaitGroup{}
-	wg.Add(2)
-	go func() {
-		defer func() {
-			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess")
-			wg.Done()
-		}()
-		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return")
-		s.tk.MustQuery(loadDataSQL)
-	}()
-	go func() {
-		defer wg.Done()
-		// Make sure table mode is Import.
-		s.checkMode(tk2, query, "table_mode", false)
-		s.adminRepairTable(dbName, "table_mode", createTableSQL)
-		tk2.EventuallyMustQueryAndCheck(query, nil, testkit.Rows([]string{"1 1", "2 2"}...), 10*time.Second, 100*time.Millisecond)
-	}()
-	wg.Wait()
-}
-
-func (s *mockGCSSuite) adminRepairTable(db, table, createTableSQL string) {
-	domainutil.RepairInfo.SetRepairMode(true)
-	domainutil.RepairInfo.SetRepairTableList([]string{db + "." + table})
-	dom := domain.GetDomain(s.tk.Session())
-	dbInfo, ok := dom.InfoCache().GetLatest().SchemaByName(ast.NewCIStr(db))
-	require.True(s.T(), ok)
-	tableInfo, err := dom.InfoCache().GetLatest().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
-	s.NoError(err)
-	domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tableInfo.Meta())
-	s.tk.MustExec("admin repair table " + table + " " + createTableSQL)
-}
-
-func (s *mockGCSSuite) checkMode(tk *testkit.TestKit, sql, tableName string, expect bool) {
-	require.Eventually(s.T(), func() bool {
-		err := tk.ExecToErr(sql)
-		if err != nil {
-			s.ErrorContains(err, "Table "+tableName+" is in mode Import")
-			return !expect
-		}
-		return expect
-	}, 10*time.Second, 100*time.Millisecond)
-}
->>>>>>> e2c6a416b43 (importinto: use etcd client with keyspace during precheck and register task on nextgen (#63101))

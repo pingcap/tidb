@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -113,7 +112,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context, se sessionctx.
 	}
 	defer terror.Call(cli.Close)
 
-	pitrCli := streamhelper.NewMetaDataClient(cli.GetClient())
+	pitrCli := streamhelper.NewMetaDataClient(cli)
 	tasks, err := pitrCli.GetAllTasks(ctx)
 	if err != nil {
 		return err
@@ -126,7 +125,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context, se sessionctx.
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, cli.GetClient())
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, cli)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -171,22 +170,3 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 	}
 	return nil
 }
-<<<<<<< HEAD
-
-func getEtcdClient() (*etcd.Client, error) {
-	tidbCfg := tidb.GetGlobalConfig()
-	tls, err := util.NewTLSConfig(
-		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
-		util.WithCertAndKeyPath(tidbCfg.Security.ClusterSSLCert, tidbCfg.Security.ClusterSSLKey),
-	)
-	if err != nil {
-		return nil, err
-	}
-	ectdEndpoints, err := util.ParseHostPortAddr(tidbCfg.Path)
-	if err != nil {
-		return nil, err
-	}
-	return etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, "", tls)
-}
-=======
->>>>>>> e2c6a416b43 (importinto: use etcd client with keyspace during precheck and register task on nextgen (#63101))
