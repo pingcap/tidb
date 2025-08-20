@@ -35,6 +35,8 @@ import (
 var MaxPropagateColsCnt = 100
 
 // VaildConstantPropagationExpressionFuncType is to filter the unsuitable expression when to propagate the constant.
+// Currently, only the `LogicalJoin.isVaildConstantPropagationExpression` has implemented this capability.
+// For more information, you can refer to the comments on this.
 type VaildConstantPropagationExpressionFuncType func(Expression) bool
 
 type basePropConstSolver struct {
