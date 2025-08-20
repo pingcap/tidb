@@ -120,8 +120,8 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 	if pb.DiscardedDueToTooLong {
 		return nil, nil
 	}
-	isBrief := format == types.ExplainFormatBrief || format == types.ExplainFormatBriefTruncated
-	isTruncated := format == types.ExplainFormatBriefTruncated
+	isBrief := format == types.ExplainFormatBrief || format == types.ExplainFormatPlanTree
+	isTruncated := format == types.ExplainFormatPlanTree
 	// decode the protobuf into strings
 	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, isBrief, isTruncated)
 	for _, cte := range pb.Ctes {
@@ -135,15 +135,19 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 	var columnIndices []int
 	if pb.WithRuntimeStats && !forTopsql {
 		switch format {
-		case types.ExplainFormatBrief, types.ExplainFormatBriefTruncated, types.ExplainFormatROW:
+		case types.ExplainFormatBrief, types.ExplainFormatROW:
 			columnIndices = []int{0, 1, 3, 4, 5, 6, 7, 8, 9}
+		case types.ExplainFormatPlanTree:
+			columnIndices = []int{0, 2, 3, 4, 5, 6, 7, 8}
 		case types.ExplainFormatVerbose:
 			columnIndices = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 		}
 	} else {
 		switch format {
-		case types.ExplainFormatBrief, types.ExplainFormatBriefTruncated, types.ExplainFormatROW:
+		case types.ExplainFormatBrief, types.ExplainFormatROW:
 			columnIndices = []int{0, 1, 3, 4, 5}
+		case types.ExplainFormatPlanTree:
+			columnIndices = []int{0, 2, 3, 4, 5}
 		case types.ExplainFormatVerbose:
 			columnIndices = []int{0, 1, 2, 3, 4, 5}
 		}

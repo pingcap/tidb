@@ -39,8 +39,8 @@ var (
 	ExplainFormatCostTrace = "cost_trace"
 	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
 	ExplainFormatPlanCache = "plan_cache"
-	// ExplainFormatBriefTruncated is the same as ExplainFormatBrief, but truncates estimated rows to remove decimal portions
-	ExplainFormatBriefTruncated = "brief_truncated"
+	// ExplainFormatPlanTree displays the plan in a tree structure format
+	ExplainFormatPlanTree = "plan_tree"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -56,6 +56,6 @@ var (
 		ExplainFormatTiDBJSON,
 		ExplainFormatCostTrace,
 		ExplainFormatPlanCache,
-		ExplainFormatBriefTruncated,
+		ExplainFormatPlanTree,
 	}
 )

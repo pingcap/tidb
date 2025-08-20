@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -888,8 +887,10 @@ func (e *Explain) prepareSchema() error {
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatBriefTruncated || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
+	case format == types.ExplainFormatPlanTree && (!e.Analyze && e.RuntimeStatsColl == nil):
+		fieldNames = []string{"id", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -904,8 +905,10 @@ func (e *Explain) prepareSchema() error {
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatBriefTruncated || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+	case format == types.ExplainFormatPlanTree && (e.Analyze || e.RuntimeStatsColl != nil):
+		fieldNames = []string{"id", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == types.ExplainFormatHint:
@@ -1032,7 +1035,19 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatBriefTruncated, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
+		if e.Rows == nil || e.Analyze {
+			flat := FlattenPhysicalPlan(e.TargetPlan, true)
+			e.Rows = ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl)
+			if e.Analyze &&
+				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
+				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
+				row := e.Rows[0]
+				tracker := e.SCtx().GetSessionVars().MemTracker
+				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
+			}
+		}
+	case types.ExplainFormatPlanTree:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.Rows = ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl)
@@ -1217,7 +1232,10 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 
 	var row []string
 	if analyze || runtimeStatsColl != nil {
-		row = []string{id, estRows}
+		row = []string{id}
+		if format != types.ExplainFormatPlanTree {
+			row = append(row, estRows)
+		}
 		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
@@ -1227,7 +1245,10 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
-		row = []string{id, estRows}
+		row = []string{id}
+		if format != types.ExplainFormatPlanTree {
+			row = append(row, estRows)
+		}
 		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost ||
 			format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
@@ -1248,11 +1269,13 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explai
 	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(p, e.Format)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
-		EstRows:      estRows,
 		TaskType:     taskType,
 		AccessObject: accessObject,
 		OperatorInfo: operatorInfo,
 		SubOperators: make([]*ExplainInfoForEncode, 0),
+	}
+	if e.Format != types.ExplainFormatPlanTree {
+		jsonRow.EstRows = estRows
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
@@ -1268,9 +1291,7 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 	costFormula = "N/A"
 	sctx := p.SCtx()
 	if isPhysicalPlan {
-		if format == types.ExplainFormatBriefTruncated {
-			estRows = strconv.FormatFloat(math.Round(pp.GetEstRowCountForDisplay()), 'f', 2, 64)
-		} else {
+		if format != types.ExplainFormatPlanTree {
 			estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
 		}
 		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {

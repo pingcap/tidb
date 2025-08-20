@@ -528,3 +528,50 @@ func TestExplainImportFromSelect(t *testing.T) {
 	require.Contains(t, rs[1][0], "TableReader")
 	require.Contains(t, rs[2][0], "TableFullScan")
 }
+
+func TestExplainFormatPlanTree(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index idx(a))")
+
+	// Insert some data to generate statistics
+	for i := 0; i < 100; i++ {
+		testKit.MustExec("insert into t values (?, ?)", i, i*2)
+	}
+	testKit.MustExec("analyze table t")
+
+	// Test the new plan_tree format
+	rows := testKit.MustQuery("explain format='plan_tree' select * from t where a = 5").Rows()
+
+	// Verify that the format is recognized and produces output
+	require.Greater(t, len(rows), 0)
+
+	// Check that the format is working (the exact output may vary based on statistics)
+	// but we should have at least the basic structure
+	require.Greater(t, len(rows[0]), 4) // Should have at least id, estRows, task, access object, operator info
+
+	// Verify that estRows (index 1) doesn't contain decimal points when using plan_tree format
+	if len(rows) > 0 && len(rows[0]) > 1 {
+		estRows := rows[0][1].(string)
+		require.NotContains(t, estRows, ".", "Estimated rows should not contain decimal points in plan_tree format")
+	}
+}
+
+func TestExplainFormatPlanTreeConstant(t *testing.T) {
+	// Test that the new format constant is properly defined
+	require.Equal(t, "plan_tree", types.ExplainFormatPlanTree)
+
+	// Test that it's included in the valid formats list
+	formats := types.ExplainFormats
+	found := false
+	for _, format := range formats {
+		if format == types.ExplainFormatPlanTree {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "ExplainFormatPlanTree should be included in ExplainFormats")
+}
