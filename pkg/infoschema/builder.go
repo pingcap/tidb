@@ -101,6 +101,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyExchangeTablePartition(b, m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
+	case model.ActionModifySchemaReadOnly:
+		return nil, applyModifySchemaReadOnly(b, m, diff)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -598,6 +600,22 @@ func (b *Builder) applyRecoverSchema(m meta.Reader, diff *model.SchemaDiff) ([]i
 		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
 	})
 	return applyCreateTables(b, m, diff)
+}
+
+func (b *Builder) applyModifySchemaReadOnly(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo.ReadOnly = di.ReadOnly
+	return nil
 }
 
 // copySortedTables copies sortedTables for old table and new table for later modification.

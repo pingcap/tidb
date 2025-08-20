@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -315,4 +316,18 @@ func TestHandleLockTable(t *testing.T) {
 		require.Len(t, se.GetAllTableLocks(), 1)
 		checkTableLocked(1, pmodel.TableLockRead)
 	})
+}
+
+func TestAlterSystemDBReadOnlyRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	for _, dbName := range []string{
+		"mysql",
+		"sys",
+		"performance_schema",
+		"metrics_schema",
+		"information_schema",
+	} {
+		tk.MustGetErrCode(fmt.Sprintf("alter database `%s` read only 1", dbName), errno.ErrAccessSysDBRejected)
+	}
 }
