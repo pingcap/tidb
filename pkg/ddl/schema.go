@@ -17,15 +17,22 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -152,6 +159,160 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, job *model.Job) (ver int
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
+}
+
+func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(jobCtx.metaMut, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if job.SchemaState == model.StateNone && dbInfo.ReadOnly == args.ReadOnly {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+	// If the database is set to read-write from read-only, we don't need the middle state.
+	if dbInfo.ReadOnly && !args.ReadOnly {
+		dbInfo.ReadOnly = args.ReadOnly
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+	trxTableName := infoschema.ClusterTableTiDBTrx
+	failpoint.Inject("mockModifySchemaReadOnlyDDL", func() {
+		trxTableName = infoschema.TableTiDBTrx
+	})
+
+	switch job.SchemaState {
+	case model.StateNone:
+		dbInfo.ReadOnly = args.ReadOnly
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StatePendingReadOnly
+	case model.StatePendingReadOnly:
+		sessCtx, err := w.sessPool.Get()
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		defer w.sessPool.Put(sessCtx)
+		session := sess.NewSession(sessCtx)
+		sampleLogger := logutil.SampleLoggerFactory(time.Second, 5, zap.String(logutil.LogFieldCategory, "ddl"))
+		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, session, dbInfo.ID, trxTableName, args.DDLStartTS)
+		failpoint.Inject("mockCheckUncommittedTxnError", func() {
+			if err == nil {
+				err = errors.New("mock error for check uncommitted txn")
+			}
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// check and wait all uncommitted txn
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+		for len(uncommittedTxn) > 0 {
+			select {
+			case <-ticker.C:
+				for txnID := range uncommittedTxn {
+					sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.%s WHERE ID = %d", trxTableName, txnID)
+					r, err := session.Execute(jobCtx.stepCtx, sql, "check if txn committed")
+					if err != nil {
+						return ver, errors.Trace(err)
+					}
+					if len(r) == 0 {
+						delete(uncommittedTxn, txnID)
+						continue
+					}
+					sampleLogger().Info("uncommitted txn block read only ddl",
+						zap.Int64("txn ID", txnID),
+						zap.Int64("job ID", job.ID),
+					)
+					break
+				}
+				failpoint.InjectCall("checkUncommittedTxns", uncommittedTxn)
+			case <-jobCtx.stepCtx.Done():
+				return ver, errors.Trace(jobCtx.stepCtx.Err())
+			}
+		}
+
+		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	}
+	return ver, nil
+}
+
+func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int64, trxTableName string, ddlStartTS uint64) (map[int64]struct{}, error) {
+	var currTS = uint64(0)
+	err := kv.RunInNewTxn(jobCtx.ctx, jobCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
+		currTS = txn.StartTS()
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	is := jobCtx.infoCache.GetLatest()
+	sql := fmt.Sprintf(
+		"SELECT RELATED_TABLE_IDS, ID FROM INFORMATION_SCHEMA.%s "+
+			"WHERE ID != %d "+ // exclude current ddl
+			"AND ID < %d", // exclude new transactions
+		trxTableName,
+		ddlStartTS,
+		currTS,
+	)
+	t := time.Now()
+	r, err := sess.Execute(jobCtx.stepCtx, sql, "get uncommitted txn id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	queryDur := time.Since(t)
+	ids := make(map[int64]struct{})
+	for _, row := range r {
+		txnID := row.GetInt64(1)
+		relatedTableIDs := row.GetString(0)
+		if relatedTableIDs == "" {
+			continue
+		}
+		tblIDs := strings.Split(relatedTableIDs, ",")
+		for _, tblID := range tblIDs {
+			id, err := strconv.Atoi(tblID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblInfo, ok := is.TableByID(jobCtx.stepCtx, int64(id))
+			if !ok {
+				return nil, errors.Errorf("table %d not found in infoschema", id)
+			}
+			if tblInfo.Meta().DBID == targetDBID {
+				ids[txnID] = struct{}{}
+				break
+			}
+		}
+	}
+	jobCtx.logger.Info("get uncommitted txn id",
+		zap.Int("txn count", len(ids)),
+		zap.Duration("query time", queryDur),
+		zap.Duration("parse time", time.Since(t)-queryDur))
+	return ids, nil
 }
 
 func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
