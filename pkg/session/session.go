@@ -3392,8 +3392,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		// we also use it here.
 		evalCtx := exprstatic.NewEvalContext(exprstatic.WithSQLMode(mysql.ModeNone))
 		exprCtx := exprstatic.NewExprContext(exprstatic.WithEvalCtx(evalCtx))
-		mbCtx := metabuild.NewContext(metabuild.WithExprCtx(exprCtx),
-			metabuild.WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeIntOnly))
+		mbCtx := metabuild.NewContext(metabuild.WithExprCtx(exprCtx))
 		tblInfo, err := ddl.BuildTableInfoFromAST(mbCtx, stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			return errors.Trace(err)

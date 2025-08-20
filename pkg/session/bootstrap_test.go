@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
@@ -2218,11 +2219,17 @@ func TestTiDBUpgradeToVer209(t *testing.T) {
 }
 
 func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen kernel system tables have different clustered pk setting, dropping pk will fail in upgradeToVer248")
+	}
 	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", false) })
 	t.Run("test disable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 0", false) })
 }
 
 func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen kernel system tables have different clustered pk setting, dropping pk will fail in upgradeToVer248")
+	}
 	t.Run("test dist task running", func(t *testing.T) {
 		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", false)
 	})
