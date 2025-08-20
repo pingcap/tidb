@@ -299,25 +299,18 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	return dbNames
 }
 
-func (p *preprocessor) checkSchemaReadOnly(in ast.Node) {
+func (p *preprocessor) checkSchemaReadOnlyInStmt(in ast.Node) {
 	dbNames := p.extractSchema(in)
 	for _, dbName := range dbNames {
-		p.schemaReadOnly(dbName)
+		p.checkSchemaReadOnly(dbName)
 	}
 }
 
-func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
+func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
 	if p.err != nil {
 		return
 	}
 
-	if dbName.L == "" {
-		currentDB := p.sctx.GetSessionVars().CurrentDB
-		if currentDB == "" {
-			return
-		}
-		dbName = pmodel.NewCIStr(currentDB)
-	}
 	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
 	if exists && dbInfo.ReadOnly {
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
@@ -774,7 +767,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	}
 
-	p.checkSchemaReadOnly(in)
+	p.checkSchemaReadOnlyInStmt(in)
 
 	return in, p.err == nil
 }
