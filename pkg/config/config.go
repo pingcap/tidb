@@ -557,6 +557,9 @@ type Instance struct {
 	TiDBRCReadCheckTS    bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 	// TiDBServiceScope indicates the role for tidb for distributed task framework.
 	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
+
+	// ServerID indicates the unique ID of the server.
+	ServerID int `toml:"server_id" json:"server_id"`
 }
 
 func (l *Log) getDisableTimestamp() bool {

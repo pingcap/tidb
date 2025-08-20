@@ -20,9 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -158,6 +160,28 @@ func TestUUID(t *testing.T) {
 		}
 	}
 	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
+	require.NoError(t, err)
+}
+
+func TestUUIDShort(t *testing.T) {
+	ctx := createContext(t)
+	f, err := newFunctionForTest(ctx, ast.UUIDShort)
+	require.NoError(t, err)
+	_, err = f.Eval(ctx, chunk.Row{})
+	require.Error(t, err) // unspecified sever id
+	originConfig := config.GetGlobalConfig()
+	originConfig.Instance.ServerID = 1
+	config.StoreGlobalConfig(originConfig)
+	originServerStartupTime := variable.ServerStartupTime
+	variable.ServerStartupTime = 2333
+	defer func() {
+		variable.ServerStartupTime = originServerStartupTime
+		config.StoreGlobalConfig(originConfig)
+	}()
+	d, err := f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, uint64(0x10000091d000000), d.GetUint64())
+	_, err = funcs[ast.UUIDShort].getFunction(ctx, datumsToConstants(nil))
 	require.NoError(t, err)
 }
 

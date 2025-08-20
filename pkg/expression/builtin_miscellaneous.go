@@ -22,11 +22,13 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -87,6 +89,7 @@ var (
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinIsUUIDSig{}
 	_ builtinFunc = &builtinUUIDSig{}
+	_ builtinFunc = &builtinUUIDShortSig{}
 	_ builtinFunc = &builtinVitessHashSig{}
 	_ builtinFunc = &builtinUUIDToBinSig{}
 	_ builtinFunc = &builtinBinToUUIDSig{}
@@ -1400,7 +1403,54 @@ type uuidShortFunctionClass struct {
 }
 
 func (c *uuidShortFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(20) // 64 bit unsigned
+	bf.tp.AddFlag(mysql.UnsignedFlag)
+	bf.tp.AddFlag(mysql.NotNullFlag)
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinUUIDShortSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	return sig, nil
+}
+
+type builtinUUIDShortSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUUIDShortSig) Clone() builtinFunc {
+	newSig := &builtinUUIDShortSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// We define a global atomic counter for the incrementing part of the UUID_SHORT.
+// A uint32 is sufficient as it only needs to cover 24 bits (0 to 16,777,215).
+// This counter will be shared across all concurrent calls to UUID_SHORT().
+var uuidShortCounter atomic.Uint32
+
+// evalString evals a builtinUUIDShortSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid-short
+func (b *builtinUUIDShortSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool, error) {
+	serverID := config.GetGlobalConfig().Instance.ServerID
+	if serverID == variable.UnspecifiedServerID {
+		return 0, false, errUnknown.GenWithStack("Unspecified server ID. Set the config `instance.server_id` to an integer between 1 and 255 when using `UUID_SHORT()`.")
+	}
+	startupTime := variable.ServerStartupTime
+
+	increment := uuidShortCounter.Add(1) - 1
+
+	p1 := uint64(serverID&0xFF) << 56
+	p2 := uint64(startupTime) << 24
+	p3 := uint64(increment & 0xFFFFFF)
+	result := p1 + p2 + p3
+
+	return int64(result), false, nil
 }
 
 type vitessHashFunctionClass struct {

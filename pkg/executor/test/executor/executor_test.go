@@ -3081,3 +3081,18 @@ func TestQueryWithKill(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestUUIDShort(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	originConfig := config.GetGlobalConfig()
+	originConfig.Instance.ServerID = 1
+	config.StoreGlobalConfig(originConfig)
+	originServerStartupTime := variable.ServerStartupTime
+	variable.ServerStartupTime = 2333
+	defer func() {
+		variable.ServerStartupTime = originServerStartupTime
+		config.StoreGlobalConfig(originConfig)
+	}()
+	tk.MustQuery("select uuid_short()").Check(testkit.Rows("72057633179172864"))
+}
