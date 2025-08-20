@@ -3709,8 +3709,6 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	// TODO(joechenrh): remove me after tested
-	// b.inAdminCheckSQL = true
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -4253,8 +4251,8 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 // buildTableForAdminCheckSQL make a copy of table info if necessary.
 // Since we want to utilize MVIndex to read the data in FAST ADMIN CHECK, to prevent from adding
-// many hacky code in the planner module, we craete a new table info with all columns without array
-// type and all indices as non-MVIndex. So optimizer will process it like a normal table.
+// many hacky code in the planner module, we craete a new table info with all MVIndex-related meta
+// removed. So optimizer will process it like a normal table.
 func buildTableForAdminCheckSQL(tbl table.Table) (table.Table, error) {
 	hasMVIndex := false
 	for _, idx := range tbl.Meta().Indices {
@@ -4269,11 +4267,15 @@ func buildTableForAdminCheckSQL(tbl table.Table) (table.Table, error) {
 	}
 
 	mockInfo := tbl.Meta().Clone()
-	for _, col := range mockInfo.Columns {
-		col.FieldType.SetArray(false)
-	}
 	for _, idx := range mockInfo.Indices {
-		idx.MVIndex = false
+		if idx.MVIndex {
+			idx.MVIndex = false
+			for _, col := range idx.Columns {
+				tblCol := mockInfo.Columns[col.Offset]
+				tblCol.FieldType.SetArray(false)
+				tblCol.Hidden = false
+			}
+		}
 	}
 
 	return tables.TableFromMeta(autoid.NewAllocators(false, nil), mockInfo)
@@ -4480,7 +4482,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
-	if b.inAdminCheckSQL {
+	if kv.GetInternalSourceType(ctx) == kv.InternalTxnAdmin {
 		if tbl, err = buildTableForAdminCheckSQL(tbl); err != nil {
 			return nil, err
 		}

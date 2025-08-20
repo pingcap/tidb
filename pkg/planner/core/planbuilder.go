@@ -303,8 +303,6 @@ type PlanBuilder struct {
 
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
-	// inAdminCheckSQL indicates whether the expression rewriter is used in admin check sql.
-	inAdminCheckSQL bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
 }
@@ -494,7 +492,6 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
-	b.inAdminCheckSQL = false
 
 	// Add more fields if they are safe to be reused.
 
@@ -507,7 +504,6 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
-	b.inAdminCheckSQL = kv.GetInternalSourceType(ctx) == kv.InternalTxnAdmin
 	switch x := node.Node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
