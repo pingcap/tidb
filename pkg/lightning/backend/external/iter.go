@@ -515,15 +515,17 @@ func NewMergeKVIter(
 	readBufferSize int,
 	checkHotspot bool,
 	outerConcurrency int,
+	largerBufferSize int,
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
 	if outerConcurrency <= 0 {
 		outerConcurrency = 1
 	}
-	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
+	concurrentReaderConcurrency := max(largerBufferSize/ConcurrentReaderBufferSizePerConc, 8)
 	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
 	// too large when checkHotspot = true(add-index).
 	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
+	logutil.BgLogger().Info("NewMergeKVIter", zap.Int("largeBufSize", largeBufSize))
 	memPool := membuf.NewPool(
 		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
