@@ -754,7 +754,7 @@ func TestIngestParam(t *testing.T) {
 		modVal      any
 		expectedVal any
 	}{
-		{"/ingest/max-batch-split-ranges", float64(0), 1000, float64(1000)},
+		{"/ingest/max-batch-split-ranges", float64(2048), 1000, float64(1000)},
 		{"/ingest/max-split-ranges-per-sec", float64(0), 2000, float64(2000)},
 		{"/ingest/max-ingest-inflight", float64(0), 1000, float64(1000)},
 		{"/ingest/max-ingest-per-sec", float64(0), 2000, float64(2000)},
