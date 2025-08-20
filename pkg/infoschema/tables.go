@@ -219,6 +219,8 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
+	// TableSchemataExtensions is the table to show read only state of database.
+	TableSchemataExtensions = "SCHEMATA_EXTENSIONS"
 )
 
 const (
@@ -341,6 +343,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
+	TableSchemataExtensions:              autoid.InformationSchemaDBID + 101,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1736,6 +1739,12 @@ var tableTiDBIndexUsage = []columnInfo{
 	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
 }
 
+var tableSchemataExtensions = []columnInfo{
+	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "OPTIONS", tp: mysql.TypeVarchar, size: 256},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2383,6 +2392,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableSchemataExtensions:                 tableSchemataExtensions,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

@@ -231,6 +231,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableSchemataExtensions:
+			err = e.setDataFromSchemataExtensions(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3951,6 +3953,37 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataFromSchemataExtensions(ctx sessionctx.Context) (err error) {
+	const readOnly = "READ ONLY=1"
+	checker := privilege.GetPrivilegeManager(ctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaSchemataExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaSchemataExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
+		return nil
+	}
+	schemas := ex.ListSchemas(e.is)
+	rows := make([][]types.Datum, 0, len(schemas))
+
+	for _, schemaName := range schemas {
+		schema, _ := e.is.SchemaByName(schemaName)
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // CATALOG_NAME
+			schema.Name.O,         // SCHEMA_NAME
+		)
+		if schema.ReadOnly {
+			record = append(record, types.NewStringDatum(readOnly))
+		}
+		rows = append(rows, record)
+	}
+	e.rows = rows
+	return
 }
 
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
