@@ -20,16 +20,6 @@ import (
 )
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.indexPlan.ExplainID().String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return "index:" + p.indexPlan.TP()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	var str strings.Builder
 	if p.IsIntersectionType {

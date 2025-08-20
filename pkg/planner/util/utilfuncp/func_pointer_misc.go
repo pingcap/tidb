@@ -319,6 +319,10 @@ var GetPlanCostVer14PhysicalIndexScan func(pp base.PhysicalPlan, taskType proper
 var GetPlanCostVer14PhysicalTableScan func(pp base.PhysicalPlan,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
+// GetPlanCostVer14PhysicalIndexReader calculates the cost of the plan if it has not been calculated yet
+var GetPlanCostVer14PhysicalIndexReader func(pp base.PhysicalPlan, _ property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
 // GetCost4PhysicalHashJoin computes cost of hash join operator itself.
 var GetCost4PhysicalHashJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64,
 	op *optimizetrace.PhysicalOptimizeOp) float64
@@ -342,6 +346,12 @@ var GetPlanCostVer24PhysicalIndexScan func(pp base.PhysicalPlan, taskType proper
 // log2(row-size) is from experiments.
 var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// GetPlanCostVer24PhysicalIndexReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = (child-cost + net-cost) / concurrency
+// net-cost = rows * row-size * net-factor
+var GetPlanCostVer24PhysicalIndexReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
 // GetPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +

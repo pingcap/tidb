@@ -345,13 +345,13 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.isLastChild = true
 		target, childIdx = f.flattenRecursively(plan.TablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
-	case *PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		childCtx.isRoot = false
 		childCtx.reqType = physicalop.Cop
 		childCtx.storeType = kv.TiKV
 		childCtx.label = Empty
 		childCtx.isLastChild = true
-		target, childIdx = f.flattenRecursively(plan.indexPlan, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.IndexPlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *physicalop.PhysicalIndexLookUpReader:
 		childCtx.isRoot = false
