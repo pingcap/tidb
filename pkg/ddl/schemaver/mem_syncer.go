@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -135,6 +136,9 @@ func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVe
 // SyncJobSchemaVerLoop implements Syncer.SyncJobSchemaVerLoop interface.
 func (*MemSyncer) SyncJobSchemaVerLoop(context.Context) {
 }
+
+// SetServerInfoSyncer implements Syncer.SetServerInfoSyncer interface.
+func (*MemSyncer) SetServerInfoSyncer(*serverinfo.Syncer) {}
 
 // Close implements Syncer.Close interface.
 func (*MemSyncer) Close() {}
