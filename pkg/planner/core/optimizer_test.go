@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -120,7 +121,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 		Desc: true,
 	}
 	var plans []*physicalop.BasePhysicalPlan
-	tableReader := &PhysicalTableReader{}
+	tableReader := &physicalop.PhysicalTableReader{}
 	partWindow := &physicalop.PhysicalWindow{
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
@@ -129,11 +130,11 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 		IsPartialSort: true,
 	}
 	sort := &physicalop.PhysicalSort{}
-	recv := &PhysicalExchangeReceiver{}
-	passSender := &PhysicalExchangeSender{
+	recv := &physicalop.PhysicalExchangeReceiver{}
+	passSender := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
-	hashSender := &PhysicalExchangeSender{
+	hashSender := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	tableScan := &physicalop.PhysicalTableScan{}
@@ -165,7 +166,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	}
 
 	const expStreamCount int64 = 8
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
 	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
 	defer func() {
@@ -178,7 +179,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	}
 
 	// Window <- Sort <- ExchangeReceiver <- ExchangeSender
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	partWindow.SetChildren([]base.PhysicalPlan{partialSort}...)
 	partialSort.SetChildren([]base.PhysicalPlan{recv}...)
@@ -187,7 +188,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	start(partWindow, expStreamCount, 4, 0)
 
 	// Window <- ExchangeReceiver <- ExchangeSender
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	partWindow.SetChildren([]base.PhysicalPlan{recv}...)
 	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
@@ -196,7 +197,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 
 	// Window <- Sort(x) <- ExchangeReceiver <- ExchangeSender
 	// Fine-grained shuffle is disabled because sort is not partial.
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	partWindow.SetChildren([]base.PhysicalPlan{sort}...)
 	sort.SetChildren([]base.PhysicalPlan{recv}...)
@@ -212,7 +213,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	partialSort1 := &physicalop.PhysicalSort{
 		IsPartialSort: true,
 	}
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	partWindow.SetChildren([]base.PhysicalPlan{partialSort}...)
 	partialSort.SetChildren([]base.PhysicalPlan{partWindow1}...)
@@ -228,7 +229,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	partialSort1 = &physicalop.PhysicalSort{
 		IsPartialSort: true,
 	}
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	partWindow.SetChildren([]base.PhysicalPlan{partialSort}...)
 	partialSort.SetChildren([]base.PhysicalPlan{nonPartWindow}...)
@@ -240,7 +241,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 
 	// HashAgg <- Window <- ExchangeReceiver <- ExchangeSender
 	hashAgg := &physicalop.PhysicalHashAgg{}
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
 	hashAgg.SetChildren([]base.PhysicalPlan{partWindow}...)
 	partWindow.SetChildren([]base.PhysicalPlan{recv}...)
@@ -250,7 +251,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	start(partWindow, expStreamCount, 3, 0)
 
 	// Window <- HashAgg(x) <- ExchangeReceiver <- ExchangeSender
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	hashAgg = &physicalop.PhysicalHashAgg{}
 	partWindow.SetChildren([]base.PhysicalPlan{hashAgg}...)
@@ -261,13 +262,13 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 
 	// Window <- Join(x) <- ExchangeReceiver <- ExchangeSender
 	//                   <- ExchangeReceiver <- ExchangeSender
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	hashJoin := &physicalop.PhysicalHashJoin{}
-	recv1 := &PhysicalExchangeReceiver{}
+	recv1 := &physicalop.PhysicalExchangeReceiver{}
 	tableScan1 := &physicalop.PhysicalTableScan{}
 	partWindow.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	hashSender1 := &PhysicalExchangeSender{
+	hashSender1 := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
@@ -279,15 +280,15 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 
 	// Join <- ExchangeReceiver <- ExchangeSender <- Window <- ExchangeReceiver(2) <- ExchangeSender(2)
 	//      <- ExchangeReceiver(1) <- ExchangeSender(1)
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
 	hashJoin = &physicalop.PhysicalHashJoin{}
-	recv1 = &PhysicalExchangeReceiver{}
+	recv1 = &physicalop.PhysicalExchangeReceiver{}
 	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
 	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
 	hashSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	recv2 := &PhysicalExchangeReceiver{}
-	hashSender2 := &PhysicalExchangeSender{
+	recv2 := &physicalop.PhysicalExchangeReceiver{}
+	hashSender2 := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	tableScan2 := &physicalop.PhysicalTableScan{}
@@ -326,7 +327,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	})
 
 	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	hashAgg = &physicalop.PhysicalHashAgg{}
 	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
 	hashAgg.SetChildren([]base.PhysicalPlan{recv}...)
@@ -337,20 +338,20 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 
 	// Join(x) <- ExchangeReceiver <- ExchangeSender
 	//                   <- ExchangeReceiver <- ExchangeSender
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	hashJoin = &physicalop.PhysicalHashJoin{}
 	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
 	hashJoin.RightJoinKeys = append(hashJoin.RightJoinKeys, col0)
 	hashJoin.InnerChildIdx = 1
 	passSender.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	recv = &PhysicalExchangeReceiver{}
-	recv1 = &PhysicalExchangeReceiver{}
+	recv = &physicalop.PhysicalExchangeReceiver{}
+	recv1 = &physicalop.PhysicalExchangeReceiver{}
 	tableScan = &physicalop.PhysicalTableScan{}
 	tableScan1 = &physicalop.PhysicalTableScan{}
-	hashSender = &PhysicalExchangeSender{
+	hashSender = &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
-	hashSender1 = &PhysicalExchangeSender{
+	hashSender1 = &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
@@ -371,7 +372,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	require.NoError(t, failpoint.Disable(fpName2))
 	require.NoError(t, failpoint.Enable(fpName2, `return("8000")`))
 	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender， exceed splitLimit
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	hashAgg = &physicalop.PhysicalHashAgg{}
 	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
 	hashAgg.SetChildren([]base.PhysicalPlan{recv}...)
@@ -383,15 +384,15 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	// exceed splitLimit
 	// Join(x) <- ExchangeReceiver <- ExchangeSender
 	//                   <- ExchangeReceiver <- ExchangeSender
-	tableReader.tablePlan = passSender
+	tableReader.TablePlan = passSender
 	hashJoin = &physicalop.PhysicalHashJoin{}
 	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
 	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
 	hashJoin.InnerChildIdx = 1
 	passSender.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	recv1 = &PhysicalExchangeReceiver{}
+	recv1 = &physicalop.PhysicalExchangeReceiver{}
 	tableScan1 = &physicalop.PhysicalTableScan{}
-	hashSender1 = &PhysicalExchangeSender{
+	hashSender1 = &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
 	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
@@ -406,7 +407,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 }
 
 func TestCanTiFlashUseHashJoinV2(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

@@ -227,9 +227,9 @@ func TestIssue32632(t *testing.T) {
 		tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 		tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-		statsTbl1 := h.GetTableStats(tbl1.Meta())
+		statsTbl1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
 		statsTbl1.RealtimeCount = 800000
-		statsTbl2 := h.GetTableStats(tbl2.Meta())
+		statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 		statsTbl2.RealtimeCount = 10000
 		var input []string
 		var output []struct {
@@ -314,14 +314,14 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				testKit.MustExec("set session tidb_redact_log=off")
+				testKit.MustExec("set global tidb_redact_log=off")
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-				testKit.MustExec("set session tidb_redact_log=on")
+				testKit.MustExec("set global tidb_redact_log=on")
 				output[i].Redact = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 			})
-			testKit.MustExec("set session tidb_redact_log=off")
+			testKit.MustExec("set global tidb_redact_log=off")
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-			testKit.MustExec("set session tidb_redact_log=on")
+			testKit.MustExec("set global tidb_redact_log=on")
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Redact...))
 		}
 	})

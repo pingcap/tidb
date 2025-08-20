@@ -24,22 +24,26 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -87,20 +91,29 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	var (
 		jobID, taskID int64
 	)
+	var runningOnUserKS bool
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		runningOnUserKS = kv.IsUserKS(se.GetStore())
 		var err2 error
 		exec := se.GetSQLExecutor()
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
-			plan.User, plan.Parameters, plan.TotalFileSize)
+			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
 		if err2 != nil {
 			return err2
 		}
+		if kerneltype.IsClassic() {
+			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+			if err2 != nil {
+				return err2
+			}
+		}
 		// in classical kernel or if we are inside SYSTEM keyspace itself, we
 		// submit the task to DXF in the same transaction as creating the job.
-		if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == keyspace.System {
+		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
 			logicalPlan.JobID = jobID
 			planCtx.SessionCtx = se
 			planCtx.TaskKey = TaskKey(jobID)
+			planCtx.Keyspace = plan.Keyspace
 			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, taskManager); err2 != nil {
 				return err2
 			}
@@ -113,7 +126,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
 	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
 	dxfTaskMgr := taskManager
-	if keyspace.IsRunningOnUser() {
+	if runningOnUserKS {
 		var err2 error
 		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
 		if err2 != nil {
@@ -123,6 +136,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			logicalPlan.JobID = jobID
 			planCtx.SessionCtx = se
 			planCtx.TaskKey = TaskKey(jobID)
+			planCtx.Keyspace = plan.Keyspace
 			var err2 error
 			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, dxfTaskMgr); err2 != nil {
 				return err2
@@ -324,6 +338,39 @@ func GetRuntimeInfoForJob(
 	}
 
 	return ri, nil
+}
+
+// GetJobLastUpdateTime get the last update time for given job from all subtasks.
+func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) {
+	taskManager, err := storage.GetDXFSvcTaskMgr()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+	taskKey := TaskKey(jobID)
+	task, err := taskManager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+
+	var rs []chunk.Row
+	err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select FROM_UNIXTIME(max(state_update_time)) from
+				(select state_update_time from mysql.tidb_background_subtask where task_key = %?
+					union
+				select state_update_time from mysql.tidb_background_subtask_history where task_key = %?
+			) t`,
+			task.ID, task.ID,
+		)
+		return err
+	})
+
+	if rs[0].IsNull(0) {
+		return types.ZeroTime, nil
+	}
+
+	return rs[0].GetTime(0), nil
 }
 
 // TaskKey returns the task key for a job.

@@ -76,7 +76,7 @@ create table t (a int, b int, c int, primary key(a), key(b));
 explain format='brief' select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1;
 id	estRows	task	access object	operator info
 Projection	13.74	root		executor__index_merge_reader.t.a, executor__index_merge_reader.t.b, executor__index_merge_reader.t.c, executor__index_merge_reader.t.a, executor__index_merge_reader.t.b, executor__index_merge_reader.t.c
-└─IndexJoin	13.74	root		inner join, inner:TableReader, outer key:executor__index_merge_reader.t.a, inner key:executor__index_merge_reader.t.a, equal cond:eq(executor__index_merge_reader.t.a, executor__index_merge_reader.t.a), eq(executor__index_merge_reader.t.c, executor__index_merge_reader.t.c), other cond:or(eq(executor__index_merge_reader.t.a, 1), eq(executor__index_merge_reader.t.b, 1))
+└─IndexJoin	13.74	root		inner join, inner:TableReader, outer key:executor__index_merge_reader.t.a, inner key:executor__index_merge_reader.t.a, equal cond:eq(executor__index_merge_reader.t.a, executor__index_merge_reader.t.a), eq(executor__index_merge_reader.t.c, executor__index_merge_reader.t.c)
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__index_merge_reader.t.c))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

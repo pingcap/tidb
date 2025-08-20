@@ -16,7 +16,6 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -55,72 +54,6 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalIndexScan.
-func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndexScan {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIdxScan, &p, offset)
-	return &p
-}
-
-// Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.SetSchema(p.tablePlan.Schema())
-	return &p
-}
-
-func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
-	if p.StoreType == kv.TiFlash {
-		_, ok := p.tablePlan.(*PhysicalExchangeSender)
-		if ok {
-			p.ReadReqType = MPP
-			return
-		}
-		tableScans := p.GetTableScans()
-		// When PhysicalTableReader's store type is tiflash, has table scan
-		// and all table scans contained are not keepOrder, try to use batch cop.
-		if len(tableScans) > 0 {
-			for _, tableScan := range tableScans {
-				if tableScan.KeepOrder {
-					return
-				}
-			}
-
-			// When allow batch cop is 1, only agg / topN uses batch cop.
-			// When allow batch cop is 2, every query uses batch cop.
-			switch ctx.GetSessionVars().AllowBatchCop {
-			case 1:
-				for _, plan := range p.TablePlans {
-					switch plan.(type) {
-					case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalTopN:
-						p.ReadReqType = BatchCop
-						return
-					}
-				}
-			case 2:
-				p.ReadReqType = BatchCop
-			}
-		}
-	}
-}
-
-// Init initializes PhysicalTableReader.
-func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTableReader {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
-	p.ReadReqType = Cop
-	if p.tablePlan == nil {
-		return &p
-	}
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.SetSchema(p.tablePlan.Schema())
-	p.adjustReadReqType(ctx)
-	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
-		setMppOrBatchCopForTableScan(p.tablePlan)
-	}
-	return &p
-}
-
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
@@ -152,53 +85,6 @@ func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offs
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.SetStats(stats)
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalExchangeSender) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeSender {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeReceiver {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
-	plans = append(plans, plan)
-	for _, child := range plan.Children() {
-		plans = flattenTreePlan(child, plans)
-	}
-	return plans
-}
-
-// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
-	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = flattenTreePlan(p, plans)
-	for i := range len(plans) / 2 {
-		j := len(plans) - i - 1
-		plans[i], plans[j] = plans[j], plans[i]
-	}
-	return plans
-}
-
-// Init only assigns type and context.
-func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTE {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeCTE, &p, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalCTETable) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTETable {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeCTETable, 0)
-	p.SetStats(stats)
 	return &p
 }
 
