@@ -1,0 +1,35 @@
+create database if not exists test;
+desc information_schema.schemata_extensions;
+Field	Type	Null	Key	Default	Extra
+CATALOG_NAME	varchar(64)	YES		NULL	
+SCHEMA_NAME	varchar(64)	YES		NULL	
+OPTIONS	varchar(256)	YES		NULL	
+select * from information_schema.schemata_extensions;
+CATALOG_NAME	SCHEMA_NAME	OPTIONS
+def	ddl__db_read_only	
+def	INFORMATION_SCHEMA	
+def	METRICS_SCHEMA	
+def	mysql	
+def	PERFORMANCE_SCHEMA	
+def	sys	
+def	test	
+alter schema test read only 1;
+select * from information_schema.schemata_extensions;
+CATALOG_NAME	SCHEMA_NAME	OPTIONS
+def	ddl__db_read_only	
+def	INFORMATION_SCHEMA	
+def	METRICS_SCHEMA	
+def	mysql	
+def	PERFORMANCE_SCHEMA	
+def	sys	
+def	test	READ ONLY=1
+alter schema test read only 0;
+select * from information_schema.schemata_extensions;
+CATALOG_NAME	SCHEMA_NAME	OPTIONS
+def	ddl__db_read_only	
+def	INFORMATION_SCHEMA	
+def	METRICS_SCHEMA	
+def	mysql	
+def	PERFORMANCE_SCHEMA	
+def	sys	
+def	test	
