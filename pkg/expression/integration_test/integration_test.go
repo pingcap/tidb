@@ -4425,3 +4425,17 @@ func TestIssue57608(t *testing.T) {
 		))
 	}
 }
+
+// This is a testcase for issue #57608, which is to ensure that the return type
+// of expression is deep copied correctly when it needs to be modified.
+func TestDeepCopyRetType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0(c0 int);")
+	tk.MustExec("create table t1(c0 decimal);")
+	tk.MustExec("insert into t1(c0) values (1687);")
+	tk.MustExec("insert  into t0(c0) values (0);")
+	tk.MustExec("create view v0(c0) as select cast((t1.c0 div t1.c0) as decimal) from t1;")
+	tk.MustQuery("select * from v0 inner join t0 on (v0.c0 like cast(v0.c0 as char) <= t0.c0) and (not atan2(t0.c0, v0.c0));").Check(testkit.Rows())
+}
