@@ -404,15 +404,18 @@ func makeParquetFileRegion(
 	dataFile FileInfo,
 ) ([]*TableRegion, []float64, error) {
 	var (
-		numberRows int64
+		numberRows = dataFile.FileMeta.Rows
 		err        error
 	)
 	if needPreciseRowCount(cfg.TableInfo) {
 		if numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta); err != nil {
 			return nil, nil, err
 		}
-	} else if numberRows <= 0 {
-		numberRows = dataFile.FileMeta.FileSize
+	} else {
+		if numberRows <= 0 {
+			numberRows = dataFile.FileMeta.FileSize
+		}
+
 		failpoint.Inject("mockParquetRowCount", func(val failpoint.Value) {
 			if v, ok := val.(int); ok {
 				numberRows = int64(v)
@@ -420,13 +423,17 @@ func makeParquetFileRegion(
 		})
 	}
 
+	// endOffset is used to indicate the read range of the file.
+	// For Parquet files, we don't support file split and always read
+	// until the end of the file. As the numberRows maybe underestimated,
+	// we set endOffset to math.MaxInt64.
 	region := &TableRegion{
 		DB:       cfg.TableMeta.DB,
 		Table:    cfg.TableMeta.Name,
 		FileMeta: dataFile.FileMeta,
 		Chunk: Chunk{
 			Offset:       0,
-			EndOffset:    numberRows,
+			EndOffset:    math.MaxInt64,
 			RealOffset:   0,
 			PrevRowIDMax: 0,
 			RowIDMax:     numberRows,
