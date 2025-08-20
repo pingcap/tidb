@@ -521,7 +521,7 @@ func NewMergeKVIter(
 		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 	}
 	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
-	concurrentReaderConcurrency = 256
+	//concurrentReaderConcurrency = 256
 	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
 	// too large when checkHotspot = true(add-index).
 	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
