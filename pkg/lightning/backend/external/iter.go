@@ -24,6 +24,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -521,9 +522,11 @@ func NewMergeKVIter(
 		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 	}
 	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
+	concurrentReaderConcurrency = 256
 	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
 	// too large when checkHotspot = true(add-index).
 	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
+	largeBufSize = 2 * units.MiB * concurrentReaderConcurrency
 	memPool := membuf.NewPool(
 		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
