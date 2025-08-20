@@ -273,7 +273,6 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		for _, tbl := range node.TableToTables {
 			dbNames = append(dbNames, tbl.OldTable.Schema)
 			dbNames = append(dbNames, tbl.NewTable.Schema)
-
 		}
 	case *ast.AlterDatabaseStmt:
 		for _, opt := range node.Options {
