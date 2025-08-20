@@ -262,8 +262,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str += ")"
 	case *physicalop.PhysicalTableReader:
 		str = fmt.Sprintf("TableReader(%s)", ToString(x.TablePlan))
-	case *PhysicalIndexReader:
-		str = fmt.Sprintf("IndexReader(%s)", ToString(x.indexPlan))
+	case *physicalop.PhysicalIndexReader:
+		str = fmt.Sprintf("IndexReader(%s)", ToString(x.IndexPlan))
 	case *physicalop.PhysicalIndexLookUpReader:
 		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.IndexPlan), ToString(x.TablePlan))
 	case *physicalop.PhysicalIndexMergeReader:

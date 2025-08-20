@@ -24,28 +24,6 @@ import (
 )
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexReader)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if op.indexPlan != nil {
-		indexPlan, ok := op.indexPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.indexPlan = indexPlan.(base.PhysicalPlan)
-	}
-	cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)
-	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns, nil)
-	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PointGetPlan)
 	*cloned = *op

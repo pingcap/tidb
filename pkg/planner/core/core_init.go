@@ -152,6 +152,9 @@ func init() {
 	// for physical cte
 	utilfuncp.GetPlanCostVer24PhysicalCTE = getPlanCostVer24PhysicalCTE
 	utilfuncp.Attach2Task4PhysicalCTEStorage = attach2Task4PhysicalCTEStorage
+	// for physical index reader
+	utilfuncp.GetPlanCostVer14PhysicalIndexReader = getPlanCostVer14PhysicalIndexReader
+	utilfuncp.GetPlanCostVer24PhysicalIndexReader = getPlanCostVer24PhysicalIndexReader
 	// for table reader
 	utilfuncp.GetPlanCostVer14PhysicalTableReader = getPlanCostVer14PhysicalTableReader
 	utilfuncp.GetPlanCostVer24PhysicalTableReader = getPlanCostVer24PhysicalTableReader

@@ -24,13 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -50,7 +46,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexScan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableScan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableReader{}
-	_ base.PhysicalPlan = &PhysicalIndexReader{}
+	_ base.PhysicalPlan = &physicalop.PhysicalIndexReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexLookUpReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexMergeReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalHashAgg{}
@@ -75,8 +71,8 @@ var (
 )
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
-	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
+func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *physicalop.PhysicalIndexReader {
+	reader := physicalop.PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
@@ -96,106 +92,6 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
 	return reader
-}
-
-// PhysicalIndexReader is the index reader in tidb.
-type PhysicalIndexReader struct {
-	physicalop.PhysicalSchemaProducer
-
-	// IndexPlans flats the indexPlan to construct executor pb.
-	indexPlan  base.PhysicalPlan
-	IndexPlans []base.PhysicalPlan
-
-	// OutputColumns represents the columns that index reader should return.
-	OutputColumns []*expression.Column
-
-	// Used by partition table.
-	PlanPartInfo *physicalop.PhysPlanPartInfo
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalIndexReader)
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	if cloned.indexPlan, err = p.indexPlan.Clone(newCtx); err != nil {
-		return nil, err
-	}
-	if cloned.IndexPlans, err = physicalop.ClonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
-		return nil, err
-	}
-	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
-	return cloned, err
-}
-
-// SetSchema overrides op.PhysicalPlan SetSchema interface.
-func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
-	if p.indexPlan != nil {
-		p.IndexPlans = physicalop.FlattenPushDownPlan(p.indexPlan)
-		switch p.indexPlan.(type) {
-		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalProjection:
-			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
-		default:
-			is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
-			p.PhysicalSchemaProducer.SetSchema(is.DataSourceSchema)
-		}
-		p.OutputColumns = p.Schema().Clone().Columns
-	}
-}
-
-// SetChildren overrides op.PhysicalPlan SetChildren interface.
-func (p *PhysicalIndexReader) SetChildren(children ...base.PhysicalPlan) {
-	p.indexPlan = children[0]
-	p.SetSchema(nil)
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
-	for _, child := range p.IndexPlans {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
-	}
-	return corCols
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.indexPlan != nil {
-		rp.Children = append(rp.Children, p.indexPlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.indexPlan != nil {
-		physicalop.AppendChildCandidate(p, p.indexPlan, op)
-	}
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexReader
-func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + p.PlanPartInfo.MemoryUsage()
-	if p.indexPlan != nil {
-		p.indexPlan.MemoryUsage()
-	}
-
-	for _, plan := range p.IndexPlans {
-		sum += plan.MemoryUsage()
-	}
-	for _, col := range p.OutputColumns {
-		sum += col.MemoryUsage()
-	}
-	return
 }
 
 // AddExtraPhysTblIDColumn for partition table.
@@ -425,8 +321,8 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 	switch copPlan := plan.(type) {
 	case *physicalop.PhysicalTableReader:
 		statsInfos = CollectPlanStatsVersion(copPlan.TablePlan, statsInfos)
-	case *PhysicalIndexReader:
-		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+	case *physicalop.PhysicalIndexReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
 	case *physicalop.PhysicalIndexLookUpReader:
 		// For index loop up, only the indexPlan is necessary,
 		// because they use the same stats and we do not set the stats info for tablePlan.
@@ -448,18 +344,4 @@ func SafeClone(sctx base.PlanContext, v base.PhysicalPlan) (_ base.PhysicalPlan,
 		}
 	}()
 	return v.Clone(sctx)
-}
-
-func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp) {
-	candidate := &tracing.CandidatePlanTrace{
-		PlanTrace: &tracing.PlanTrace{
-			ID:          pp.ID(),
-			TP:          pp.TP(),
-			ExplainInfo: pp.ExplainInfo(),
-			// TODO: trace the cost
-		},
-	}
-	op.AppendCandidate(candidate)
-	pp.AppendChildCandidate(op)
-	op.GetTracer().Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }

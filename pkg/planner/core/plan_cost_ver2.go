@@ -262,22 +262,23 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalIndexReader returns the plan-cost of this sub-plan, which is:
 // plan-cost = (child-cost + net-cost) / concurrency
 // net-cost = rows * row-size * net-factor
-func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalIndexReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
 
-	rows := getCardinality(p.indexPlan, option.CostFlag)
+	rows := getCardinality(p.IndexPlan, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
 
-	childCost, err := p.indexPlan.GetPlanCostVer2(property.CopSingleReadTaskType, option)
+	childCost, err := p.IndexPlan.GetPlanCostVer2(property.CopSingleReadTaskType, option)
 	if err != nil {
 		return costusage.ZeroCostVer2, err
 	}
@@ -1220,8 +1221,8 @@ func isTemporaryTable(tbl *model.TableInfo) bool {
 
 func getTableInfo(p base.PhysicalPlan) *model.TableInfo {
 	switch x := p.(type) {
-	case *PhysicalIndexReader:
-		return getTableInfo(x.indexPlan)
+	case *physicalop.PhysicalIndexReader:
+		return getTableInfo(x.IndexPlan)
 	case *physicalop.PhysicalTableReader:
 		return getTableInfo(x.TablePlan)
 	case *physicalop.PhysicalIndexLookUpReader:

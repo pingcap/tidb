@@ -272,7 +272,7 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 // AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
-	appendChildCandidate(p, p.TablePlan, op)
+	AppendChildCandidate(p, p.TablePlan, op)
 }
 
 // ExplainInfo implements Plan interface.
@@ -427,21 +427,6 @@ func GetDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 		res.Partitions = append(res.Partitions, pi.Definitions[idx].Name.O)
 	}
 	return res
-}
-
-// TODO: keep one replica is ok after all physical reader is migrated.
-func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp) {
-	candidate := &tracing.CandidatePlanTrace{
-		PlanTrace: &tracing.PlanTrace{
-			ID:          pp.ID(),
-			TP:          pp.TP(),
-			ExplainInfo: pp.ExplainInfo(),
-			// TODO: trace the cost
-		},
-	}
-	op.AppendCandidate(candidate)
-	pp.AppendChildCandidate(op)
-	op.GetTracer().Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }
 
 // ResolveIndicesForVirtualColumn resolves dependent columns's indices for virtual columns.

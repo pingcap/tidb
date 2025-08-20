@@ -16,6 +16,7 @@ go_library(
         "physical_hash_join.go",
         "physical_index_hash_join.go",
         "physical_index_join.go",
+        "physical_index_reader.go",
         "physical_index_scan.go",
         "physical_indexlookup_reader.go",
         "physical_indexmerge_reader.go",

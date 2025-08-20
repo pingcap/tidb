@@ -297,7 +297,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildTableReader(v)
 	case *physicalop.PhysicalTableSample:
 		return b.buildTableSample(v)
-	case *plannercore.PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		return b.buildIndexReader(v)
 	case *physicalop.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
@@ -4088,7 +4088,7 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	return usedPartition, true, contentPos, nil
 }
 
-func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
+func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexReader) (*IndexReaderExecutor, error) {
 	dagReq, err := builder.ConstructDAGReq(b.ctx, v.IndexPlans, kv.TiKV)
 	if err != nil {
 		return nil, err
@@ -4147,7 +4147,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	return e, nil
 }
 
-func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) exec.Executor {
+func (b *executorBuilder) buildIndexReader(v *physicalop.PhysicalIndexReader) exec.Executor {
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
@@ -4606,7 +4606,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	switch v := plan.(type) {
 	case *physicalop.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
-	case *plannercore.PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	case *physicalop.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
@@ -4946,7 +4946,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Conte
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 
-func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
+func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *physicalop.PhysicalIndexReader,
 	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, memoryTracker *memory.Tracker, interruptSignal *atomic.Value,
 ) (exec.Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
