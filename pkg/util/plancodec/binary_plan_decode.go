@@ -15,7 +15,6 @@
 package plancodec
 
 import (
-	"math"
 	"strconv"
 	"strings"
 
@@ -40,9 +39,9 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 		return planDiscardedDecoded, nil
 	}
 	// 1. decode the protobuf into strings
-	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, false, false)
+	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, false)
 	for _, cte := range pb.Ctes {
-		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, false, false)
+		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, false)
 	}
 	if len(rows) == 0 {
 		return "", nil
@@ -120,12 +119,10 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 	if pb.DiscardedDueToTooLong {
 		return nil, nil
 	}
-	isBrief := format == types.ExplainFormatBrief || format == types.ExplainFormatPlanTree
-	isTruncated := format == types.ExplainFormatPlanTree
-	// decode the protobuf into strings
-	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, isBrief, isTruncated)
+	isBrief := format == types.ExplainFormatBrief
+	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, isBrief)
 	for _, cte := range pb.Ctes {
-		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, isBrief, isTruncated)
+		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, isBrief)
 	}
 	if len(rows) == 0 {
 		return nil, nil
@@ -199,7 +196,7 @@ func calculateMaxFieldLens(rows [][]string, hasRuntimeStats bool) (runeLens, byt
 	return
 }
 
-func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, hasRuntimeStats bool, out [][]string, isBrief bool, isTruncated bool) [][]string {
+func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, hasRuntimeStats bool, out [][]string, isBrief bool) [][]string {
 	row := make([]string, 0, 10)
 	// 1. extract the information and turn them into strings for display
 	var explainID string
@@ -209,11 +206,7 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 		explainID = texttree.PrettyIdentifier(op.Name+printDriverSide(op.Labels), indent, isLastChild)
 	}
 	var estRows string
-	if isTruncated {
-		estRows = strconv.FormatFloat(math.Floor(op.EstRows), 'f', 0, 64)
-	} else {
-		estRows = strconv.FormatFloat(op.EstRows, 'f', 2, 64)
-	}
+	estRows = strconv.FormatFloat(op.EstRows, 'f', 2, 64)
 	cost := strconv.FormatFloat(op.Cost, 'f', 2, 64)
 	var actRows, execInfo, memInfo, diskInfo string
 	if hasRuntimeStats {
@@ -282,7 +275,7 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	}
 	childIndent := texttree.Indent4Child(indent, isLastChild)
 	for i, child := range children {
-		out = decodeBinaryOperator(child, childIndent, i == len(children)-1, hasRuntimeStats, out, isBrief, false)
+		out = decodeBinaryOperator(child, childIndent, i == len(children)-1, hasRuntimeStats, out, isBrief)
 	}
 	return out
 }
