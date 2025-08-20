@@ -120,6 +120,7 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 		return nil, nil
 	}
 	isBrief := format == types.ExplainFormatBrief
+	// decode the protobuf into strings
 	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, isBrief)
 	for _, cte := range pb.Ctes {
 		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, isBrief)
@@ -205,8 +206,7 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	} else {
 		explainID = texttree.PrettyIdentifier(op.Name+printDriverSide(op.Labels), indent, isLastChild)
 	}
-	var estRows string
-	estRows = strconv.FormatFloat(op.EstRows, 'f', 2, 64)
+	estRows := strconv.FormatFloat(op.EstRows, 'f', 2, 64)
 	cost := strconv.FormatFloat(op.Cost, 'f', 2, 64)
 	var actRows, execInfo, memInfo, diskInfo string
 	if hasRuntimeStats {
