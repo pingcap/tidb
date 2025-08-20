@@ -114,7 +114,7 @@ type TiCIShardCacheClient struct {
 
 // NewTiCIShardCacheClient creates a new TiCIShardCacheClient instance.
 func NewTiCIShardCacheClient(etcdClient *clientv3.Client) (*TiCIShardCacheClient, error) {
-	client, err := tici.NewNilManagerCtx(context.Background(), etcdClient)
+	client, err := tici.NewManagerCtx(context.Background(), etcdClient)
 	if err != nil {
 		return nil, err
 	}
