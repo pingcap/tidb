@@ -172,6 +172,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	if matched {
 		return histCnt, nil
 	}
+<<<<<<< HEAD
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 {
@@ -197,6 +198,12 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	}
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return c.Histogram.NotNullCount() / histNDV, nil
+=======
+	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
+	// or all values assumed to be contained within TopN.
+	rowEstimate := estimateRowCountWithUniformDistribution(sctx, c, realtimeRowCount, modifyCount)
+	return rowEstimate.Est, nil
+>>>>>>> 2010151c503 (planner: equal estimate consistent for index and column (#63049))
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
