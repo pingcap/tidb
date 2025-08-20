@@ -21,8 +21,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	ast "github.com/pingcap/tidb/pkg/parser/types"
+	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -225,7 +226,7 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 	if checkType {
 		switch column.GetType(pc.ctx).GetType() {
 		case mysql.TypeBit:
-			if !IsPushDownEnabled(ast.TypeStr(mysql.TypeBit), kv.TiKV) {
+			if !IsPushDownEnabled(parsertypes.TypeStr(mysql.TypeBit), kv.TiKV) {
 				return nil
 			}
 		case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
@@ -268,6 +269,10 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// Check whether this function can be pushed.
 	if !canFuncBePushed(pc.ctx, expr, kv.UnSpecified) {
 		return nil
+	}
+
+	if pc.isTiCIExpr && expr.FuncName.L == ast.IsTruthWithNull {
+		return pc.ExprToPB(expr.GetArgs()[0])
 	}
 
 	// Check whether all of its parameters can be pushed.

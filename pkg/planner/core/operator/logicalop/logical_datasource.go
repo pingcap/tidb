@@ -654,17 +654,19 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	matchedFuncs := make(map[*expression.ScalarFunction]struct{}, 2)
 	for _, cond := range ds.PushedDownConds {
 		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok || sf.FuncName.L != ast.FTSMatchWord {
-			if expression.ContainsFullTextSearchFn(cond) {
-				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
-			}
+		if !ok {
 			continue
 		}
-		idSetForCheck.Clear()
-		for i := 1; i < len(sf.GetArgs()); i++ {
-			col := sf.GetArgs()[i].(*expression.Column)
-			idSetForCheck.Insert(int(col.ID))
+		_, isSingleFTS := expression.FTSFuncMap[sf.FuncName.L]
+		if !isSingleFTS {
+			containsFTS := expression.ContainsFullTextSearchFn(cond)
+			onlyLogicOpAndFTS := expression.ExprOnlyContainsLogicOpAndFTS(cond)
+			if containsFTS && !onlyLogicOpAndFTS {
+				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
+			}
 		}
+		idSetForCheck.Clear()
+		expression.CollectColumnIDForFTS(sf, &idSetForCheck)
 		// Check TiCI version first.
 		var currentIndex *model.IndexInfo
 		for idx, set := range ticiIdx2FastCheck {
