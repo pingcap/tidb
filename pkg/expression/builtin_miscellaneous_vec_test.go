@@ -140,6 +140,7 @@ func (c *counter) add(diff int) int {
 
 func TestSleepVectorized(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	sessVars := ctx.GetSessionVars()
 
 	fc := funcs[ast.Sleep]

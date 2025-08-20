@@ -32,7 +32,8 @@ import (
 
 func TestBaseBuiltin(t *testing.T) {
 	ctx := mock.NewContext()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
+	cc := make(CloneContext, 2)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, "", nil, types.ETTimestamp)
 	require.NoError(t, err)
 	_, _, err = bf.evalInt(ctx, chunk.Row{})
 	require.Error(t, err)
@@ -51,6 +52,7 @@ func TestBaseBuiltin(t *testing.T) {
 }
 
 func TestClone(t *testing.T) {
+	cc := make(CloneContext, 2)
 	builtinFuncs := []builtinFunc{
 		&builtinArithmeticPlusRealSig{}, &builtinArithmeticPlusDecimalSig{}, &builtinArithmeticPlusIntSig{}, &builtinArithmeticMinusRealSig{}, &builtinArithmeticMinusDecimalSig{},
 		&builtinArithmeticMinusIntSig{}, &builtinArithmeticDivideRealSig{}, &builtinArithmeticDivideDecimalSig{}, &builtinArithmeticMultiplyRealSig{}, &builtinArithmeticMultiplyDecimalSig{},
@@ -147,7 +149,7 @@ func TestClone(t *testing.T) {
 		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
 	}
 	for _, f := range builtinFuncs {
-		cf := f.Clone()
+		cf := f.Clone(cc)
 		require.IsType(t, f, cf)
 	}
 }
@@ -188,24 +190,26 @@ func TestGetUint64FromConstant(t *testing.T) {
 }
 
 func TestSetExprColumnInOperand(t *testing.T) {
+	cc := make(CloneContext, 2)
 	col := &Column{RetType: newIntFieldType()}
-	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
+	require.True(t, SetExprColumnInOperand(cc, col).(*Column).InOperand)
 
 	ctx := mock.NewContext()
 	f, err := funcs[ast.Abs].getFunction(ctx, cc, []Expression{col})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f}
-	SetExprColumnInOperand(fun)
+	SetExprColumnInOperand(cc, fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
 
 func TestPopRowFirstArg(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext)
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(ctx, cc, []Expression{c1, c2, c3})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f, FuncName: ast.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
-	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
+	fun2, err := PopRowFirstArg(mock.NewContext(), cc, fun)
 	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
 }
@@ -239,79 +243,82 @@ func TestGetStrIntFromConstant(t *testing.T) {
 
 func TestSubstituteCorCol2Constant(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
 	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
-	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
-	plus := newFunctionWithMockCtx(ast.Plus, cast, corCol2)
-	plus2 := newFunctionWithMockCtx(ast.Plus, plus, NewOne())
+	cast := BuildCastFunction(ctx, cc, corCol1, types.NewFieldType(mysql.TypeLonglong))
+	plus := newFunctionWithMockCtx(ast.Plus, cc, cast, corCol2)
+	plus2 := newFunctionWithMockCtx(ast.Plus, cc, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	ret, err := SubstituteCorCol2Constant(ctx, plus2)
+	ret, err := SubstituteCorCol2Constant(ctx, cc, plus2)
 	require.NoError(t, err)
 	require.True(t, ret.Equal(ctx, ans1))
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	ret, err = SubstituteCorCol2Constant(ctx, col1)
+	ret, err = SubstituteCorCol2Constant(ctx, cc, col1)
 	require.NoError(t, err)
 	ans2 := col1
 	require.True(t, ret.Equal(ctx, ans2))
-	plus3 := newFunctionWithMockCtx(ast.Plus, plus2, col1)
-	ret, err = SubstituteCorCol2Constant(ctx, plus3)
+	plus3 := newFunctionWithMockCtx(ast.Plus, cc, plus2, col1)
+	ret, err = SubstituteCorCol2Constant(ctx, cc, plus3)
 	require.NoError(t, err)
-	ans3 := newFunctionWithMockCtx(ast.Plus, ans1, col1)
+	ans3 := newFunctionWithMockCtx(ast.Plus, cc, ans1, col1)
 	require.False(t, ret.Equal(ctx, ans3))
 }
 
 func TestPushDownNot(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
-	eqFunc := newFunctionWithMockCtx(ast.EQ, col, NewOne())
-	orFunc := newFunctionWithMockCtx(ast.LogicOr, eqFunc, eqFunc)
-	andFunc := newFunctionWithMockCtx(ast.LogicAnd, orFunc, eqFunc)
-	notFunc := newFunctionWithMockCtx(ast.UnaryNot, andFunc)
+	eqFunc := newFunctionWithMockCtx(ast.EQ, cc, col, NewOne())
+	orFunc := newFunctionWithMockCtx(ast.LogicOr, cc, eqFunc, eqFunc)
+	andFunc := newFunctionWithMockCtx(ast.LogicAnd, cc, orFunc, eqFunc)
+	notFunc := newFunctionWithMockCtx(ast.UnaryNot, cc, andFunc)
 	// (a!=1&&a!=1)||a=1
-	neFunc := newFunctionWithMockCtx(ast.NE, col, NewOne())
-	andFunc2 := newFunctionWithMockCtx(ast.LogicAnd, neFunc, neFunc)
-	orFunc2 := newFunctionWithMockCtx(ast.LogicOr, andFunc2, neFunc)
-	notFuncCopy := notFunc.Clone()
+	neFunc := newFunctionWithMockCtx(ast.NE, cc, col, NewOne())
+	andFunc2 := newFunctionWithMockCtx(ast.LogicAnd, cc, neFunc, neFunc)
+	orFunc2 := newFunctionWithMockCtx(ast.LogicOr, cc, andFunc2, neFunc)
+	notFuncCopy := notFunc.Clone(cc)
 	ret := PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, orFunc2))
 	require.True(t, notFunc.Equal(ctx, notFuncCopy))
 
 	// issue 15725
 	// (not not a) should be optimized to (a is true)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, cc, col)))
 
 	// (not not (a+1)) should be optimized to (a+1 is true)
-	plusFunc := newFunctionWithMockCtx(ast.Plus, col, NewOne())
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, plusFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	plusFunc := newFunctionWithMockCtx(ast.Plus, cc, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, plusFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, plusFunc)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, cc, plusFunc)))
 	// (not not not a) should be optimized to (not (a is true))
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, cc, newFunctionWithMockCtx(ast.IsTruthWithNull, cc, col))))
 	// (not not not not a) should be optimized to (a is true)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
-	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, cc, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, cc, col)))
 }
 
 func TestFilter(t *testing.T) {
+	cc := make(CloneContext, 2)
 	conditions := []Expression{
-		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
-		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.LogicOr, cc, newLonglong(1), newColumn(0)),
 	}
 	result := make([]Expression, 0, 5)
 	result = Filter(result, conditions, isLogicOrFunction)
@@ -319,10 +326,11 @@ func TestFilter(t *testing.T) {
 }
 
 func TestFilterOutInPlace(t *testing.T) {
+	cc := make(CloneContext, 2)
 	conditions := []Expression{
-		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
-		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.LogicOr, cc, newLonglong(1), newColumn(0)),
 	}
 	remained, filtered := FilterOutInPlace(conditions, isLogicOrFunction)
 	require.Equal(t, 2, len(remained))
@@ -463,29 +471,30 @@ func TestProjectionBenefitsFromPushedDown(t *testing.T) {
 		inputSchemaLen int
 		expectResult   bool
 	}
-	castFunc, _ := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), newFunctionWithMockCtx(ast.JSONExtract, newColJSON(), newColString("str", "binary")))
+	cc := make(CloneContext, 2)
+	castFunc, _ := NewFunction(mock.NewContext(), cc, ast.Cast, types.NewFieldType(mysql.TypeString), newFunctionWithMockCtx(ast.JSONExtract, cc, newColJSON(), newColString("str", "binary")))
 	testDataArray := []testDataType{
 		{[]Expression{newColumn(0), newColumn(1)}, 5, true},
 		{[]Expression{newColumn(0), newColumn(1)}, 2, false},
 		{[]Expression{
 			newColumn(0),
-			newFunctionWithMockCtx(ast.JSONExtract, newColJSON(), newColString("str", "binary")),
-			newFunctionWithMockCtx(ast.JSONDepth, newColJSON()),
-			newFunctionWithMockCtx(ast.JSONLength, newColJSON()),
-			newFunctionWithMockCtx(ast.JSONType, newColJSON()),
-			newFunctionWithMockCtx(ast.JSONValid, newColJSON()),
-			newFunctionWithMockCtx(ast.JSONContains, newColJSON(), newColString("str", "binary")),
-			newFunctionWithMockCtx(ast.JSONContainsPath, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary"), newColString("str", "binary")),
-			newFunctionWithMockCtx(ast.JSONKeys, newColJSON()),
-			newFunctionWithMockCtx(ast.JSONSearch, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary")),
-			newFunctionWithMockCtx(ast.JSONMemberOf, newColString("str", "binary"), newColJSON()),
-			newFunctionWithMockCtx(ast.JSONOverlaps, newColJSON(), newColJSON()),
+			newFunctionWithMockCtx(ast.JSONExtract, cc, newColJSON(), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONDepth, cc, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONLength, cc, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONType, cc, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONValid, cc, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONContains, cc, newColJSON(), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONContainsPath, cc, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary"), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONKeys, cc, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONSearch, cc, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONMemberOf, cc, newColString("str", "binary"), newColJSON()),
+			newFunctionWithMockCtx(ast.JSONOverlaps, cc, newColJSON(), newColJSON()),
 		}, 3, true},
 		{[]Expression{
-			newFunctionWithMockCtx(ast.JSONUnquote, newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONUnquote, cc, newColString("str", "binary")),
 		}, 3, false},
 		{[]Expression{
-			newFunctionWithMockCtx(ast.JSONUnquote, castFunc),
+			newFunctionWithMockCtx(ast.JSONUnquote, cc, castFunc),
 		}, 3, true},
 	}
 	for _, testData := range testDataArray {
@@ -495,14 +504,15 @@ func TestProjectionBenefitsFromPushedDown(t *testing.T) {
 }
 
 func BenchmarkExtractColumns(b *testing.B) {
+	cc := make(CloneContext, 2)
 	conditions := []Expression{
-		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
-		newFunctionWithMockCtx(ast.EQ, newColumn(2), newColumn(3)),
-		newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
-		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(2), newColumn(3)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(3), newLonglong(1)),
+		newFunctionWithMockCtx(ast.LogicOr, cc, newLonglong(1), newColumn(0)),
 	}
-	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
+	expr := ComposeCNFCondition(mock.NewContext(), cc, conditions...)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -515,14 +525,15 @@ func (m *MockExpr) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, res
 }
 
 func BenchmarkExprFromSchema(b *testing.B) {
+	cc := make(CloneContext, 2)
 	conditions := []Expression{
-		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
-		newFunctionWithMockCtx(ast.EQ, newColumn(2), newColumn(3)),
-		newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
-		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(2), newColumn(3)),
+		newFunctionWithMockCtx(ast.EQ, cc, newColumn(3), newLonglong(1)),
+		newFunctionWithMockCtx(ast.LogicOr, cc, newLonglong(1), newColumn(0)),
 	}
-	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
+	expr := ComposeCNFCondition(mock.NewContext(), cc, conditions...)
 	schema := &Schema{Columns: ExtractColumns(expr)}
 
 	b.ResetTimer()
@@ -620,7 +631,7 @@ func (m *MockExpr) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (val types.
 }
 func (m *MockExpr) GetType(_ EvalContext) *types.FieldType { return m.t }
 
-func (m *MockExpr) Clone() Expression {
+func (m *MockExpr) Clone(CloneContext) Expression {
 	cloned := new(MockExpr)
 	cloned.i = m.i
 	cloned.err = m.err
@@ -630,13 +641,13 @@ func (m *MockExpr) Clone() Expression {
 	return cloned
 }
 
-func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
-func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstLevel() ConstLevel                            { return ConstNone }
-func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
-func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
-func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
-func (m *MockExpr) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
+func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool                 { return false }
+func (m *MockExpr) IsCorrelated() bool                                       { return false }
+func (m *MockExpr) ConstLevel() ConstLevel                                   { return ConstNone }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression                    { return m }
+func (m *MockExpr) ResolveIndices(CloneContext, *Schema) (Expression, error) { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error                      { return nil }
+func (m *MockExpr) ResolveIndicesByVirtualExpr(ctx EvalContext, cc CloneContext, schema *Schema) (Expression, bool) {
 	return m, true
 }
 func (m *MockExpr) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {

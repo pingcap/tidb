@@ -49,7 +49,8 @@ func genVecBuiltinRegexpBenchCaseForConstants(ctx BuildContext) (baseFunc builti
 	args[1] = DatumToConstant(types.NewStringDatum(rePat), mysql.TypeString, 0)
 
 	var err error
-	baseFunc, err = funcs[ast.Regexp].getFunction(ctx, args)
+	cc := make(CloneContext, 2)
+	baseFunc, err = funcs[ast.Regexp].getFunction(ctx, cc, args)
 	if err != nil {
 		panic(err)
 	}
