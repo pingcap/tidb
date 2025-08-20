@@ -2097,6 +2097,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	dbInfo, _ := is.SchemaByName(dbName)
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -2119,6 +2120,10 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		tbl, err = domainSchema.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
+		}
+		dbInfoLatest, _ := domainSchema.SchemaByName(dbName)
+		if dbInfo.ReadOnly != dbInfoLatest.ReadOnly {
+			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
 		}
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)

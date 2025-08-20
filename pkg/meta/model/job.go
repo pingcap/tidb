@@ -113,7 +113,7 @@ const (
 	ActionAddVectorIndex                        ActionType = 73
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
-	_                                           ActionType = 77 // reserve for database read-only feature
+	ActionModifySchemaReadOnly                  ActionType = 77
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
@@ -191,6 +191,7 @@ var ActionMap = map[ActionType]string{
 	ActionAddVectorIndex:                        "add vector index",
 	ActionAlterTableMode:                        "alter table mode",
 	ActionRefreshMeta:                           "refresh meta",
+	ActionModifySchemaReadOnly:                  "modify schema read only",
 	ActionAlterTableAffinity:                    "alter table affinity",
 	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
 	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
@@ -270,6 +271,8 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// StatePendingReadOnly means this database is pending to be read-only.
+	StatePendingReadOnly
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
