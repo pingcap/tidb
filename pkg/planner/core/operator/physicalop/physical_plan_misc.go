@@ -83,6 +83,26 @@ type PhysPlanPartInfo struct {
 	ColumnNames    types.NameSlice
 }
 
+// GetPruningConds returns the pruning conditions for partition pruning.
+func (pi *PhysPlanPartInfo) GetPruningConds() []expression.Expression {
+	return pi.PruningConds
+}
+
+// GetPartitionNames returns the partition names.
+func (pi *PhysPlanPartInfo) GetPartitionNames() []ast.CIStr {
+	return pi.PartitionNames
+}
+
+// GetColumns returns the columns used for partition pruning.
+func (pi *PhysPlanPartInfo) GetColumns() []*expression.Column {
+	return pi.Columns
+}
+
+// GetColumnNames returns the column names used for partition pruning.
+func (pi *PhysPlanPartInfo) GetColumnNames() types.NameSlice {
+	return pi.ColumnNames
+}
+
 const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
 
 // CloneForPlanCache clones the PhysPlanPartInfo for plan cache.

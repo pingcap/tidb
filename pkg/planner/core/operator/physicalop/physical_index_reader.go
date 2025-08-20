@@ -114,7 +114,7 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.IndexPlan != nil {
-		appendChildCandidate(p, p.IndexPlan, op)
+		AppendChildCandidate(p, p.IndexPlan, op)
 	}
 }
 
@@ -244,16 +244,4 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 		p.OutputColumns[i] = newCol.(*expression.Column)
 	}
 	return
-}
-
-func ClonePhysicalPlan(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
-	cloned := make([]base.PhysicalPlan, 0, len(plans))
-	for _, p := range plans {
-		c, err := p.Clone(sctx)
-		if err != nil {
-			return nil, err
-		}
-		cloned = append(cloned, c)
-	}
-	return cloned, nil
 }
