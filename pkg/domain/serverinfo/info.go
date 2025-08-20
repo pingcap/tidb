@@ -59,12 +59,28 @@ type StaticInfo struct {
 	StatusPort     uint   `json:"status_port"`
 	Lease          string `json:"lease"`
 	StartTimestamp int64  `json:"start_timestamp"`
+	// Keyspace is the keyspace name of this TiDB instance.
+	// it's always empty in classic kernel.
+	Keyspace string `json:"keyspace,omitempty"`
+	// AssumedKeyspace is the keyspace that this server info syncer assumes to be.
+	// it's empty when the server info syncer represents the keyspace of this TiDB
+	// instance.
+	// it's only used in cross keyspace scenario, such as on a user keyspace TiDB
+	// instance, it will access the SYSTEM keyspace, it will assume to be in the
+	// SYSTEM keyspace to join the online schema change process, to make sure the
+	// info schema is correctly synced.
+	AssumedKeyspace string `json:"assumed_keyspace,omitempty"`
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
 	// which will be changed on occasions such as connection to PD is restored after broken.
 	ServerIDGetter func() uint64 `json:"-"`
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
+}
+
+// IsAssumed checks if the StaticInfo is assumed to be in a keyspace other than its own.
+func (i *StaticInfo) IsAssumed() bool {
+	return i.AssumedKeyspace != ""
 }
 
 // DynamicInfo represents the dynamic information of the server.

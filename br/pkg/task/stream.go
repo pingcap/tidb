@@ -149,7 +149,7 @@ type StreamConfig struct {
 	DumpStatusTo *[]stream.TaskStatus `json:"-" toml:"-"`
 
 	// Spec for the command `advancer`.
-	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
+	AdvancerCfg advancercfg.CommandConfig `json:"advancer-config" toml:"advancer-config"`
 
 	// Spec for the command `pause`.
 	Message string `json:"message" toml:"message"`
@@ -975,8 +975,8 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return err
 	}
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCLI)
-	advancer := streamhelper.NewCheckpointAdvancer(env)
-	advancer.UpdateConfig(cfg.AdvancerCfg)
+	advancer := streamhelper.NewCommandCheckpointAdvancer(env)
+	advancer.UpdateConfig(&cfg.AdvancerCfg)
 	ownerMgr := streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI)
 	defer func() {
 		ownerMgr.Close()
@@ -1520,12 +1520,24 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
-	migs, err := client.GetMigrations(ctx)
+	migs, err := client.GetLockedMigrations(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	client.BuildMigrations(migs.Migs)
-	defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+
+	skipCleanup := false
+	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
+		// Skip the cleanup - this keeps the read lock held
+		// and will cause lock conflicts for other restore operations
+		log.Info("Skipping migration read lock cleanup due to failpoint")
+		skipCleanup = true
+	})
+
+	if !skipCleanup {
+		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+	}
+
 	defer client.RestoreSSTStatisticFields(&extraFields)
 
 	ddlFiles := cfg.ddlFiles

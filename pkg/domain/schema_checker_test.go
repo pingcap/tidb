@@ -28,7 +28,7 @@ import (
 func TestSchemaCheckerSimple(t *testing.T) {
 	lease := 5 * time.Millisecond
 	validator := isvalidator.New(lease)
-	checker := &SchemaChecker{Validator: validator, needCheckSchema: true}
+	checker := &SchemaChecker{Validator: validator, needCheckSchemaByDelta: true}
 
 	// Add some schema versions and delta table IDs.
 	ts := uint64(time.Now().UnixNano())
