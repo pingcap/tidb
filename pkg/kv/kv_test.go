@@ -51,11 +51,7 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
 	tag = NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
-	if kerneltype.IsNextGen() {
-		require.Len(t, tag, 8)
-	} else {
-		require.Len(t, tag, 6) // For classic kernel, it does not include keyspace name.
-	}
+	require.Len(t, tag, 6)
 
 	decodedSQLDigest, err = resourcegrouptag.DecodeResourceGroupTag(tag)
 	require.NoError(t, err)

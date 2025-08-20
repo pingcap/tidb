@@ -841,6 +841,8 @@ func TestShowIndex(t *testing.T) {
 		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test_db_state")
 			result, err1 := tk.Exec(showIndexSQL)
 			if err1 != nil {
 				checkErr = err1
