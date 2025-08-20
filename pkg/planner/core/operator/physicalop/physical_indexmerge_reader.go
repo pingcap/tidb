@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -79,28 +80,28 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.PartialPlansRaw))
 	for _, partialPlan := range p.PartialPlansRaw {
-		tempPlans := utilfuncp.FlattenPushDownPlan(partialPlan)
+		tempPlans := FlattenPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.TablePlan != nil {
-		p.TablePlans = utilfuncp.FlattenPushDownPlan(p.TablePlan)
+		p.TablePlans = FlattenPushDownPlan(p.TablePlan)
 		p.SetSchema(p.TablePlan.Schema())
 		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {
-		if schema, ok := utilfuncp.GetDataSourceSchema4IndexScan(p.PartialPlans[0][0]); ok {
-			p.SetSchema(schema)
-		} else {
+		switch p.PartialPlans[0][0].(type) {
+		case *PhysicalTableScan:
 			p.SetSchema(p.PartialPlans[0][0].Schema())
+		default:
+			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
+			p.SetSchema(is.DataSourceSchema)
 		}
 	}
 	if p.KeepOrder {
 		switch x := p.PartialPlans[0][0].(type) {
 		case *PhysicalTableScan:
 			p.ByItems = x.ByItems
-		default:
-			if by, ok := utilfuncp.GetByItems4IndexScan(x); ok {
-				p.ByItems = by
-			}
+		case *PhysicalIndexScan:
+			p.ByItems = x.ByItems
 		}
 	}
 	return &p
@@ -108,13 +109,13 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 
 // GetAvgTableRowSize return the average row size of table plan.
 func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), utilfuncp.GetTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
 }
 
 // GetPartialReaderNetDataSize returns the estimated total response data size of a partial read.
 func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan base.PhysicalPlan) float64 {
-	_, isIdxScan := utilfuncp.GetDataSourceSchema4IndexScan(plan)
-	return plan.StatsCount() * cardinality.GetAvgRowSize(p.SCtx(), utilfuncp.GetTblStats(plan), plan.Schema().Columns, isIdxScan, false)
+	_, isIdxScan := plan.(*PhysicalIndexScan)
+	return plan.StatsCount() * cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(plan), plan.Schema().Columns, isIdxScan, false)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -159,10 +160,10 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.TablePlan != nil {
-		utilfuncp.AppendChildCandidate(p, p.TablePlan, op)
+		AppendChildCandidate(p, p.TablePlan, op)
 	}
 	for _, partialPlan := range p.PartialPlansRaw {
-		utilfuncp.AppendChildCandidate(p, partialPlan, op)
+		AppendChildCandidate(p, partialPlan, op)
 	}
 }
 
@@ -199,23 +200,19 @@ func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
 
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	// Handle cases where TablePlans might be empty or TablePlan might be nil
-	if len(p.TablePlans) == 0 || p.TablePlan == nil {
-		// Return a typed empty object to avoid nil pointer deref in explain paths
-		return utilfuncp.GetDynamicAccessPartition(sctx, nil, p.PlanPartInfo, "")
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return access.DynamicPartitionAccessObjects(nil)
 	}
-
-	ts, ok := p.TablePlans[0].(*PhysicalTableScan)
-	if !ok {
-		// Return a typed empty object to avoid nil pointer deref in explain paths
-		return utilfuncp.GetDynamicAccessPartition(sctx, nil, p.PlanPartInfo, "")
-	}
-
+	ts := p.TablePlans[0].(*PhysicalTableScan)
 	asName := ""
 	if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 		asName = ts.TableAsName.O
 	}
-	return utilfuncp.GetDynamicAccessPartition(sctx, ts.Table, p.PlanPartInfo, asName)
+	res := GetDynamicAccessPartition(sctx, ts.Table, p.PlanPartInfo, asName)
+	if res == nil {
+		return access.DynamicPartitionAccessObjects(nil)
+	}
+	return access.DynamicPartitionAccessObjects{res}
 }
 
 // ExplainInfo implements Plan interface.
@@ -237,43 +234,43 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexMergeReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *op
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.PushedLimit = p.PushedLimit.Clone()
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	partialPlans, ok := utilfuncp.ClonePhysicalPlansForPlanCache(newCtx, p.PartialPlansRaw)
+	cloned.PushedLimit = op.PushedLimit.Clone()
+	cloned.ByItems = util.CloneByItemss(op.ByItems)
+	partialPlans, ok := ClonePhysicalPlansForPlanCache(newCtx, op.PartialPlansRaw)
 	if !ok {
 		return nil, false
 	}
 	cloned.PartialPlansRaw = partialPlans
-	if p.TablePlan != nil {
-		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
+	if op.TablePlan != nil {
+		tablePlan, ok := op.TablePlan.CloneForPlanCache(newCtx)
 		if !ok {
 			return nil, false
 		}
 		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
 	}
-	cloned.PartialPlans = make([][]base.PhysicalPlan, len(p.PartialPlans))
+	cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))
 	for i, plan := range cloned.PartialPlansRaw {
-		cloned.PartialPlans[i] = utilfuncp.FlattenPushDownPlan(plan)
+		cloned.PartialPlans[i] = FlattenPushDownPlan(plan)
 	}
-	cloned.TablePlans = utilfuncp.FlattenPushDownPlan(cloned.TablePlan)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.HandleCols != nil {
-		cloned.HandleCols = p.HandleCols.Clone()
+	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
+	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
+	if op.HandleCols != nil {
+		cloned.HandleCols = op.HandleCols.Clone()
 	}
 	return cloned, true
 }
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
-	err = utilfuncp.ResolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.Schema())
+	err = ResolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}

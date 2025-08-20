@@ -15,9 +15,19 @@
 package physicalop
 
 import (
+	"context"
+	"strconv"
+
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
@@ -79,4 +89,72 @@ func GetTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
 	default:
 		return GetTblStats(copTaskPlan.Children()[0])
 	}
+}
+
+// GetDynamicAccessPartition get the dynamic access partition.
+func GetDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, physPlanPartInfo *PhysPlanPartInfo, asName string) (res *access.DynamicPartitionAccessObject) {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil || !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return nil
+	}
+
+	res = &access.DynamicPartitionAccessObject{}
+	tblName := tblInfo.Name.O
+	if len(asName) > 0 {
+		tblName = asName
+	}
+	res.Table = tblName
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	db, ok := infoschema.SchemaByTable(is, tblInfo)
+	if ok {
+		res.Database = db.Name.O
+	}
+	tmp, ok := is.TableByID(context.Background(), tblInfo.ID)
+	if !ok {
+		res.Err = "partition table not found:" + strconv.FormatInt(tblInfo.ID, 10)
+		return res
+	}
+	tbl := tmp.(table.PartitionedTable)
+
+	idxArr, err := partitionpruning.PartitionPruning(sctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
+	if err != nil {
+		res.Err = "partition pruning error:" + err.Error()
+		return res
+	}
+
+	if len(idxArr) == 1 && idxArr[0] == rule.FullRange {
+		res.AllPartitions = true
+		return res
+	}
+
+	for _, idx := range idxArr {
+		res.Partitions = append(res.Partitions, pi.Definitions[idx].Name.O)
+	}
+	return res
+}
+
+// ResolveIndicesForVirtualColumn resolves dependent columns's indices for virtual columns.
+func ResolveIndicesForVirtualColumn(result []*expression.Column, schema *expression.Schema) error {
+	for _, col := range result {
+		if col.VirtualExpr != nil {
+			newExpr, err := col.VirtualExpr.ResolveIndices(schema)
+			if err != nil {
+				return err
+			}
+			col.VirtualExpr = newExpr
+		}
+	}
+	return nil
+}
+
+func ClonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
+	clonedPlans := make([]base.PhysicalPlan, len(plans))
+	for i, plan := range plans {
+		cloned, ok := plan.CloneForPlanCache(newCtx)
+		if !ok {
+			return nil, false
+		}
+		clonedPlans[i] = cloned.(base.PhysicalPlan)
+	}
+	return clonedPlans, true
 }

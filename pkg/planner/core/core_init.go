@@ -16,10 +16,8 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -200,38 +198,4 @@ func init() {
 	// for physical index merge reader.
 	utilfuncp.GetPlanCostVer14PhysicalIndexMergeReader = GetPlanCostVer14PhysicalIndexMergeReader
 	utilfuncp.GetPlanCostVer24PhysicalIndexMergeReader = GetPlanCostVer24PhysicalIndexMergeReader
-	utilfuncp.FlattenPushDownPlan = flattenPushDownPlan
-	utilfuncp.GetTblStats = getTblStats
-	utilfuncp.ClonePhysicalPlansForPlanCache = clonePhysicalPlansForPlanCache
-	utilfuncp.AppendChildCandidate = appendChildCandidate
-	utilfuncp.ResolveIndicesForVirtualColumn = resolveIndicesForVirtualColumn
-	utilfuncp.LoadTableStats = loadTableStats
-	utilfuncp.GetDynamicAccessPartition = func(
-		sctx base.PlanContext,
-		tblInfo *model.TableInfo,
-		physPlanPartInfo any,
-		asName string,
-	) base.AccessObject {
-		ppi, _ := physPlanPartInfo.(*physicalop.PhysPlanPartInfo)
-		res := getDynamicAccessPartition(sctx, tblInfo, ppi, asName)
-		if res == nil {
-			// Return a typed empty object to avoid nil pointer deref in explain paths
-			return DynamicPartitionAccessObjects(nil)
-		}
-		return DynamicPartitionAccessObjects{res}
-	}
-	utilfuncp.GetDataSourceSchema4IndexScan = func(pp base.PhysicalPlan) (*expression.Schema, bool) {
-		is, ok := pp.(*PhysicalIndexScan)
-		if !ok || is == nil {
-			return nil, false
-		}
-		return is.dataSourceSchema, true
-	}
-	utilfuncp.GetByItems4IndexScan = func(pp base.PhysicalPlan) ([]*plannerutil.ByItems, bool) {
-		is, ok := pp.(*PhysicalIndexScan)
-		if !ok || is == nil {
-			return nil, false
-		}
-		return is.ByItems, true
-	}
 }

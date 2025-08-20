@@ -57,7 +57,7 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned := new(BatchPointGetPlan)
 	*cloned = *op
 	cloned.SimpleSchemaProducer = *op.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
-	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
+	probeParents, ok := physicalop.ClonePhysicalPlansForPlanCache(newCtx, op.probeParents)
 	if !ok {
 		return nil, false
 	}
