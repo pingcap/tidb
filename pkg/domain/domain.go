@@ -1998,7 +1998,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	// Still close InitStatsDone to unblock waiters that may depend on it.
 	if config.GetGlobalConfig().Security.SkipGrantTable {
 		close(statsHandle.InitStatsDone)
-		statslogutil.StatsLogger().Info("Skip initial stats due to skip-grant-table being set")
+		statslogutil.StatsLogger().Info("Skipping initial stats due to skip-grant-table being set")
 		return
 	}
 
