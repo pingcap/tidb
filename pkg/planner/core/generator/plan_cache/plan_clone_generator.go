@@ -83,7 +83,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			"core.PhysicalIndexMergeReader.TablePlans":
 			c.write("cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)")
 			continue
-		case "core.PhysicalIndexLookUpReader.IndexPlans":
+		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
 			c.write("cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)")
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":
