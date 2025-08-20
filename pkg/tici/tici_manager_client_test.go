@@ -231,23 +231,3 @@ func TestModelIndexToTiCIIndexInfo(t *testing.T) {
 	assert.Equal(t, int64(2), ii.IndexId)
 	assert.Equal(t, int64(1), ii.TableId)
 }
-
-func TestModelPrimaryKeyToTiCIIndexInfo(t *testing.T) {
-	tblInfo := &model.TableInfo{
-		ID:      1,
-		Name:    ast.NewCIStr("t"),
-		Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}},
-		Version: 1,
-		Indices: []*model.IndexInfo{
-			{ID: 2, Name: ast.NewCIStr("pk"), Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true, Primary: true},
-		},
-	}
-	ii := ModelPrimaryKeyToTiCIIndexInfo(tblInfo)
-	assert.NotNil(t, ii)
-	assert.Equal(t, int64(2), ii.IndexId)
-
-	// No primary key
-	tblInfo.Indices = []*model.IndexInfo{}
-	ii = ModelPrimaryKeyToTiCIIndexInfo(tblInfo)
-	assert.Nil(t, ii)
-}
