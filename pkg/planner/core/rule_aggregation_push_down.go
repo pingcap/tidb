@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -81,8 +82,7 @@ func (*AggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.AggFu
 // 0 stands for left, 1 stands for right, -1 stands for both, 2 stands for neither (e.g. count(*), sum(1) ...)
 func (*AggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, lSchema, rSchema *expression.Schema) int {
 	fromLeft, fromRight := false, false
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.Args, nil)
+	cols := expression.ExtractColumnsMapFromExpressions(nil, aggFunc.Args...)
 	for _, col := range cols {
 		if lSchema.Contains(col) {
 			fromLeft = true
@@ -364,7 +364,7 @@ func (a *AggregationPushDownSolver) makeNewAgg(ctx base.PlanContext, aggFuncs []
 }
 
 func (*AggregationPushDownSolver) splitPartialAgg(agg *logicalop.LogicalAggregation) (pushedAgg *logicalop.LogicalAggregation) {
-	partial, final, _ := BuildFinalModeAggregation(agg.SCtx(), &AggInfo{
+	partial, final, _ := physicalop.BuildFinalModeAggregation(agg.SCtx(), &physicalop.AggInfo{
 		AggFuncs:     agg.AggFuncs,
 		GroupByItems: agg.GroupByItems,
 		Schema:       agg.Schema(),

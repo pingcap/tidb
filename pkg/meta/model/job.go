@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -115,6 +116,7 @@ const (
 	ActionModifyEngineAttribute  ActionType = 74
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
+	ActionModifySchemaReadOnly   ActionType = 77 // reserve for database read-only feature
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -190,6 +192,7 @@ var ActionMap = map[ActionType]string{
 	ActionModifyEngineAttribute:         "modify engine attribute",
 	ActionAlterTableMode:                "alter table mode",
 	ActionRefreshMeta:                   "refresh meta",
+	ActionModifySchemaReadOnly:          "modify schema read only",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -393,6 +396,10 @@ type Job struct {
 	// SessionVars store system variables used in the DDL execution.
 	// To keep the backward compatibility, we still name it SessionVars.
 	SessionVars map[string]string `json:"session_vars,omitempty"`
+
+	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
+	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
+	LastSchemaVersion int64 `json:"last_schema_version"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -747,6 +754,10 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StateDeleteOnly ||
 			job.SchemaState == StateDeleteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionModifyColumn:
+		if job.SchemaState == StatePublic {
 			return false
 		}
 	case ActionAddTablePartition:
@@ -1233,5 +1244,12 @@ func NewJobW(job *Job, bytes []byte) *JobW {
 }
 
 func init() {
-	SetJobVerInUse(JobVersion1)
+	// as the cluster might be upgraded from old TiDB version, so we set to v1
+	// initially, and then we detect the right version when DDL start.
+	ver := JobVersion1
+	if kerneltype.IsNextGen() {
+		// nextgen doesn't need to consider the compatibility with old TiDB versions,
+		ver = JobVersion2
+	}
+	SetJobVerInUse(ver)
 }

@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//pkg/ddl/logutil",
         "//pkg/infoschema/context",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/metrics",

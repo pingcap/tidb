@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -547,7 +548,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
 		for partialIsCop := range 2 {
 			for isMPPTask := range 2 {
-				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
+				partial, final, _ := physicalop.BuildFinalModeAggregation(sctx, &physicalop.AggInfo{
 					AggFuncs:     aggFuncs,
 					GroupByItems: groubyItems,
 					Schema:       aggSchemaBuilder(sctx, aggFuncs),
@@ -570,7 +571,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 		}
 	}
 
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -678,17 +679,17 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 }
 
 func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
-	window := &core.PhysicalWindow{}
+	window := &physicalop.PhysicalWindow{}
 	newPlan, err := window.Clone(nil)
 	require.NoError(t, err)
-	newWindow, ok := newPlan.(*core.PhysicalWindow)
+	newWindow, ok := newPlan.(*physicalop.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	window.TiFlashFineGrainedShuffleStreamCount = 8
 	newPlan, err = window.Clone(nil)
 	require.NoError(t, err)
-	newWindow, ok = newPlan.(*core.PhysicalWindow)
+	newWindow, ok = newPlan.(*physicalop.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 

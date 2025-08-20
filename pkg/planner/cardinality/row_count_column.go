@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -167,7 +168,11 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
 	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
-	if matched {
+	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
+	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
+	// also check if this last bucket end value is underrepresented
+	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt, nil
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
@@ -175,7 +180,6 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 || (c.IsFullLoad() && c.Histogram.NotNullCount() == 0) {
 		// branch 1: all NDV's are in TopN, and no histograms
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
@@ -315,7 +319,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV).Est
 		}
 
 		if debugTrace {
@@ -339,7 +343,8 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).
 func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
-	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
+	// TODO: Track min/max range for column estimates, currently only used for indexes.
+	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r).Est
 	if c.StatsVer <= statistics.Version1 {
 		return histBetweenCnt
 	}
@@ -404,4 +409,56 @@ func ColumnEqualRowCount(sctx planctx.PlanContext, t *statistics.Table, value ty
 	result, err := equalRowCountOnColumn(sctx, c, value, encodedVal, t.RealtimeCount, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.RealtimeCount)
 	return result, errors.Trace(err)
+}
+
+// getPseudoRowCountWithPartialStats calculates the row count if there are no statistics on the index, but there are column stats available.
+func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistics.HistColl, indexRanges []*ranger.Range,
+	tableRowCount float64, idxCols []*expression.Column) (totalCount float64, maxCount float64, err error) {
+	if tableRowCount == 0 {
+		return 0, 0, nil
+	}
+	// If it is a single column index, directly use column estimation instead.
+	if len(idxCols) == 1 {
+		count, err := GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges)
+		return count, 0, err
+	}
+	tmpRan := []*ranger.Range{
+		{
+			LowVal:    make([]types.Datum, 1),
+			HighVal:   make([]types.Datum, 1),
+			Collators: make([]collate.Collator, 1),
+		},
+	}
+	var (
+		count float64
+		colID int64
+	)
+	totalCount = float64(0)
+	maxCount = float64(0)
+	for _, indexRange := range indexRanges {
+		selectivity := float64(1.0)
+		corrSelectivity := float64(1.0)
+		for i := range indexRange.LowVal {
+			tmpRan[0].LowVal[0] = indexRange.LowVal[i]
+			tmpRan[0].HighVal[0] = indexRange.HighVal[i]
+			tmpRan[0].Collators[0] = indexRange.Collators[0]
+			if i == len(indexRange.LowVal)-1 {
+				tmpRan[0].LowExclude = indexRange.LowExclude
+				tmpRan[0].HighExclude = indexRange.HighExclude
+			}
+			colID = idxCols[i].UniqueID
+			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
+			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			if err != nil {
+				return 0, 0, errors.Trace(err)
+			}
+			tempSelectivity := count / tableRowCount
+			selectivity *= tempSelectivity
+			corrSelectivity = min(corrSelectivity, tempSelectivity)
+		}
+		totalCount += selectivity * tableRowCount
+		maxCount += corrSelectivity * tableRowCount
+	}
+	totalCount = mathutil.Clamp(totalCount, 1, tableRowCount)
+	return totalCount, maxCount, nil
 }

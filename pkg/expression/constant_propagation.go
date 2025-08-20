@@ -243,6 +243,10 @@ var propConstSolverPool = sync.Pool{
 type propConstSolver struct {
 	basePropConstSolver
 	conditions []Expression
+	// When performing constant propagation, if the newly created expression cannot be pushed down,
+	// we might consider this expression to be invalid. We use the pushDownFilter here to determine
+	// whether it can be pushed down.
+	pushDownfilter func(expr Expression) bool
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -252,8 +256,9 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, pushDownfilter func(expression Expression) bool, conditions []Expression) []Expression {
 	s.ctx = ctx
+	s.pushDownfilter = pushDownfilter
 	return s.solve(conditions)
 }
 
@@ -261,6 +266,7 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions 
 func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	s.conditions = s.conditions[:0]
+	s.pushDownfilter = nil
 	propConstSolverPool.Put(s)
 }
 
@@ -350,10 +356,16 @@ func (s *propConstSolver) propagateColumnEQ() {
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
+					if s.pushDownfilter != nil && !s.pushDownfilter(newExpr) {
+						continue
+					}
 					s.conditions = append(s.conditions, newExpr)
 				}
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
+					if s.pushDownfilter != nil && !s.pushDownfilter(newExpr) {
+						continue
+					}
 					s.conditions = append(s.conditions, newExpr)
 				}
 			}
@@ -431,14 +443,14 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.conditions = propagateConstantDNF(s.ctx, s.conditions...)
+	s.conditions = propagateConstantDNF(s.ctx, s.pushDownfilter, s.conditions...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return slices.Clone(s.conditions)
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
-func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expression {
+func PropagateConstant(ctx exprctx.ExprContext, filter func(expr Expression) bool, conditions ...Expression) []Expression {
 	if len(conditions) == 0 {
 		return conditions
 	}
@@ -446,12 +458,12 @@ func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expr
 	defer func() {
 		solver.Clear()
 	}()
-	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), filter, conditions)
 }
 
-var propOuterJoinConstSolverPool = sync.Pool{
+var propSpecialJoinConstSolverPool = sync.Pool{
 	New: func() any {
-		solver := &propOuterJoinConstSolver{
+		solver := &propSpecialJoinConstSolver{
 			basePropConstSolver: newBasePropConstSolver(),
 			joinConds:           make([]Expression, 0, 4),
 			filterConds:         make([]Expression, 0, 4),
@@ -460,35 +472,40 @@ var propOuterJoinConstSolverPool = sync.Pool{
 	},
 }
 
-type propOuterJoinConstSolver struct {
+type propSpecialJoinConstSolver struct {
 	basePropConstSolver
 	joinConds   []Expression
 	filterConds []Expression
 	outerSchema *Schema
 	innerSchema *Schema
+	// When performing constant propagation, if the newly created expression cannot be pushed down,
+	// we might consider this expression to be invalid. We use the pushDownFilter here to determine
+	// whether it can be pushed down.
+	pushDownFilter func(Expression) bool
 	// nullSensitive indicates if this outer join is null sensitive, if true, we cannot generate
 	// additional `col is not null` condition from column equal conditions. Specifically, this value
-	// is true for LeftOuterSemiJoin and AntiLeftOuterSemiJoin.
+	// is true for LeftOuterSemiJoin, AntiLeftOuterSemiJoin and AntiSemiJoin.
 	nullSensitive bool
 }
 
-func newPropOuterJoinConstSolver() *propOuterJoinConstSolver {
-	solver := propOuterJoinConstSolverPool.Get().(*propOuterJoinConstSolver)
+func newPropSpecialJoinConstSolver() *propSpecialJoinConstSolver {
+	solver := propSpecialJoinConstSolverPool.Get().(*propSpecialJoinConstSolver)
 	return solver
 }
 
 // clear resets the solver.
-func (s *propOuterJoinConstSolver) Clear() {
+func (s *propSpecialJoinConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	s.joinConds = s.joinConds[:0]
 	s.filterConds = s.filterConds[:0]
 	s.outerSchema = nil
 	s.innerSchema = nil
 	s.nullSensitive = false
-	propOuterJoinConstSolverPool.Put(s)
+	s.pushDownFilter = nil
+	propSpecialJoinConstSolverPool.Put(s)
 }
 
-func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
+func (s *propSpecialJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 	s.joinConds = s.joinConds[:0]
 	s.joinConds = append(s.joinConds, &Constant{
 		Value:   types.NewDatum(false),
@@ -550,7 +567,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 }
 
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
-func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
+func (s *propSpecialJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
 	var conds []Expression
 	var condsOffset int
 	if filterConds {
@@ -606,7 +623,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 }
 
 // pickNewEQConds picks constant equal expressions from join and filter conditions.
-func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Constant {
+func (s *propSpecialJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Constant {
 	retMapper := make(map[int]*Constant)
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, true)
 	if retMapper == nil {
@@ -619,7 +636,7 @@ func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Const
 
 // propagateConstantEQ propagates expressions like `outerCol = const` by substituting `outerCol` in *JOIN* condition
 // with `const`, the procedure repeats multiple times.
-func (s *propOuterJoinConstSolver) propagateConstantEQ() {
+func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 	clear(s.eqMapper)
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
@@ -642,7 +659,7 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 	}
 }
 
-func (s *propOuterJoinConstSolver) colsFromOuterAndInner(col1, col2 *Column) (*Column, *Column) {
+func (s *propSpecialJoinConstSolver) colsFromOuterAndInner(col1, col2 *Column) (*Column, *Column) {
 	if s.outerSchema.Contains(col1) && s.innerSchema.Contains(col2) {
 		return col1, col2
 	}
@@ -656,7 +673,7 @@ func (s *propOuterJoinConstSolver) colsFromOuterAndInner(col1, col2 *Column) (*C
 // propagation over outer join. We only use expression like `outerCol = innerCol`, for expressions like
 // `outerCol1 = outerCol2` or `innerCol1 = innerCol2`, they do not help deriving new inner table conditions
 // which can be pushed down to children plan nodes, so we do not pick them.
-func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, *Column) {
+func (s *propSpecialJoinConstSolver) validColEqualCond(cond Expression) (*Column, *Column) {
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
 		rCol, rOk := fun.GetArgs()[1].(*Column)
@@ -668,7 +685,7 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 }
 
 // deriveConds given `outerCol = innerCol`, derive new expression for specified conditions.
-func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schema *Schema, fCondsOffset int, visited []bool, filterConds bool) []bool {
+func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, schema *Schema, fCondsOffset int, visited []bool, filterConds bool) []bool {
 	var offset, condsLen int
 	var conds []Expression
 	if filterConds {
@@ -691,6 +708,9 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 		}
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
+			if s.pushDownFilter != nil && !s.pushDownFilter(newExpr) {
+				continue
+			}
 			s.joinConds = append(s.joinConds, newExpr)
 		}
 	}
@@ -701,7 +721,7 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., innerCol, ...)' derived from 'expression(..., outerCol, ...)' as long as
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
-func (s *propOuterJoinConstSolver) propagateColumnEQ() {
+func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 	if s.nullSensitive {
 		return
 	}
@@ -755,7 +775,7 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 	}
 }
 
-func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
+func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
@@ -773,18 +793,18 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds...)
-	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds...)
+	s.joinConds = propagateConstantDNF(s.ctx, s.pushDownFilter, s.joinConds...)
+	s.filterConds = propagateConstantDNF(s.ctx, s.pushDownFilter, s.filterConds...)
 	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
-func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expression {
+func propagateConstantDNF(ctx exprctx.ExprContext, filter func(expr Expression) bool, conds ...Expression) []Expression {
 	for i, cond := range conds {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, item)...)
+				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, filter, item)...)
 			}
 			conds[i] = ComposeDNFCondition(ctx, dnfItems...)
 		}
@@ -792,15 +812,16 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expres
 	return conds
 }
 
-// PropConstOverOuterJoin propagate constant equal and column equal conditions over outer join.
+// PropConstOverSpecialJoin propagate constant equal and column equal conditions over outer join or anti semi join.
 // First step is to extract `outerCol = const` from join conditions and filter conditions,
 // and substitute `outerCol` in join conditions with `const`;
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
-func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
-	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
-	solver := newPropOuterJoinConstSolver()
+func PropConstOverSpecialJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
+	outerSchema, innerSchema *Schema,
+	nullSensitive bool, pushDownFilter func(expression Expression) bool) ([]Expression, []Expression) {
+	solver := newPropSpecialJoinConstSolver()
 	defer func() {
 		solver.Clear()
 	}()
@@ -808,11 +829,12 @@ func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Ex
 	solver.innerSchema = innerSchema
 	solver.nullSensitive = nullSensitive
 	solver.ctx = ctx
+	solver.pushDownFilter = pushDownFilter
 	return solver.solve(joinConds, filterConds)
 }
 
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
-	PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression
+	PropagateConstant(ctx exprctx.ExprContext, filter func(expr Expression) bool, conditions []Expression) []Expression
 	Clear()
 }

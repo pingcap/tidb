@@ -35,19 +35,19 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalStreamAgg{},
-		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
+	var structures = []any{
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
-		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
-		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}}
+		core.PhysicalIndexMergeReader{},
+		core.Update{}, core.Delete{}, core.Insert{}}
 
 	// todo: add all back with physicalop.x
 	// var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
 	//		core.PhysicalProjection{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
 	//		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
 	//		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
-	//		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
-	//		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
+	//		physicalop.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{},
+	//      core.PhysicalIndexMergeReader{},
+	//		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
@@ -81,15 +81,15 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		switch fullFieldName { // handle some fields specially
 		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
 			"core.PhysicalIndexMergeReader.TablePlans":
-			c.write("cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)")
+			c.write("cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)")
 			continue
 		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
-			c.write("cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)")
+			c.write("cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)")
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
 			c.write("for i, plan := range cloned.partialPlans {")
-			c.write("cloned.PartialPlans[i] = flattenPushDownPlan(plan)")
+			c.write("cloned.PartialPlans[i] = physicalop.FlattenPushDownPlan(plan)")
 			c.write("}")
 			continue
 		}
@@ -98,9 +98,9 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
-		case "core.basePhysicalAgg":
+		case "physicalop.BasePhysicalAgg":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
-			c.write(`basePlan, baseOK := op.%v.cloneForPlanCacheWithSelf(newCtx, cloned)
+			c.write(`basePlan, baseOK := op.%v.CloneForPlanCacheWithSelf(newCtx, cloned)
 							if !baseOK {return nil, false}
 							cloned.%v = *basePlan`, fieldName, fieldName)
 		case "physicalop.BasePhysicalJoin":
@@ -115,8 +115,8 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 							cloned.%v = *basePlan`, fieldName, fieldName)
 		case "baseimpl.Plan":
 			c.write("cloned.%v = *op.%v.CloneWithNewCtx(newCtx)", f.Name, f.Name)
-		case "core.baseSchemaProducer":
-			c.write("cloned.%v = *op.%v.cloneForPlanCache(newCtx)", f.Name, f.Name)
+		case "physicalop.SimpleSchemaProducer":
+			c.write("cloned.%v = *op.%v.CloneSelfForPlanCache(newCtx)", f.Name, f.Name)
 		case "[]expression.Expression", "[]*expression.Column",
 			"[]*expression.Constant", "[]*expression.ScalarFunction":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
@@ -137,9 +137,11 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 			c.write("}")
-		case "*core.PushedDownLimit":
+		case "*physicalop.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
-		case "*core.PhysPlanPartInfo", "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
+		case "*physicalop.PhysPlanPartInfo":
+			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
+		case "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
 			c.write("cloned.%v = op.%v.cloneForPlanCache()", f.Name, f.Name)
 		case "kv.Handle":
 			c.write("if op.%v != nil {", f.Name)
@@ -153,10 +155,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = op.%v.Clone().(%v)", f.Name, f.Name, f.Type.String())
 			c.write("}")
 			c.write("}")
-		case "core.PhysicalIndexJoin":
+		case "physicalop.PhysicalIndexJoin":
 			c.write("inlj, ok := op.%v.CloneForPlanCache(newCtx)", f.Name)
 			c.write("if !ok {return nil, false}")
-			c.write("cloned.%v = *inlj.(*PhysicalIndexJoin)", f.Name)
+			c.write("cloned.%v = *inlj.(*physicalop.PhysicalIndexJoin)", f.Name)
 			c.write("cloned.Self = cloned")
 		case "base.PhysicalPlan":
 			c.write("if op.%v != nil {", f.Name)
@@ -249,6 +251,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 `

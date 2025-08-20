@@ -41,8 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -64,7 +64,7 @@ type taskInfo struct {
 	lastRegisterTime time.Time
 
 	// initialized lazily in register()
-	etcdClient   *etcd.Client
+	etcdClient   *clientv3.Client
 	taskRegister utils.TaskRegister
 }
 
@@ -84,7 +84,7 @@ func (t *taskInfo) register(ctx context.Context) {
 			return
 		}
 		t.etcdClient = client
-		t.taskRegister = NewTaskRegisterWithTTL(client.GetClient(), registerTaskTTL,
+		t.taskRegister = NewTaskRegisterWithTTL(client, registerTaskTTL,
 			utils.RegisterImportInto, strconv.FormatInt(t.taskID, 10))
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
@@ -151,23 +151,24 @@ func NewImportScheduler(
 	ctx context.Context,
 	task *proto.Task,
 	param scheduler.Param,
-	store kv.Storage,
 ) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
-		store:         store,
+		store:         param.Store,
 		taskKS:        task.Keyspace,
 	}
 	return sch
 }
 
 // NewImportSchedulerForTest creates a new import scheduler for test.
-func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
+func NewImportSchedulerForTest(globalSort bool, task *proto.Task, param scheduler.Param, store kv.Storage) scheduler.Scheduler {
 	return &importScheduler{
-		GlobalSort: globalSort,
-		taskKS:     tidb.GetGlobalKeyspaceName(),
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), task, param),
+		GlobalSort:    globalSort,
+		store:         store,
+		taskKS:        tidb.GetGlobalKeyspaceName(),
 	}
 }
 
@@ -184,7 +185,7 @@ func (sch *importScheduler) Init() (err error) {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
-	if task.Keyspace != tidb.GetGlobalKeyspaceName() {
+	if task.Keyspace != sch.store.GetKeyspace() {
 		if err = sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
 			var err2 error
 			sch.taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(task.Keyspace)
@@ -315,10 +316,6 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
-		// Update update_time in tidb_import_jobs
-		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepGlobalSorting); err != nil {
-			return nil, err
-		}
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
@@ -688,9 +685,9 @@ func (sch *importScheduler) cancelJob(ctx context.Context, task *proto.Task,
 	)
 }
 
-func (sch *importScheduler) getTaskMgrForAccessingImportJob() (*storage.TaskManager, error) {
-	if sch.taskKS == tidb.GetGlobalKeyspaceName() {
-		return storage.GetTaskManager()
+func (sch *importScheduler) getTaskMgrForAccessingImportJob() (scheduler.TaskManager, error) {
+	if sch.taskKS == sch.store.GetKeyspace() {
+		return sch.GetTaskMgr(), nil
 	}
 	return storage.NewTaskManager(sch.taskKSSessPool), nil
 }

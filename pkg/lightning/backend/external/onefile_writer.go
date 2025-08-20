@@ -17,9 +17,9 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	"math/rand"
 	"path/filepath"
 	"slices"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -62,6 +62,7 @@ type OneFileWriter struct {
 	// file information.
 	writerID       string
 	filenamePrefix string
+	rnd            *rand.Rand
 	dataFile       string
 	statFile       string
 	dataWriter     storage.ExternalFileWriter
@@ -86,8 +87,9 @@ type OneFileWriter struct {
 	minKey []byte
 	maxKey []byte
 
-	logger   *zap.Logger
-	partSize int64
+	logger       *zap.Logger
+	partSize     int64
+	writtenBytes int64
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -97,14 +99,14 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 		return nil
 	}
 
-	dataFile := filepath.Join(w.filenamePrefix, "one-file")
+	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
 	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    w.partSize})
 	if err != nil {
 		return err
 	}
-	statFile := filepath.Join(w.filenamePrefix+statSuffix, "one-file")
+	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
 	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize})
@@ -127,7 +129,7 @@ func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
 		return nil
 	}
 
-	dupFile := filepath.Join(w.filenamePrefix+dupSuffix, "one-file")
+	dupFile := filepath.Join(w.getPartitionedPrefix()+dupSuffix, "one-file")
 	dupWriter, err := w.store.Create(ctx, dupFile, &storage.WriterOption{
 		// too many duplicates will cause duplicate resolution part very slow,
 		// we temporarily use 1 as we don't expect too many duplicates, if there
@@ -225,7 +227,6 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		return err
 	}
 	// 1. encode data and write to kvStore.
-	writeStartTime := time.Now()
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
@@ -255,10 +256,11 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
-	writeDuration := time.Since(writeStartTime)
-	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
-	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
-		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
+	w.writtenBytes += int64(length)
+	if w.writtenBytes >= 16*units.MiB {
+		metrics.MergeSortWriteBytes.Add(float64(w.writtenBytes))
+		w.writtenBytes = 0
+	}
 	return nil
 }
 
@@ -345,6 +347,10 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		}
 	}
 	return nil
+}
+
+func (w *OneFileWriter) getPartitionedPrefix() string {
+	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
 }
 
 // caller should make sure the buf is large enough to hold the encoded data.

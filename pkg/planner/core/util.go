@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -92,64 +90,6 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 		a.windowFuncs = append(a.windowFuncs, v)
 	}
 	return n, true
-}
-
-// baseSchemaProducer stores the schema for the base plans who can produce schema directly.
-type baseSchemaProducer struct {
-	schema *expression.Schema
-	names  types.NameSlice `plan-cache-clone:"shallow"`
-	baseimpl.Plan
-}
-
-func (s *baseSchemaProducer) cloneForPlanCache(newCtx base.PlanContext) *baseSchemaProducer {
-	cloned := new(baseSchemaProducer)
-	cloned.Plan = *s.Plan.CloneWithNewCtx(newCtx)
-	cloned.schema = s.schema
-	cloned.names = s.names
-	return cloned
-}
-
-// OutputNames returns the outputting names of each column.
-func (s *baseSchemaProducer) OutputNames() types.NameSlice {
-	return s.names
-}
-
-func (s *baseSchemaProducer) SetOutputNames(names types.NameSlice) {
-	s.names = names
-}
-
-// Schema implements the Plan.Schema interface.
-func (s *baseSchemaProducer) Schema() *expression.Schema {
-	if s.schema == nil {
-		s.schema = expression.NewSchema()
-	}
-	return s.schema
-}
-
-// SetSchema implements the Plan.SetSchema interface.
-func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
-	s.schema = schema
-}
-
-func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
-	s.schema = schema
-	s.names = names
-}
-
-// MemoryUsage return the memory usage of baseSchemaProducer
-func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.Plan.MemoryUsage()
-	if s.schema != nil {
-		sum += s.schema.MemoryUsage()
-	}
-	for _, name := range s.names {
-		sum += name.MemoryUsage()
-	}
-	return
 }
 
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
@@ -262,18 +202,6 @@ func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool
 		}
 	}
 	return false
-}
-
-func clonePhysicalPlan(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
-	cloned := make([]base.PhysicalPlan, 0, len(plans))
-	for _, p := range plans {
-		c, err := p.Clone(sctx)
-		if err != nil {
-			return nil, err
-		}
-		cloned = append(cloned, c)
-	}
-	return cloned, nil
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.

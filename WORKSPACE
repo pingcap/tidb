@@ -38,13 +38,13 @@ versions.check(minimum_bazel_version = "6.0.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "9d72f7b8904128afb98d46bbef82ad7223ec9ff3718d419afb355fddd9f9484a",
+    sha256 = "89d2050410602142c9acafd01c95baf48b65f8dd16f4771d37c89f82f5e147f2",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
-        "http://ats.apps.svc/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
-        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
-        "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
-        "https://github.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "http://bazel-cache.pingcap.net:8080/bazel-contrib/rules_go/releases/download/v0.56.1/rules_go-v0.56.1.zip",
+        "http://ats.apps.svc/bazel-contrib/rules_go/releases/download/v0.56.1/rules_go-v0.56.1.zip",
+        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.56.1/rules_go-v0.56.1.zip",
+        "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.56.1/rules_go-v0.56.1.zip",
+        "https://github.com/bazel-contrib/rules_go/releases/download/v0.56.1/rules_go-v0.56.1.zip",
     ],
 )
 
@@ -104,7 +104,7 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.23.11",
+    version = "1.23.12",
 )
 
 gazelle_dependencies(go_sdk = "go_sdk")

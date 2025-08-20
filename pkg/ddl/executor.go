@@ -82,6 +82,7 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
+	removingObjPrefix     = "_Tomestone$_"
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
@@ -6596,7 +6597,7 @@ func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, c
 		return errors.Trace(err)
 	}
 	// check if the expression is bool type
-	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tblInfo); err != nil {
+	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx(), constraintInfo, tblInfo); err != nil {
 		return err
 	}
 	job := &model.Job{
@@ -6767,7 +6768,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	failpoint.InjectCall("waitJobSubmitted")
 
 	sessVars := ctx.GetSessionVars()
-	sessVars.StmtCtx.IsDDLJobInQueue = true
+	sessVars.StmtCtx.IsDDLJobInQueue.Store(true)
 
 	ddlAction := job.Type
 	if result.merged {

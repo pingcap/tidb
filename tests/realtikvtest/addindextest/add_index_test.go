@@ -15,13 +15,14 @@
 package addindextest
 
 import (
+<<<<<<< HEAD
 	"fmt"
+=======
+	"sync"
+>>>>>>> master
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -208,21 +208,24 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")
-	ingest.MockDMLExecutionStateBeforeImport = func() {
-		tk3.MustExec("replace INTO t VALUES (-18585,'duplicatevalue',4);")
-		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
-	}
-	ddl.MockDMLExecutionStateBeforeMerge = func() {
-		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
-		tk3.MustExec("replace into t values (-18585,'duplicatevalue',0);")
-	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "return(true)"))
+	beforeIngestOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", func() {
+		beforeIngestOnce.Do(func() {
+			tk3.MustExec("replace INTO t VALUES (-18585,'duplicatevalue',4);")
+			tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+		})
+	})
+	beforeMergeOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
+		beforeMergeOnce.Do(func() {
+			tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+			tk3.MustExec("replace into t values (-18585,'duplicatevalue',0);")
+		})
+	})
+
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
 }
 
 func TestAddIndexOnGB18030Bin(t *testing.T) {

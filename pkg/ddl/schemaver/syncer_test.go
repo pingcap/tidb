@@ -39,7 +39,7 @@ import (
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -104,7 +104,8 @@ func TestSyncerSimple(t *testing.T) {
 
 	// for CheckAllVersions
 	childCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	require.Error(t, syncers[0].WaitVersionSynced(childCtx, 0, currentVer))
+	_, err2 := syncers[0].WaitVersionSynced(childCtx, 0, currentVer, false)
+	require.Error(t, err2)
 	cancel()
 
 	// for UpdateSelfVersion
@@ -117,12 +118,16 @@ func TestSyncerSimple(t *testing.T) {
 	require.True(t, isTimeoutError(err))
 
 	// for CheckAllVersions
-	require.NoError(t, syncers[0].WaitVersionSynced(context.Background(), 0, currentVer-1))
-	require.NoError(t, syncers[0].WaitVersionSynced(context.Background(), 0, currentVer))
+	syncSummary, err2 := syncers[0].WaitVersionSynced(context.Background(), 0, currentVer-1, false)
+	require.NoError(t, err2)
+	require.Equal(t, &schemaver.SyncSummary{ServerCount: 2}, syncSummary)
+	syncSummary, err2 = syncers[0].WaitVersionSynced(context.Background(), 0, currentVer, false)
+	require.NoError(t, err2)
+	require.Equal(t, &schemaver.SyncSummary{ServerCount: 2}, syncSummary)
 
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
-	err = syncers[0].WaitVersionSynced(childCtx, 0, currentVer)
+	_, err = syncers[0].WaitVersionSynced(childCtx, 0, currentVer, false)
 	require.True(t, isTimeoutError(err))
 
 	// for Close
