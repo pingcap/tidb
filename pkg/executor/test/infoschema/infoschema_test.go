@@ -982,6 +982,38 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 	}
 }
 
+func TestInfoSchemaExcludeNonPublicColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_state_test")
+	tk.MustExec("create table t_state_test (a int, b int, c int);")
+
+	var seen atomic.Bool
+	tk2 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		// We're interested in modify-column flow reaching write reorganization.
+		if job.Type == model.ActionModifyColumn && job.SchemaState == model.StateWriteReorganization {
+			// Query information_schema.columns and assert temporary changing columns are not visible
+			rows := tk2.MustQuery("select COLUMN_NAME from information_schema.columns where table_schema='test' and table_name='t_state_test'").Sort().Rows()
+			// collect column names
+			names := make([]string, 0, len(rows))
+			for _, r := range rows {
+				names = append(names, strings.ToLower(r[0].(string)))
+			}
+			// Expect only original columns a,b,c to be visible
+			require.ElementsMatch(t, []string{"a", "b", "c"}, names)
+			seen.Store(true)
+		}
+	})
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+
+	// Trigger the ALTER that will reorganize the table
+	tk.MustExec("alter table t_state_test modify column a bigint;")
+
+	require.True(t, seen.Load(), "Expected the failpoint to be triggered during the modify-column flow")
+}
+
 func TestIndexUsageWithData(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
