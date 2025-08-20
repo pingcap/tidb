@@ -56,9 +56,10 @@ func TestBitCount(t *testing.T) {
 		{"xxx", int64(0)},
 		{nil, nil},
 	}
+	cc := make(CloneContext, 2)
 	for _, test := range bitCountCases {
 		in := types.NewDatum(test.origin)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{in}))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		count, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -76,13 +77,15 @@ func TestBitCount(t *testing.T) {
 
 func TestRowFunc(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.RowFunc]
-	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums([]any{"1", 1.2, true, 120}...)))
+	_, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums([]any{"1", 1.2, true, 120}...)))
 	require.NoError(t, err)
 }
 
 func TestSetVar(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.SetVar]
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
@@ -101,7 +104,7 @@ func TestSetVar(t *testing.T) {
 		{[]any{"g", timeDec}, timeDec},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		fn, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		require.NoError(t, err)
@@ -118,6 +121,7 @@ func TestSetVar(t *testing.T) {
 
 func TestGetVar(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	sessionVars := []struct {
@@ -162,7 +166,7 @@ func TestGetVar(t *testing.T) {
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
-		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
+		fn, err := BuildGetVarFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		require.NoError(t, err)
 		d, err := fn.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -172,6 +176,7 @@ func TestGetVar(t *testing.T) {
 
 func TestTypeConversion(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	// Set value as int64
 	key := "a"
 	val := int64(3)
@@ -182,7 +187,7 @@ func TestTypeConversion(t *testing.T) {
 	args := []any{"a"}
 	// To Decimal.
 	tp = types.NewFieldType(mysql.TypeNewDecimal)
-	fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
+	fn, err := BuildGetVarFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...))[0], tp)
 	require.NoError(t, err)
 	d, err := fn.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -190,7 +195,7 @@ func TestTypeConversion(t *testing.T) {
 	require.Equal(t, des, d.GetValue())
 	// To Float.
 	tp = types.NewFieldType(mysql.TypeDouble)
-	fn, err = BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
+	fn, err = BuildGetVarFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...))[0], tp)
 	require.NoError(t, err)
 	d, err = fn.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -199,12 +204,13 @@ func TestTypeConversion(t *testing.T) {
 
 func TestValues(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
-	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("")))
+	_, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums("")))
 	require.Error(t, err)
 	require.Regexp(t, "Incorrect parameter count in the call to native function 'values'$", err.Error())
 
-	sig, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums()))
+	sig, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums()))
 	require.NoError(t, err)
 
 	ret, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
@@ -228,6 +234,7 @@ func TestValues(t *testing.T) {
 
 func TestSetVarFromColumn(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	ft1 := types.FieldType{}
 	ft1.SetType(mysql.TypeVarString)
 	ft1.SetFlen(20)
@@ -247,6 +254,7 @@ func TestSetVarFromColumn(t *testing.T) {
 	// Construct SetVar function.
 	funcSetVar, err := NewFunction(
 		ctx,
+		cc,
 		ast.SetVar,
 		ft3,
 		[]Expression{argVarName, argCol}...,
@@ -276,6 +284,7 @@ func TestSetVarFromColumn(t *testing.T) {
 
 func TestInFunc(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.In]
 	decimal1 := types.NewDecFromFloatForTest(123.121)
 	decimal2 := types.NewDecFromFloatForTest(123.122)
@@ -321,7 +330,7 @@ func TestInFunc(t *testing.T) {
 		{[]any{json1, json1, json3, json4}, int64(1)},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		fn, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		require.NoError(t, err)
@@ -329,7 +338,7 @@ func TestInFunc(t *testing.T) {
 	}
 	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci")
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")
-	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{strD1, strD2}))
+	fn, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{strD1, strD2}))
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -352,9 +361,9 @@ func TestGetParam(t *testing.T) {
 	}
 	ctx.GetSessionVars().PlanCacheParams.Append(params...)
 	fc := funcs[ast.GetParam]
-
+	cc := make(CloneContext, 2)
 	for i := range params {
-		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(i)))
+		fn, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(i)))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -364,7 +373,7 @@ func TestGetParam(t *testing.T) {
 		require.Equal(t, str, d.GetString())
 	}
 
-	fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(len(params)+1)))
+	fn, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(len(params)+1)))
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
 	require.Equal(t, exprctx.ErrParamIndexExceedParamCounts, err)

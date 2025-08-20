@@ -232,10 +232,10 @@ func TestRegexpLike(t *testing.T) {
 		{"[a", "", 0, ErrRegexp},
 		{"\\", "", 0, ErrRegexp},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, tt := range testsExcludeMatchType {
 		fc := funcs[ast.Regexp]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		require.NoError(t, err)
 		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
@@ -283,7 +283,7 @@ func TestRegexpLike(t *testing.T) {
 
 	for _, tt := range testsIncludeMatchType {
 		fc := funcs[ast.RegexpLike]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.matchType)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.matchType)))
 		require.NoError(t, err)
 		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
@@ -355,7 +355,7 @@ func TestRegexpLikeVec(t *testing.T) {
 
 func TestRegexpSubstr(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	// test regexp_substr(expr, pat)
 	testParam2 := []struct {
 		input    any // string
@@ -381,7 +381,7 @@ func TestRegexpSubstr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -430,7 +430,7 @@ func TestRegexpSubstr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -483,7 +483,7 @@ func TestRegexpSubstr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -528,7 +528,7 @@ func TestRegexpSubstr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -610,7 +610,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 
 func TestRegexpInStr(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	// test regexp_instr(expr, pat)
 	testParam2 := []struct {
 		input    any // string
@@ -637,7 +637,7 @@ func TestRegexpInStr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -685,7 +685,7 @@ func TestRegexpInStr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -738,7 +738,7 @@ func TestRegexpInStr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -785,7 +785,7 @@ func TestRegexpInStr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -832,7 +832,7 @@ func TestRegexpInStr(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -922,7 +922,7 @@ func TestRegexpInStrVec(t *testing.T) {
 
 func TestRegexpReplace(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	url1 := "https://go.mail/folder-1/online/ru-en/#lingvo/#1О 50000&price_ashka/rav4/page=/check.xml"
 	url2 := "http://saint-peters-total=меньше 1000-rublyayusche/catalogue/kolasuryat-v-2-kadyirovka-personal/serial_id=0&input_state/apartments/mokrotochki.net/upravda.ru/yandex.ru/GameMain.aspx?mult]/on/orders/50195&text=мыс и орелка в Балаш смотреть онлайн бесплатно в хорошем камбалакс&lr=20030393833539353862643188&op_promo=C-Teaser_id=06d162.html"
 
@@ -971,7 +971,7 @@ func TestRegexpReplace(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1026,7 +1026,7 @@ func TestRegexpReplace(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1085,7 +1085,7 @@ func TestRegexpReplace(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1137,7 +1137,7 @@ func TestRegexpReplace(t *testing.T) {
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
-			f, err := fc.getFunction(ctx, args)
+			f, err := fc.getFunction(ctx, cc, args)
 			require.NoError(t, err)
 
 			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})

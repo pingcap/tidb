@@ -63,7 +63,7 @@ func TestUnary(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{NewZero()})
+	_, err := funcs[ast.UnaryMinus].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -126,7 +126,7 @@ func TestLogicAnd(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.LogicAnd, NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.LogicAnd].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.LogicAnd].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -197,7 +197,7 @@ func TestRightShift(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.RightShift, NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.RightShift].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.RightShift].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -236,7 +236,7 @@ func TestBitXor(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.Xor, NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.Xor].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.Xor].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -282,7 +282,7 @@ func TestBitOr(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.Or, NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.Or].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.Or].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -349,7 +349,7 @@ func TestLogicOr(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.LogicOr, NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.LogicOr].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.LogicOr].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -388,7 +388,7 @@ func TestBitAnd(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.And, NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.And].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.And].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -434,7 +434,7 @@ func TestBitNeg(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.BitNeg, NewZero(), NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.BitNeg].getFunction(ctx, []Expression{NewZero()})
+	_, err = funcs[ast.BitNeg].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -488,7 +488,7 @@ func TestUnaryNot(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.UnaryNot, NewZero(), NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.UnaryNot].getFunction(ctx, []Expression{NewZero()})
+	_, err = funcs[ast.UnaryNot].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -659,6 +659,6 @@ func TestLogicXor(t *testing.T) {
 	_, err := newFunctionForTest(ctx, ast.LogicXor, NewZero())
 	require.Error(t, err)
 
-	_, err = funcs[ast.LogicXor].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.LogicXor].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }

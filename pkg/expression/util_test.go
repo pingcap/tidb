@@ -192,7 +192,7 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
 
 	ctx := mock.NewContext()
-	f, err := funcs[ast.Abs].getFunction(ctx, []Expression{col})
+	f, err := funcs[ast.Abs].getFunction(ctx, cc, []Expression{col})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f}
 	SetExprColumnInOperand(fun)
@@ -202,7 +202,7 @@ func TestSetExprColumnInOperand(t *testing.T) {
 func TestPopRowFirstArg(t *testing.T) {
 	ctx := mock.NewContext()
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
-	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
+	f, err := funcs[ast.RowFunc].getFunction(ctx, cc, []Expression{c1, c2, c3})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f, FuncName: ast.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)

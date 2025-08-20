@@ -47,10 +47,10 @@ func TestAbs(t *testing.T) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	cc := make(CloneContext, 2)
 	for _, tt := range Dtbl {
 		fc := funcs[ast.Abs]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestCeil(t *testing.T) {
 			RetType: types.NewFieldType(mysql.TypeFloat),
 		},
 	}
-
+	cc := make(CloneContext, 2)
 	runCasesOn := func(funcName string, cases []testCase, exps []Expression) {
 		for _, test := range cases {
 			f, err := newFunctionForTest(ctx, funcName, primitiveValsToConstants(ctx, []any{test.arg})...)
@@ -114,7 +114,7 @@ func TestCeil(t *testing.T) {
 		}
 
 		for _, exp := range exps {
-			_, err := funcs[funcName].getFunction(ctx, []Expression{exp})
+			_, err := funcs[funcName].getFunction(ctx, cc, []Expression{exp})
 			require.NoError(t, err)
 		}
 	}
@@ -169,13 +169,14 @@ func TestExp(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Exp].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Exp].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
 func TestFloor(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	sc := ctx.GetSessionVars().StmtCtx
 	oldTypeFlags := sc.TypeFlags()
 	defer func() {
@@ -239,7 +240,7 @@ func TestFloor(t *testing.T) {
 			RetType: types.NewFieldType(mysql.TypeFloat),
 		},
 	} {
-		_, err := funcs[ast.Floor].getFunction(ctx, []Expression{exp})
+		_, err := funcs[ast.Floor].getFunction(ctx, cc, []Expression{exp})
 		require.NoError(t, err)
 	}
 }
@@ -282,8 +283,8 @@ func TestLog(t *testing.T) {
 			require.Equal(t, test.expect, result.GetFloat64())
 		}
 	}
-
-	_, err := funcs[ast.Log].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Log].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -320,8 +321,8 @@ func TestLog2(t *testing.T) {
 			require.Equal(t, test.expect, result.GetFloat64())
 		}
 	}
-
-	_, err := funcs[ast.Log2].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Log2].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -358,15 +359,16 @@ func TestLog10(t *testing.T) {
 			require.Equal(t, test.expect, result.GetFloat64())
 		}
 	}
-
-	_, err := funcs[ast.Log10].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Log10].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
 func TestRand(t *testing.T) {
+	cc := make(CloneContext, 2)
 	ctx := createContext(t)
 	fc := funcs[ast.Rand]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -374,7 +376,7 @@ func TestRand(t *testing.T) {
 	require.GreaterOrEqual(t, v.GetFloat64(), float64(0))
 
 	// issue 3211
-	f2, err := fc.getFunction(ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
+	f2, err := fc.getFunction(ctx, cc, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	require.NoError(t, err)
 	randGen := mathutil.NewWithSeed(20160101)
 	for range 3 {
@@ -397,10 +399,10 @@ func TestPow(t *testing.T) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	cc := make(CloneContext, 2)
 	for _, tt := range Dtbl {
 		fc := funcs[ast.Pow]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -418,7 +420,7 @@ func TestPow(t *testing.T) {
 	errDtbl := tblToDtbl(errTbl)
 	for i, tt := range errDtbl {
 		fc := funcs[ast.Pow]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 		if i == 2 {
@@ -460,10 +462,10 @@ func TestRound(t *testing.T) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	cc := make(CloneContext, 2)
 	for _, tt := range Dtbl {
 		fc := funcs[ast.Round]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		switch f.(type) {
 		case *builtinRoundWithFracIntSig:
@@ -528,10 +530,10 @@ func TestTruncate(t *testing.T) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
+	cc := make(CloneContext, 2)
 	for _, tt := range Dtbl {
 		fc := funcs[ast.Truncate]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -634,8 +636,8 @@ func TestConv(t *testing.T) {
 		r := getValidPrefix(tt.s, tt.base)
 		require.Equal(t, tt.ret, r)
 	}
-
-	_, err := funcs[ast.Conv].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Conv].getFunction(ctx, cc, []Expression{NewZero(), NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -647,7 +649,7 @@ func TestSign(t *testing.T) {
 		sc.SetTypeFlags(oldTypeFlags)
 	}()
 	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	cc := make(CloneContext, 2)
 	for _, tt := range []struct {
 		num []any
 		ret any
@@ -666,7 +668,7 @@ func TestSign(t *testing.T) {
 		{[]any{uint64(9223372036854775808)}, int64(1)},
 	} {
 		fc := funcs[ast.Sign]
-		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, tt.num))
+		f, err := fc.getFunction(ctx, cc, primitiveValsToConstants(ctx, tt.num))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -718,7 +720,8 @@ func TestDegrees(t *testing.T) {
 			}
 		}
 	}
-	_, err := funcs[ast.Degrees].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Degrees].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -735,10 +738,10 @@ func TestSqrt(t *testing.T) {
 		{[]any{"9"}, float64(3)},
 		{[]any{"-16"}, nil},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		fc := funcs[ast.Sqrt]
-		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, tt.Arg))
+		f, err := fc.getFunction(ctx, cc, primitiveValsToConstants(ctx, tt.Arg))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -748,7 +751,8 @@ func TestSqrt(t *testing.T) {
 
 func TestPi(t *testing.T) {
 	ctx := createContext(t)
-	f, err := funcs[ast.PI].getFunction(ctx, nil)
+	cc := make(CloneContext, 2)
+	f, err := funcs[ast.PI].getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 
 	pi, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -772,9 +776,10 @@ func TestRadians(t *testing.T) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
+	cc := make(CloneContext, 2)
 	for _, tt := range Dtbl {
 		fc := funcs[ast.Radians]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -784,7 +789,7 @@ func TestRadians(t *testing.T) {
 
 	invalidArg := "notNum"
 	fc := funcs[ast.Radians]
-	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -830,8 +835,8 @@ func TestSin(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Sin].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Sin].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -871,8 +876,8 @@ func TestCos(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Cos].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Cos].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -910,8 +915,8 @@ func TestAcos(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Acos].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Acos].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -949,8 +954,8 @@ func TestAsin(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Asin].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Asin].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -988,8 +993,8 @@ func TestAtan(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Atan].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Atan].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1028,8 +1033,8 @@ func TestTan(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Tan].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Tan].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1071,7 +1076,7 @@ func TestCot(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Cot].getFunction(ctx, []Expression{NewOne()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Cot].getFunction(ctx, cc, []Expression{NewOne()})
 	require.NoError(t, err)
 }

@@ -29,6 +29,7 @@ import (
 
 func TestLike(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		input   string
 		pattern string
@@ -53,7 +54,7 @@ func TestLike(t *testing.T) {
 	for _, tt := range tests {
 		comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
 		require.NoError(t, err, comment)
 		r, err := evalBuiltinFuncConcurrent(f, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
@@ -63,6 +64,7 @@ func TestLike(t *testing.T) {
 
 func TestRegexp(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		pattern string
 		input   string
@@ -85,7 +87,7 @@ func TestRegexp(t *testing.T) {
 	}
 	for _, tt := range tests {
 		fc := funcs[ast.Regexp]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		require.NoError(t, err)
 		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
@@ -99,6 +101,7 @@ func TestRegexp(t *testing.T) {
 
 func TestCILike(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		input            string
 		pattern          string
@@ -139,7 +142,7 @@ func TestCILike(t *testing.T) {
 		comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
 		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
-		f, err := fc.getFunction(ctx, inputs)
+		f, err := fc.getFunction(ctx, cc, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -151,7 +154,7 @@ func TestCILike(t *testing.T) {
 		comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
 		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
-		f, err := fc.getFunction(ctx, inputs)
+		f, err := fc.getFunction(ctx, cc, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -163,7 +166,7 @@ func TestCILike(t *testing.T) {
 		comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
 		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
-		f, err := fc.getFunction(ctx, inputs)
+		f, err := fc.getFunction(ctx, cc, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_0900_ai_ci"))
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
