@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -39,7 +39,7 @@ const (
 
 // GetEtcdClient returns an etcd client.
 // exported for testing.
-var GetEtcdClient = getEtcdClient
+var GetEtcdClient = store.NewEtcdCli
 
 // CheckRequirements checks the requirements for IMPORT INTO.
 // we check the following things here:
@@ -51,7 +51,8 @@ var GetEtcdClient = getEtcdClient
 //   - no CDC or PiTR tasks running
 //
 // we check them one by one, and return the first error we meet.
-func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
+func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionctx.Context) error {
+	conn := se.GetSQLExecutor()
 	if e.DataSourceType == DataSourceTypeFile {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
 		if err != nil {
@@ -68,7 +69,7 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 		return err
 	}
 	if !e.DisablePrecheck {
-		if err := e.checkCDCPiTRTasks(ctx); err != nil {
+		if err := e.checkCDCPiTRTasks(ctx, se); err != nil {
 			return err
 		}
 	}
@@ -105,8 +106,8 @@ func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.S
 	return nil
 }
 
-func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
-	cli, err := GetEtcdClient()
+func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context, se sessionctx.Context) error {
+	cli, err := GetEtcdClient(se.GetStore())
 	if err != nil {
 		return err
 	}
@@ -170,6 +171,7 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 	}
 	return nil
 }
+<<<<<<< HEAD
 
 func getEtcdClient() (*etcd.Client, error) {
 	tidbCfg := tidb.GetGlobalConfig()
@@ -186,3 +188,5 @@ func getEtcdClient() (*etcd.Client, error) {
 	}
 	return etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, "", tls)
 }
+=======
+>>>>>>> e2c6a416b43 (importinto: use etcd client with keyspace during precheck and register task on nextgen (#63101))

@@ -79,7 +79,7 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
 	s.tk.MustExec("create table dst (a bigint primary key, b varchar(100), c int);")
 
-	client, err := importer.GetEtcdClient()
+	client, err := importer.GetEtcdClient(s.store)
 	s.NoError(err)
 	s.T().Cleanup(func() {
 		_ = client.Close()
