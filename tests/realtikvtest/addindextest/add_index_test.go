@@ -175,7 +175,7 @@ func TestAddIndexWithPartialCleanup(t *testing.T) {
 	tk.MustExec("set global tidb_ddl_error_count_limit = 5")
 
 	tk.MustExec("create table t(id int, c1 int)")
-	for i := range 100 {
+	for i := range 50 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
 	}
 

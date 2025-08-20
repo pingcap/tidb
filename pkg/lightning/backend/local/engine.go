@@ -204,7 +204,8 @@ func partialCleanupDirectory(dir string) {
 		return
 	}
 
-	toDelete := allFiles[rand.Intn(len(allFiles)+1)]
+	// Remove one file to simulate partial cleanup is enough
+	toDelete := allFiles[rand.Intn(len(allFiles))]
 	//nolint: errcheck
 	os.Remove(toDelete)
 }
@@ -219,7 +220,7 @@ func cleanupDBFolder(dataDir string, uuid string) error {
 
 	failpoint.Inject("mockCleanupDBFolderError", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
-			// partially cleanup the pebble directory, so we can't open it again.
+			// Partially cleanup the pebble directory, so we can't recover from it.
 			partialCleanupDirectory(filepath.Join(dataDir, uuid))
 			failpoint.Return(errors.New("mock cleanup db folder error"))
 		}
