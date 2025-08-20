@@ -1229,7 +1229,11 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 }
 
 func isFullIndexMatch(candidate *candidatePath) bool {
-	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
+	if candidate.path.IsDNFCond {
+		return candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns) && candidate.hasOnlyEqualPredicatesInDNF(true)
+	} else {
+		return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
+	}
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
@@ -1611,7 +1615,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				isDNFOnlyEquals := c.hasOnlyEqualPredicatesInDNF()
+				// Check if all access conditions in DNF form have at least one equal predicate. Pass false to
+				// identify that if we have multiple predicate in each DNF condition, only the first must be equals.
+				isDNFOnlyEquals := c.hasOnlyEqualPredicatesInDNF(false)
 				if preferMerge || isDNFOnlyEquals || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
@@ -1631,14 +1637,14 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 }
 
 // hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
-func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
+func (c *candidatePath) hasOnlyEqualPredicatesInDNF(needAllPredicates bool) bool {
 	// Exit if this isn't a DNF condition or has no access conditions
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return false
 	}
-	// If the minimum number of access conditions required for DNF is more than 1, then each OR condition
-	// must have at least 1 equal predicates to satisfy the DNF requirement. Return true.
-	if c.path.MinAccessCondsForDNFCond > 1 {
+	// If needAllPredicates is true, then we require all access conditions to be equal predicates.
+	// If needAllPredicates is false, then we only require at least one equal predicate. Return true.
+	if !needAllPredicates && c.path.MinAccessCondsForDNFCond > 1 {
 		return true
 	}
 
