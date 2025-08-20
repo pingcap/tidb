@@ -188,6 +188,19 @@ func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expres
 	return m
 }
 
+// ExtractColumnsUniqueIDFromExpressions it the same as ExtractColumnsFromExpressions, but return a slices which contains
+// columns's unique id
+func ExtractColumnsUniqueIDFromExpressions(exprs ...Expression) []int64 {
+	if len(exprs) == 0 {
+		return nil
+	}
+	m := make(map[int64]*Column, len(exprs))
+	for _, expr := range exprs {
+		extractColumns(m, expr, nil)
+	}
+	return slices.Collect(maps.Keys(m))
+}
+
 // ExtractColumnsMapFromExpressionsWithReusedMap is the same as ExtractColumnsFromExpressions, but map can be reused.
 func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) {
 	if len(exprs) == 0 {
@@ -1422,14 +1435,15 @@ func IsRuntimeConstExpr(expr Expression) bool {
 	return false
 }
 
-func isAllBooleanFunctionExpr(expr Expression) bool {
+// IsAllBooleanFunctionExpr is to judge whether the expression only uses the boolean functions.
+func IsAllBooleanFunctionExpr(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if _, ok := booleanFunctions[x.FuncName.L]; !ok {
 			return false
 		}
 		for _, arg := range x.GetArgs() {
-			if !isAllBooleanFunctionExpr(arg) {
+			if !IsAllBooleanFunctionExpr(arg) {
 				return false
 			}
 		}
