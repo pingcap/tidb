@@ -75,9 +75,9 @@ func (re *regexpBaseFuncSig) isBinaryCollation() bool {
 	return re.collation == charset.CollationBin && re.charset == charset.CharsetBin
 }
 
-func (re *regexpBaseFuncSig) clone() *regexpBaseFuncSig {
+func (re *regexpBaseFuncSig) clone(cc CloneContext) *regexpBaseFuncSig {
 	newSig := &regexpBaseFuncSig{}
-	newSig.cloneFrom(&re.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &re.baseBuiltinFunc)
 	return newSig
 }
 
@@ -204,7 +204,7 @@ type regexpLikeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpLikeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *regexpLikeFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func (c *regexpLikeFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		argTp = append(argTp, types.ETString)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTp...)
 	if err != nil {
 		return nil, err
 	}
@@ -233,9 +233,9 @@ type builtinRegexpLikeFuncSig struct {
 	regexpBaseFuncSig
 }
 
-func (re *builtinRegexpLikeFuncSig) Clone() builtinFunc {
+func (re *builtinRegexpLikeFuncSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinRegexpLikeFuncSig{}
-	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone(cc)
 	return newSig
 }
 
@@ -334,7 +334,7 @@ type regexpSubstrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpSubstrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *regexpSubstrFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -349,7 +349,7 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx BuildContext, args []Express
 		argTp = append(argTp, types.ETInt, types.ETInt, types.ETString)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, argTp...)
 	if err != nil {
 		return nil, err
 	}
@@ -376,9 +376,9 @@ func (re *builtinRegexpSubstrFuncSig) vectorized() bool {
 	return true
 }
 
-func (re *builtinRegexpSubstrFuncSig) Clone() builtinFunc {
+func (re *builtinRegexpSubstrFuncSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinRegexpSubstrFuncSig{}
-	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone(cc)
 	return newSig
 }
 
@@ -621,7 +621,7 @@ type regexpInStrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpInStrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *regexpInStrFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
@@ -638,7 +638,7 @@ func (c *regexpInStrFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		argTp = append(argTp, types.ETInt, types.ETInt, types.ETInt, types.ETString)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTp...)
 	if err != nil {
 		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
@@ -660,9 +660,9 @@ type builtinRegexpInStrFuncSig struct {
 	regexpBaseFuncSig
 }
 
-func (re *builtinRegexpInStrFuncSig) Clone() builtinFunc {
+func (re *builtinRegexpInStrFuncSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinRegexpInStrFuncSig{}
-	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone(cc)
 	return newSig
 }
 
@@ -958,7 +958,7 @@ type regexpReplaceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpReplaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *regexpReplaceFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
@@ -975,7 +975,7 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx BuildContext, args []Expres
 		argTp = append(argTp, types.ETString, types.ETInt, types.ETInt, types.ETString)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETString, argTp...)
 	if err != nil {
 		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
@@ -1034,9 +1034,9 @@ func (re *builtinRegexpReplaceFuncSig) vectorized() bool {
 	return true
 }
 
-func (re *builtinRegexpReplaceFuncSig) Clone() builtinFunc {
+func (re *builtinRegexpReplaceFuncSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinRegexpReplaceFuncSig{}
-	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone(cc)
 	return newSig
 }
 

@@ -35,7 +35,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	return ft
 }
 
-func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
+func getSignatureByPB(ctx BuildContext, cc CloneContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := PbTypeToFieldType(tp)
 	base, err := newBaseBuiltinFuncWithFieldType(fieldTp, args)
 	if err != nil {
@@ -933,7 +933,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		tipb.ScalarFuncSig_AddDateDurationIntDatetime,
 		tipb.ScalarFuncSig_AddDateDurationRealDatetime,
 		tipb.ScalarFuncSig_AddDateDurationDecimalDatetime:
-		f, e = (&addSubDateFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}, addTime, addDuration, setAdd}).getFunction(ctx, args)
+		f, e = (&addSubDateFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}, addTime, addDuration, setAdd}).getFunction(ctx, cc, args)
 		if e != nil {
 			return f, e
 		}
@@ -965,7 +965,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		tipb.ScalarFuncSig_SubDateDurationIntDatetime,
 		tipb.ScalarFuncSig_SubDateDurationRealDatetime,
 		tipb.ScalarFuncSig_SubDateDurationDecimalDatetime:
-		f, e = (&addSubDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, subTime, subDuration, setSub}).getFunction(ctx, args)
+		f, e = (&addSubDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, subTime, subDuration, setSub}).getFunction(ctx, cc, args)
 		if e != nil {
 			return f, e
 		}
@@ -1158,8 +1158,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	return f, nil
 }
 
-func newDistSQLFunctionBySig(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
-	f, err := getSignatureByPB(ctx, sigCode, tp, args)
+func newDistSQLFunctionBySig(ctx BuildContext, cc CloneContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
+	f, err := getSignatureByPB(ctx, cc, sigCode, tp, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1243,6 +1243,7 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 	}
 	// Then it must be a scalar function.
 	args := make([]Expression, 0, len(expr.Children))
+	cc := make(CloneContext, 4)
 	for _, child := range expr.Children {
 		if child.Tp == tipb.ExprType_ValueList {
 			results, err := decodeValueList(child.Val)
@@ -1261,7 +1262,7 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 		}
 		args = append(args, arg)
 	}
-	sf, err := newDistSQLFunctionBySig(ctx, expr.Sig, expr.FieldType, args)
+	sf, err := newDistSQLFunctionBySig(ctx, cc, expr.Sig, expr.FieldType, args)
 	if err != nil {
 		return nil, err
 	}

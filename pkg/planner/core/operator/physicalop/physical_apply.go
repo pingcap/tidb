@@ -66,8 +66,9 @@ func (p *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned.PhysicalHashJoin = *hj
 	cloned.CanUseCache = p.CanUseCache
 	cloned.Concurrency = p.Concurrency
+	cc := make(expression.CloneContext, 2)
 	for _, col := range p.OuterSchema {
-		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
+		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone(cc).(*expression.CorrelatedColumn))
 	}
 	return cloned, nil
 }
@@ -126,8 +127,9 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 		dedupCols[col.UniqueID] = col
 	}
 	p.OuterSchema = make([]*expression.CorrelatedColumn, 0, len(dedupCols))
+	cc := make(expression.CloneContext, 2)
 	for _, col := range dedupCols {
-		newCol, err := col.Column.ResolveIndices(p.Children()[0].Schema())
+		newCol, err := col.Column.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -140,14 +142,14 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 	// single child's schema.
 	joinedSchema := expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema())
 	for i, cond := range p.PhysicalHashJoin.EqualConditions {
-		newSf, err := cond.ResolveIndices(joinedSchema)
+		newSf, err := cond.ResolveIndices(cc, joinedSchema)
 		if err != nil {
 			return err
 		}
 		p.PhysicalHashJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
 	}
 	for i, cond := range p.PhysicalHashJoin.NAEqualConditions {
-		newSf, err := cond.ResolveIndices(joinedSchema)
+		newSf, err := cond.ResolveIndices(cc, joinedSchema)
 		if err != nil {
 			return err
 		}

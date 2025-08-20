@@ -716,7 +716,8 @@ func makeupDecodeColMap(dbName ast.CIStr, t table.Table) (map[int64]decoder.Colu
 	for _, col := range t.WritableCols() {
 		writableColInfos = append(writableColInfos, col.ColumnInfo)
 	}
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(newReorgExprCtx(), dbName, t.Meta().Name, writableColInfos, t.Meta())
+	cc := make(expression.CloneContext, 4)
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(newReorgExprCtx(), cc, dbName, t.Meta().Name, writableColInfos, t.Meta())
 	if err != nil {
 		return nil, err
 	}

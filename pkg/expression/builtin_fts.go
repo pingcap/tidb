@@ -37,13 +37,13 @@ type builtinFtsMatchWordSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinFtsMatchWordSig) Clone() builtinFunc {
+func (b *builtinFtsMatchWordSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinFtsMatchWordSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
-func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETString, types.ETString)
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, argTps...)
 	if err != nil {
 		return nil, err
 	}

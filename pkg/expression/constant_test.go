@@ -57,19 +57,20 @@ func newString(value string, collation string) *Constant {
 	}
 }
 
-func newFunctionWithMockCtx(funcName string, args ...Expression) Expression {
-	return newFunction(mock.NewContext(), funcName, args...)
+func newFunctionWithMockCtx(funcName string, cc CloneContext, args ...Expression) Expression {
+	return newFunction(mock.NewContext(), cc, funcName, args...)
 }
 
-func newFunction(ctx BuildContext, funcName string, args ...Expression) Expression {
-	return newFunctionWithType(ctx, funcName, types.NewFieldType(mysql.TypeLonglong), args...)
+func newFunction(ctx BuildContext, cc CloneContext, funcName string, args ...Expression) Expression {
+	return newFunctionWithType(ctx, cc, funcName, types.NewFieldType(mysql.TypeLonglong), args...)
 }
 
-func newFunctionWithType(ctx BuildContext, funcName string, tp *types.FieldType, args ...Expression) Expression {
-	return NewFunctionInternal(ctx, funcName, tp, args...)
+func newFunctionWithType(ctx BuildContext, cc CloneContext, funcName string, tp *types.FieldType, args ...Expression) Expression {
+	return NewFunctionInternal(ctx, cc, funcName, tp, args...)
 }
 
 func TestConstantPropagation(t *testing.T) {
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		solver     []PropagateConstantSolver
 		conditions []Expression
@@ -78,59 +79,59 @@ func TestConstantPropagation(t *testing.T) {
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
-				newFunctionWithMockCtx(ast.EQ, newColumn(2), newColumn(3)),
-				newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
-				newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(1), newColumn(2)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(2), newColumn(3)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(3), newLonglong(1)),
+				newFunctionWithMockCtx(ast.LogicOr, cc, newLonglong(1), newColumn(0)),
 			},
 			result: "1, eq(Column#0, 1), eq(Column#1, 1), eq(Column#2, 1), eq(Column#3, 1)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.EQ, newColumn(1), newLonglong(1)),
-				newFunctionWithMockCtx(ast.NE, newColumn(2), newLonglong(2)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(1), newLonglong(1)),
+				newFunctionWithMockCtx(ast.NE, cc, newColumn(2), newLonglong(2)),
 			},
 			result: "eq(Column#0, 1), eq(Column#1, 1), ne(Column#2, 2)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.EQ, newColumn(1), newLonglong(1)),
-				newFunctionWithMockCtx(ast.EQ, newColumn(2), newColumn(3)),
-				newFunctionWithMockCtx(ast.GE, newColumn(2), newLonglong(2)),
-				newFunctionWithMockCtx(ast.NE, newColumn(2), newLonglong(4)),
-				newFunctionWithMockCtx(ast.NE, newColumn(3), newLonglong(5)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(1), newLonglong(1)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(2), newColumn(3)),
+				newFunctionWithMockCtx(ast.GE, cc, newColumn(2), newLonglong(2)),
+				newFunctionWithMockCtx(ast.NE, cc, newColumn(2), newLonglong(4)),
+				newFunctionWithMockCtx(ast.NE, cc, newColumn(3), newLonglong(5)),
 			},
 			result: "eq(Column#0, 1), eq(Column#1, 1), eq(Column#2, Column#3), ge(Column#2, 2), ge(Column#3, 2), ne(Column#2, 4), ne(Column#2, 5), ne(Column#3, 4), ne(Column#3, 5)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(2)),
-				newFunctionWithMockCtx(ast.GE, newColumn(1), newLonglong(0)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(2)),
+				newFunctionWithMockCtx(ast.GE, cc, newColumn(1), newLonglong(0)),
 			},
 			result: "eq(Column#0, Column#1), eq(Column#0, Column#2), ge(Column#0, 0), ge(Column#1, 0), ge(Column#2, 0)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.GT, newColumn(0), newLonglong(2)),
-				newFunctionWithMockCtx(ast.GT, newColumn(1), newLonglong(3)),
-				newFunctionWithMockCtx(ast.LT, newColumn(0), newLonglong(1)),
-				newFunctionWithMockCtx(ast.GT, newLonglong(2), newColumn(1)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.GT, cc, newColumn(0), newLonglong(2)),
+				newFunctionWithMockCtx(ast.GT, cc, newColumn(1), newLonglong(3)),
+				newFunctionWithMockCtx(ast.LT, cc, newColumn(0), newLonglong(1)),
+				newFunctionWithMockCtx(ast.GT, cc, newLonglong(2), newColumn(1)),
 			},
 			result: "eq(Column#0, Column#1), gt(2, Column#0), gt(2, Column#1), gt(Column#0, 2), gt(Column#0, 3), gt(Column#1, 2), gt(Column#1, 3), lt(Column#0, 1), lt(Column#1, 1)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newLonglong(1), newColumn(0)),
+				newFunctionWithMockCtx(ast.EQ, cc, newLonglong(1), newColumn(0)),
 				newLonglong(0),
 			},
 			result: "0",
@@ -138,41 +139,41 @@ func TestConstantPropagation(t *testing.T) {
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.In, newColumn(0), newLonglong(1), newLonglong(2)),
-				newFunctionWithMockCtx(ast.In, newColumn(1), newLonglong(3), newLonglong(4)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.In, cc, newColumn(0), newLonglong(1), newLonglong(2)),
+				newFunctionWithMockCtx(ast.In, cc, newColumn(1), newLonglong(3), newLonglong(4)),
 			},
 			result: "eq(Column#0, Column#1), in(Column#0, 1, 2), in(Column#0, 3, 4), in(Column#1, 1, 2), in(Column#1, 3, 4)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newFunctionWithMockCtx(ast.BitLength, newColumn(2))),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newFunctionWithMockCtx(ast.BitLength, cc, newColumn(2))),
 			},
 			result: "eq(Column#0, Column#1), eq(Column#0, bit_length(cast(Column#2, var_string(20)))), eq(Column#1, bit_length(cast(Column#2, var_string(20))))",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.LE, newFunctionWithMockCtx(ast.Mul, newColumn(0), newColumn(0)), newLonglong(50)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.LE, cc, newFunctionWithMockCtx(ast.Mul, cc, newColumn(0), newColumn(0)), newLonglong(50)),
 			},
 			result: "eq(Column#0, Column#1), le(mul(Column#0, Column#0), 50), le(mul(Column#1, Column#1), 50)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.LE, newColumn(0), newFunctionWithMockCtx(ast.Plus, newColumn(1), newLonglong(1))),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.LE, cc, newColumn(0), newFunctionWithMockCtx(ast.Plus, cc, newColumn(1), newLonglong(1))),
 			},
 			result: "eq(Column#0, Column#1), le(Column#0, plus(Column#0, 1)), le(Column#0, plus(Column#1, 1)), le(Column#1, plus(Column#1, 1))",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
-				newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
-				newFunctionWithMockCtx(ast.LE, newColumn(0), newFunctionWithMockCtx(ast.Rand)),
+				newFunctionWithMockCtx(ast.EQ, cc, newColumn(0), newColumn(1)),
+				newFunctionWithMockCtx(ast.LE, cc, newColumn(0), newFunctionWithMockCtx(ast.Rand, cc)),
 			},
 			result: "eq(Column#0, Column#1), le(cast(Column#0, double BINARY), rand())",
 		},
@@ -182,7 +183,7 @@ func TestConstantPropagation(t *testing.T) {
 			ctx := mock.NewContext()
 			conds := make([]Expression, 0, len(tt.conditions))
 			for _, cd := range tt.conditions {
-				conds = append(conds, FoldConstant(ctx, cd))
+				conds = append(conds, FoldConstant(ctx, cc, cd))
 			}
 			newConds := solver.PropagateConstant(ctx, nil, conds)
 			var result []string
@@ -196,6 +197,7 @@ func TestConstantPropagation(t *testing.T) {
 }
 
 func TestConstantFolding(t *testing.T) {
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		condition       func(ctx BuildContext) Expression
 		result          string
@@ -203,43 +205,43 @@ func TestConstantFolding(t *testing.T) {
 	}{
 		{
 			condition: func(ctx BuildContext) Expression {
-				return newFunction(ctx, ast.LT, newColumn(0), newFunction(ctx, ast.Plus, newLonglong(1), newLonglong(2)))
+				return newFunction(ctx, cc, ast.LT, newColumn(0), newFunction(ctx, cc, ast.Plus, newLonglong(1), newLonglong(2)))
 			},
 			result: "lt(Column#0, 3)",
 		},
 		{
 			condition: func(ctx BuildContext) Expression {
-				return newFunction(ctx, ast.LT, newColumn(0), newFunction(ctx, ast.Greatest, newLonglong(1), newLonglong(2)))
+				return newFunction(ctx, cc, ast.LT, newColumn(0), newFunction(ctx, cc, ast.Greatest, newLonglong(1), newLonglong(2)))
 			},
 			result: "lt(Column#0, 2)",
 		},
 		{
 			condition: func(ctx BuildContext) Expression {
-				return newFunction(ctx, ast.EQ, newColumn(0), newFunction(ctx, ast.Rand))
+				return newFunction(ctx, cc, ast.EQ, newColumn(0), newFunction(ctx, cc, ast.Rand))
 			},
 			result: "eq(cast(Column#0, double BINARY), rand())",
 		},
 		{
 			condition: func(ctx BuildContext) Expression {
-				return newFunction(ctx, ast.IsNull, newLonglong(1))
+				return newFunction(ctx, cc, ast.IsNull, newLonglong(1))
 			},
 			result: "0",
 		},
 		{
 			condition: func(ctx BuildContext) Expression {
-				return newFunction(ctx, ast.EQ, newColumn(0), newFunction(ctx, ast.UnaryNot, newFunctionWithMockCtx(ast.Plus, newLonglong(1), newLonglong(1))))
+				return newFunction(ctx, cc, ast.EQ, newColumn(0), newFunction(ctx, cc, ast.UnaryNot, newFunctionWithMockCtx(ast.Plus, cc, newLonglong(1), newLonglong(1))))
 			},
 			result: "eq(Column#0, 0)",
 		},
 		{
 			condition: func(ctx BuildContext) Expression {
-				return newFunction(ctx, ast.LT, newColumn(0), newFunction(ctx, ast.Plus, newColumn(1), newFunctionWithMockCtx(ast.Plus, newLonglong(2), newLonglong(1))))
+				return newFunction(ctx, cc, ast.LT, newColumn(0), newFunction(ctx, cc, ast.Plus, newColumn(1), newFunctionWithMockCtx(ast.Plus, cc, newLonglong(2), newLonglong(1))))
 			},
 			result: "lt(Column#0, plus(Column#1, 3))",
 		},
 		{
 			condition: func(ctx BuildContext) Expression {
-				expr := newFunction(ctx, ast.ConcatWS, newColumn(0), NewNull())
+				expr := newFunction(ctx, cc, ast.ConcatWS, newColumn(0), NewNull())
 				return expr
 			},
 			nullRejectCheck: true,
@@ -254,42 +256,43 @@ func TestConstantFolding(t *testing.T) {
 			ctx = exprctx.WithNullRejectCheck(ctx)
 			require.True(t, ctx.IsInNullRejectCheck())
 		}
-		newConds := FoldConstant(ctx, expr)
+		newConds := FoldConstant(ctx, cc, expr)
 		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
 }
 
 func TestConstantFoldingCharsetConvert(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		condition Expression
 		result    string
 	}{
 		{
-			condition: newFunction(ctx, ast.Length, newFunctionWithType(
-				ctx,
+			condition: newFunction(ctx, cc, ast.Length, newFunctionWithType(
+				ctx, cc,
 				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
 				newString("中文", "gbk_bin"))),
 			result: "4",
 		},
 		{
-			condition: newFunction(ctx, ast.Length, newFunctionWithType(
-				ctx,
+			condition: newFunction(ctx, cc, ast.Length, newFunctionWithType(
+				ctx, cc,
 				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
 				newString("中文", "utf8mb4_bin"))),
 			result: "6",
 		},
 		{
-			condition: newFunction(ctx, ast.Concat, newFunctionWithType(
-				ctx,
+			condition: newFunction(ctx, cc, ast.Concat, newFunctionWithType(
+				ctx, cc,
 				InternalFuncFromBinary, types.NewFieldType(mysql.TypeVarchar),
 				newString("中文", "binary"))),
 			result: "中文",
 		},
 		{
-			condition: newFunction(ctx, ast.Concat,
+			condition: newFunction(ctx, cc, ast.Concat,
 				newFunctionWithType(
-					ctx,
+					ctx, cc,
 					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
 					newString("\xd2\xbb", "binary")),
 				newString("中文", "gbk_bin"),
@@ -297,10 +300,10 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 			result: "一中文",
 		},
 		{
-			condition: newFunction(ctx, ast.Concat,
+			condition: newFunction(ctx, cc, ast.Concat,
 				newString("中文", "gbk_bin"),
 				newFunctionWithType(
-					ctx,
+					ctx, cc,
 					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
 					newString("\xd2\xbb", "binary")),
 			),
@@ -308,7 +311,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 		},
 		// The result is binary charset, so gbk constant will convert to binary which is \xd6\xd0\xce\xc4.
 		{
-			condition: newFunction(ctx, ast.Concat,
+			condition: newFunction(ctx, cc, ast.Concat,
 				newString("中文", "gbk_bin"),
 				newString("\xd2\xbb", "binary"),
 			),
@@ -316,7 +319,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		newConds := FoldConstant(ctx, tt.condition)
+		newConds := FoldConstant(ctx, cc, tt.condition)
 		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx, errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
 }
@@ -389,6 +392,7 @@ func TestDeferredParamNotNull(t *testing.T) {
 }
 
 func TestDeferredExprNotNull(t *testing.T) {
+	cc := make(CloneContext, 2)
 	m := &MockExpr{}
 	ctx := mock.NewContext()
 	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
@@ -459,7 +463,7 @@ func TestDeferredExprNotNull(t *testing.T) {
 	xJsn, _, _ := cst.EvalJSON(ctx, chunk.Row{})
 	require.Equal(t, xJsn.String(), m.i.(types.BinaryJSON).String())
 
-	cln := cst.Clone().(*Constant)
+	cln := cst.Clone(cc).(*Constant)
 	require.Equal(t, cst.DeferredExpr, cln.DeferredExpr)
 }
 

@@ -81,8 +81,9 @@ func Selectivity(
 	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
 		if sc.EnableOptimizerCETrace {
+			cc := make(expression.CloneContext, 2)
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
-				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
+				expression.ComposeCNFCondition(ctx.GetExprCtx(), cc, exprs...), ret*float64(coll.RealtimeCount))
 		}
 		return ret, nil, nil
 	}
@@ -246,7 +247,8 @@ func Selectivity(
 					curExpr = append(curExpr, remainedExprs[i])
 				}
 			}
-			expr := expression.ComposeCNFCondition(ctx.GetExprCtx(), curExpr...)
+			cc := make(expression.CloneContext, 4)
+			expr := expression.ComposeCNFCondition(ctx.GetExprCtx(), cc, curExpr...)
 			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		} else if sc.EnableOptimizerDebugTrace {
 			var strs []string
@@ -383,7 +385,8 @@ OUTER:
 		if sc.EnableOptimizerCETrace {
 			// Tracing for the expression estimation results after applying the DNF estimation result.
 			curExpr = append(curExpr, remainedExprs[i])
-			expr := expression.ComposeCNFCondition(ctx.GetExprCtx(), curExpr...)
+			cc := make(expression.CloneContext, 4)
+			expr := expression.ComposeCNFCondition(ctx.GetExprCtx(), cc, curExpr...)
 			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		}
 	}
@@ -445,7 +448,8 @@ OUTER:
 
 	if sc.EnableOptimizerCETrace {
 		// Tracing for the expression estimation results after applying the default selectivity.
-		totalExpr := expression.ComposeCNFCondition(ctx.GetExprCtx(), remainedExprs...)
+		cc := make(expression.CloneContext, 4)
+		totalExpr := expression.ComposeCNFCondition(ctx.GetExprCtx(), cc, remainedExprs...)
 		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
 	if !fixcontrol.GetBoolWithDefault(

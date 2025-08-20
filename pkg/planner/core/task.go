@@ -376,7 +376,7 @@ func getProj(ctx base.PlanContext, p base.PhysicalPlan) *physicalop.PhysicalProj
 	for _, col := range p.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
-	proj.SetSchema(p.Schema().Clone())
+	proj.SetSchema(p.Schema().Clone(nil))
 	proj.SetChildren(p)
 	return proj
 }
@@ -441,19 +441,20 @@ func convertPartitionKeysIfNeed4PhysicalHashJoin(pp base.PhysicalPlan, lTask, rT
 
 	lPartKeys := make([]*property.MPPPartitionColumn, 0, len(rTask.hashCols))
 	rPartKeys := make([]*property.MPPPartitionColumn, 0, len(lTask.hashCols))
+	cc := make(expression.CloneContext, 4)
 	for i := range lTask.hashCols {
 		lKey := lTask.hashCols[i]
 		rKey := rTask.hashCols[i]
 		if lMask[i] {
 			cType := cTypes[i].Clone()
 			cType.SetFlag(lKey.Col.RetType.GetFlag())
-			lCast := expression.BuildCastFunction(p.SCtx().GetExprCtx(), lKey.Col, cType)
+			lCast := expression.BuildCastFunction(p.SCtx().GetExprCtx(), cc, lKey.Col, cType)
 			lKey = &property.MPPPartitionColumn{Col: appendExpr(lProj, lCast), CollateID: lKey.CollateID}
 		}
 		if rMask[i] {
 			cType := cTypes[i].Clone()
 			cType.SetFlag(rKey.Col.RetType.GetFlag())
-			rCast := expression.BuildCastFunction(p.SCtx().GetExprCtx(), rKey.Col, cType)
+			rCast := expression.BuildCastFunction(p.SCtx().GetExprCtx(), cc, rKey.Col, cType)
 			rKey = &property.MPPPartitionColumn{Col: appendExpr(rProj, rCast), CollateID: rKey.CollateID}
 		}
 		lPartKeys = append(lPartKeys, lKey)
@@ -568,18 +569,19 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	for _, hashCol := range task.hashCols {
 		hashColArray = append(hashColArray, hashCol.Col)
 	}
+	cc := make(expression.CloneContext, 4)
 	if p.Schema().Len() < defaultSchema.Len() {
 		if p.Schema().Len() > 0 {
 			proj := physicalop.PhysicalProjection{
 				Exprs: expression.Column2Exprs(p.Schema().Columns),
 			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
-			proj.SetSchema(p.Schema().Clone())
+			proj.SetSchema(p.Schema().Clone(cc))
 			for _, hashCol := range hashColArray {
 				if !proj.Schema().Contains(hashCol) && defaultSchema.Contains(hashCol) {
 					joinCol := defaultSchema.Columns[defaultSchema.ColumnIndex(hashCol)]
 					proj.Exprs = append(proj.Exprs, joinCol)
-					proj.Schema().Append(joinCol.Clone().(*expression.Column))
+					proj.Schema().Append(joinCol.Clone(cc).(*expression.Column))
 				}
 			}
 			attachPlan2Task(proj, task)
@@ -607,7 +609,7 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 					if defaultSchema.Contains(hashCol) {
 						joinCol := defaultSchema.Columns[defaultSchema.ColumnIndex(hashCol)]
 						proj.Exprs = append(proj.Exprs, joinCol)
-						clonedHashColArray = append(clonedHashColArray, joinCol.Clone().(*expression.Column))
+						clonedHashColArray = append(clonedHashColArray, joinCol.Clone(cc).(*expression.Column))
 					}
 				}
 
@@ -990,8 +992,9 @@ func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, 
 		}
 	}
 	newByItems := make([]*util.ByItems, 0, len(p.ByItems))
+	cc := make(expression.CloneContext, 4)
 	for _, expr := range p.ByItems {
-		newByItems = append(newByItems, expr.Clone())
+		newByItems = append(newByItems, expr.Clone(cc))
 	}
 	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
 	for _, expr := range p.GetPartitionBy() {
@@ -1018,8 +1021,9 @@ func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, 
 		// create a new PhysicalProjection to calculate the distance columns, and add it into plan route
 		bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns))
 		bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns))
+		cc := make(expression.CloneContext, 4)
 		for _, col := range newGlobalTopN.Schema().Columns {
-			newCol := col.Clone().(*expression.Column)
+			newCol := col.Clone(cc).(*expression.Column)
 			bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
 			bottomProjExprs = append(bottomProjExprs, newCol)
 		}
@@ -1823,7 +1827,7 @@ func adjust3StagePhaseAgg(p *physicalop.PhysicalHashAgg, partialAgg, finalAgg ba
 		RetType:  tp,
 	}
 	// append the physical expand op with groupingID column.
-	physicalExpand.SetSchema(mpp.p.Schema().Clone())
+	physicalExpand.SetSchema(mpp.p.Schema().Clone(nil))
 	physicalExpand.Schema().Append(groupingIDCol.(*expression.Column))
 	physicalExpand.GroupingIDCol = groupingIDCol.(*expression.Column)
 	// attach PhysicalExpand to mpp
@@ -1848,19 +1852,20 @@ func adjust3StagePhaseAgg(p *physicalop.PhysicalHashAgg, partialAgg, finalAgg ba
 	for _, col := range mpp.p.Schema().Columns {
 		proj4Partial.Exprs = append(proj4Partial.Exprs, col)
 	}
-	proj4Partial.SetSchema(mpp.p.Schema().Clone())
+	proj4Partial.SetSchema(mpp.p.Schema().Clone(nil))
 
 	partialHashAgg := partialAgg.(*physicalop.PhysicalHashAgg)
 	partialHashAgg.GroupByItems = append(partialHashAgg.GroupByItems, groupingIDCol)
 	partialHashAgg.Schema().Append(groupingIDCol.(*expression.Column))
 	// it will create a new stats for partial agg.
 	scaleStats4GroupingSets(partialHashAgg, groupingSets, groupingIDCol.(*expression.Column), proj4Partial.Schema(), proj4Partial.StatsInfo())
+	cc := make(expression.CloneContext, 4)
 	for _, fun := range partialHashAgg.AggFuncs {
 		if !fun.HasDistinct {
 			// for normal agg phase1, we should also modify them to target for specified group data.
 			// Expr = (case when groupingID = targeted_groupingID then arg else null end)
-			eqExpr := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), groupingIDCol, expression.NewUInt64Const(fun.GroupingID))
-			caseWhen := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.Case, fun.Args[0].GetType(ectx), eqExpr, fun.Args[0], expression.NewNull())
+			eqExpr := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), cc, ast.EQ, types.NewFieldType(mysql.TypeTiny), groupingIDCol, expression.NewUInt64Const(fun.GroupingID))
+			caseWhen := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), cc, ast.Case, fun.Args[0].GetType(ectx), eqExpr, fun.Args[0], expression.NewNull())
 			caseWhenProjCol := &expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 				RetType:  fun.Args[0].GetType(ectx),
@@ -2117,7 +2122,7 @@ func attach2TaskForMPP4PhysicalWindow(p *physicalop.PhysicalWindow, mpp *MppTask
 	// FIXME: currently, tiflash's join has different schema with TiDB,
 	// so we have to rebuild the schema of join and operators which may inherit schema from join.
 	// for window, we take the sub-plan's schema, and the schema generated by windowDescs.
-	columns := p.Schema().Clone().Columns[len(p.Schema().Columns)-len(p.WindowFuncDescs):]
+	columns := p.Schema().Clone(nil).Columns[len(p.Schema().Columns)-len(p.WindowFuncDescs):]
 	p.SetSchema(expression.MergeSchema(mpp.Plan().Schema(), expression.NewSchema(columns...)))
 
 	failpoint.Inject("CheckMPPWindowSchemaLength", func() {

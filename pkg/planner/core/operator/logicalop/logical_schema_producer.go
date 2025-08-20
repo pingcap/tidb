@@ -84,7 +84,7 @@ func (s *LogicalSchemaProducer) Schema() *expression.Schema {
 		if len(s.Children()) == 1 {
 			// default implementation for plans has only one child: proprgate child schema.
 			// multi-children plans are likely to have particular implementation.
-			s.schema = s.Children()[0].Schema().Clone()
+			s.schema = s.Children()[0].Schema().Clone(nil)
 		} else {
 			s.schema = expression.NewSchema()
 		}

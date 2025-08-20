@@ -125,14 +125,15 @@ func makeDatums(i any) []types.Datum {
 
 func TestIsNullFunc(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.IsNull]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(1)))
 	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(0), v.GetInt64())
 
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(nil)))
 	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -141,15 +142,16 @@ func TestIsNullFunc(t *testing.T) {
 
 func TestLock(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	lock := funcs[ast.GetLock]
-	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock", 1)))
+	f, err := lock.getFunction(ctx, cc, datumsToConstants(types.MakeDatums("mylock", 1)))
 	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 
 	releaseLock := funcs[ast.ReleaseLock]
-	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock")))
+	f, err = releaseLock.getFunction(ctx, cc, datumsToConstants(types.MakeDatums("mylock")))
 	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -266,7 +268,8 @@ func newFunctionForTest(ctx BuildContext, funcName string, args ...Expression) (
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
 	funcArgs := slices.Clone(args)
-	f, err := fc.getFunction(ctx, funcArgs)
+	cc := make(CloneContext, 2)
+	f, err := fc.getFunction(ctx, cc, funcArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -285,9 +288,9 @@ var (
 )
 
 func getInt8Con() Expression {
-	return int8Con.Clone()
+	return int8Con.Clone(nil)
 }
 
 func getVarcharCon() Expression {
-	return varcharCon.Clone()
+	return varcharCon.Clone(nil)
 }

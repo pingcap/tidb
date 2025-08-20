@@ -1593,7 +1593,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName ast.CIStr, tbl table.Table, idx *model.IndexInfo) (base.Plan, error) {
 	tblInfo := tbl.Meta()
 	physicalID, isPartition := getPhysicalID(tbl, idx.Global)
-	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), dbName, tblInfo)
+	cc := make(expression.CloneContext, 4)
+	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), cc, dbName, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -1612,7 +1613,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 		Index:            idx,
 		IdxCols:          idxCols,
 		IdxColLens:       idxColLens,
-		DataSourceSchema: idxColSchema.Clone(),
+		DataSourceSchema: idxColSchema.Clone(cc),
 		Ranges:           ranger.FullRange(),
 		PhysicalTableID:  physicalID,
 		IsPartition:      isPartition,
@@ -2037,7 +2038,8 @@ type calcOnceMap struct {
 func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *calcOnceMap, columnSelector func([]*expression.Column) []expression.Expression) error {
 	intest.Assert(cols.data != nil, "cols.data should not be nil before adding columns")
 	tblInfo := tbl.TableInfo
-	columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx.GetExprCtx(), tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
+	cc := make(expression.CloneContext, 2)
+	columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx.GetExprCtx(), cc, tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
 	if err != nil {
 		return err
 	}
@@ -3659,9 +3661,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		fieldsLen := len(p.Schema().Columns)
 		proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx, 0)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
+		cc := make(expression.CloneContext, 2)
 		for _, col := range p.Schema().Columns {
 			proj.Exprs = append(proj.Exprs, col)
-			newCol := col.Clone().(*expression.Column)
+			newCol := col.Clone(cc).(*expression.Column)
 			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 			schema.Append(newCol)
 		}
@@ -3672,7 +3675,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	}
 	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
 		b.curClause = orderByClause
-		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
+		cc := make(expression.CloneContext, 2)
+		orderByCol := np.Schema().Columns[0].Clone(cc).(*expression.Column)
 		sort := logicalop.LogicalSort{
 			ByItems: []*util.ByItems{{Expr: orderByCol}},
 		}.Init(b.ctx, b.getSelectOffset())
@@ -4066,8 +4070,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
+	cc := make(expression.CloneContext, 2)
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), cc, tn.Schema, tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4562,7 +4567,8 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
 	}
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), ast.NewCIStr(""), tableInfo)
+	cc := make(expression.CloneContext, 2)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), cc, ast.NewCIStr(""), tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4823,7 +4829,8 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
 	}
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), ast.NewCIStr(""), tableInfo)
+	cc := make(expression.CloneContext, 4)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), cc, ast.NewCIStr(""), tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4963,7 +4970,8 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Pla
 		return nil, plannererrors.ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
+	cc := make(expression.CloneContext, 4)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), cc, node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -5079,7 +5087,8 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Pla
 	tblInfo := tnW.TableInfo
 	handleColInfos := buildHandleColumnInfos(tblInfo)
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
+	cc := make(expression.CloneContext, 4)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), cc, node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
 	}

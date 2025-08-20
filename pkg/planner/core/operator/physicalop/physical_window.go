@@ -88,6 +88,7 @@ func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	}
 	cloned.PhysicalSchemaProducer = *base
 	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	cc := make(expression.CloneContext, 2)
 	for _, it := range p.PartitionBy {
 		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
@@ -97,7 +98,7 @@ func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	}
 	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
 	for _, it := range p.WindowFuncDescs {
-		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
+		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone(cc))
 	}
 	if p.Frame != nil {
 		cloned.Frame = p.Frame.Clone()
@@ -231,23 +232,24 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
+	cc := make(expression.CloneContext, 2)
 	for i := range len(p.Schema().Columns) - len(p.WindowFuncDescs) {
 		col := p.Schema().Columns[i]
-		newCol, err := col.ResolveIndices(p.Children()[0].Schema())
+		newCol, err := col.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
 		p.Schema().Columns[i] = newCol.(*expression.Column)
 	}
 	for i, item := range p.PartitionBy {
-		newCol, err := item.Col.ResolveIndices(p.Children()[0].Schema())
+		newCol, err := item.Col.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
 	for i, item := range p.OrderBy {
-		newCol, err := item.Col.ResolveIndices(p.Children()[0].Schema())
+		newCol, err := item.Col.ResolveIndices(cc, p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
@@ -255,7 +257,7 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	}
 	for _, desc := range p.WindowFuncDescs {
 		for i, arg := range desc.Args {
-			desc.Args[i], err = arg.ResolveIndices(p.Children()[0].Schema())
+			desc.Args[i], err = arg.ResolveIndices(cc, p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
@@ -263,13 +265,13 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	}
 	if p.Frame != nil {
 		for i := range p.Frame.Start.CalcFuncs {
-			p.Frame.Start.CalcFuncs[i], err = p.Frame.Start.CalcFuncs[i].ResolveIndices(p.Children()[0].Schema())
+			p.Frame.Start.CalcFuncs[i], err = p.Frame.Start.CalcFuncs[i].ResolveIndices(cc, p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
 		}
 		for i := range p.Frame.End.CalcFuncs {
-			p.Frame.End.CalcFuncs[i], err = p.Frame.End.CalcFuncs[i].ResolveIndices(p.Children()[0].Schema())
+			p.Frame.End.CalcFuncs[i], err = p.Frame.End.CalcFuncs[i].ResolveIndices(cc, p.Children()[0].Schema())
 			if err != nil {
 				return err
 			}
@@ -290,15 +292,16 @@ func (p *PhysicalWindow) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) 
 	windowExec := &tipb.Window{}
 
 	windowExec.FuncDesc = make([]*tipb.Expr, 0, len(p.WindowFuncDescs))
+	cc := make(expression.CloneContext, 2)
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	for _, desc := range p.WindowFuncDescs {
 		windowExec.FuncDesc = append(windowExec.FuncDesc, aggregation.WindowFuncToPBExpr(evalCtx, client, desc))
 	}
 	for _, item := range p.PartitionBy {
-		windowExec.PartitionBy = append(windowExec.PartitionBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(), item.Desc))
+		windowExec.PartitionBy = append(windowExec.PartitionBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(cc), item.Desc))
 	}
 	for _, item := range p.OrderBy {
-		windowExec.OrderBy = append(windowExec.OrderBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(), item.Desc))
+		windowExec.OrderBy = append(windowExec.OrderBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(cc), item.Desc))
 	}
 
 	if p.Frame != nil {

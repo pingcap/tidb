@@ -38,12 +38,12 @@ type groupingImplFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *groupingImplFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *groupingImplFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	argTp := []types.EvalType{types.ETInt}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTp...)
 	if err != nil {
 		return nil, err
 	}
@@ -118,9 +118,9 @@ func (b *BuiltinGroupingImplSig) metadata() proto.Message {
 }
 
 // Clone implementing the builtinFunc interface.
-func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
+func (b *BuiltinGroupingImplSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &BuiltinGroupingImplSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	newSig.mode = b.mode
 	newSig.groupingMarks = b.groupingMarks
 	// mpp task generation will clone whole plan tree, including every expression related.

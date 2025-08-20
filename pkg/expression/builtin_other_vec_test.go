@@ -65,10 +65,11 @@ func BenchmarkVectorizedBuiltinOtherFunc(b *testing.B) {
 
 func TestInDecimal(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	ft := eType2FieldType(types.ETDecimal)
 	col0 := &Column{RetType: ft, Index: 0}
 	col1 := &Column{RetType: ft, Index: 1}
-	inFunc, err := funcs[ast.In].getFunction(ctx, []Expression{col0, col1})
+	inFunc, err := funcs[ast.In].getFunction(ctx, cc, []Expression{col0, col1})
 	require.NoError(t, err)
 
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 1024)
@@ -92,6 +93,7 @@ func TestInDecimal(t *testing.T) {
 
 func TestGetParamVec(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	params := []types.Datum{
 		types.NewIntDatum(123),
 		types.NewStringDatum("abc"),
@@ -99,7 +101,7 @@ func TestGetParamVec(t *testing.T) {
 	ctx.GetSessionVars().PlanCacheParams.Append(params...)
 	ft := eType2FieldType(types.ETInt)
 	col := &Column{RetType: ft, Index: 0}
-	fn, err := funcs[ast.GetParam].getFunction(ctx, []Expression{col})
+	fn, err := funcs[ast.GetParam].getFunction(ctx, cc, []Expression{col})
 	require.NoError(t, err)
 
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 3)

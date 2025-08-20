@@ -2352,7 +2352,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 		TblColHists:     ds.TblColHists,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetIsPartition(ds.PartitionDefIdx != nil)
-	ts.SetSchema(ds.Schema().Clone())
+	ts.SetSchema(ds.Schema().Clone(nil))
 	err := setIndexMergeTableScanHandleCols(ds, ts)
 	if err != nil {
 		return nil, nil, false, err
@@ -2584,7 +2584,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			TblColHists:     ds.TblColHists,
 		}.Init(ds.SCtx(), is.QueryBlockOffset())
 		ts.SetIsPartition(ds.PartitionDefIdx != nil)
-		ts.SetSchema(ds.Schema().Clone())
+		ts.SetSchema(ds.Schema().Clone(nil))
 		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
 		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
 		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
@@ -2964,7 +2964,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
 		AccessConditions: candidate.path.AccessConds,
-		schema:           ds.Schema().Clone(),
+		schema:           ds.Schema().Clone(nil),
 		dbName:           ds.DBName.L,
 		TblInfo:          ds.TableInfo,
 		outputNames:      ds.OutputNames(),
@@ -3069,7 +3069,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
-			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(nil), ds.OutputNames(), ds.QueryBlockOffset())
 			sel := physicalop.PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
 			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
@@ -3094,7 +3094,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
-			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(nil), ds.OutputNames(), ds.QueryBlockOffset())
 			sel := physicalop.PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
@@ -3103,7 +3103,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 	}
 	if rTsk.GetPlan() == nil {
-		tmpP := batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+		tmpP := batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(nil), ds.OutputNames(), ds.QueryBlockOffset())
 		rTsk.SetPlan(tmpP)
 	}
 

@@ -81,15 +81,17 @@ func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.Physica
 		return nil, err
 	}
 	if p.ExtraHandleCol != nil {
-		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
+		cc := make(expression.CloneContext, 2)
+		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone(cc).(*expression.Column)
 	}
 	if p.PushedLimit != nil {
 		cloned.PushedLimit = p.PushedLimit.Clone()
 	}
 	if len(p.CommonHandleCols) != 0 {
 		cloned.CommonHandleCols = make([]*expression.Column, 0, len(p.CommonHandleCols))
+		cc := make(expression.CloneContext, 2)
 		for _, col := range p.CommonHandleCols {
-			cloned.CommonHandleCols = append(cloned.CommonHandleCols, col.Clone().(*expression.Column))
+			cloned.CommonHandleCols = append(cloned.CommonHandleCols, col.Clone(cc).(*expression.Column))
 		}
 	}
 	return cloned, nil
@@ -244,10 +246,11 @@ func (p *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (
 	cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)
 	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
 	if p.ExtraHandleCol != nil {
+		cc := make(expression.CloneContext, 2)
 		if p.ExtraHandleCol.SafeToShareAcrossSession() {
 			cloned.ExtraHandleCol = p.ExtraHandleCol
 		} else {
-			cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
+			cloned.ExtraHandleCol = p.ExtraHandleCol.Clone(cc).(*expression.Column)
 		}
 	}
 	cloned.PushedLimit = p.PushedLimit.Clone()

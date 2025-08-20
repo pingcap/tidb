@@ -31,6 +31,7 @@ import (
 
 func TestInetAton(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tbl := []struct {
 		Input    any
 		Expected any
@@ -53,7 +54,7 @@ func TestInetAton(t *testing.T) {
 	dtbl := tblToDtbl(tbl)
 	fc := funcs[ast.InetAton]
 	for _, tt := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
@@ -84,9 +85,10 @@ func TestIsIPv4(t *testing.T) {
 		{"1.2.3.4.5", 0},
 	}
 	fc := funcs[ast.IsIPv4]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		ip := types.NewStringDatum(test.ip)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -94,7 +96,7 @@ func TestIsIPv4(t *testing.T) {
 	}
 	// test NULL input for is_ipv4
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -123,9 +125,10 @@ func TestIsUUID(t *testing.T) {
 	}
 
 	fc := funcs[ast.IsUUID]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		uuid := types.NewStringDatum(test.uuid)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{uuid}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{uuid}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -133,7 +136,7 @@ func TestIsUUID(t *testing.T) {
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -161,12 +164,14 @@ func TestUUID(t *testing.T) {
 			require.Equal(t, 12, len(p))
 		}
 	}
-	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.UUID].getFunction(ctx, cc, datumsToConstants(nil))
 	require.NoError(t, err)
 }
 
 func TestAnyValue(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tbl := []struct {
 		arg any
 		ret any
@@ -179,7 +184,7 @@ func TestAnyValue(t *testing.T) {
 	}
 	for _, tt := range tbl {
 		fc := funcs[ast.AnyValue]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.arg)))
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -189,6 +194,7 @@ func TestAnyValue(t *testing.T) {
 
 func TestIsIPv6(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		ip     string
 		expect any
@@ -202,7 +208,7 @@ func TestIsIPv6(t *testing.T) {
 	fc := funcs[ast.IsIPv6]
 	for _, test := range tests {
 		ip := types.NewStringDatum(test.ip)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -210,7 +216,7 @@ func TestIsIPv6(t *testing.T) {
 	}
 	// test NULL input for is_ipv6
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -230,9 +236,10 @@ func TestInetNtoa(t *testing.T) {
 		{math.MaxUint32, "255.255.255.255"},
 	}
 	fc := funcs[ast.InetNtoa]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -240,7 +247,7 @@ func TestInetNtoa(t *testing.T) {
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -248,6 +255,7 @@ func TestInetNtoa(t *testing.T) {
 
 func TestInet6NtoA(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		ip     []byte
 		expect any
@@ -270,7 +278,7 @@ func TestInet6NtoA(t *testing.T) {
 	fc := funcs[ast.Inet6Ntoa]
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -278,7 +286,7 @@ func TestInet6NtoA(t *testing.T) {
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -301,9 +309,10 @@ func TestInet6AtoN(t *testing.T) {
 		{"::ffff:255.255.255.255", []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}},
 	}
 	fc := funcs[ast.Inet6Aton]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		expect := types.NewDatum(test.expect)
@@ -316,7 +325,7 @@ func TestInet6AtoN(t *testing.T) {
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -335,9 +344,10 @@ func TestIsIPv4Mapped(t *testing.T) {
 		{[]byte{0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6}, 0},
 	}
 	fc := funcs[ast.IsIPv4Mapped]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -345,7 +355,7 @@ func TestIsIPv4Mapped(t *testing.T) {
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -365,9 +375,10 @@ func TestIsIPv4Compat(t *testing.T) {
 		{[]byte{0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6}, 0},
 	}
 	fc := funcs[ast.IsIPv4Compat]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -375,7 +386,7 @@ func TestIsIPv4Compat(t *testing.T) {
 	}
 
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -540,8 +551,8 @@ func TestUUIDToBin(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.UUIDToBin].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.UUIDToBin].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -611,21 +622,21 @@ func TestBinToUUID(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.BinToUUID].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.BinToUUID].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
 func TestTidbShard(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.TiDBShard]
 
 	// tidb_shard(-1) == 81, ......
 	args := makeDatums([]int{-1, 0, 1, 9999999999999999})
 	res := makeDatums([]int{81, 167, 214, 63})
 	for i, arg := range args {
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg}))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -636,7 +647,7 @@ func TestTidbShard(t *testing.T) {
 	args2 := makeDatums([]string{"abc", "ope", "wopddd"})
 	res2 := makeDatums([]int{167})
 	for _, arg := range args2 {
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{arg}))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -645,7 +656,7 @@ func TestTidbShard(t *testing.T) {
 
 	args3 := makeDatums([]int{-1, 0, 1, 9999999999999999})
 	{
-		_, err := fc.getFunction(ctx, datumsToConstants(args3))
+		_, err := fc.getFunction(ctx, cc, datumsToConstants(args3))
 		require.Error(t, err)
 	}
 }

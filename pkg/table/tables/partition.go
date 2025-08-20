@@ -305,7 +305,8 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
 	ctx := NewPartitionExprBuildCtx()
 	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
+	cc := make(expression.CloneContext, 4)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, cc, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +430,8 @@ func dataForRangeColumnsPruning(ctx expression.BuildContext, defs []model.Partit
 			switch schema.Columns[colOffsets[j]].RetType.GetType() {
 			case mysql.TypeDatetime, mysql.TypeDate:
 				// Will also fold constant
-				tmp = expression.BuildCastFunction(ctx, tmp, schema.Columns[colOffsets[j]].RetType)
+				cc := make(expression.CloneContext, 4)
+				tmp = expression.BuildCastFunction(ctx, cc, tmp, schema.Columns[colOffsets[j]].RetType)
 			}
 			lessThanCols = append(lessThanCols, &tmp)
 		}
@@ -862,9 +864,10 @@ func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partC
 	}
 	offset := getColumnsOffset(cols, columns)
 	deDupCols := make([]*expression.Column, 0, len(cols))
+	cc := make(expression.CloneContext, 4)
 	for _, col := range cols {
 		if findIdxByColUniqueID(deDupCols, col) < 0 {
-			c := col.Clone().(*expression.Column)
+			c := col.Clone(cc).(*expression.Column)
 			deDupCols = append(deDupCols, c)
 		}
 	}
@@ -898,21 +901,22 @@ func generateListPartitionExpr(ctx expression.BuildContext, tblInfo *model.Table
 // Clone a copy of ForListPruning
 func (lp *ForListPruning) Clone() *ForListPruning {
 	ret := *lp
+	cc := make(expression.CloneContext, 4)
 	if ret.LocateExpr != nil {
-		ret.LocateExpr = lp.LocateExpr.Clone()
+		ret.LocateExpr = lp.LocateExpr.Clone(cc)
 	}
 	if ret.PruneExpr != nil {
-		ret.PruneExpr = lp.PruneExpr.Clone()
+		ret.PruneExpr = lp.PruneExpr.Clone(cc)
 	}
 	ret.PruneExprCols = make([]*expression.Column, 0, len(lp.PruneExprCols))
 	for i := range lp.PruneExprCols {
-		c := lp.PruneExprCols[i].Clone().(*expression.Column)
+		c := lp.PruneExprCols[i].Clone(cc).(*expression.Column)
 		ret.PruneExprCols = append(ret.PruneExprCols, c)
 	}
 	ret.ColPrunes = make([]*ForListColumnPruning, 0, len(lp.ColPrunes))
 	for i := range lp.ColPrunes {
 		l := *lp.ColPrunes[i]
-		l.ExprCol = l.ExprCol.Clone().(*expression.Column)
+		l.ExprCol = l.ExprCol.Clone(cc).(*expression.Column)
 		ret.ColPrunes = append(ret.ColPrunes, &l)
 	}
 	return &ret
@@ -921,6 +925,7 @@ func (lp *ForListPruning) Clone() *ForListPruning {
 func (lp *ForListPruning) buildListPruner(ctx expression.BuildContext, exprStr string, defs []model.PartitionDefinition, exprCols []*expression.Column,
 	columns []*expression.Column, names types.NameSlice) error {
 	schema := expression.NewSchema(columns...)
+	cc := make(expression.CloneContext, 4)
 	p := parser.New()
 	expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names)
 	if err != nil {
@@ -929,9 +934,9 @@ func (lp *ForListPruning) buildListPruner(ctx expression.BuildContext, exprStr s
 		return errors.Trace(err)
 	}
 	// Since need to change the column index of the expression, clone the expression first.
-	lp.LocateExpr = expr.Clone()
+	lp.LocateExpr = expr.Clone(cc)
 	lp.PruneExprCols = exprCols
-	lp.PruneExpr = expr.Clone()
+	lp.PruneExpr = expr.Clone(cc)
 	cols := expression.ExtractColumns(lp.PruneExpr)
 	for _, c := range cols {
 		idx := findIdxByColUniqueID(exprCols, c)

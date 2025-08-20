@@ -165,9 +165,10 @@ func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
 
 func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	ft := eType2FieldType(types.ETInt)
 	col0 := &Column{RetType: ft, Index: 0}
-	f, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{col0})
+	f, err := funcs[ast.UnaryMinus].getFunction(ctx, cc, []Expression{col0})
 	require.NoError(t, err)
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)

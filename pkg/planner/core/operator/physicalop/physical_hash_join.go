@@ -196,11 +196,12 @@ func (p *PhysicalHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, er
 	cloned.BasePhysicalJoin = *base
 	cloned.Concurrency = p.Concurrency
 	cloned.UseOuterToBuild = p.UseOuterToBuild
+	cc := make(expression.CloneContext, 2)
 	for _, c := range p.EqualConditions {
-		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone().(*expression.ScalarFunction))
+		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone(cc).(*expression.ScalarFunction))
 	}
 	for _, c := range p.NAEqualConditions {
-		cloned.NAEqualConditions = append(cloned.NAEqualConditions, c.Clone().(*expression.ScalarFunction))
+		cloned.NAEqualConditions = append(cloned.NAEqualConditions, c.Clone(cc).(*expression.ScalarFunction))
 	}
 	for _, rf := range p.runtimeFilterList {
 		clonedRF := rf.Clone()
@@ -398,40 +399,41 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	lSchema := p.Children()[0].Schema()
 	rSchema := p.Children()[1].Schema()
 	ctx := p.SCtx()
+	cc := make(expression.CloneContext, 2)
 	for i, fun := range p.EqualConditions {
-		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
+		lArg, err := fun.GetArgs()[0].ResolveIndices(cc, lSchema)
 		if err != nil {
 			return err
 		}
 		p.LeftJoinKeys[i] = lArg.(*expression.Column)
-		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
+		rArg, err := fun.GetArgs()[1].ResolveIndices(cc, rSchema)
 		if err != nil {
 			return err
 		}
 		p.RightJoinKeys[i] = rArg.(*expression.Column)
-		p.EqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
+		p.EqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), cc, fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, fun := range p.NAEqualConditions {
-		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
+		lArg, err := fun.GetArgs()[0].ResolveIndices(cc, lSchema)
 		if err != nil {
 			return err
 		}
 		p.LeftNAJoinKeys[i] = lArg.(*expression.Column)
-		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
+		rArg, err := fun.GetArgs()[1].ResolveIndices(cc, rSchema)
 		if err != nil {
 			return err
 		}
 		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
-		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
+		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), cc, fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
+		p.LeftConditions[i], err = expr.ResolveIndices(cc, lSchema)
 		if err != nil {
 			return err
 		}
 	}
 	for i, expr := range p.RightConditions {
-		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
+		p.RightConditions[i], err = expr.ResolveIndices(cc, rSchema)
 		if err != nil {
 			return err
 		}
@@ -440,7 +442,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	mergedSchema := expression.MergeSchema(lSchema, rSchema)
 
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
+		p.OtherConditions[i], err = expr.ResolveIndices(cc, mergedSchema)
 		if err != nil {
 			return err
 		}
@@ -474,7 +476,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 		}
 		if findIdx != -1 {
 			// valid one.
-			p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
+			p.Schema().Columns[i] = p.Schema().Columns[i].Clone(cc).(*expression.Column)
 			p.Schema().Columns[i].Index = findIdx
 			marked[findIdx] = true
 			foundCnt++

@@ -74,13 +74,13 @@ func TestIlike(t *testing.T) {
 		{"啊aaa啊啊啊aa", "啊aaa啊啊啊aa", int('a'), 0, 0},
 	}
 	var charsetAndCollationGeneral = [][]string{{"utf8mb4", "utf8mb4_general_ci"}, {"utf8", "utf8_general_ci"}}
-
+	cc := make(CloneContext, 2)
 	for _, charsetAndCollation := range charsetAndCollationGeneral {
 		for _, tt := range tests {
 			comment := fmt.Sprintf(`for input = "%s", pattern = "%s", escape = "%s", collation = "%s"`, tt.input, tt.pattern, string(rune(tt.escape)), charsetAndCollation[1])
 			fc := funcs[ast.Ilike]
 			inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.escape))
-			f, err := fc.getFunction(ctx, inputs)
+			f, err := fc.getFunction(ctx, cc, inputs)
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charsetAndCollation[0], charsetAndCollation[1])
 			f.setCollator(collate.GetCollator(charsetAndCollation[1]))
@@ -95,13 +95,12 @@ func TestIlike(t *testing.T) {
 		{"utf8mb4", "utf8mb4_unicode_ci"},
 		{"utf8", "utf8_bin"},
 		{"utf8", "utf8_unicode_ci"}}
-
 	for _, charsetAndCollation := range charsetAndCollationUnicode {
 		for _, tt := range tests {
 			comment := fmt.Sprintf(`for input = "%s", pattern = "%s", escape = "%s", collation = "%s"`, tt.input, tt.pattern, string(rune(tt.escape)), charsetAndCollation[1])
 			fc := funcs[ast.Ilike]
 			inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.escape))
-			f, err := fc.getFunction(ctx, inputs)
+			f, err := fc.getFunction(ctx, cc, inputs)
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charsetAndCollation[0], charsetAndCollation[1])
 			f.setCollator(collate.GetCollator(charsetAndCollation[1]))

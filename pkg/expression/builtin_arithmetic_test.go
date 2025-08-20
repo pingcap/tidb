@@ -97,8 +97,8 @@ func TestArithmeticPlus(t *testing.T) {
 	ctx := createContext(t)
 	// case: 1
 	args := []any{int64(12), int64(1)}
-
-	bf, err := funcs[ast.Plus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	cc := make(CloneContext, 2)
+	bf, err := funcs[ast.Plus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	intSig, ok := bf.(*builtinArithmeticPlusIntSig)
@@ -113,7 +113,7 @@ func TestArithmeticPlus(t *testing.T) {
 	// case 2
 	args = []any{1.01001, -0.01}
 
-	bf, err = funcs[ast.Plus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Plus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	realSig, ok := bf.(*builtinArithmeticPlusRealSig)
@@ -128,7 +128,7 @@ func TestArithmeticPlus(t *testing.T) {
 	// case 3
 	args = []any{nil, -0.11101}
 
-	bf, err = funcs[ast.Plus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Plus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
@@ -143,7 +143,7 @@ func TestArithmeticPlus(t *testing.T) {
 	// case 4
 	args = []any{nil, nil}
 
-	bf, err = funcs[ast.Plus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Plus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
@@ -160,7 +160,7 @@ func TestArithmeticPlus(t *testing.T) {
 	require.NoError(t, err)
 	args = []any{hexStr, int64(1)}
 
-	bf, err = funcs[ast.Plus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Plus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
@@ -175,7 +175,7 @@ func TestArithmeticPlus(t *testing.T) {
 	require.NoError(t, err)
 	args = []any{bitStr, int64(1)}
 
-	bf, err = funcs[ast.Plus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Plus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 
@@ -193,8 +193,8 @@ func TestArithmeticMinus(t *testing.T) {
 	ctx := createContext(t)
 	// case: 1
 	args := []any{int64(12), int64(1)}
-
-	bf, err := funcs[ast.Minus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	cc := make(CloneContext, 2)
+	bf, err := funcs[ast.Minus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	intSig, ok := bf.(*builtinArithmeticMinusIntSig)
@@ -209,7 +209,7 @@ func TestArithmeticMinus(t *testing.T) {
 	// case 2
 	args = []any{1.01001, -0.01}
 
-	bf, err = funcs[ast.Minus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Minus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	realSig, ok := bf.(*builtinArithmeticMinusRealSig)
@@ -224,7 +224,7 @@ func TestArithmeticMinus(t *testing.T) {
 	// case 3
 	args = []any{nil, -0.11101}
 
-	bf, err = funcs[ast.Minus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Minus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
@@ -239,7 +239,7 @@ func TestArithmeticMinus(t *testing.T) {
 	// case 4
 	args = []any{1.01, nil}
 
-	bf, err = funcs[ast.Minus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Minus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
@@ -254,7 +254,7 @@ func TestArithmeticMinus(t *testing.T) {
 	// case 5
 	args = []any{nil, nil}
 
-	bf, err = funcs[ast.Minus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	bf, err = funcs[ast.Minus].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(args...)))
 	require.NoError(t, err)
 	require.NotNil(t, bf)
 	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
@@ -269,6 +269,7 @@ func TestArithmeticMinus(t *testing.T) {
 
 func TestArithmeticMultiply(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	testCases := []struct {
 		args   []any
 		expect []any
@@ -309,7 +310,7 @@ func TestArithmeticMultiply(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Mul].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		sig, err := funcs[ast.Mul].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, sig)
 		val, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
@@ -325,7 +326,7 @@ func TestArithmeticMultiply(t *testing.T) {
 
 func TestArithmeticDivide(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	testCases := []struct {
 		args   []any
 		expect any
@@ -377,7 +378,7 @@ func TestArithmeticDivide(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Div].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		sig, err := funcs[ast.Div].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, sig)
 		switch sig.(type) {
@@ -394,6 +395,7 @@ func TestArithmeticDivide(t *testing.T) {
 
 func TestArithmeticIntDivide(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	testCases := []struct {
 		args   []any
 		expect []any
@@ -493,7 +495,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.IntDiv].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		sig, err := funcs[ast.IntDiv].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, sig)
 		val, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
@@ -509,6 +511,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 
 func TestArithmeticMod(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	testCases := []struct {
 		args   []any
 		expect any
@@ -636,7 +639,7 @@ func TestArithmeticMod(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Mod].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		sig, err := funcs[ast.Mod].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, sig)
 		val, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
@@ -661,6 +664,7 @@ func TestArithmeticMod(t *testing.T) {
 
 func TestDecimalErrOverflow(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	testCases := []struct {
 		args   []float64
 		opd    string
@@ -694,7 +698,7 @@ func TestDecimalErrOverflow(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		dec1, dec2 := types.NewDecFromFloatForTest(tc.args[0]), types.NewDecFromFloatForTest(tc.args[1])
-		bf, err := funcs[tc.opd].getFunction(ctx, datumsToConstants(types.MakeDatums(dec1, dec2)))
+		bf, err := funcs[tc.opd].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(dec1, dec2)))
 		require.NoError(t, err)
 		require.NotNil(t, bf)
 		require.Equal(t, tc.sig, bf.PbCode())

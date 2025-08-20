@@ -95,11 +95,12 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
 func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
+	cc := make(expression.CloneContext, 4)
 	switch joinType {
 	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
-		return leftSchema.Clone()
+		return leftSchema.Clone(cc)
 	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
-		newSchema := leftSchema.Clone()
+		newSchema := leftSchema.Clone(cc)
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}

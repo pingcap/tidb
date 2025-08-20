@@ -167,12 +167,12 @@ type arithmeticPlusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +182,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 	}
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
@@ -191,7 +191,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 		sig.setPbCode(tipb.ScalarFuncSig_PlusReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +200,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig, nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -220,9 +220,9 @@ type builtinArithmeticPlusIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticPlusIntSig) Clone() builtinFunc {
+func (s *builtinArithmeticPlusIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticPlusIntSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -276,9 +276,9 @@ type builtinArithmeticPlusDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticPlusDecimalSig) Clone() builtinFunc {
+func (s *builtinArithmeticPlusDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticPlusDecimalSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -310,9 +310,9 @@ type builtinArithmeticPlusRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticPlusRealSig) Clone() builtinFunc {
+func (s *builtinArithmeticPlusRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticPlusRealSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -338,12 +338,12 @@ type arithmeticMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
 		if err != nil {
 			return nil, err
 		}
@@ -353,7 +353,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 	}
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
@@ -362,7 +362,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 		sig.setPbCode(tipb.ScalarFuncSig_MinusReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 		if err != nil {
 			return nil, err
 		}
@@ -371,7 +371,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig, nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -391,9 +391,9 @@ type builtinArithmeticMinusRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMinusRealSig) Clone() builtinFunc {
+func (s *builtinArithmeticMinusRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMinusRealSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -420,9 +420,9 @@ type builtinArithmeticMinusDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMinusDecimalSig) Clone() builtinFunc {
+func (s *builtinArithmeticMinusDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMinusDecimalSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -454,9 +454,9 @@ type builtinArithmeticMinusIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMinusIntSig) Clone() builtinFunc {
+func (s *builtinArithmeticMinusIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMinusIntSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -542,12 +542,12 @@ type arithmeticMultiplyFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	if args[0].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() || args[1].GetType(ctx.GetEvalCtx()).EvalType().IsVectorKind() {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETVectorFloat32, types.ETVectorFloat32, types.ETVectorFloat32)
 		if err != nil {
 			return nil, err
 		}
@@ -558,7 +558,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
@@ -567,7 +567,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 		if err != nil {
 			return nil, err
 		}
@@ -576,7 +576,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig, nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -600,9 +600,9 @@ type builtinArithmeticMultiplyRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMultiplyRealSig) Clone() builtinFunc {
+func (s *builtinArithmeticMultiplyRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMultiplyRealSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -614,9 +614,9 @@ type builtinArithmeticMultiplyDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMultiplyDecimalSig) Clone() builtinFunc {
+func (s *builtinArithmeticMultiplyDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMultiplyDecimalSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -628,9 +628,9 @@ type builtinArithmeticMultiplyIntUnsignedSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMultiplyIntUnsignedSig) Clone() builtinFunc {
+func (s *builtinArithmeticMultiplyIntUnsignedSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMultiplyIntUnsignedSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -642,9 +642,9 @@ type builtinArithmeticMultiplyIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMultiplyIntSig) Clone() builtinFunc {
+func (s *builtinArithmeticMultiplyIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMultiplyIntSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -722,13 +722,13 @@ type arithmeticDivideFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
@@ -737,7 +737,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 		sig.setPbCode(tipb.ScalarFuncSig_DivideReal)
 		return sig, nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 	if err != nil {
 		return nil, err
 	}
@@ -756,9 +756,9 @@ type builtinArithmeticDivideRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticDivideRealSig) Clone() builtinFunc {
+func (s *builtinArithmeticDivideRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticDivideRealSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -770,9 +770,9 @@ type builtinArithmeticDivideDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticDivideDecimalSig) Clone() builtinFunc {
+func (s *builtinArithmeticDivideDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticDivideDecimalSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -828,14 +828,14 @@ type arithmeticIntDivideFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticIntDivideFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *arithmeticIntDivideFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETInt && rhsEvalTp == types.ETInt {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 		if err != nil {
 			return nil, err
 		}
@@ -846,7 +846,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx BuildContext, args []
 		sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
 		return sig, nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDecimal, types.ETDecimal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETDecimal, types.ETDecimal)
 	if err != nil {
 		return nil, err
 	}
@@ -866,9 +866,9 @@ type builtinArithmeticIntDivideIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticIntDivideIntSig) Clone() builtinFunc {
+func (s *builtinArithmeticIntDivideIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticIntDivideIntSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -880,9 +880,9 @@ type builtinArithmeticIntDivideDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticIntDivideDecimalSig) Clone() builtinFunc {
+func (s *builtinArithmeticIntDivideDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticIntDivideDecimalSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -999,14 +999,14 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	}
 }
 
-func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
@@ -1018,7 +1018,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, args []Expres
 		sig.setPbCode(tipb.ScalarFuncSig_ModReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 		if err != nil {
 			return nil, err
 		}
@@ -1030,7 +1030,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, args []Expres
 		sig.setPbCode(tipb.ScalarFuncSig_ModDecimal)
 		return sig, nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1067,9 +1067,9 @@ type builtinArithmeticModRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticModRealSig) Clone() builtinFunc {
+func (s *builtinArithmeticModRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticModRealSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1103,9 +1103,9 @@ type builtinArithmeticModDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticModDecimalSig) Clone() builtinFunc {
+func (s *builtinArithmeticModDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticModDecimalSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1134,9 +1134,9 @@ type builtinArithmeticModIntUnsignedUnsignedSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticModIntUnsignedUnsignedSig) Clone() builtinFunc {
+func (s *builtinArithmeticModIntUnsignedUnsignedSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticModIntUnsignedUnsignedSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1172,9 +1172,9 @@ type builtinArithmeticModIntUnsignedSignedSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticModIntUnsignedSignedSig) Clone() builtinFunc {
+func (s *builtinArithmeticModIntUnsignedSignedSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticModIntUnsignedSignedSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1215,9 +1215,9 @@ type builtinArithmeticModIntSignedUnsignedSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticModIntSignedUnsignedSig) Clone() builtinFunc {
+func (s *builtinArithmeticModIntSignedUnsignedSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticModIntSignedUnsignedSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1258,9 +1258,9 @@ type builtinArithmeticModIntSignedSignedSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticModIntSignedSignedSig) Clone() builtinFunc {
+func (s *builtinArithmeticModIntSignedSignedSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticModIntSignedSignedSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1294,9 +1294,9 @@ type builtinArithmeticPlusVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticPlusVectorFloat32Sig) Clone() builtinFunc {
+func (s *builtinArithmeticPlusVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticPlusVectorFloat32Sig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1327,9 +1327,9 @@ type builtinArithmeticMinusVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMinusVectorFloat32Sig) Clone() builtinFunc {
+func (s *builtinArithmeticMinusVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMinusVectorFloat32Sig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1360,9 +1360,9 @@ type builtinArithmeticMultiplyVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (s *builtinArithmeticMultiplyVectorFloat32Sig) Clone() builtinFunc {
+func (s *builtinArithmeticMultiplyVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinArithmeticMultiplyVectorFloat32Sig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &s.baseBuiltinFunc)
 	return newSig
 }
 

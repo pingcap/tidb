@@ -331,7 +331,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
 			}.Init(p.SCtx(), p.QueryBlockOffset())
 			// Clone the schema here, because the schema may be changed by column pruning rules.
-			proj.SetSchema(originalSchema.Clone())
+			proj.SetSchema(originalSchema.Clone(nil))
 			proj.SetChildren(p)
 			p = proj
 		}
@@ -523,8 +523,9 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
+				cc := make(expression.CloneContext, 4)
 				funcName := edge.FuncName.L
-				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
+				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), cc, funcName, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
 
 				// after creating the new EQCondition function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
 				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
@@ -538,7 +539,8 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
 					}
 					leftNode, rightNode = leftPlan, rightPlan
-					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(),
+					cc := make(expression.CloneContext, 4)
+					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), cc, funcName, edge.GetStaticType(),
 						rCol, lCol).(*expression.ScalarFunction)
 				}
 				usedEdges = append(usedEdges, newSf)
@@ -552,7 +554,7 @@ func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expre
 	proj, ok := p.(*logicalop.LogicalProjection)
 	if !ok {
 		proj = logicalop.LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
-		proj.SetSchema(p.Schema().Clone())
+		proj.SetSchema(p.Schema().Clone(nil))
 		proj.SetChildren(p)
 	}
 	return proj, proj.AppendExpr(expr)

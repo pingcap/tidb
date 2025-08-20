@@ -121,8 +121,8 @@ func NewCopContextBase(
 		fieldTps = append(fieldTps, &extra.FieldType)
 		handleIDs = []int64{extra.ID}
 	}
-
-	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(exprCtx,
+	cc := make(expression.CloneContext, 4)
+	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(exprCtx, cc,
 		ast.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
 	if err != nil {
 		return nil, err

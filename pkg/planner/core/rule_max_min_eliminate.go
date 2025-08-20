@@ -121,7 +121,7 @@ func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
 		newDs.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
-		newDs.SetSchema(p.Schema().Clone())
+		newDs.SetSchema(p.Schema().Clone(nil))
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
 		allAccessPaths := make([]*util.AccessPath, 0, len(p.AllPossibleAccessPaths))
@@ -183,13 +183,14 @@ func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation
 
 	var sel *logicalop.LogicalSelection
 	var sort *logicalop.LogicalSort
+	cc := make(expression.CloneContext, 4)
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			sel = logicalop.LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
-			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
-			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), cc, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), cc, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
 			sel.SetChildren(agg.Children()[0])
 			child = sel

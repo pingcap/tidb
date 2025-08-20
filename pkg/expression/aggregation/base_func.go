@@ -41,9 +41,9 @@ type baseFuncDesc struct {
 	RetTp *types.FieldType
 }
 
-func newBaseFuncDesc(ctx expression.BuildContext, name string, args []expression.Expression) (baseFuncDesc, error) {
+func newBaseFuncDesc(ctx expression.BuildContext, cc expression.CloneContext, name string, args []expression.Expression) (baseFuncDesc, error) {
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
-	err := b.TypeInfer(ctx)
+	err := b.TypeInfer(ctx, cc)
 	return b, err
 }
 
@@ -98,13 +98,12 @@ func (a *baseFuncDesc) equal(ctx expression.EvalContext, other *baseFuncDesc) bo
 	return true
 }
 
-func (a *baseFuncDesc) clone() *baseFuncDesc {
+func (a *baseFuncDesc) clone(cc expression.CloneContext) *baseFuncDesc {
 	clone := *a
-	newTp := *a.RetTp
-	clone.RetTp = &newTp
+	clone.RetTp = cc.Clone(a.RetTp)
 	clone.Args = make([]expression.Expression, len(a.Args))
 	for i := range a.Args {
-		clone.Args[i] = a.Args[i].Clone()
+		clone.Args[i] = a.Args[i].Clone(cc)
 	}
 	return &clone
 }
@@ -124,7 +123,7 @@ func (a *baseFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) 
 }
 
 // TypeInfer infers the arguments and return types of an function.
-func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
+func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext, cc expression.CloneContext) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count()
@@ -137,12 +136,12 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	case ast.AggFuncAvg:
 		a.typeInfer4Avg(ctx.GetEvalCtx())
 	case ast.AggFuncGroupConcat:
-		a.typeInfer4GroupConcat(ctx)
+		a.typeInfer4GroupConcat(ctx, cc)
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue:
-		a.typeInfer4MaxMin(ctx)
+		a.typeInfer4MaxMin(ctx, cc)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
-		a.typeInfer4BitFuncs(ctx)
+		a.typeInfer4BitFuncs(ctx, cc)
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
@@ -152,13 +151,13 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	case ast.WindowFuncPercentRank:
 		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
-		a.typeInfer4LeadLag(ctx)
+		a.typeInfer4LeadLag(ctx, cc)
 	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
 		a.typeInfer4PopOrSamp()
 	case ast.AggFuncJsonArrayagg:
 		a.typeInfer4JsonArrayAgg()
 	case ast.AggFuncJsonObjectAgg:
-		return a.typeInfer4JsonObjectAgg(ctx)
+		return a.typeInfer4JsonObjectAgg(ctx, cc)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -298,7 +297,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
+func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext, cc expression.CloneContext) {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
 	charset, collate := charset.GetDefaultCharsetAndCollate()
 	a.RetTp.SetCharset(charset)
@@ -309,12 +308,12 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
 	for i := range len(a.Args) - 1 {
 		if tp := a.Args[i].GetType(ctx.GetEvalCtx()); tp.GetType() == mysql.TypeNewDecimal {
-			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+			a.Args[i] = expression.BuildCastFunction(ctx, cc, a.Args[i], tp)
 		}
 	}
 }
 
-func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext) {
+func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext, cc expression.CloneContext) {
 	_, argIsScalaFunc := a.Args[0].(*expression.ScalarFunction)
 	if argIsScalaFunc && a.Args[0].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeFloat {
 		// For scalar function, the result of "float32" is set to the "float64"
@@ -324,7 +323,7 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext) {
 		tp.SetFlen(mysql.MaxRealWidth)
 		tp.SetDecimal(types.UnspecifiedLength)
 		types.SetBinChsClnFlag(tp)
-		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
+		a.Args[0] = expression.BuildCastFunction(ctx, cc, a.Args[0], tp)
 	}
 	a.RetTp = a.Args[0].GetType(ctx.GetEvalCtx())
 	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin ||
@@ -339,12 +338,12 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext) {
 	}
 }
 
-func (a *baseFuncDesc) typeInfer4BitFuncs(ctx expression.BuildContext) {
+func (a *baseFuncDesc) typeInfer4BitFuncs(ctx expression.BuildContext, cc expression.CloneContext) {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
-	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0], nil)
+	a.Args[0] = expression.WrapWithCastAsInt(ctx, cc, a.Args[0], nil)
 }
 
 func (a *baseFuncDesc) typeInfer4JsonArrayAgg() {
@@ -352,10 +351,10 @@ func (a *baseFuncDesc) typeInfer4JsonArrayAgg() {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-func (a *baseFuncDesc) typeInfer4JsonObjectAgg(ctx expression.BuildContext) error {
+func (a *baseFuncDesc) typeInfer4JsonObjectAgg(ctx expression.BuildContext, cc expression.CloneContext) error {
 	a.RetTp = types.NewFieldType(mysql.TypeJSON)
 	types.SetBinChsClnFlag(a.RetTp)
-	a.Args[0] = expression.WrapWithCastAsString(ctx, a.Args[0])
+	a.Args[0] = expression.WrapWithCastAsString(ctx, cc, a.Args[0])
 	return nil
 }
 
@@ -384,9 +383,9 @@ func (a *baseFuncDesc) typeInfer4PercentRank() {
 	a.RetTp.SetDecimal(mysql.NotFixedDec)
 }
 
-func (a *baseFuncDesc) typeInfer4LeadLag(ctx expression.BuildContext) {
+func (a *baseFuncDesc) typeInfer4LeadLag(ctx expression.BuildContext, cc expression.CloneContext) {
 	if len(a.Args) < 3 {
-		a.typeInfer4MaxMin(ctx)
+		a.typeInfer4MaxMin(ctx, cc)
 	} else {
 		// Merge the type of first and third argument.
 		// FIXME: select lead(b collate utf8mb4_unicode_ci, 1, 'lead' collate utf8mb4_general_ci) over() as a from t; should report error.
@@ -449,18 +448,18 @@ var noNeedCastAggFuncs = map[string]struct{}{
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
-func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
+func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext, cc expression.CloneContext) {
 	if len(a.Args) == 0 {
 		return
 	}
 	if _, ok := noNeedCastAggFuncs[a.Name]; ok {
 		return
 	}
-	var castFunc func(ctx expression.BuildContext, expr expression.Expression) expression.Expression
+	var castFunc func(ctx expression.BuildContext, cc expression.CloneContext, expr expression.Expression) expression.Expression
 	switch retTp := a.RetTp; retTp.EvalType() {
 	case types.ETInt:
-		castFunc = func(ctx expression.BuildContext, expr expression.Expression) expression.Expression {
-			return expression.WrapWithCastAsInt(ctx, expr, retTp)
+		castFunc = func(ctx expression.BuildContext, cc expression.CloneContext, expr expression.Expression) expression.Expression {
+			return expression.WrapWithCastAsInt(ctx, cc, expr, retTp)
 		}
 	case types.ETReal:
 		castFunc = expression.WrapWithCastAsReal
@@ -469,8 +468,8 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 	case types.ETDecimal:
 		castFunc = expression.WrapWithCastAsDecimal
 	case types.ETDatetime, types.ETTimestamp:
-		castFunc = func(ctx expression.BuildContext, expr expression.Expression) expression.Expression {
-			return expression.WrapWithCastAsTime(ctx, expr, retTp)
+		castFunc = func(ctx expression.BuildContext, cc expression.CloneContext, expr expression.Expression) expression.Expression {
+			return expression.WrapWithCastAsTime(ctx, cc, expr, retTp)
 		}
 	case types.ETDuration:
 		castFunc = expression.WrapWithCastAsDuration
@@ -489,7 +488,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 		if a.Args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
 			continue
 		}
-		a.Args[i] = castFunc(ctx, a.Args[i])
+		a.Args[i] = castFunc(ctx, cc, a.Args[i])
 	}
 }
 

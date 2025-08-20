@@ -489,16 +489,16 @@ func extractColumnSet(expr Expression, set *intset.FastIntSet) {
 }
 
 // SetExprColumnInOperand is used to set columns in expr as InOperand.
-func SetExprColumnInOperand(expr Expression) Expression {
+func SetExprColumnInOperand(cc CloneContext, expr Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
-		col := v.Clone().(*Column)
+		col := v.Clone(cc).(*Column)
 		col.InOperand = true
 		return col
 	case *ScalarFunction:
 		args := v.GetArgs()
 		for i, arg := range args {
-			args[i] = SetExprColumnInOperand(arg)
+			args[i] = SetExprColumnInOperand(cc, arg)
 		}
 	}
 	return expr
@@ -507,8 +507,8 @@ func SetExprColumnInOperand(expr Expression) Expression {
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 // TODO: remove this function and only use ColumnSubstituteImpl since this function swallows the error, which seems unsafe.
-func ColumnSubstitute(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression) Expression {
-	_, _, resExpr := ColumnSubstituteImpl(ctx, expr, schema, newExprs, false)
+func ColumnSubstitute(ctx BuildContext, cc CloneContext, expr Expression, schema *Schema, newExprs []Expression) Expression {
+	_, _, resExpr := ColumnSubstituteImpl(ctx, cc, expr, schema, newExprs, false)
 	return resExpr
 }
 
@@ -517,8 +517,8 @@ func ColumnSubstitute(ctx BuildContext, expr Expression, schema *Schema, newExpr
 //
 //	1: substitute them all once find col in schema.
 //	2: nothing in expr can be substituted.
-func ColumnSubstituteAll(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
-	_, hasFail, resExpr := ColumnSubstituteImpl(ctx, expr, schema, newExprs, true)
+func ColumnSubstituteAll(ctx BuildContext, cc CloneContext, expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	_, hasFail, resExpr := ColumnSubstituteImpl(ctx, cc, expr, schema, newExprs, true)
 	return hasFail, resExpr
 }
 
@@ -527,7 +527,7 @@ func ColumnSubstituteAll(ctx BuildContext, expr Expression, schema *Schema, newE
 // @return bool means whether the expr has changed.
 // @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
 // @return Expression, the original expr or the changed expr, it depends on the first @return bool.
-func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
+func ColumnSubstituteImpl(ctx BuildContext, cc CloneContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
@@ -536,7 +536,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		}
 		newExpr := newExprs[id]
 		if v.InOperand {
-			newExpr = SetExprColumnInOperand(newExpr)
+			newExpr = SetExprColumnInOperand(cc, newExpr)
 		}
 		return true, false, newExpr
 	case *ScalarFunction:
@@ -544,7 +544,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		hasFail := false
 		if v.FuncName.L == ast.Cast || v.FuncName.L == ast.Grouping {
 			var newArg Expression
-			substituted, hasFail, newArg = ColumnSubstituteImpl(ctx, v.GetArgs()[0], schema, newExprs, fail1Return)
+			substituted, hasFail, newArg = ColumnSubstituteImpl(ctx, cc, v.GetArgs()[0], schema, newExprs, fail1Return)
 			if fail1Return && hasFail {
 				return substituted, hasFail, v
 			}
@@ -553,18 +553,11 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
-					// If the newArg is a ScalarFunction(cast), BuildCastFunctionWithCheck will modify the newArg.RetType,
-					// So we need to deep copy RetType.
-					// TODO: Expression interface needs a deep copy method.
-					if newArgFunc, ok := newArg.(*ScalarFunction); ok {
-						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
-						newArg = newArgFunc
-					}
-					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
+					e, err = BuildCastFunctionWithCheck(ctx, cc, newArg, v.RetType, false, v.Function.IsExplicitCharset())
 					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
-					e = v.Clone()
+					e = v.Clone(cc)
 					e.(*ScalarFunction).Function.getArgs()[0] = newArg
 				}
 				e.SetCoercibility(v.Coercibility())
@@ -608,7 +601,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
 		}
 		for idx, arg := range v.GetArgs() {
-			changed, failed, newFuncExpr := ColumnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return)
+			changed, failed, newFuncExpr := ColumnSubstituteImpl(ctx, cc, arg, schema, newExprs, fail1Return)
 			if fail1Return && failed {
 				return changed, failed, v
 			}
@@ -647,7 +640,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			newFunc, err := NewFunction(ctx, cc, v.FuncName.L, v.RetType, refExprArr.Result()...)
 			if err != nil {
 				return true, true, v
 			}
@@ -716,13 +709,13 @@ Loop:
 
 // SubstituteCorCol2Constant will substitute correlated column to constant value which it contains.
 // If the args of one scalar function are all constant, we will substitute it to constant.
-func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, error) {
+func SubstituteCorCol2Constant(ctx BuildContext, cc CloneContext, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		allConstant := true
 		newArgs := make([]Expression, 0, len(x.GetArgs()))
 		for _, arg := range x.GetArgs() {
-			newArg, err := SubstituteCorCol2Constant(ctx, arg)
+			newArg, err := SubstituteCorCol2Constant(ctx, cc, arg)
 			if err != nil {
 				return nil, err
 			}
@@ -742,19 +735,19 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf Expression
 		)
 		if x.FuncName.L == ast.Cast {
-			newSf = BuildCastFunction(ctx, newArgs[0], x.RetType)
+			newSf = BuildCastFunction(ctx, cc, newArgs[0], x.RetType)
 		} else if x.FuncName.L == ast.Grouping {
-			newSf = x.Clone()
+			newSf = x.Clone(cc)
 			newSf.(*ScalarFunction).GetArgs()[0] = newArgs[0]
 		} else {
-			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
+			newSf, err = NewFunction(ctx, cc, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
 		}
 		return newSf, err
 	case *CorrelatedColumn:
 		return &Constant{Value: *x.Data, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			newExpr := FoldConstant(ctx, x)
+			newExpr := FoldConstant(ctx, cc, x)
 			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 		}
 	}
@@ -843,11 +836,11 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
-func pushNotAcrossArgs(ctx BuildContext, exprs []Expression, not bool) ([]Expression, bool) {
+func pushNotAcrossArgs(ctx BuildContext, cc CloneContext, exprs []Expression, not bool) ([]Expression, bool) {
 	newExprs := make([]Expression, 0, len(exprs))
 	flag := false
 	for _, expr := range exprs {
-		newExpr, changed := pushNotAcrossExpr(ctx, expr, not)
+		newExpr, changed := pushNotAcrossExpr(ctx, cc, expr, not)
 		flag = changed || flag
 		newExprs = append(newExprs, newExpr)
 	}
@@ -885,7 +878,7 @@ func noPrecisionLossCastCompatible(cast, argCol *types.FieldType) bool {
 	return true
 }
 
-func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int) (Expression, bool) {
+func unwrapCast(sctx BuildContext, cc CloneContext, parentF *ScalarFunction, castOffset int) (Expression, bool) {
 	_, collation := parentF.CharsetAndCollation()
 	cast, ok := parentF.GetArgs()[castOffset].(*ScalarFunction)
 	if !ok || cast.FuncName.L != ast.Cast {
@@ -913,15 +906,15 @@ func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int) (Exp
 
 	// the column is covered by indexes, deconstructing it out.
 	if castOffset == 0 {
-		return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, c, parentF.GetArgs()[1]), true
+		return NewFunctionInternal(sctx, cc, parentF.FuncName.L, parentF.RetType, c, parentF.GetArgs()[1]), true
 	}
-	return NewFunctionInternal(sctx, parentF.FuncName.L, parentF.RetType, parentF.GetArgs()[0], c), true
+	return NewFunctionInternal(sctx, cc, parentF.FuncName.L, parentF.RetType, parentF.GetArgs()[0], c), true
 }
 
 // eliminateCastFunction will detect the original arg before and the cast type after, once upon
 // there is no precision loss between them, current cast wrapper can be eliminated. For string
 // type, collation is also taken into consideration. (mainly used to build range or point)
-func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, changed bool) {
+func eliminateCastFunction(sctx BuildContext, cc CloneContext, expr Expression) (_ Expression, changed bool) {
 	f, ok := expr.(*ScalarFunction)
 	if !ok {
 		return expr, false
@@ -933,7 +926,7 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 		rmCast := false
 		rmCastItems := make([]Expression, len(dnfItems))
 		for i, dnfItem := range dnfItems {
-			newExpr, curDowncast := eliminateCastFunction(sctx, dnfItem)
+			newExpr, curDowncast := eliminateCastFunction(sctx, cc, dnfItem)
 			rmCastItems[i] = newExpr
 			if curDowncast {
 				rmCast = true
@@ -949,7 +942,7 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 		rmCast := false
 		rmCastItems := make([]Expression, len(cnfItems))
 		for i, cnfItem := range cnfItems {
-			newExpr, curDowncast := eliminateCastFunction(sctx, cnfItem)
+			newExpr, curDowncast := eliminateCastFunction(sctx, cc, cnfItem)
 			rmCastItems[i] = newExpr
 			if curDowncast {
 				rmCast = true
@@ -957,16 +950,16 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 		}
 		if rmCast {
 			// compose the new CNF expression.
-			return ComposeCNFCondition(sctx, rmCastItems...), true
+			return ComposeCNFCondition(sctx, cc, rmCastItems...), true
 		}
 		return expr, false
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		// for case: eq(cast(test.t2.a, varchar(100), "aaaaa"), once t2.a is covered by index or pk, try deconstructing it out.
-		if newF, ok := unwrapCast(sctx, f, 0); ok {
+		if newF, ok := unwrapCast(sctx, cc, f, 0); ok {
 			return newF, true
 		}
 		// for case: eq("aaaaa"， cast(test.t2.a, varchar(100)), once t2.a is covered by index or pk, try deconstructing it out.
-		if newF, ok := unwrapCast(sctx, f, 1); ok {
+		if newF, ok := unwrapCast(sctx, cc, f, 1); ok {
 			return newF, true
 		}
 	case ast.In:
@@ -995,7 +988,7 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 		}
 		newArgs := []Expression{c}
 		newArgs = append(newArgs, f.GetArgs()[1:]...)
-		return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, newArgs...), true
+		return NewFunctionInternal(sctx, cc, f.FuncName.L, f.RetType, newArgs...), true
 	}
 	return expr, false
 }
@@ -1004,29 +997,29 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 // Input `not` indicates whether there's a `NOT` be pushed down.
 // Output `changed` indicates whether the output expression differs from the
 // input `expr` because of the pushed-down-not.
-func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expression, changed bool) {
+func pushNotAcrossExpr(ctx BuildContext, cc CloneContext, expr Expression, not bool) (_ Expression, changed bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
+			child, err := wrapWithIsTrue(ctx, cc, true, f.GetArgs()[0], true)
 			if err != nil {
 				return expr, false
 			}
 			var childExpr Expression
-			childExpr, changed = pushNotAcrossExpr(ctx, child, !not)
+			childExpr, changed = pushNotAcrossExpr(ctx, cc, child, !not)
 			if !changed && !not {
 				return expr, false
 			}
 			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				return NewFunctionInternal(ctx, oppositeOp[f.FuncName.L], f.GetType(ctx.GetEvalCtx()), f.GetArgs()...), true
+				return NewFunctionInternal(ctx, cc, oppositeOp[f.FuncName.L], f.GetType(ctx.GetEvalCtx()), f.GetArgs()...), true
 			}
-			newArgs, changed := pushNotAcrossArgs(ctx, f.GetArgs(), false)
+			newArgs, changed := pushNotAcrossArgs(ctx, cc, f.GetArgs(), false)
 			if !changed {
 				return f, false
 			}
-			return NewFunctionInternal(ctx, f.FuncName.L, f.GetType(ctx.GetEvalCtx()), newArgs...), true
+			return NewFunctionInternal(ctx, cc, f.FuncName.L, f.GetType(ctx.GetEvalCtx()), newArgs...), true
 		case ast.LogicAnd, ast.LogicOr:
 			var (
 				newArgs []Expression
@@ -1034,20 +1027,20 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 			)
 			funcName := f.FuncName.L
 			if not {
-				newArgs, _ = pushNotAcrossArgs(ctx, f.GetArgs(), true)
+				newArgs, _ = pushNotAcrossArgs(ctx, cc, f.GetArgs(), true)
 				funcName = oppositeOp[f.FuncName.L]
 				changed = true
 			} else {
-				newArgs, changed = pushNotAcrossArgs(ctx, f.GetArgs(), false)
+				newArgs, changed = pushNotAcrossArgs(ctx, cc, f.GetArgs(), false)
 			}
 			if !changed {
 				return f, false
 			}
-			return NewFunctionInternal(ctx, funcName, f.GetType(ctx.GetEvalCtx()), newArgs...), true
+			return NewFunctionInternal(ctx, cc, funcName, f.GetType(ctx.GetEvalCtx()), newArgs...), true
 		}
 	}
 	if not {
-		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+		expr = NewFunctionInternal(ctx, cc, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr, not
 }
@@ -1069,7 +1062,8 @@ func GetExprInsideIsTruth(expr Expression) Expression {
 
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx BuildContext, expr Expression) Expression {
-	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
+	cc := make(CloneContext, 4)
+	newExpr, _ := pushNotAcrossExpr(ctx, cc, expr, false)
 	return newExpr
 }
 
@@ -1078,7 +1072,8 @@ func PushDownNot(ctx BuildContext, expr Expression) Expression {
 // 2: cast args should be one for original base column and one for constant.
 // 3: some collation compatibility and precision loss will be considered when remove this cast func.
 func EliminateNoPrecisionLossCast(sctx BuildContext, expr Expression) Expression {
-	newExpr, _ := eliminateCastFunction(sctx, expr)
+	cc := make(CloneContext, 4)
+	newExpr, _ := eliminateCastFunction(sctx, cc, expr)
 	return newExpr
 }
 
@@ -1135,7 +1130,8 @@ func ExtractFiltersFromDNFs(ctx BuildContext, conditions []Expression) []Express
 	var allExtracted []Expression
 	for i := len(conditions) - 1; i >= 0; i-- {
 		if sf, ok := conditions[i].(*ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			extracted, remained := extractFiltersFromDNF(ctx, sf)
+			cc := make(CloneContext, 4)
+			extracted, remained := extractFiltersFromDNF(ctx, cc, sf)
 			allExtracted = append(allExtracted, extracted...)
 			if remained == nil {
 				conditions = slices.Delete(conditions, i, i+1)
@@ -1148,7 +1144,7 @@ func ExtractFiltersFromDNFs(ctx BuildContext, conditions []Expression) []Express
 }
 
 // extractFiltersFromDNF extracts the same condition that occurs in every DNF item and remove them from dnf leaves.
-func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Expression, Expression) {
+func extractFiltersFromDNF(ctx BuildContext, cc CloneContext, dnfFunc *ScalarFunction) ([]Expression, Expression) {
 	dnfItems := FlattenDNFConditions(dnfFunc)
 	codeMap := make(map[string]int)
 	hashcode2Expr := make(map[string]Expression)
@@ -1198,7 +1194,7 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 			onlyNeedExtracted = true
 			break
 		}
-		newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, newCNFItems...))
+		newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, cc, newCNFItems...))
 	}
 	extractedExpr := make([]Expression, 0, len(hashcode2Expr))
 	for _, expr := range hashcode2Expr {
@@ -1244,7 +1240,8 @@ func DeriveRelaxedFiltersFromDNF(ctx BuildContext, expr Expression, schema *Sche
 		if len(newCNFItems) == 0 {
 			return nil
 		}
-		newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, newCNFItems...))
+		cc := make(CloneContext, 4)
+		newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, cc, newCNFItems...))
 	}
 	return ComposeDNFCondition(ctx, newDNFItems...)
 }
@@ -1277,13 +1274,13 @@ func GetFuncArg(e Expression, idx int) Expression {
 
 // PopRowFirstArg pops the first element and returns the rest of row.
 // e.g. After this function (1, 2, 3) becomes (2, 3).
-func PopRowFirstArg(ctx BuildContext, e Expression) (ret Expression, err error) {
+func PopRowFirstArg(ctx BuildContext, cc CloneContext, e Expression) (ret Expression, err error) {
 	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		args := f.GetArgs()
 		if len(args) == 2 {
 			return args[1], nil
 		}
-		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(ctx.GetEvalCtx()), args[1:]...)
+		ret, err = NewFunction(ctx, cc, ast.RowFunc, f.GetType(ctx.GetEvalCtx()), args[1:]...)
 		return ret, err
 	}
 	return
@@ -1395,9 +1392,9 @@ func GetIntFromConstant(ctx EvalContext, value Expression) (int, bool, error) {
 }
 
 // BuildNotNullExpr wraps up `not(isnull())` for given expression.
-func BuildNotNullExpr(ctx BuildContext, expr Expression) Expression {
-	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
-	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
+func BuildNotNullExpr(ctx BuildContext, cc CloneContext, expr Expression) Expression {
+	isNull := NewFunctionInternal(ctx, cc, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+	notNull := NewFunctionInternal(ctx, cc, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
 }
 

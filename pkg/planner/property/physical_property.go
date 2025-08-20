@@ -75,7 +75,7 @@ func (s *SortItem) String() string {
 
 // Clone makes a copy of SortItem.
 func (s SortItem) Clone() SortItem {
-	return SortItem{Col: s.Col.Clone().(*expression.Column), Desc: s.Desc}
+	return SortItem{Col: s.Col.Clone(nil).(*expression.Column), Desc: s.Desc}
 }
 
 // MemoryUsage return the memory usage of SortItem
@@ -124,7 +124,8 @@ type MPPPartitionColumn struct {
 
 // ResolveIndices resolve index for MPPPartitionColumn
 func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
-	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
+	cc := make(expression.CloneContext, 4)
+	newColExpr, err := partitionCol.Col.ResolveIndices(cc, schema)
 	if err != nil {
 		return nil, err
 	}
@@ -137,8 +138,9 @@ func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema
 
 // Clone makes a copy of MPPPartitionColumn.
 func (partitionCol *MPPPartitionColumn) Clone() *MPPPartitionColumn {
+	cc := make(expression.CloneContext, 4)
 	return &MPPPartitionColumn{
-		Col:       partitionCol.Col.Clone().(*expression.Column),
+		Col:       partitionCol.Col.Clone(cc).(*expression.Column),
 		CollateID: partitionCol.CollateID,
 	}
 }

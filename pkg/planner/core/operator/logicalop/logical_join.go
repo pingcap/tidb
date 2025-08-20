@@ -342,9 +342,10 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 // BuildKeyInfo implements the base.LogicalPlan.<4th> interface.
 func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	cc := make(expression.CloneContext, 2)
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
-		selfSchema.PKOrUK = childSchema[0].Clone().PKOrUK
+		selfSchema.PKOrUK = childSchema[0].Clone(cc).PKOrUK
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
 		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
 		if len(p.EqualConditions) == 0 {
@@ -995,30 +996,30 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 	copy(cpRightConditions, p.RightConditions)
 	copy(cpOtherConditions, p.OtherConditions)
 	copy(cpEqualConditions, p.EqualConditions)
-
+	cc := make(expression.CloneContext, 2)
 	exprCtx := p.SCtx().GetExprCtx()
 	// try to substitute columns in these condition.
 	for i, cond := range cpLeftConditions {
-		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
+		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(exprCtx, cc, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpRightConditions {
-		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
+		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(exprCtx, cc, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpOtherConditions {
-		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
+		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(exprCtx, cc, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpEqualConditions {
 		var tmp expression.Expression
-		if hasFail, tmp = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
+		if hasFail, tmp = expression.ColumnSubstituteAll(exprCtx, cc, cond, schema, exprs); hasFail {
 			return
 		}
 		cpEqualConditions[i] = tmp.(*expression.ScalarFunction)
@@ -1196,8 +1197,9 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 		ByItems:          make([]*util.ByItems, len(topN.ByItems)),
 		PreferLimitToCop: topN.PreferLimitToCop,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
+	cc := make(expression.CloneContext, 4)
 	for i := range topN.ByItems {
-		newTopN.ByItems[i] = topN.ByItems[i].Clone()
+		newTopN.ByItems[i] = topN.ByItems[i].Clone(cc)
 	}
 	appendTopNPushDownJoinTraceStep(p, newTopN, idx, opt)
 	return p.Children()[idx].PushDownTopN(newTopN, opt), selfEliminated
@@ -1296,6 +1298,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
 	ctx := p.SCtx()
+	cc := make(expression.CloneContext, 2)
 	for _, expr := range conditions {
 		// For queries like `select a in (select a from s where s.b = t.b) from t`,
 		// if subquery is empty caused by `s.b = t.b`, the result should always be
@@ -1321,19 +1324,19 @@ func (p *LogicalJoin) ExtractOnCondition(
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
 						if util.IsNullRejected(ctx, leftSchema, expr, true) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
-							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), leftCol)
+							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), cc, leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
 						if util.IsNullRejected(ctx, rightSchema, expr, true) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
-							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), rightCol)
+							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), cc, rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
 					switch binop.FuncName.L {
 					case ast.EQ, ast.NullEQ:
-						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), binop.FuncName.L, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), cc, binop.FuncName.L, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue
 					}
@@ -1588,6 +1591,7 @@ func (p *LogicalJoin) updateEQCond() {
 	lChild, rChild := p.Children()[0], p.Children()[1]
 	var lKeys, rKeys []expression.Expression
 	var lNAKeys, rNAKeys []expression.Expression
+	cc := make(expression.CloneContext, 2)
 	// We need two steps here:
 	// step1: try best to extract normal EQ condition from OtherCondition to join EqualConditions.
 	for i := len(p.OtherConditions) - 1; i >= 0; i-- {
@@ -1643,7 +1647,7 @@ func (p *LogicalJoin) updateEQCond() {
 				if rProj != nil {
 					rKey = rProj.AppendExpr(rKey)
 				}
-				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), cc, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 				if isNA {
 					p.NAEQConditions = append(p.NAEQConditions, eqCond.(*expression.ScalarFunction))
 				} else {
@@ -1687,6 +1691,7 @@ func (p *LogicalJoin) updateEQCond() {
 func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	child := p.Children()[idx]
 	proj, ok := child.(*LogicalProjection)
+
 	if ok {
 		return proj
 	}
@@ -1694,7 +1699,8 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
-	proj.SetSchema(child.Schema().Clone())
+	cc := make(expression.CloneContext, 4)
+	proj.SetSchema(child.Schema().Clone(cc))
 	proj.SetChildren(child)
 	p.Children()[idx] = proj
 	return proj
@@ -1938,7 +1944,8 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 		childCol = schema.RetrieveColumn(arg1)
 	}
 	if util.IsNullRejected(ctx, schema, expr, true) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
-		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
+		cc := make(expression.CloneContext, 4)
+		return expression.BuildNotNullExpr(ctx.GetExprCtx(), cc, childCol)
 	}
 	return nil
 }
@@ -1946,11 +1953,12 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 // BuildLogicalJoinSchema builds the schema for join operator.
 func BuildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
+	cc := make(expression.CloneContext, 4)
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
-		return leftSchema.Clone()
+		return leftSchema.Clone(cc)
 	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := leftSchema.Clone()
+		newSchema := leftSchema.Clone(cc)
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}

@@ -116,7 +116,7 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coalesceFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *coalesceFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (c *coalesceFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retEvalTp, fieldEvalTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, retEvalTp, fieldEvalTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -189,9 +189,9 @@ type builtinCoalesceIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCoalesceIntSig) Clone() builtinFunc {
+func (b *builtinCoalesceIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCoalesceIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -214,9 +214,9 @@ type builtinCoalesceRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCoalesceRealSig) Clone() builtinFunc {
+func (b *builtinCoalesceRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCoalesceRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -239,9 +239,9 @@ type builtinCoalesceDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCoalesceDecimalSig) Clone() builtinFunc {
+func (b *builtinCoalesceDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCoalesceDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -264,9 +264,9 @@ type builtinCoalesceStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCoalesceStringSig) Clone() builtinFunc {
+func (b *builtinCoalesceStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCoalesceStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -289,9 +289,9 @@ type builtinCoalesceTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCoalesceTimeSig) Clone() builtinFunc {
+func (b *builtinCoalesceTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCoalesceTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -316,9 +316,9 @@ type builtinCoalesceDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCoalesceDurationSig) Clone() builtinFunc {
+func (b *builtinCoalesceDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCoalesceDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -342,9 +342,9 @@ type builtinCoalesceJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCoalesceJSONSig) Clone() builtinFunc {
+func (b *builtinCoalesceJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCoalesceJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -367,9 +367,9 @@ type builtinCoalesceVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinCoalesceVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinCoalesceVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinCoalesceVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -495,7 +495,7 @@ type greatestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *greatestFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *greatestFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -514,7 +514,7 @@ func (c *greatestFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	for i := range args {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, resTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -585,9 +585,9 @@ type builtinGreatestIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGreatestIntSig) Clone() builtinFunc {
+func (b *builtinGreatestIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGreatestIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -618,9 +618,9 @@ type builtinGreatestRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGreatestRealSig) Clone() builtinFunc {
+func (b *builtinGreatestRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGreatestRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -651,9 +651,9 @@ type builtinGreatestDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGreatestDecimalSig) Clone() builtinFunc {
+func (b *builtinGreatestDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGreatestDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -684,9 +684,9 @@ type builtinGreatestStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGreatestStringSig) Clone() builtinFunc {
+func (b *builtinGreatestStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGreatestStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -715,9 +715,9 @@ type builtinGreatestCmpStringAsTimeSig struct {
 	cmpAsDate bool
 }
 
-func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
+func (b *builtinGreatestCmpStringAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGreatestCmpStringAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
@@ -772,9 +772,9 @@ type builtinGreatestTimeSig struct {
 	cmpAsDate bool
 }
 
-func (b *builtinGreatestTimeSig) Clone() builtinFunc {
+func (b *builtinGreatestTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGreatestTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
@@ -805,9 +805,9 @@ type builtinGreatestDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGreatestDurationSig) Clone() builtinFunc {
+func (b *builtinGreatestDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGreatestDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -831,9 +831,9 @@ type builtinGreatestVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGreatestVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinGreatestVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGreatestVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -854,7 +854,7 @@ type leastFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leastFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *leastFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -873,7 +873,7 @@ func (c *leastFunctionClass) getFunction(ctx BuildContext, args []Expression) (s
 	for i := range args {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, resTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -929,9 +929,9 @@ type builtinLeastIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLeastIntSig) Clone() builtinFunc {
+func (b *builtinLeastIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLeastIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -962,9 +962,9 @@ type builtinLeastRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLeastRealSig) Clone() builtinFunc {
+func (b *builtinLeastRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLeastRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -995,9 +995,9 @@ type builtinLeastDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLeastDecimalSig) Clone() builtinFunc {
+func (b *builtinLeastDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLeastDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1028,9 +1028,9 @@ type builtinLeastStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLeastStringSig) Clone() builtinFunc {
+func (b *builtinLeastStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLeastStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1059,9 +1059,9 @@ type builtinLeastCmpStringAsTimeSig struct {
 	cmpAsDate bool
 }
 
-func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
+func (b *builtinLeastCmpStringAsTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLeastCmpStringAsTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
@@ -1091,9 +1091,9 @@ type builtinLeastTimeSig struct {
 	cmpAsDate bool
 }
 
-func (b *builtinLeastTimeSig) Clone() builtinFunc {
+func (b *builtinLeastTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLeastTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
@@ -1134,9 +1134,9 @@ type builtinLeastDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLeastDurationSig) Clone() builtinFunc {
+func (b *builtinLeastDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLeastDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1160,9 +1160,9 @@ type builtinLeastVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLeastVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinLeastVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLeastVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1183,7 +1183,7 @@ type intervalFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *intervalFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *intervalFunctionClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1211,7 +1211,7 @@ func (c *intervalFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	for range args {
 		argTps = append(argTps, argTp)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1231,9 +1231,9 @@ type builtinIntervalIntSig struct {
 	hasNullable bool
 }
 
-func (b *builtinIntervalIntSig) Clone() builtinFunc {
+func (b *builtinIntervalIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinIntervalIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1327,9 +1327,9 @@ type builtinIntervalRealSig struct {
 	hasNullable bool
 }
 
-func (b *builtinIntervalRealSig) Clone() builtinFunc {
+func (b *builtinIntervalRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinIntervalRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	newSig.hasNullable = b.hasNullable
 	return newSig
 }
@@ -1570,7 +1570,7 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 //
 //	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 //	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
-func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
+func RefineComparedConstant(ctx BuildContext, cc CloneContext, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	evalCtx := ctx.GetEvalCtx()
 	dt, err := con.Eval(evalCtx, chunk.Row{})
 	if err != nil {
@@ -1609,12 +1609,12 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 	}
 	switch op {
 	case opcode.LT, opcode.GE:
-		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
+		resultExpr := NewFunctionInternal(ctx, cc, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
 			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
 	case opcode.LE, opcode.GT:
-		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
+		resultExpr := NewFunctionInternal(ctx, cc, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
 			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
@@ -1676,10 +1676,10 @@ func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldTy
 //
 // To ensure MySQL compatibility, we need to handle this case specifically. If the non-duration type constant cannot be cast to a duration type,
 // we rewrite the expression to always return false by converting it to `0 <=> 1`.
-func (c *compareFunctionClass) handleDurationTypeComparisonForNullEq(ctx BuildContext, arg0, arg1 Expression) (_ []Expression, err error) {
+func (c *compareFunctionClass) handleDurationTypeComparisonForNullEq(ctx BuildContext, cc CloneContext, arg0, arg1 Expression) (_ []Expression, err error) {
 	// check if a constant value becomes null after being cast to a duration type.
-	castToDurationIsNull := func(ctx BuildContext, arg Expression) (bool, error) {
-		f := WrapWithCastAsDuration(ctx, arg)
+	castToDurationIsNull := func(ctx BuildContext, cc CloneContext, arg Expression) (bool, error) {
+		f := WrapWithCastAsDuration(ctx, cc, arg)
 		_, isNull, err := f.EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return false, err
@@ -1696,13 +1696,13 @@ func (c *compareFunctionClass) handleDurationTypeComparisonForNullEq(ctx BuildCo
 			// This is a const null, there is no need to re-write the expression
 			return nil, nil
 		}
-		isNull, err = castToDurationIsNull(ctx, arg0)
+		isNull, err = castToDurationIsNull(ctx, cc, arg0)
 	} else if arg1IsCon && arg1Const.DeferredExpr == nil && !arg0IsCon && arg0.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDuration {
 		if arg1Const.Value.IsNull() {
 			// This is a const null, there is no need to re-write the expression
 			return nil, nil
 		}
-		isNull, err = castToDurationIsNull(ctx, arg1)
+		isNull, err = castToDurationIsNull(ctx, cc, arg1)
 	}
 	if err != nil {
 		return nil, err
@@ -1772,7 +1772,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 //
 // This refining operation depends on the values of these args, but these values can change when using plan-cache.
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
-func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) ([]Expression, error) {
+func (c *compareFunctionClass) refineArgs(ctx BuildContext, cc CloneContext, args []Expression) ([]Expression, error) {
 	arg0Type, arg1Type := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	arg0EvalType, arg1EvalType := arg0Type.EvalType(), arg1Type.EvalType()
 	arg0IsInt := arg0EvalType == types.ETInt
@@ -1792,7 +1792,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 
 	// Handle comparison between a duration type column and a non-duration type constant.
 	if c.op == opcode.NullEQ {
-		if result, err := c.handleDurationTypeComparisonForNullEq(ctx, args[0], args[1]); err != nil || result != nil {
+		if result, err := c.handleDurationTypeComparisonForNullEq(ctx, cc, args[0], args[1]); err != nil || result != nil {
 			return result, err
 		}
 	}
@@ -1807,7 +1807,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
+		arg1, isExceptional = RefineComparedConstant(ctx, cc, *arg0Type, arg1, c.op)
 		// Why check not null flag
 		// eg: int_col > const_val(which is less than min_int32)
 		// If int_col got null, compare result cannot be true
@@ -1834,7 +1834,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
+		arg0, isExceptional = RefineComparedConstant(ctx, cc, *arg1Type, arg0, symmetricOp[c.op])
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())) {
 			finalArg0 = arg0
 		}
@@ -1974,22 +1974,22 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx BuildContext, args [
 }
 
 // getFunction sets compare built-in function signatures for various types.
-func (c *compareFunctionClass) getFunction(ctx BuildContext, rawArgs []Expression) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) getFunction(ctx BuildContext, cc CloneContext, rawArgs []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, err
 	}
-	args, err := c.refineArgs(ctx, rawArgs)
+	args, err := c.refineArgs(ctx, cc, rawArgs)
 	if err != nil {
 		return nil, err
 	}
 	cmpType := GetAccurateCmpType(ctx.GetEvalCtx(), args[0], args[1])
-	sig, err = c.generateCmpSigs(ctx, args, cmpType)
+	sig, err = c.generateCmpSigs(ctx, cc, args, cmpType)
 	return sig, err
 }
 
 // generateCmpSigs generates compare function signatures.
-func (c *compareFunctionClass) generateCmpSigs(ctx BuildContext, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
+func (c *compareFunctionClass) generateCmpSigs(ctx BuildContext, cc CloneContext, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, types.ETInt, tp, tp)
 	if err != nil {
 		return nil, err
 	}
@@ -2206,9 +2206,9 @@ type builtinLTIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLTIntSig) Clone() builtinFunc {
+func (b *builtinLTIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLTIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2223,9 +2223,9 @@ type builtinLTRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLTRealSig) Clone() builtinFunc {
+func (b *builtinLTRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLTRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2240,9 +2240,9 @@ type builtinLTDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLTDecimalSig) Clone() builtinFunc {
+func (b *builtinLTDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLTDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2257,9 +2257,9 @@ type builtinLTStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLTStringSig) Clone() builtinFunc {
+func (b *builtinLTStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLTStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2274,9 +2274,9 @@ type builtinLTDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLTDurationSig) Clone() builtinFunc {
+func (b *builtinLTDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLTDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2291,9 +2291,9 @@ type builtinLTTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLTTimeSig) Clone() builtinFunc {
+func (b *builtinLTTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLTTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2308,9 +2308,9 @@ type builtinLTJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLTJSONSig) Clone() builtinFunc {
+func (b *builtinLTJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLTJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2325,9 +2325,9 @@ type builtinLTVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLTVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinLTVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLTVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2342,9 +2342,9 @@ type builtinLEIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLEIntSig) Clone() builtinFunc {
+func (b *builtinLEIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLEIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2359,9 +2359,9 @@ type builtinLERealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLERealSig) Clone() builtinFunc {
+func (b *builtinLERealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLERealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2376,9 +2376,9 @@ type builtinLEDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLEDecimalSig) Clone() builtinFunc {
+func (b *builtinLEDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLEDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2393,9 +2393,9 @@ type builtinLEStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLEStringSig) Clone() builtinFunc {
+func (b *builtinLEStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLEStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2410,9 +2410,9 @@ type builtinLEDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLEDurationSig) Clone() builtinFunc {
+func (b *builtinLEDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLEDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2427,9 +2427,9 @@ type builtinLETimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLETimeSig) Clone() builtinFunc {
+func (b *builtinLETimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLETimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2444,9 +2444,9 @@ type builtinLEJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLEJSONSig) Clone() builtinFunc {
+func (b *builtinLEJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLEJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2461,9 +2461,9 @@ type builtinLEVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLEVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinLEVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinLEVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2478,9 +2478,9 @@ type builtinGTIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGTIntSig) Clone() builtinFunc {
+func (b *builtinGTIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGTIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2495,9 +2495,9 @@ type builtinGTRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGTRealSig) Clone() builtinFunc {
+func (b *builtinGTRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGTRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2512,9 +2512,9 @@ type builtinGTDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGTDecimalSig) Clone() builtinFunc {
+func (b *builtinGTDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGTDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2529,9 +2529,9 @@ type builtinGTStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGTStringSig) Clone() builtinFunc {
+func (b *builtinGTStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGTStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2546,9 +2546,9 @@ type builtinGTDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGTDurationSig) Clone() builtinFunc {
+func (b *builtinGTDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGTDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2563,9 +2563,9 @@ type builtinGTTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGTTimeSig) Clone() builtinFunc {
+func (b *builtinGTTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGTTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2580,9 +2580,9 @@ type builtinGTJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGTJSONSig) Clone() builtinFunc {
+func (b *builtinGTJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGTJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2597,9 +2597,9 @@ type builtinGTVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGTVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinGTVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGTVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2614,9 +2614,9 @@ type builtinGEIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGEIntSig) Clone() builtinFunc {
+func (b *builtinGEIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGEIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2631,9 +2631,9 @@ type builtinGERealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGERealSig) Clone() builtinFunc {
+func (b *builtinGERealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGERealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2648,9 +2648,9 @@ type builtinGEDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGEDecimalSig) Clone() builtinFunc {
+func (b *builtinGEDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGEDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2665,9 +2665,9 @@ type builtinGEStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGEStringSig) Clone() builtinFunc {
+func (b *builtinGEStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGEStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2682,9 +2682,9 @@ type builtinGEDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGEDurationSig) Clone() builtinFunc {
+func (b *builtinGEDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGEDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2699,9 +2699,9 @@ type builtinGETimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGETimeSig) Clone() builtinFunc {
+func (b *builtinGETimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGETimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2716,9 +2716,9 @@ type builtinGEJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGEJSONSig) Clone() builtinFunc {
+func (b *builtinGEJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGEJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2733,9 +2733,9 @@ type builtinGEVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinGEVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinGEVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinGEVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2750,9 +2750,9 @@ type builtinEQIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinEQIntSig) Clone() builtinFunc {
+func (b *builtinEQIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinEQIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2767,9 +2767,9 @@ type builtinEQRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinEQRealSig) Clone() builtinFunc {
+func (b *builtinEQRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinEQRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2784,9 +2784,9 @@ type builtinEQDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinEQDecimalSig) Clone() builtinFunc {
+func (b *builtinEQDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinEQDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2801,9 +2801,9 @@ type builtinEQStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinEQStringSig) Clone() builtinFunc {
+func (b *builtinEQStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinEQStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2818,9 +2818,9 @@ type builtinEQDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinEQDurationSig) Clone() builtinFunc {
+func (b *builtinEQDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinEQDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2835,9 +2835,9 @@ type builtinEQTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinEQTimeSig) Clone() builtinFunc {
+func (b *builtinEQTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinEQTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2852,9 +2852,9 @@ type builtinEQJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinEQJSONSig) Clone() builtinFunc {
+func (b *builtinEQJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinEQJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2869,9 +2869,9 @@ type builtinEQVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinEQVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinEQVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinEQVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2886,9 +2886,9 @@ type builtinNEIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNEIntSig) Clone() builtinFunc {
+func (b *builtinNEIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNEIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2903,9 +2903,9 @@ type builtinNERealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNERealSig) Clone() builtinFunc {
+func (b *builtinNERealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNERealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2920,9 +2920,9 @@ type builtinNEDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNEDecimalSig) Clone() builtinFunc {
+func (b *builtinNEDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNEDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2937,9 +2937,9 @@ type builtinNEStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNEStringSig) Clone() builtinFunc {
+func (b *builtinNEStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNEStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2954,9 +2954,9 @@ type builtinNEDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNEDurationSig) Clone() builtinFunc {
+func (b *builtinNEDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNEDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2971,9 +2971,9 @@ type builtinNETimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNETimeSig) Clone() builtinFunc {
+func (b *builtinNETimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNETimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2988,9 +2988,9 @@ type builtinNEJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNEJSONSig) Clone() builtinFunc {
+func (b *builtinNEJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNEJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3005,9 +3005,9 @@ type builtinNEVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNEVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinNEVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNEVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3022,9 +3022,9 @@ type builtinNullEQIntSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNullEQIntSig) Clone() builtinFunc {
+func (b *builtinNullEQIntSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNullEQIntSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3059,9 +3059,9 @@ type builtinNullEQRealSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNullEQRealSig) Clone() builtinFunc {
+func (b *builtinNullEQRealSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNullEQRealSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3093,9 +3093,9 @@ type builtinNullEQDecimalSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNullEQDecimalSig) Clone() builtinFunc {
+func (b *builtinNullEQDecimalSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNullEQDecimalSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3127,9 +3127,9 @@ type builtinNullEQStringSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNullEQStringSig) Clone() builtinFunc {
+func (b *builtinNullEQStringSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNullEQStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3161,9 +3161,9 @@ type builtinNullEQDurationSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNullEQDurationSig) Clone() builtinFunc {
+func (b *builtinNullEQDurationSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNullEQDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3195,9 +3195,9 @@ type builtinNullEQTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNullEQTimeSig) Clone() builtinFunc {
+func (b *builtinNullEQTimeSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNullEQTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3229,9 +3229,9 @@ type builtinNullEQJSONSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNullEQJSONSig) Clone() builtinFunc {
+func (b *builtinNullEQJSONSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNullEQJSONSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -3266,9 +3266,9 @@ type builtinNullEQVectorFloat32Sig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinNullEQVectorFloat32Sig) Clone() builtinFunc {
+func (b *builtinNullEQVectorFloat32Sig) Clone(cc CloneContext) builtinFunc {
 	newSig := &builtinNullEQVectorFloat32Sig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	return newSig
 }
 

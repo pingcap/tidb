@@ -57,8 +57,8 @@ func (by *ByItems) StringWithCtx(ctx expression.ParamValues, redact string) stri
 }
 
 // Clone makes a copy of ByItems.
-func (by *ByItems) Clone() *ByItems {
-	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
+func (by *ByItems) Clone(cc expression.CloneContext) *ByItems {
+	return &ByItems{Expr: by.Expr.Clone(cc), Desc: by.Desc}
 }
 
 // Equal checks whether two ByItems are equal.

@@ -242,7 +242,7 @@ func TestInColumnArray(t *testing.T) {
 
 func TestGcColumnExprIsTidbShard(t *testing.T) {
 	ctx := mock.NewContext()
-
+	cc := make(CloneContext, 2)
 	// abnormal case
 	// nil, not tidb_shard
 	require.False(t, GcColumnExprIsTidbShard(nil))
@@ -252,12 +252,12 @@ func TestGcColumnExprIsTidbShard(t *testing.T) {
 	col := &Column{RetType: ft, Index: 0}
 	d1 := types.NewDatum(1)
 	con := &Constant{Value: d1, RetType: ft}
-	expr := NewFunctionInternal(ctx, ast.EQ, ft, col, con)
+	expr := NewFunctionInternal(ctx, cc, ast.EQ, ft, col, con)
 	require.False(t, GcColumnExprIsTidbShard(expr))
 
 	// normal case
 	// tidb_shard(a) = 1
-	shardExpr := NewFunctionInternal(ctx, ast.TiDBShard, ft, col)
+	shardExpr := NewFunctionInternal(ctx, cc, ast.TiDBShard, ft, col)
 	require.True(t, GcColumnExprIsTidbShard(shardExpr))
 }
 

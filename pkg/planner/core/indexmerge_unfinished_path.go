@@ -389,11 +389,13 @@ func buildIntoAccessPath(
 			} else {
 				// case 2: non-mv index
 				var path *util.AccessPath
+				cc := make(expression.CloneContext, 2)
 				// Reuse the previous implementation. The same usage as in initUnfinishedPathsFromExpr().
 				path, needSelection = generateNormalIndexPartialPath(
 					ds,
 					expression.ComposeCNFCondition(
 						ds.SCtx().GetExprCtx(),
+						cc,
 						unfinishedPath.usableFilters...,
 					),
 					originalPaths[i],
@@ -537,7 +539,8 @@ func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPa
 		indexCondsForP := p.AccessConds[:]
 		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
 		if len(indexCondsForP) > 0 {
-			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
+			cc := make(expression.CloneContext, 2)
+			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), cc, indexCondsForP...))
 		}
 	}
 	accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)

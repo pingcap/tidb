@@ -198,6 +198,7 @@ func TestVectorizedBuiltinArithmeticFunc(t *testing.T) {
 
 func TestVectorizedDecimalErrOverflow(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	testCases := []struct {
 		args     []float64
 		funcName string
@@ -228,7 +229,7 @@ func TestVectorizedDecimalErrOverflow(t *testing.T) {
 		input.AppendMyDecimal(0, dec1)
 		input.AppendMyDecimal(1, dec2)
 		cols := []Expression{&Column{Index: 0, RetType: fts[0]}, &Column{Index: 1, RetType: fts[1]}}
-		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cols)
+		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cc, cols)
 		require.NoError(t, err)
 		result := chunk.NewColumn(eType2FieldType(types.ETDecimal), 1)
 		err = vecEvalType(ctx, baseFunc, types.ETDecimal, input, result)

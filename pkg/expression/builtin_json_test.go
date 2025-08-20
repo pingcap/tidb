@@ -32,6 +32,7 @@ import (
 
 func TestJSONType(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.JSONType]
 	tbl := []struct {
 		Input    any
@@ -47,7 +48,7 @@ func TestJSONType(t *testing.T) {
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, tt := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -75,8 +76,9 @@ func TestJSONQuote(t *testing.T) {
 		{`1\u2232\u22322`, `"1\\u2232\\u22322"`},
 	}
 	dtbl := tblToDtbl(tbl)
+	cc := make(CloneContext, 2)
 	for _, tt := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -108,10 +110,11 @@ func TestJSONUnquote(t *testing.T) {
 		{`""a""`, `""a""`, types.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")},
 		{`"""a"""`, `"""a"""`, types.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		var d types.Datum
 		d.SetString(tt.Input, mysql.DefaultCollationName)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{d}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{d}))
 		require.NoError(t, err)
 		d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.Error == nil {
@@ -209,15 +212,16 @@ func TestJSONSumCrc32(t *testing.T) {
 	}
 
 	var err error
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		inputExpr := datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0]
 		if tt.path != "" {
 			json, extract := buildJSON(tt.input, tt.path)
-			inputExpr, err = NewFunction(ctx, ast.JSONExtract, types.NewFieldType(mysql.TypeJSON), json, extract)
+			inputExpr, err = NewFunction(ctx, cc, ast.JSONExtract, types.NewFieldType(mysql.TypeJSON), json, extract)
 			require.NoError(t, err)
 		}
 
-		f, err := BuildJSONSumCrc32FunctionWithCheck(ctx, inputExpr, tt.tp)
+		f, err := BuildJSONSumCrc32FunctionWithCheck(ctx, cc, inputExpr, tt.tp)
 		require.NoError(t, err, tt.input)
 
 		val, _, err := f.EvalInt(ctx, chunk.Row{})
@@ -243,9 +247,10 @@ func TestJSONExtract(t *testing.T) {
 		{[]any{jstr, `$.a[0].aa[0].aaa`, `$.aaa`}, `[1, 2]`, true},
 		{[]any{jstr, `$.a[0].aa[0].aaa`, `$InvalidPath`}, nil, false},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.Success {
@@ -289,9 +294,10 @@ func TestJSONSetInsertReplace(t *testing.T) {
 	var err error
 	var f builtinFunc
 	var d types.Datum
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
-		f, err = tt.fc.getFunction(ctx, datumsToConstants(args))
+		f, err = tt.fc.getFunction(ctx, cc, datumsToConstants(args))
 		if tt.BuildSuccess {
 			require.NoError(t, err)
 			d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -316,6 +322,7 @@ func TestJSONSetInsertReplace(t *testing.T) {
 
 func TestJSONMerge(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.JSONMerge]
 	tbl := []struct {
 		Input    []any
@@ -327,7 +334,7 @@ func TestJSONMerge(t *testing.T) {
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -347,6 +354,7 @@ func TestJSONMerge(t *testing.T) {
 
 func TestJSONMergePreserve(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.JSONMergePreserve]
 	tbl := []struct {
 		Input    []any
@@ -358,7 +366,7 @@ func TestJSONMergePreserve(t *testing.T) {
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -386,9 +394,10 @@ func TestJSONArray(t *testing.T) {
 		{[]any{1}, `[1]`},
 		{[]any{nil, "a", 3, `{"a": "b"}`}, `[null, "a", 3, "{\"a\": \"b\"}"]`},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -419,10 +428,11 @@ func TestJSONObject(t *testing.T) {
 	}
 	var err error
 	var f builtinFunc
+	cc := make(CloneContext, 2)
 	var d types.Datum
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
-		f, err = fc.getFunction(ctx, datumsToConstants(args))
+		f, err = fc.getFunction(ctx, cc, datumsToConstants(args))
 		if tt.BuildSuccess {
 			require.NoError(t, err)
 			d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -471,9 +481,10 @@ func TestJSONRemove(t *testing.T) {
 		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
 		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]", "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 
@@ -518,9 +529,10 @@ func TestJSONMemberOf(t *testing.T) {
 		{[]any{`{"a":1}`, `["{\"a\":1}"]`}, 1, nil},
 		{[]any{`{"a":1}`, `["{\"a\":1}", 1]`}, 1, nil},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err, tt.input)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
@@ -584,9 +596,10 @@ func TestJSONContains(t *testing.T) {
 		{[]any{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONText},
 		{[]any{`a:1`, `1`}, 1, types.ErrInvalidJSONText},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
@@ -611,7 +624,7 @@ func TestJSONContains(t *testing.T) {
 		{"", 0.05},
 	}
 	for _, cs := range cases {
-		_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
+		_, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
 		require.True(t, ErrInvalidTypeForJSON.Equal(err))
 	}
 }
@@ -663,9 +676,10 @@ func TestJSONOverlaps(t *testing.T) {
 		{[]any{`6`, `[4,5,"6",7]`}, 0, nil},
 		{[]any{`"6"`, `[4,5,6,7]`}, 0, nil},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err, tt.input)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
@@ -722,9 +736,10 @@ func TestJSONContainsPath(t *testing.T) {
 		{[]any{jsonString, "aLl", "$.a", "$.e"}, 0, true},
 		{[]any{jsonString, "test", "$.a"}, nil, false},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -793,9 +808,10 @@ func TestJSONLength(t *testing.T) {
 		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]"}, nil, true},
 		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].b"}, nil, true},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -862,9 +878,10 @@ func TestJSONKeys(t *testing.T) {
 		{[]any{`[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]`, `$[last].C`}, nil, true},
 		{[]any{`[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]`, `$[last].C[1]`}, `["E"]`, true},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -927,9 +944,10 @@ func TestJSONDepth(t *testing.T) {
 		// Tests non-json
 		{[]any{`a`}, nil, false},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -989,11 +1007,11 @@ func TestJSONArrayAppend(t *testing.T) {
 		{[]any{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].a`, 3.14}, `[1, 2, 3, {"a": [4, 5, 6, 3.14]}, 7]`, nil},
 		{[]any{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
 	}
-
+	cc := make(CloneContext, 2)
 	for i, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		// No error should return in getFunction if tt.err is nil.
 		if err != nil {
 			require.Error(t, tt.err)
@@ -1076,9 +1094,10 @@ func TestJSONSearch(t *testing.T) {
 		{[]any{jsonString, `all`, `abc`, nil, `$xx`}, nil, false}, // wrong path
 		{[]any{jsonString, nil, `abc`}, nil, true},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -1141,9 +1160,10 @@ func TestJSONArrayInsert(t *testing.T) {
 		// More test cases
 		{[]any{`["a", {"b": [1, 2]}, [3, 4]]`, `$[0]`, `x`, `$[0]`, `y`}, `["y", "x", "a", {"b": [1, 2]}, [3, 4]]`, true, nil},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		// Parameter count error
 		if err != nil {
 			require.Error(t, tt.err)
@@ -1194,9 +1214,10 @@ func TestJSONValid(t *testing.T) {
 		{2.5, 0},
 		{nil, nil},
 	}
+	cc := make(CloneContext, 2)
 	dtbl := tblToDtbl(tbl)
 	for _, tt := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1228,9 +1249,10 @@ func TestJSONStorageFree(t *testing.T) {
 		{[]any{`[{"a":1]`}, 0, false},
 		{[]any{`[{a":1]`}, 0, false},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -1271,9 +1293,10 @@ func TestJSONStorageSize(t *testing.T) {
 		{[]any{`[{"a":1]`}, 0, false},
 		{[]any{`[{a":1]`}, 0, false},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -1345,9 +1368,10 @@ func TestJSONPretty(t *testing.T) {
 		{[]any{`{1}`}, nil, false},
 		{[]any{`[1,3,4,5]]`}, nil, false},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -1435,9 +1459,10 @@ func TestJSONMergePatch(t *testing.T) {
 		{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false},
 		{[]any{`{"a":1}`, `jjj`, `null`}, nil, false},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(args))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
@@ -1494,8 +1519,9 @@ func TestJSONSchemaValid(t *testing.T) {
 		{[]any{`{"properties": {"a": {"type": "string", "pattern": "^a"}}}`, `{"a": "cba"}`}, 0},
 	}
 	dtbl := tblToDtbl(tbl)
+	cc := make(CloneContext, 2)
 	for _, tt := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1526,10 +1552,10 @@ func TestJSONSchemaValidCache(t *testing.T) {
 		{[]any{`{}`, `{}`}, 1},
 	}
 	dtbl := tblToDtbl(tbl)
-
+	cc := make(CloneContext, 2)
 	for _, tt := range dtbl {
 		// Get the function and eval once, ensuring it is cached
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1542,7 +1568,7 @@ func TestJSONSchemaValidCache(t *testing.T) {
 		require.NoError(t, err)
 
 		// Now get a new cache by getting the function again.
-		f, err = fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		f, err = fc.getFunction(ctx, cc, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 
 		// Empty cache, we call the function. This should return an error.

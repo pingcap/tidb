@@ -224,7 +224,8 @@ func (*AggregationPushDownSolver) checkValidJoin(join *logicalop.LogicalJoin) bo
 func (*AggregationPushDownSolver) decompose(ctx base.PlanContext, aggFunc *aggregation.AggFuncDesc,
 	schema *expression.Schema, nullGenerating bool) ([]*aggregation.AggFuncDesc, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
-	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
+	cc := make(expression.CloneContext, 4)
+	result := []*aggregation.AggFuncDesc{aggFunc.Clone(cc)}
 	for _, aggFunc := range result {
 		schema.Append(&expression.Column{
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -296,8 +297,9 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAg
 
 func (*AggregationPushDownSolver) getDefaultValues(agg *logicalop.LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
+	cc := make(expression.CloneContext, 4)
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue, err := aggFunc.EvalNullValueInOuterJoin(agg.SCtx().GetExprCtx(), agg.Children()[0].Schema())
+		value, existsDefaultValue, err := aggFunc.EvalNullValueInOuterJoin(agg.SCtx().GetExprCtx(), cc, agg.Children()[0].Schema())
 		// if err is not null, just treat it as no default value.
 		if err != nil || !existsDefaultValue {
 			return nil, false
@@ -346,12 +348,13 @@ func (a *AggregationPushDownSolver) makeNewAgg(ctx base.PlanContext, aggFuncs []
 		newFuncs, schema = a.decompose(ctx, aggFunc, schema, nullGenerating)
 		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
+	cc := make(expression.CloneContext, 4)
 	for _, gbyCol := range gbyCols {
-		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 		if err != nil {
 			return nil, err
 		}
-		newCol, _ := gbyCol.Clone().(*expression.Column)
+		newCol, _ := gbyCol.Clone(cc).(*expression.Column)
 		newCol.RetType = firstRow.RetTp
 		newAggFuncDescs = append(newAggFuncDescs, firstRow)
 		schema.Append(newCol)
@@ -391,27 +394,28 @@ func (*AggregationPushDownSolver) splitPartialAgg(agg *logicalop.LogicalAggregat
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
 func (*AggregationPushDownSolver) pushAggCrossUnion(agg *logicalop.LogicalAggregation, unionSchema *expression.Schema, unionChild base.LogicalPlan) (base.LogicalPlan, error) {
 	ctx := agg.SCtx()
+	cc := make(expression.CloneContext, 4)
 	newAgg := logicalop.LogicalAggregation{
 		AggFuncs:       make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs)),
 		GroupByItems:   make([]expression.Expression, 0, len(agg.GroupByItems)),
 		PreferAggType:  agg.PreferAggType,
 		PreferAggToCop: agg.PreferAggToCop,
 	}.Init(ctx, agg.QueryBlockOffset())
-	newAgg.SetSchema(agg.Schema().Clone())
+	newAgg.SetSchema(agg.Schema().Clone(cc))
 	for _, aggFunc := range agg.AggFuncs {
-		newAggFunc := aggFunc.Clone()
+		newAggFunc := aggFunc.Clone(cc)
 		newArgs := make([]expression.Expression, 0, len(newAggFunc.Args))
 		for _, arg := range newAggFunc.Args {
-			newArgs = append(newArgs, expression.ColumnSubstitute(ctx.GetExprCtx(), arg, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns)))
+			newArgs = append(newArgs, expression.ColumnSubstitute(ctx.GetExprCtx(), cc, arg, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns)))
 		}
 		newAggFunc.Args = newArgs
 		newAgg.AggFuncs = append(newAgg.AggFuncs, newAggFunc)
 	}
 	for _, gbyExpr := range agg.GroupByItems {
-		newExpr := expression.ColumnSubstitute(ctx.GetExprCtx(), gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
+		newExpr := expression.ColumnSubstitute(ctx.GetExprCtx(), cc, gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
 		// TODO: if there is a duplicated first_row function, we can delete it.
-		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -475,7 +479,7 @@ func (a *AggregationPushDownSolver) tryAggPushDownForUnion(union *logicalop.Logi
 		}
 		newChildren = append(newChildren, newChild)
 	}
-	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Clone().Columns...))
+	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Clone(nil).Columns...))
 	union.SetChildren(newChildren...)
 	appendAggPushDownAcrossUnionTraceStep(union, agg, opt)
 	return nil
@@ -564,8 +568,9 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 				ctx := p.SCtx()
 				noSideEffects := true
 				newGbyItems := make([]expression.Expression, 0, len(agg.GroupByItems))
+				cc := make(expression.CloneContext, 4)
 				for _, gbyItem := range agg.GroupByItems {
-					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), gbyItem, proj.Schema(), proj.Exprs, true)
+					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), cc, gbyItem, proj.Schema(), proj.Exprs, true)
 					if failed {
 						noSideEffects = false
 						break
@@ -584,8 +589,9 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 					for _, aggFunc := range agg.AggFuncs {
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
 						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
+						cc := make(expression.CloneContext, 4)
 						for _, arg := range aggFunc.Args {
-							_, failed, newArg := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), arg, proj.Schema(), proj.Exprs, true)
+							_, failed, newArg := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), cc, arg, proj.Schema(), proj.Exprs, true)
 							if failed {
 								noSideEffects = false
 								break
@@ -601,8 +607,9 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 						if len(aggFunc.OrderByItems) != 0 {
 							oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
 							newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
+							cc := make(expression.CloneContext, 4)
 							for _, oby := range aggFunc.OrderByItems {
-								_, failed, byItem := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), oby.Expr, proj.Schema(), proj.Exprs, true)
+								_, failed, byItem := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), cc, oby.Expr, proj.Schema(), proj.Exprs, true)
 								if failed {
 									noSideEffects = false
 									break

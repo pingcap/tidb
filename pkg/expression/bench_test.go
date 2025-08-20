@@ -102,44 +102,45 @@ func (h *benchHelper) init() {
 	}
 
 	h.exprs = make([]Expression, 0, 10)
-	expr, err := NewFunction(h.ctx, ast.Substr, h.inputTypes[3], []Expression{cols[3], cols[2]}...)
+	cc := make(CloneContext, 4)
+	expr, err := NewFunction(h.ctx, cc, ast.Substr, h.inputTypes[3], []Expression{cols[3], cols[2]}...)
 	if err != nil {
 		panic("create SUBSTR function failed.")
 	}
 	h.exprs = append(h.exprs, expr)
-	expr1, err := NewFunction(h.ctx, ast.Plus, h.inputTypes[0], []Expression{cols[1], cols[2]}...)
+	expr1, err := NewFunction(h.ctx, cc, ast.Plus, h.inputTypes[0], []Expression{cols[1], cols[2]}...)
 	if err != nil {
 		panic("create PLUS function failed.")
 	}
 	h.exprs = append(h.exprs, expr1)
-	expr2, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[11], cols[8]}...)
+	expr2, err := NewFunction(h.ctx, cc, ast.GT, h.inputTypes[2], []Expression{cols[11], cols[8]}...)
 	if err != nil {
 		panic("create GT function failed.")
 	}
 	h.exprs = append(h.exprs, expr2)
-	expr3, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[19], cols[10]}...)
+	expr3, err := NewFunction(h.ctx, cc, ast.GT, h.inputTypes[2], []Expression{cols[19], cols[10]}...)
 	if err != nil {
 		panic("create GT function failed.")
 	}
 	h.exprs = append(h.exprs, expr3)
-	expr4, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[17], cols[4]}...)
+	expr4, err := NewFunction(h.ctx, cc, ast.GT, h.inputTypes[2], []Expression{cols[17], cols[4]}...)
 	if err != nil {
 		panic("create GT function failed.")
 	}
 	h.exprs = append(h.exprs, expr4)
-	expr5, err := NewFunction(h.ctx, ast.GT, h.inputTypes[2], []Expression{cols[18], cols[5]}...)
+	expr5, err := NewFunction(h.ctx, cc, ast.GT, h.inputTypes[2], []Expression{cols[18], cols[5]}...)
 	if err != nil {
 		panic("create GT function failed.")
 	}
 	h.exprs = append(h.exprs, expr5)
 
-	expr6, err := NewFunction(h.ctx, ast.LE, h.inputTypes[2], []Expression{cols[19], cols[4]}...)
+	expr6, err := NewFunction(h.ctx, cc, ast.LE, h.inputTypes[2], []Expression{cols[19], cols[4]}...)
 	if err != nil {
 		panic("create LE function failed.")
 	}
 	h.exprs = append(h.exprs, expr6)
 
-	expr7, err := NewFunction(h.ctx, ast.EQ, h.inputTypes[2], []Expression{cols[20], cols[3]}...)
+	expr7, err := NewFunction(h.ctx, cc, ast.EQ, h.inputTypes[2], []Expression{cols[20], cols[3]}...)
 	if err != nil {
 		panic("create EQ function failed.")
 	}
@@ -175,11 +176,12 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	con1 := NewOne()
 	con2 := NewZero()
-	add := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
-	sub := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
+	cc := make(CloneContext, 4)
+	add := NewFunctionInternal(mock.NewContext(), cc, ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
+	sub := NewFunctionInternal(mock.NewContext(), cc, ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sub.Clone()
+		sub.Clone(cc)
 	}
 	b.ReportAllocs()
 }
@@ -1331,8 +1333,8 @@ func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenc
 			cols[i] = &Column{Index: i, RetType: fts[i]}
 		}
 	}
-
-	expr, err := NewFunction(ctx, funcName, eType2FieldType(testCase.retEvalType), cols...)
+	cc := make(CloneContext, 2)
+	expr, err := NewFunction(ctx, cc, funcName, eType2FieldType(testCase.retEvalType), cols...)
 	if err != nil {
 		panic(err)
 	}
@@ -1475,9 +1477,10 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 	}
 
 	var err error
+	cc := make(CloneContext, 4)
 	if funcName == ast.JSONSumCrc32 {
 		fc := &jsonSumCRC32FunctionClass{baseFunctionClass{ast.JSONSumCrc32, 1, 1}, fts[0]}
-		baseFunc, err = fc.getFunction(ctx, cols)
+		baseFunc, err = fc.getFunction(ctx, cc, cols)
 	} else if funcName == ast.Cast {
 		var fc functionClass
 		tp := eType2FieldType(testCase.retEvalType)
@@ -1497,7 +1500,7 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 		case types.ETString:
 			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		}
-		baseFunc, err = fc.getFunction(ctx, cols)
+		baseFunc, err = fc.getFunction(ctx, cc, cols)
 	} else if funcName == ast.GetVar {
 		var fc functionClass
 		tp := eType2FieldType(testCase.retEvalType)
@@ -1511,9 +1514,9 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 		default:
 			fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
 		}
-		baseFunc, err = fc.getFunction(ctx, cols)
+		baseFunc, err = fc.getFunction(ctx, cc, cols)
 	} else {
-		baseFunc, err = funcs[funcName].getFunction(ctx, cols)
+		baseFunc, err = funcs[funcName].getFunction(ctx, cc, cols)
 	}
 	if err != nil {
 		panic(err)

@@ -166,7 +166,8 @@ func (path *AccessPath) Clone() *AccessPath {
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 	}
 	if path.IndexMergeORSourceFilter != nil {
-		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
+		cc := make(expression.CloneContext, 4)
+		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone(cc)
 	}
 	ret.PartialIndexPaths = SliceDeepClone(path.PartialIndexPaths)
 	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))

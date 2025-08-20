@@ -27,13 +27,14 @@ import (
 
 func TestClone(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(expression.CloneContext, 2)
 	col := &expression.Column{
 		UniqueID: 0,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
-	desc, err := newBaseFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{col})
+	desc, err := newBaseFuncDesc(ctx, cc, ast.AggFuncFirstRow, []expression.Expression{col})
 	require.NoError(t, err)
-	cloned := desc.clone()
+	cloned := desc.clone(cc)
 	require.True(t, desc.equal(ctx, cloned))
 
 	col1 := &expression.Column{
@@ -57,7 +58,7 @@ func TestBaseFunc_InferAggRetType(t *testing.T) {
 	dataTypes := []*types.FieldType{
 		doubleType, bitType,
 	}
-
+	cc := make(expression.CloneContext, 2)
 	for _, dataType := range dataTypes {
 		notNullType := dataType.Clone()
 		notNullType.AddFlag(mysql.NotNullFlag)
@@ -66,9 +67,9 @@ func TestBaseFunc_InferAggRetType(t *testing.T) {
 			RetType:  notNullType,
 		}
 		for _, name := range funcNames {
-			desc, err := newBaseFuncDesc(ctx, name, []expression.Expression{col})
+			desc, err := newBaseFuncDesc(ctx, cc, name, []expression.Expression{col})
 			require.NoError(t, err)
-			err = desc.TypeInfer(ctx)
+			err = desc.TypeInfer(ctx, cc)
 			require.NoError(t, err)
 			require.Equal(t, dataType, desc.RetTp)
 		}
@@ -77,7 +78,7 @@ func TestBaseFunc_InferAggRetType(t *testing.T) {
 
 func TestTypeInfer4AvgSum(t *testing.T) {
 	ctx := mock.NewContext()
-
+	cc := make(expression.CloneContext, 2)
 	// sum(col)
 	{
 		argCol := &expression.Column{
@@ -88,9 +89,9 @@ func TestTypeInfer4AvgSum(t *testing.T) {
 		argCol.RetType.SetFlen(argColFlen)
 		argCol.RetType.SetDecimal(2)
 
-		avgFunc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{argCol})
+		avgFunc, err := newBaseFuncDesc(ctx, cc, ast.AggFuncAvg, []expression.Expression{argCol})
 		require.NoError(t, err)
-		err = avgFunc.TypeInfer(ctx)
+		err = avgFunc.TypeInfer(ctx, cc)
 		require.NoError(t, err)
 
 		partialSumFunc := avgFunc
@@ -119,14 +120,14 @@ func TestTypeInfer4AvgSum(t *testing.T) {
 		divArgCol2.RetType.SetDecimal(0)
 
 		mockDivRetType := types.NewFieldType(mysql.TypeUnspecified)
-		divExpr, err := expression.NewFunction(ctx, ast.Div, mockDivRetType, divArgCol1, divArgCol2)
+		divExpr, err := expression.NewFunction(ctx, cc, ast.Div, mockDivRetType, divArgCol1, divArgCol2)
 		require.NoError(t, err)
 		require.Equal(t, divExpr.GetType(ctx.GetEvalCtx()).GetFlen(), 25)
 		require.Equal(t, divExpr.GetType(ctx.GetEvalCtx()).GetDecimal(), 4)
 
-		avgFunc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{divExpr})
+		avgFunc, err := newBaseFuncDesc(ctx, cc, ast.AggFuncAvg, []expression.Expression{divExpr})
 		require.NoError(t, err)
-		err = avgFunc.TypeInfer(ctx)
+		err = avgFunc.TypeInfer(ctx, cc)
 		require.NoError(t, err)
 		require.Equal(t, avgFunc.RetTp.GetFlen(), 29)
 		require.Equal(t, avgFunc.RetTp.GetDecimal(), 8)

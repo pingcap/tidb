@@ -30,7 +30,7 @@ type WindowFuncDesc struct {
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
-func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
+func NewWindowFuncDesc(ctx expression.BuildContext, cc expression.CloneContext, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
 	// if we are in the prepare statement, skip the params check since it's not been initialized.
 	if !skipCheckArgs {
 		switch strings.ToLower(name) {
@@ -57,7 +57,7 @@ func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expressi
 		}
 	}
 
-	base, err := newBaseFuncDesc(ctx, name, args)
+	base, err := newBaseFuncDesc(ctx, cc, name, args)
 
 	// Some window functions' return column type must be nullable or not nullable
 	switch name {
@@ -118,8 +118,8 @@ func NeedFrame(name string) bool {
 }
 
 // Clone makes a copy of SortItem.
-func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
-	return &WindowFuncDesc{*s.baseFuncDesc.clone()}
+func (s *WindowFuncDesc) Clone(cc expression.CloneContext) *WindowFuncDesc {
+	return &WindowFuncDesc{*s.baseFuncDesc.clone(cc)}
 }
 
 // WindowFuncToPBExpr converts aggregate function to pb.

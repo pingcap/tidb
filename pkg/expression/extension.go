@@ -96,7 +96,7 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 	}, nil
 }
 
-func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *extensionFuncClass) getFunction(ctx BuildContext, cc CloneContext, args []Expression) (builtinFunc, error) {
 	checker, err := c.GetPrivilegeChecker(ctx.GetEvalCtx())
 	if err != nil {
 		return nil, err
@@ -109,7 +109,7 @@ func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, c.funcDef.EvalTp, c.funcDef.ArgTps[:len(args)]...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, c.funcName, args, c.funcDef.EvalTp, c.funcDef.ArgTps[:len(args)]...)
 	if err != nil {
 		return nil, err
 	}
@@ -158,9 +158,9 @@ type extensionFuncSig struct {
 	extension.FunctionDef
 }
 
-func (b *extensionFuncSig) Clone() builtinFunc {
+func (b *extensionFuncSig) Clone(cc CloneContext) builtinFunc {
 	newSig := &extensionFuncSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(cc, &b.baseBuiltinFunc)
 	newSig.FunctionDef = b.FunctionDef
 	return newSig
 }

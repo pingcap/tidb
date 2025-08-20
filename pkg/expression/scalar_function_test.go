@@ -27,6 +27,7 @@ import (
 )
 
 func TestExpressionSemanticEqual(t *testing.T) {
+	cc := make(CloneContext, 2)
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -37,75 +38,76 @@ func TestExpressionSemanticEqual(t *testing.T) {
 	}
 	// order sensitive cases
 	// a < b; b > a
-	sf1 := newFunctionWithMockCtx(ast.LT, a, b)
-	sf2 := newFunctionWithMockCtx(ast.GT, b, a)
+	sf1 := newFunctionWithMockCtx(ast.LT, cc, a, b)
+	sf2 := newFunctionWithMockCtx(ast.GT, cc, b, a)
 	require.True(t, ExpressionsSemanticEqual(sf1, sf2))
 
 	// a > b; b < a
-	sf3 := newFunctionWithMockCtx(ast.GT, a, b)
-	sf4 := newFunctionWithMockCtx(ast.LT, b, a)
+	sf3 := newFunctionWithMockCtx(ast.GT, cc, a, b)
+	sf4 := newFunctionWithMockCtx(ast.LT, cc, b, a)
 	require.True(t, ExpressionsSemanticEqual(sf3, sf4))
 
 	// a<=b; b>=a
-	sf5 := newFunctionWithMockCtx(ast.LE, a, b)
-	sf6 := newFunctionWithMockCtx(ast.GE, b, a)
+	sf5 := newFunctionWithMockCtx(ast.LE, cc, a, b)
+	sf6 := newFunctionWithMockCtx(ast.GE, cc, b, a)
 	require.True(t, ExpressionsSemanticEqual(sf5, sf6))
 
 	// a>=b; b<=a
-	sf7 := newFunctionWithMockCtx(ast.GE, a, b)
-	sf8 := newFunctionWithMockCtx(ast.LE, b, a)
+	sf7 := newFunctionWithMockCtx(ast.GE, cc, a, b)
+	sf8 := newFunctionWithMockCtx(ast.LE, cc, b, a)
 	require.True(t, ExpressionsSemanticEqual(sf7, sf8))
 
 	// not(a<b); a >= b
-	sf9 := newFunctionWithMockCtx(ast.UnaryNot, sf1)
+	sf9 := newFunctionWithMockCtx(ast.UnaryNot, cc, sf1)
 	require.True(t, ExpressionsSemanticEqual(sf9, sf7))
 
 	// a < b; not(a>=b)
-	sf10 := newFunctionWithMockCtx(ast.UnaryNot, sf7)
+	sf10 := newFunctionWithMockCtx(ast.UnaryNot, cc, sf7)
 	require.True(t, ExpressionsSemanticEqual(sf1, sf10))
 
 	// order insensitive cases
 	// a + b; b + a
-	p1 := newFunctionWithMockCtx(ast.Plus, a, b)
-	p2 := newFunctionWithMockCtx(ast.Plus, b, a)
+	p1 := newFunctionWithMockCtx(ast.Plus, cc, a, b)
+	p2 := newFunctionWithMockCtx(ast.Plus, cc, b, a)
 	require.True(t, ExpressionsSemanticEqual(p1, p2))
 
 	// a * b; b * a
-	m1 := newFunctionWithMockCtx(ast.Mul, a, b)
-	m2 := newFunctionWithMockCtx(ast.Mul, b, a)
+	m1 := newFunctionWithMockCtx(ast.Mul, cc, a, b)
+	m2 := newFunctionWithMockCtx(ast.Mul, cc, b, a)
 	require.True(t, ExpressionsSemanticEqual(m1, m2))
 
 	// a = b; b = a
-	e1 := newFunctionWithMockCtx(ast.EQ, a, b)
-	e2 := newFunctionWithMockCtx(ast.EQ, b, a)
+	e1 := newFunctionWithMockCtx(ast.EQ, cc, a, b)
+	e2 := newFunctionWithMockCtx(ast.EQ, cc, b, a)
 	require.True(t, ExpressionsSemanticEqual(e1, e2))
 
 	// a = b AND b + a; a + b AND b = a
-	a1 := newFunctionWithMockCtx(ast.LogicAnd, e1, p2)
-	a2 := newFunctionWithMockCtx(ast.LogicAnd, p1, e2)
+	a1 := newFunctionWithMockCtx(ast.LogicAnd, cc, e1, p2)
+	a2 := newFunctionWithMockCtx(ast.LogicAnd, cc, p1, e2)
 	require.True(t, ExpressionsSemanticEqual(a1, a2))
 
 	// a * b OR a + b;  b + a OR b * a
-	o1 := newFunctionWithMockCtx(ast.LogicOr, m1, p1)
-	o2 := newFunctionWithMockCtx(ast.LogicOr, p2, m2)
+	o1 := newFunctionWithMockCtx(ast.LogicOr, cc, m1, p1)
+	o2 := newFunctionWithMockCtx(ast.LogicOr, cc, p2, m2)
 	require.True(t, ExpressionsSemanticEqual(o1, o2))
 }
 
 func TestScalarFunction(t *testing.T) {
+	cc := make(CloneContext, 2)
 	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
 
-	sf := newFunctionWithMockCtx(ast.LT, a, NewOne())
+	sf := newFunctionWithMockCtx(ast.LT, cc, a, NewOne())
 	require.False(t, sf.IsCorrelated())
 	require.Equal(t, ConstNone, sf.ConstLevel())
 	require.True(t, sf.Decorrelate(nil).Equal(ctx, sf))
 	require.EqualValues(t, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, sf.HashCode())
 
 	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
-	newSf, ok := sf.Clone().(*ScalarFunction)
+	newSf, ok := sf.Clone(cc).(*ScalarFunction)
 	require.True(t, ok)
 	require.True(t, sf.Equal(ctx, newSf))
 	require.Equal(t, "values", newSf.FuncName.O)
@@ -117,6 +119,7 @@ func TestScalarFunction(t *testing.T) {
 }
 
 func TestIssue23309(t *testing.T) {
+	cc := make(CloneContext, 2)
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -125,7 +128,7 @@ func TestIssue23309(t *testing.T) {
 	a.RetType.SetFlag(a.RetType.GetFlag() | mysql.NotNullFlag)
 	null := NewNull()
 	null.RetType = types.NewFieldType(mysql.TypeNull)
-	sf, _ := newFunctionWithMockCtx(ast.NE, a, null).(*ScalarFunction)
+	sf, _ := newFunctionWithMockCtx(ast.NE, cc, a, null).(*ScalarFunction)
 	v, err := sf.GetArgs()[1].Eval(mock.NewContext(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
@@ -135,13 +138,14 @@ func TestIssue23309(t *testing.T) {
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {
+	cc := make(CloneContext, 2)
 	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	sf0, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
-	sf1, _ := newFunctionWithMockCtx(ast.LT, a, NewOne()).(*ScalarFunction)
+	sf0, _ := newFunctionWithMockCtx(ast.LT, cc, a, NewZero()).(*ScalarFunction)
+	sf1, _ := newFunctionWithMockCtx(ast.LT, cc, a, NewOne()).(*ScalarFunction)
 
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)
@@ -151,12 +155,13 @@ func TestScalarFuncs2Exprs(t *testing.T) {
 }
 
 func TestScalarFunctionHash64Equals(t *testing.T) {
+	cc := make(CloneContext, 2)
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	sf0, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
-	sf1, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	sf0, _ := newFunctionWithMockCtx(ast.LT, cc, a, NewZero()).(*ScalarFunction)
+	sf1, _ := newFunctionWithMockCtx(ast.LT, cc, a, NewZero()).(*ScalarFunction)
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
 	sf0.Hash64(hasher1)
@@ -165,21 +170,21 @@ func TestScalarFunctionHash64Equals(t *testing.T) {
 	require.True(t, sf0.Equals(sf1))
 
 	// change the func name
-	sf2, _ := newFunctionWithMockCtx(ast.GT, a, NewZero()).(*ScalarFunction)
+	sf2, _ := newFunctionWithMockCtx(ast.GT, cc, a, NewZero()).(*ScalarFunction)
 	hasher2.Reset()
 	sf2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, sf0.Equals(sf2))
 
 	// change the args
-	sf3, _ := newFunctionWithMockCtx(ast.LT, a, NewOne()).(*ScalarFunction)
+	sf3, _ := newFunctionWithMockCtx(ast.LT, cc, a, NewOne()).(*ScalarFunction)
 	hasher2.Reset()
 	sf3.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, sf0.Equals(sf3))
 
 	// change the ret type
-	sf4, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	sf4, _ := newFunctionWithMockCtx(ast.LT, cc, a, NewZero()).(*ScalarFunction)
 	sf4.RetType = types.NewFieldType(mysql.TypeLong)
 	hasher2.Reset()
 	sf4.Hash64(hasher2)
@@ -190,8 +195,9 @@ func TestScalarFunctionHash64Equals(t *testing.T) {
 // To test that when argument number is 0, unix_timestamp can not be pushed down to tikv
 func TestForbidUnixTimestampPushdown(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	fc := &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}}
-	bt, err := fc.getFunction(ctx, nil)
+	bt, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	sf := &ScalarFunction{
 		Function: bt,

@@ -243,13 +243,14 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 
 func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	var eqConds []*expression.ScalarFunction
+	cc := make(expression.CloneContext, 4)
 	for _, edge := range edges {
 		lCol := edge.edge.GetArgs()[0].(*expression.Column)
 		rCol := edge.edge.GetArgs()[1].(*expression.Column)
 		if leftPlan.Schema().Contains(lCol) {
 			eqConds = append(eqConds, edge.edge)
 		} else {
-			newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
+			newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), cc, ast.EQ, edge.edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
 			eqConds = append(eqConds, newSf)
 		}
 	}

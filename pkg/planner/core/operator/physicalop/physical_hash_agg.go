@@ -173,8 +173,9 @@ func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.Sta
 	// I clone it first.
 	// It needs a well refactor to make sure that the physical optimize should not change the things of logical plan.
 	// It's bad for cascades
+	cc := make(expression.CloneContext, 2)
 	for i, aggFunc := range la.AggFuncs {
-		newAggFuncs[i] = aggFunc.Clone()
+		newAggFuncs[i] = aggFunc.Clone(cc)
 	}
 	agg := &BasePhysicalAgg{
 		GroupByItems: newGbyItems,

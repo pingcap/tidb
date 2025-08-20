@@ -38,6 +38,7 @@ import (
 
 func TestLengthAndOctetLength(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	cases := []struct {
 		args     any
 		expected int64
@@ -76,7 +77,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(ctx, []Expression{NewZero()})
+	_, err := funcs[ast.Length].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -137,7 +138,8 @@ func TestASCII(t *testing.T) {
 			}
 		}
 	}
-	_, err := funcs[ast.Length].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Length].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -337,8 +339,8 @@ func TestConcatWS(t *testing.T) {
 			}
 		}
 	}
-
-	_, err = funcs[ast.ConcatWS].getFunction(ctx, primitiveValsToConstants(ctx, []any{nil, nil}))
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.ConcatWS].getFunction(ctx, cc, primitiveValsToConstants(ctx, []any{nil, nil}))
 	require.NoError(t, err)
 }
 
@@ -437,8 +439,8 @@ func TestLeft(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Left].getFunction(ctx, []Expression{getVarcharCon(), getInt8Con()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Left].getFunction(ctx, cc, []Expression{getVarcharCon(), getInt8Con()})
 	require.NoError(t, err)
 }
 
@@ -487,8 +489,8 @@ func TestRight(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Right].getFunction(ctx, []Expression{getVarcharCon(), getInt8Con()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Right].getFunction(ctx, cc, []Expression{getVarcharCon(), getInt8Con()})
 	require.NoError(t, err)
 }
 
@@ -508,8 +510,9 @@ func TestRepeat(t *testing.T) {
 
 	ctx := createContext(t)
 	fc := funcs[ast.Repeat]
+	cc := make(CloneContext, 2)
 	for _, c := range cases {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.args...)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(c.args...)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -601,8 +604,8 @@ func TestLower(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Lower].getFunction(ctx, []Expression{getVarcharCon()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Lower].getFunction(ctx, cc, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -659,8 +662,8 @@ func TestUpper(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Upper].getFunction(ctx, []Expression{getVarcharCon()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Upper].getFunction(ctx, cc, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -688,8 +691,9 @@ func TestUpper(t *testing.T) {
 
 func TestReverse(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.Reverse]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(nil)))
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -706,9 +710,8 @@ func TestReverse(t *testing.T) {
 	}
 
 	dtbl := tblToDtbl(tbl)
-
 	for _, c := range dtbl {
-		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
+		f, err = fc.getFunction(ctx, cc, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -794,8 +797,8 @@ func TestReplace(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Replace].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Replace].getFunction(ctx, cc, []Expression{NewZero(), NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -839,16 +842,17 @@ func TestSubstring(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Substring].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Substring].getFunction(ctx, cc, []Expression{NewZero(), NewZero(), NewZero()})
 	require.NoError(t, err)
 
-	_, err = funcs[ast.Substring].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.Substring].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
 func TestConvert(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tbl := []struct {
 		str           any
 		cs            string
@@ -864,7 +868,7 @@ func TestConvert(t *testing.T) {
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Convert]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.cs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		retType := f.getRetTp()
@@ -891,14 +895,14 @@ func TestConvert(t *testing.T) {
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Convert]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.cs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		require.Equal(t, v.err, err.Error())
 		require.Nil(t, f)
 	}
 
 	// Test wrong charset while evaluating.
 	fc := funcs[ast.Convert]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("haha", "utf8")))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums("haha", "utf8")))
 	require.NoError(t, err)
 	require.NotNil(t, f)
 	wrongFunction := f.(*builtinConvertSig)
@@ -950,8 +954,8 @@ func TestSubstringIndex(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.SubstringIndex].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.SubstringIndex].getFunction(ctx, cc, []Expression{NewZero(), NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -996,8 +1000,8 @@ func TestSpace(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Space].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Space].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1069,9 +1073,10 @@ func TestLocate(t *testing.T) {
 		{[]any{nil, "bar", 0}, nil},
 	}
 	Dtbl := tblToDtbl(tbl)
+	cc := make(CloneContext, 2)
 	instr := funcs[ast.Locate]
 	for i, c := range Dtbl {
-		f, err := instr.getFunction(ctx, datumsToConstants(c["Args"]))
+		f, err := instr.getFunction(ctx, cc, datumsToConstants(c["Args"]))
 		require.NoError(t, err)
 		got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1094,7 +1099,7 @@ func TestLocate(t *testing.T) {
 		exprs := datumsToConstants(c["Args"])
 		types.SetBinChsClnFlag(exprs[0].GetType(ctx))
 		types.SetBinChsClnFlag(exprs[1].GetType(ctx))
-		f, err := instr.getFunction(ctx, exprs)
+		f, err := instr.getFunction(ctx, cc, exprs)
 		require.NoError(t, err)
 		got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1144,14 +1149,14 @@ func TestTrim(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Trim].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Trim].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 
-	_, err = funcs[ast.Trim].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	_, err = funcs[ast.Trim].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 
-	_, err = funcs[ast.Trim].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	_, err = funcs[ast.Trim].getFunction(ctx, cc, []Expression{NewZero(), NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1192,8 +1197,8 @@ func TestLTrim(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.LTrim].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.LTrim].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1232,8 +1237,8 @@ func TestRTrim(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.RTrim].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.RTrim].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1301,11 +1306,11 @@ func TestHexFunc(t *testing.T) {
 			require.Equal(t, c.res, d.GetString())
 		}
 	}
-
-	_, err := funcs[ast.Hex].getFunction(ctx, []Expression{getInt8Con()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Hex].getFunction(ctx, cc, []Expression{getInt8Con()})
 	require.NoError(t, err)
 
-	_, err = funcs[ast.Hex].getFunction(ctx, []Expression{getVarcharCon()})
+	_, err = funcs[ast.Hex].getFunction(ctx, cc, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 }
 
@@ -1344,8 +1349,8 @@ func TestUnhexFunc(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.Unhex].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Unhex].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1385,8 +1390,8 @@ func TestBitLength(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.BitLength].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.BitLength].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1411,9 +1416,10 @@ func TestChar(t *testing.T) {
 		{"1234567", 1234567, 1234567, "gbk", "\u0012謬\u0012謬\u0012謬", 0}, // test char for gbk
 		{"123456789", 123456789, 123456789, "gbk", nil, 1},               // invalid 123456789 in gbk
 	}
+	cc := make(CloneContext, 2)
 	run := func(i int, result any, warnCnt int, dts ...any) {
 		fc := funcs[ast.CharFunc]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(dts...)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(dts...)))
 		require.NoError(t, err, i)
 		require.NotNil(t, f, i)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1448,9 +1454,10 @@ func TestCharLength(t *testing.T) {
 		{3.14, 4},  // float
 		{nil, nil}, // nil
 	}
+	cc := make(CloneContext, 2)
 	for _, v := range tbl {
 		fc := funcs[ast.CharLength]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.input)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(v.input)))
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1477,7 +1484,7 @@ func TestCharLength(t *testing.T) {
 		tp.SetCollate(charset.CollationBin)
 		tp.SetFlen(types.UnspecifiedLength)
 		tp.SetFlag(mysql.BinaryFlag)
-		f, err := fc.getFunction(ctx, arg)
+		f, err := fc.getFunction(ctx, cc, arg)
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1487,6 +1494,7 @@ func TestCharLength(t *testing.T) {
 
 func TestFindInSet(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	for _, c := range []struct {
 		str    any
 		strlst any
@@ -1505,7 +1513,7 @@ func TestFindInSet(t *testing.T) {
 		{nil, "bar", nil},
 	} {
 		fc := funcs[ast.FindInSet]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.str, c.strlst)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(c.str, c.strlst)))
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1537,9 +1545,10 @@ func TestField(t *testing.T) {
 		{[]any{1.10, 0, 11e-1}, int64(2)},
 		{[]any{"abc", 0, 1, 11.1, 1.1}, int64(1)},
 	}
+	cc := make(CloneContext, 2)
 	for _, c := range tbl {
 		fc := funcs[ast.Field]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.argLst...)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(c.argLst...)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1570,11 +1579,12 @@ func TestLpad(t *testing.T) {
 		{"中文", 10, "", ""},
 	}
 	fc := funcs[ast.Lpad]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		str := types.NewStringDatum(test.str)
 		length := types.NewIntDatum(test.len)
 		padStr := types.NewStringDatum(test.padStr)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, length, padStr}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{str, length, padStr}))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1610,11 +1620,12 @@ func TestRpad(t *testing.T) {
 		{"中文", 10, "", ""},
 	}
 	fc := funcs[ast.Rpad]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		str := types.NewStringDatum(test.str)
 		length := types.NewIntDatum(test.len)
 		padStr := types.NewStringDatum(test.padStr)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, length, padStr}))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{str, length, padStr}))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1799,9 +1810,10 @@ func TestInstr(t *testing.T) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
+	cc := make(CloneContext, 2)
 	instr := funcs[ast.Instr]
 	for i, c := range Dtbl {
-		f, err := instr.getFunction(ctx, datumsToConstants(c["Args"]))
+		f, err := instr.getFunction(ctx, cc, datumsToConstants(c["Args"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1838,7 +1850,8 @@ func TestLoadFile(t *testing.T) {
 			}
 		}
 	}
-	_, err := funcs[ast.LoadFile].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.LoadFile].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -1856,10 +1869,10 @@ func TestMakeSet(t *testing.T) {
 		{[]any{-100 | 4, "hello", "nice", "abc", "world"}, "abc,world"},
 		{[]any{-1, "hello", "nice", "abc", "world"}, "hello,nice,abc,world"},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, c := range tbl {
 		fc := funcs[ast.MakeSet]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.argList...)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(c.argList...)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1870,6 +1883,7 @@ func TestMakeSet(t *testing.T) {
 
 func TestOct(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	octTests := []struct {
 		origin any
 		ret    string
@@ -1901,7 +1915,7 @@ func TestOct(t *testing.T) {
 	fc := funcs[ast.Oct]
 	for _, tt := range octTests {
 		in := types.NewDatum(tt.origin)
-		f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
+		f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{in}))
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -1911,7 +1925,7 @@ func TestOct(t *testing.T) {
 	}
 	// tt NULL input for sha
 	var argNull types.Datum
-	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
@@ -1919,6 +1933,7 @@ func TestOct(t *testing.T) {
 
 func TestFormat(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	formatTests := []struct {
 		number    any
 		precision any
@@ -1990,7 +2005,7 @@ func TestFormat(t *testing.T) {
 
 	fc := funcs[ast.Format]
 	for _, tt := range formatTests {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -2001,7 +2016,7 @@ func TestFormat(t *testing.T) {
 	origTypeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(origTypeFlags.WithTruncateAsWarning(true))
 	for _, tt := range formatTests1 {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -2018,21 +2033,21 @@ func TestFormat(t *testing.T) {
 	}
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(origTypeFlags)
 
-	f2, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
+	f2, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	require.NoError(t, err)
 	require.NotNil(t, f2)
 	r2, err := evalBuiltinFunc(f2, ctx, chunk.Row{})
 	testutil.DatumEqual(t, types.NewDatum(errors.New("not implemented")), types.NewDatum(err))
 	testutil.DatumEqual(t, types.NewDatum(formatTests2.ret), r2)
 
-	f3, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
+	f3, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
 	require.NoError(t, err)
 	require.NotNil(t, f3)
 	r3, err := evalBuiltinFunc(f3, ctx, chunk.Row{})
 	testutil.DatumEqual(t, types.NewDatum(errors.New("not support for the specific locale")), types.NewDatum(err))
 	testutil.DatumEqual(t, types.NewDatum(formatTests3.ret), r3)
 
-	f4, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests4.number, formatTests4.precision, formatTests4.locale)))
+	f4, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(formatTests4.number, formatTests4.precision, formatTests4.locale)))
 	require.NoError(t, err)
 	require.NotNil(t, f4)
 	r4, err := evalBuiltinFunc(f4, ctx, chunk.Row{})
@@ -2048,6 +2063,7 @@ func TestFormat(t *testing.T) {
 
 func TestFromBase64(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tests := []struct {
 		args   any
 		expect any
@@ -2077,7 +2093,7 @@ func TestFromBase64(t *testing.T) {
 	}
 	fc := funcs[ast.FromBase64]
 	for _, test := range tests {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(test.args)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(test.args)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -2177,8 +2193,9 @@ func TestInsert(t *testing.T) {
 		{[]any{"我叫小雨呀", -1, 2, nil}, nil},
 	}
 	fc := funcs[ast.InsertFunc]
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(test.args...)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(test.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -2236,12 +2253,14 @@ func TestOrd(t *testing.T) {
 			}
 		}
 	}
-	_, err := funcs[ast.Ord].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.Ord].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
 func TestElt(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tbl := []struct {
 		argLst []any
 		ret    any
@@ -2255,7 +2274,7 @@ func TestElt(t *testing.T) {
 	}
 	for _, c := range tbl {
 		fc := funcs[ast.Elt]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.argLst...)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(c.argLst...)))
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -2265,6 +2284,7 @@ func TestElt(t *testing.T) {
 
 func TestExportSet(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	estd := []struct {
 		argLst []any
 		res    string
@@ -2282,7 +2302,7 @@ func TestExportSet(t *testing.T) {
 	}
 	fc := funcs[ast.ExportSet]
 	for _, c := range estd {
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.argLst...)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(c.argLst...)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		exportSetRes, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -2313,10 +2333,11 @@ func TestBin(t *testing.T) {
 	fc := funcs[ast.Bin]
 	dtbl := tblToDtbl(tbl)
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithIgnoreTruncateErr(true))
 	for _, c := range dtbl {
-		f, err := fc.getFunction(ctx, datumsToConstants(c["Input"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -2342,10 +2363,10 @@ func TestQuote(t *testing.T) {
 		{string([]byte{0, 26}), `'\0\Z'`},
 		{nil, "NULL"},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, c := range tbl {
 		fc := funcs[ast.Quote]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.arg)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(c.arg)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -2419,8 +2440,8 @@ func TestToBase64(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.ToBase64].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.ToBase64].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -2531,11 +2552,11 @@ func TestStringRight(t *testing.T) {
 		{"", 2, ""},
 		{nil, 2, nil},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		str := types.NewDatum(test.str)
 		length := types.NewDatum(test.length)
-		f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, length}))
+		f, _ := fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{str, length}))
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		if result.IsNull() {
@@ -2583,17 +2604,17 @@ func TestWeightString(t *testing.T) {
 		{"中", "BINARY", 3, "中"},
 		{"中", "BINARY", 5, "中\x00\x00"},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, test := range tests {
 		str := types.NewDatum(test.expr)
 		var f builtinFunc
 		var err error
 		if test.padding == "NONE" {
-			f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str}))
+			f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{str}))
 		} else {
 			padding := types.NewDatum(test.padding)
 			length := types.NewDatum(test.length)
-			f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str, padding, length}))
+			f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{str, padding, length}))
 		}
 		require.NoError(t, err)
 
@@ -2681,7 +2702,7 @@ func TestCIWeightString(t *testing.T) {
 		length  int
 		expect  any
 	}
-
+	cc := make(CloneContext, 2)
 	checkResult := func(collation string, tests []weightStringTest) {
 		fc := funcs[ast.WeightString]
 		for _, test := range tests {
@@ -2689,11 +2710,11 @@ func TestCIWeightString(t *testing.T) {
 			var f builtinFunc
 			var err error
 			if test.padding == "NONE" {
-				f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str}))
+				f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{str}))
 			} else {
 				padding := types.NewDatum(test.padding)
 				length := types.NewDatum(test.length)
-				f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str, padding, length}))
+				f, err = fc.getFunction(ctx, cc, datumsToConstants([]types.Datum{str, padding, length}))
 			}
 			require.NoError(t, err)
 			result, err := evalBuiltinFunc(f, ctx, chunk.Row{})

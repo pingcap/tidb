@@ -38,6 +38,7 @@ func TestNewValuesFunc(t *testing.T) {
 
 func TestEvaluateExprWithNull(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).add("col1", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
@@ -48,20 +49,21 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	outerIfNull, err := newFunctionForTest(ctx, ast.Ifnull, col0, innerIfNull)
 	require.NoError(t, err)
 
-	res, err := EvaluateExprWithNull(ctx, schema, outerIfNull, true)
+	res, err := EvaluateExprWithNull(ctx, cc, schema, outerIfNull, true)
 	require.Nil(t, err)
 	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx, errors.RedactLogDisable))
 	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(ctx, errors.RedactLogEnable))
 	require.Equal(t, "ifnull(Column#1, ‹1›)", res.StringWithCtx(ctx, errors.RedactLogMarker))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
-	res, err = EvaluateExprWithNull(ctx, schema, outerIfNull, true)
+	res, err = EvaluateExprWithNull(ctx, cc, schema, outerIfNull, true)
 	require.Nil(t, err)
 	require.True(t, res.Equal(ctx, NewOne()))
 }
 
 func TestEvaluateExprWithNullMeetError(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).add("col1", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
@@ -75,15 +77,16 @@ func TestEvaluateExprWithNullMeetError(t *testing.T) {
 	require.NoError(t, err)
 
 	// the inner function has an error
-	_, err = EvaluateExprWithNull(ctx, schema, outerIfNull, true)
+	_, err = EvaluateExprWithNull(ctx, cc, schema, outerIfNull, true)
 	require.NotNil(t, err)
 	// check in NullRejectCheck ctx
-	_, err = EvaluateExprWithNull(ctx.GetNullRejectCheckExprCtx(), schema, outerIfNull, true)
+	_, err = EvaluateExprWithNull(ctx.GetNullRejectCheckExprCtx(), cc, schema, outerIfNull, true)
 	require.NotNil(t, err)
 }
 
 func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
@@ -93,7 +96,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
 	require.NoError(t, err)
-	res, err := EvaluateExprWithNull(ctx, schema, ltWithoutParam, true)
+	res, err := EvaluateExprWithNull(ctx, cc, schema, ltWithoutParam, true)
 	require.Nil(t, err)
 	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
 	param := NewOne()
@@ -101,7 +104,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
-	res, err = EvaluateExprWithNull(ctx, schema, ltWithParam, true)
+	res, err = EvaluateExprWithNull(ctx, cc, schema, ltWithParam, true)
 	require.Nil(t, err)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
@@ -110,10 +113,11 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	tblInfo := newTestTableBuilder("").add("col_str", mysql.TypeString, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 
-	castStrAsJSON := BuildCastFunction(ctx, schema.Columns[0], types.NewFieldType(mysql.TypeJSON))
+	castStrAsJSON := BuildCastFunction(ctx, cc, schema.Columns[0], types.NewFieldType(mysql.TypeJSON))
 	jsonConstant := &Constant{Value: types.NewDatum("123"), RetType: types.NewFieldType(mysql.TypeJSON)}
 
 	// initially has ParseToJSONFlag
@@ -127,7 +131,7 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 
 	// after EvaluateExprWithNull, this flag should be still false
-	EvaluateExprWithNull(ctx, schema, eq, true)
+	EvaluateExprWithNull(ctx, cc, schema, eq, true)
 	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()
 	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 }
@@ -158,31 +162,33 @@ func TestIsBinaryLiteral(t *testing.T) {
 }
 
 func TestConstLevel(t *testing.T) {
+	cc := make(CloneContext, 2)
 	ctxConst := NewZero()
-	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
+	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp, cc)
 	ctx := exprstatic.NewEvalContext()
 	for _, c := range []struct {
 		exp   Expression
 		level ConstLevel
 	}{
-		{newFunctionWithMockCtx(ast.Rand), ConstNone},
-		{newFunctionWithMockCtx(ast.UUID), ConstNone},
-		{newFunctionWithMockCtx(ast.GetParam, NewOne()), ConstNone},
-		{newFunctionWithMockCtx(ast.Abs, NewOne()), ConstStrict},
-		{newFunctionWithMockCtx(ast.Abs, newColumn(1)), ConstNone},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), NewOne()), ConstStrict},
-		{newFunctionWithMockCtx(ast.Plus, newColumn(1), NewOne()), ConstNone},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
+		{newFunctionWithMockCtx(ast.Rand, cc), ConstNone},
+		{newFunctionWithMockCtx(ast.UUID, cc), ConstNone},
+		{newFunctionWithMockCtx(ast.GetParam, cc, NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Abs, cc, NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Abs, cc, newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, cc, NewOne(), NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Plus, cc, newColumn(1), NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, cc, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, cc, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, cc, NewOne(), ctxConst), ConstOnlyInContext},
 	} {
 		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 }
 
 func TestVectorizable(t *testing.T) {
+	cc := make(CloneContext, 2)
 	exprs := make([]Expression, 0, 4)
-	sf := newFunctionWithMockCtx(ast.Rand)
+	sf := newFunctionWithMockCtx(ast.Rand, cc)
 	column := &Column{
 		UniqueID: 0,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -206,21 +212,21 @@ func TestVectorizable(t *testing.T) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
 	exprs = exprs[:0]
-	sf = newFunctionWithMockCtx(ast.SetVar, column0, column1)
+	sf = newFunctionWithMockCtx(ast.SetVar, cc, column0, column1)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 
 	exprs = exprs[:0]
-	sf = newFunctionWithMockCtx(ast.GetVar, column0)
+	sf = newFunctionWithMockCtx(ast.GetVar, cc, column0)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 
 	exprs = exprs[:0]
-	sf = newFunctionWithMockCtx(ast.NextVal, column0)
+	sf = newFunctionWithMockCtx(ast.NextVal, cc, column0)
 	exprs = append(exprs, sf)
-	sf = newFunctionWithMockCtx(ast.LastVal, column0)
+	sf = newFunctionWithMockCtx(ast.LastVal, cc, column0)
 	exprs = append(exprs, sf)
-	sf = newFunctionWithMockCtx(ast.SetVal, column1, column2)
+	sf = newFunctionWithMockCtx(ast.SetVal, cc, column1, column2)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 }

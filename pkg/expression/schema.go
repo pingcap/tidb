@@ -26,10 +26,10 @@ import (
 type KeyInfo []*Column
 
 // Clone copies the entire UniqueKey.
-func (ki KeyInfo) Clone() KeyInfo {
+func (ki KeyInfo) Clone(cc CloneContext) KeyInfo {
 	result := make([]*Column, 0, len(ki))
 	for _, col := range ki {
-		result = append(result, col.Clone().(*Column))
+		result = append(result, col.Clone(cc).(*Column))
 	}
 	return result
 }
@@ -72,24 +72,24 @@ func (s *Schema) String() string {
 }
 
 // Clone copies the total schema.
-func (s *Schema) Clone() *Schema {
+func (s *Schema) Clone(cc CloneContext) *Schema {
 	if s == nil {
 		return nil
 	}
 	cols := make([]*Column, 0, s.Len())
 	keys := make([]KeyInfo, 0, len(s.PKOrUK))
 	for _, col := range s.Columns {
-		cols = append(cols, col.Clone().(*Column))
+		cols = append(cols, col.Clone(cc).(*Column))
 	}
 	for _, key := range s.PKOrUK {
-		keys = append(keys, key.Clone())
+		keys = append(keys, key.Clone(cc))
 	}
 	schema := NewSchema(cols...)
 	schema.SetKeys(keys)
 	if s.NullableUK != nil {
 		uniqueKeys := make([]KeyInfo, 0, len(s.NullableUK))
 		for _, key := range s.NullableUK {
-			uniqueKeys = append(uniqueKeys, key.Clone())
+			uniqueKeys = append(uniqueKeys, key.Clone(cc))
 		}
 		schema.SetUniqueKeys(uniqueKeys)
 	}
@@ -303,17 +303,18 @@ func (s *Schema) GetExtraHandleColumn() *Column {
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.
 // That will be processed in build_key_info.go.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
+	var cc CloneContext = nil
 	if lSchema == nil && rSchema == nil {
 		return nil
 	}
 	if lSchema == nil {
-		return rSchema.Clone()
+		return rSchema.Clone(cc)
 	}
 	if rSchema == nil {
-		return lSchema.Clone()
+		return lSchema.Clone(cc)
 	}
-	tmpL := lSchema.Clone()
-	tmpR := rSchema.Clone()
+	tmpL := lSchema.Clone(cc)
+	tmpR := rSchema.Clone(cc)
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
 	return ret
 }

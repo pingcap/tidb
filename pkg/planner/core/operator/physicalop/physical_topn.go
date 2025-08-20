@@ -67,8 +67,9 @@ func (p *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error)
 	}
 	cloned.PhysicalSchemaProducer = *base
 	cloned.ByItems = make([]*util.ByItems, 0, len(p.ByItems))
+	cc := make(expression.CloneContext, 2)
 	for _, it := range p.ByItems {
-		cloned.ByItems = append(cloned.ByItems, it.Clone())
+		cloned.ByItems = append(cloned.ByItems, it.Clone(cc))
 	}
 	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
 	for _, it := range p.PartitionBy {
@@ -184,11 +185,12 @@ func (p *PhysicalTopN) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*
 		Limit: p.Count,
 	}
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+	cc := make(expression.CloneContext, 2)
 	for _, item := range p.ByItems {
 		topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(evalCtx, client, item.Expr, item.Desc))
 	}
 	for _, item := range p.PartitionBy {
-		topNExec.PartitionBy = append(topNExec.PartitionBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(), item.Desc))
+		topNExec.PartitionBy = append(topNExec.PartitionBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(cc), item.Desc))
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {

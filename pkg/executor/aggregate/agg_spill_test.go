@@ -203,38 +203,39 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	groupItems := []expression.Expression{childCols[0]}
 
 	var err error
+	cc := make(expression.CloneContext, 2)
 	var aggFirstRow *aggregation.AggFuncDesc
 	var aggSum *aggregation.AggFuncDesc
 	var aggCount *aggregation.AggFuncDesc
 	var aggAvg *aggregation.AggFuncDesc
 	var aggMin *aggregation.AggFuncDesc
 	var aggMax *aggregation.AggFuncDesc
-	aggFirstRow, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
+	aggFirstRow, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	aggSum, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
+	aggSum, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), cc, ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	aggCount, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{childCols[1]}, false)
+	aggCount, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), cc, ast.AggFuncCount, []expression.Expression{childCols[1]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	aggAvg, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncAvg, []expression.Expression{childCols[1]}, false)
+	aggAvg, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), cc, ast.AggFuncAvg, []expression.Expression{childCols[1]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	aggMin, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncMin, []expression.Expression{childCols[1]}, false)
+	aggMin, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), cc, ast.AggFuncMin, []expression.Expression{childCols[1]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	aggMax, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncMax, []expression.Expression{childCols[1]}, false)
+	aggMax, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), cc, ast.AggFuncMax, []expression.Expression{childCols[1]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

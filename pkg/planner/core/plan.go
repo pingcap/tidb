@@ -189,12 +189,13 @@ func optimizeByShuffle4MergeJoin(pp *physicalop.PhysicalMergeJoin, ctx base.Plan
 	}
 
 	leftByItemArray := make([]expression.Expression, 0, len(pp.LeftJoinKeys))
+	cc := make(expression.CloneContext, 2)
 	for _, col := range pp.LeftJoinKeys {
-		leftByItemArray = append(leftByItemArray, col.Clone())
+		leftByItemArray = append(leftByItemArray, col.Clone(cc))
 	}
 	rightByItemArray := make([]expression.Expression, 0, len(pp.RightJoinKeys))
 	for _, col := range pp.RightJoinKeys {
-		rightByItemArray = append(rightByItemArray, col.Clone())
+		rightByItemArray = append(rightByItemArray, col.Clone(cc))
 	}
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := physicalop.PhysicalShuffle{

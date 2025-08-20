@@ -80,11 +80,12 @@ func (p *mockVecPlusIntBuiltinFunc) vecEvalInt(ctx EvalContext, input *chunk.Chu
 
 func genMockVecPlusIntBuiltinFunc(ctx BuildContext) (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *chunk.Column) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
+	cc := make(CloneContext, 2)
 	col1 := newColumn(0)
 	col1.Index, col1.RetType = 0, tp
 	col2 := newColumn(1)
 	col2.Index, col2.RetType = 1, tp
-	bf, err := newBaseBuiltinFuncWithTp(ctx, "", []Expression{col1, col2}, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, "", []Expression{col1, col2}, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		panic(err)
 	}
@@ -431,11 +432,12 @@ func convertETType(eType types.EvalType) (mysqlType byte) {
 
 func genMockRowDouble(ctx BuildContext, eType types.EvalType, enableVec bool) (builtinFunc, *chunk.Chunk, *chunk.Column, error) {
 	mysqlType := convertETType(eType)
+	cc := make(CloneContext, 2)
 	tp := types.NewFieldType(mysqlType)
 	col1 := newColumn(1)
 	col1.Index = 0
 	col1.RetType = tp
-	bf, err := newBaseBuiltinFuncWithTp(ctx, "", []Expression{col1}, eType, eType)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, cc, "", []Expression{col1}, eType, eType)
 	if err != nil {
 		return nil, nil, nil, err
 	}

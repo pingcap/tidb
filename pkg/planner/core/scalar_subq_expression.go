@@ -157,9 +157,9 @@ func (s *ScalarSubQueryExpr) GetType(_ expression.EvalContext) *types.FieldType 
 }
 
 // Clone copies an expression totally.
-func (s *ScalarSubQueryExpr) Clone() expression.Expression {
+func (s *ScalarSubQueryExpr) Clone(cc expression.CloneContext) expression.Expression {
 	ret := *s
-	ret.RetType = s.RetType.Clone()
+	ret.RetType = cc.Clone(s.RetType)
 	return &ret
 }
 
@@ -196,12 +196,12 @@ func (*ScalarSubQueryExpr) resolveIndices(*expression.Schema) error {
 }
 
 // ResolveIndices implements the Expression interface.
-func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Expression, error) {
+func (s *ScalarSubQueryExpr) ResolveIndices(expression.CloneContext, *expression.Schema) (expression.Expression, error) {
 	return s, nil
 }
 
 // ResolveIndicesByVirtualExpr implements the Expression interface.
-func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ expression.EvalContext, _ *expression.Schema) (expression.Expression, bool) {
+func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(expression.EvalContext, expression.CloneContext, *expression.Schema) (expression.Expression, bool) {
 	return s, false
 }
 

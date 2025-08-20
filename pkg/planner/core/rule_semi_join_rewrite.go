@@ -106,9 +106,10 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	}.Init(p.SCtx(), p.Children()[1].QueryBlockOffset())
 
 	aggOutputCols := make([]*expression.Column, 0, len(join.EqualConditions))
+	cc := make(expression.CloneContext, 4)
 	for i := range join.EqualConditions {
 		innerCol := join.EqualConditions[i].GetArgs()[1].(*expression.Column)
-		firstRow, err := aggregation.NewAggFuncDesc(join.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(join.SCtx().GetExprCtx(), cc, ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
 		if err != nil {
 			return nil, err
 		}

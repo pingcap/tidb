@@ -85,6 +85,7 @@ func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalU
 	if !un.Mpp {
 		return un
 	}
+	cc := make(expression.CloneContext, 2)
 	for i, ch := range un.Children() {
 		exprs := make([]expression.Expression, len(ch.Schema().Columns))
 		needChange := false
@@ -94,7 +95,7 @@ func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalU
 			srcCol.Index = i
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.GetFlag()) == mysql.HasNotNullFlag(srcType.GetFlag())) {
-				exprs[i] = expression.BuildCastFunction4Union(un.SCtx().GetExprCtx(), srcCol, dstType)
+				exprs[i] = expression.BuildCastFunction4Union(un.SCtx().GetExprCtx(), cc, srcCol, dstType)
 				needChange = true
 			} else {
 				exprs[i] = srcCol
@@ -104,7 +105,7 @@ func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalU
 			proj := physicalop.PhysicalProjection{
 				Exprs: exprs,
 			}.Init(un.SCtx(), ch.StatsInfo(), 0)
-			proj.SetSchema(un.Schema().Clone())
+			proj.SetSchema(un.Schema().Clone(cc))
 			proj.SetChildren(ch)
 			un.Children()[i] = proj
 		}
@@ -119,7 +120,8 @@ func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalU
 func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) base.PhysicalPlan {
 	hasScalarFunc := false
 	exprCtx := aggPlan.SCtx().GetExprCtx()
-	coreusage.WrapCastForAggFuncs(exprCtx, aggFuncs)
+	cc := make(expression.CloneContext, 2)
+	coreusage.WrapCastForAggFuncs(exprCtx, cc, aggFuncs)
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
@@ -226,6 +228,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 // redundant columns.
 func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base.PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
+	cc := make(expression.CloneContext, 4)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
 		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
 		hasScalarFunc = hasScalarFunc || isScalarFunc
@@ -236,21 +239,21 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 
 	topProjExprs := make([]expression.Expression, 0, p.Schema().Len())
 	for i := range p.Schema().Columns {
-		col := p.Schema().Columns[i].Clone().(*expression.Column)
+		col := p.Schema().Columns[i].Clone(cc).(*expression.Column)
 		col.Index = i
 		topProjExprs = append(topProjExprs, col)
 	}
 	topProj := physicalop.PhysicalProjection{
 		Exprs: topProjExprs,
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
-	topProj.SetSchema(p.Schema().Clone())
+	topProj.SetSchema(p.Schema().Clone(cc))
 	topProj.SetChildren(p)
 
 	childPlan := p.Children()[0]
 	bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	for _, col := range childPlan.Schema().Columns {
-		newCol := col.Clone().(*expression.Column)
+		newCol := col.Clone(cc).(*expression.Column)
 		newCol.Index = childPlan.Schema().ColumnIndex(newCol)
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
 		bottomProjExprs = append(bottomProjExprs, newCol)
@@ -296,11 +299,11 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 
 	numOrderByItems := len(orderByItems)
 	childPlan := p.Children()[0]
-
+	cc := make(expression.CloneContext, 4)
 	bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	for _, col := range childPlan.Schema().Columns {
-		newCol := col.Clone().(*expression.Column)
+		newCol := col.Clone(cc).(*expression.Column)
 		newCol.Index = childPlan.Schema().ColumnIndex(newCol)
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
 		bottomProjExprs = append(bottomProjExprs, newCol)
@@ -329,14 +332,14 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 
 	topProjExprs := make([]expression.Expression, 0, childPlan.Schema().Len())
 	for i := range childPlan.Schema().Columns {
-		col := childPlan.Schema().Columns[i].Clone().(*expression.Column)
+		col := childPlan.Schema().Columns[i].Clone(cc).(*expression.Column)
 		col.Index = i
 		topProjExprs = append(topProjExprs, col)
 	}
 	topProj := physicalop.PhysicalProjection{
 		Exprs: topProjExprs,
 	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
-	topProj.SetSchema(childPlan.Schema().Clone())
+	topProj.SetSchema(childPlan.Schema().Clone(cc))
 	topProj.SetChildren(bottomProj)
 
 	if origChildProj, isChildProj := childPlan.(*physicalop.PhysicalProjection); isChildProj {

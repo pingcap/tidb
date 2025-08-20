@@ -157,9 +157,10 @@ func TestVectorizedBuiltinCastFunc(t *testing.T) {
 }
 
 func TestVectorizedCastRealAsTime(t *testing.T) {
+	cc := make(CloneContext, 2)
 	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
 	ctx := createContext(t)
-	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeDatetime))
+	baseFunc, err := newBaseBuiltinFunc(ctx, cc, "", []Expression{col}, types.NewFieldType(mysql.TypeDatetime))
 	if err != nil {
 		panic(err)
 	}
@@ -247,7 +248,8 @@ func genCastRealAsTime() (*chunk.Chunk, []*types.Time) {
 func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
 	ctx := mock.NewContext()
-	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
+	cc := make(CloneContext, 2)
+	baseFunc, err := newBaseBuiltinFunc(ctx, cc, "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	if err != nil {
 		panic(err)
 	}

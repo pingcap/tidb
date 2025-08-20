@@ -54,7 +54,7 @@ func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema,
 	}
 	return &TableSampleInfo{
 		AstNode:    node,
-		FullSchema: fullSchema.Clone(),
+		FullSchema: fullSchema.Clone(nil),
 		Partitions: pt,
 	}
 }

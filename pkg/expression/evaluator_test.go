@@ -101,6 +101,7 @@ func primitiveValsToConstants(ctx BuildContext, args []any) []Expression {
 
 func TestSleep(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	sessVars := ctx.GetSessionVars()
 
 	fc := funcs[ast.Sleep]
@@ -110,7 +111,7 @@ func TestSleep(t *testing.T) {
 	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 	sessVars.StmtCtx.SetErrLevels(levels)
 	d := make([]types.Datum, 1)
-	f, err := fc.getFunction(ctx, datumsToConstants(d))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(d))
 	require.NoError(t, err)
 	res, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -118,7 +119,7 @@ func TestSleep(t *testing.T) {
 	require.Equal(t, types.KindInt64, res.Kind())
 	require.Equal(t, int64(0), res.GetInt64())
 	d[0].SetInt64(-1)
-	f, err = fc.getFunction(ctx, datumsToConstants(d))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants(d))
 	require.NoError(t, err)
 	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -131,13 +132,13 @@ func TestSleep(t *testing.T) {
 	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
 	sessVars.StmtCtx.SetErrLevels(levels)
 	d[0].SetNull()
-	_, err = fc.getFunction(ctx, datumsToConstants(d))
+	_, err = fc.getFunction(ctx, cc, datumsToConstants(d))
 	require.NoError(t, err)
 	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
 	require.False(t, res.IsNull())
 	d[0].SetFloat64(-2.5)
-	_, err = fc.getFunction(ctx, datumsToConstants(d))
+	_, err = fc.getFunction(ctx, cc, datumsToConstants(d))
 	require.NoError(t, err)
 	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
@@ -146,7 +147,7 @@ func TestSleep(t *testing.T) {
 	// strict model
 	d[0].SetFloat64(0.5)
 	start := time.Now()
-	f, err = fc.getFunction(ctx, datumsToConstants(d))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants(d))
 	require.NoError(t, err)
 	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -156,7 +157,7 @@ func TestSleep(t *testing.T) {
 	sub := time.Since(start)
 	require.GreaterOrEqual(t, sub.Nanoseconds(), int64(0.5*1e9))
 	d[0].SetFloat64(3)
-	f, err = fc.getFunction(ctx, datumsToConstants(d))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants(d))
 	require.NoError(t, err)
 	start = time.Now()
 	go func() {
@@ -211,9 +212,10 @@ func TestBinopComparison(t *testing.T) {
 		{1, ast.LE, 1, 1},
 	}
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -244,7 +246,7 @@ func TestBinopComparison(t *testing.T) {
 
 	for _, tt := range nilTbl {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -276,9 +278,10 @@ func TestBinopLogic(t *testing.T) {
 		{0, ast.LogicXor, 1, 1},
 	}
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -312,9 +315,10 @@ func TestBinopBitop(t *testing.T) {
 	}
 
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -406,9 +410,10 @@ func TestBinopNumeric(t *testing.T) {
 	}
 
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -454,7 +459,7 @@ func TestBinopNumeric(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.SetErrLevels(levels)
 	for _, tt := range testcases {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
 		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.Error(t, err)
@@ -464,7 +469,7 @@ func TestBinopNumeric(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.SetErrLevels(levels)
 	for _, tt := range testcases {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -500,9 +505,10 @@ func TestExtract(t *testing.T) {
 		{"DAY_HOUR", 1110},
 		{"YEAR_MONTH", 201111},
 	}
+	cc := make(CloneContext, 2)
 	for _, tt := range tbl {
 		fc := funcs[ast.Extract]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Unit, str)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.Unit, str)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -511,7 +517,7 @@ func TestExtract(t *testing.T) {
 
 	// Test nil
 	fc := funcs[ast.Extract]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("SECOND", nil)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums("SECOND", nil)))
 	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -552,9 +558,10 @@ func TestUnaryOp(t *testing.T) {
 		{types.Enum{Name: "a", Value: 1}, ast.UnaryMinus, -1.0},
 		{types.Set{Name: "a", Value: 1}, ast.UnaryMinus, -1.0},
 	}
+	cc := make(CloneContext, 2)
 	for i, tt := range tbl {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.arg)))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -577,7 +584,7 @@ func TestUnaryOp(t *testing.T) {
 
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tt.arg)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -592,18 +599,19 @@ func TestUnaryOp(t *testing.T) {
 
 func TestMod(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.Mod]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(234, 10)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(234, 10)))
 	require.NoError(t, err)
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.NewIntDatum(4), r)
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(29, 9)))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(29, 9)))
 	require.NoError(t, err)
 	r, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.NewIntDatum(2), r)
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(34.5, 3)))
+	f, err = fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(34.5, 3)))
 	require.NoError(t, err)
 	r, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -612,10 +620,10 @@ func TestMod(t *testing.T) {
 
 func TestOptionalProp(t *testing.T) {
 	ctx := createContext(t)
-
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.Plus]
 	arg1fc := funcs[ast.CurrentUser]
-	arg1f, err := arg1fc.getFunction(ctx, nil)
+	arg1f, err := arg1fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	arg1 := &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.CurrentUser),
@@ -623,7 +631,7 @@ func TestOptionalProp(t *testing.T) {
 		RetType:  arg1f.getRetTp(),
 	}
 	arg2fc := funcs[ast.TiDBIsDDLOwner]
-	arg2f, err := arg2fc.getFunction(ctx, nil)
+	arg2f, err := arg2fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	arg2 := &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.TiDBIsDDLOwner),
@@ -631,7 +639,7 @@ func TestOptionalProp(t *testing.T) {
 		RetType:  arg2f.getRetTp(),
 	}
 
-	f, err := fc.getFunction(ctx, []Expression{arg1, arg2})
+	f, err := fc.getFunction(ctx, cc, []Expression{arg1, arg2})
 	require.NoError(t, err)
 	fe := &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.Plus),
@@ -640,7 +648,7 @@ func TestOptionalProp(t *testing.T) {
 	}
 
 	fc2 := funcs[ast.GetLock]
-	f2, err := fc2.getFunction(ctx, datumsToConstants(types.MakeDatums("tidb_distsql_scan_concurrency", 10)))
+	f2, err := fc2.getFunction(ctx, cc, datumsToConstants(types.MakeDatums("tidb_distsql_scan_concurrency", 10)))
 	require.NoError(t, err)
 	fe2 := &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.GetLock),

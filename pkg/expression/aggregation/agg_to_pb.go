@@ -172,7 +172,7 @@ func PBAggFuncModeToAggFuncMode(pbMode *tipb.AggFunctionMode) (mode AggFunctionM
 }
 
 // PBExprToAggFuncDesc converts pb to aggregate function.
-func PBExprToAggFuncDesc(ctx expression.BuildContext, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
+func PBExprToAggFuncDesc(ctx expression.BuildContext, cc expression.CloneContext, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
 	var name string
 	switch aggFunc.Tp {
 	case tipb.ExprType_Count:
@@ -210,7 +210,7 @@ func PBExprToAggFuncDesc(ctx expression.BuildContext, aggFunc *tipb.Expr, fieldT
 		Args:  args,
 		RetTp: expression.FieldTypeFromPB(aggFunc.FieldType),
 	}
-	base.WrapCastForAggArgs(ctx)
+	base.WrapCastForAggArgs(ctx, cc)
 	return &AggFuncDesc{
 		baseFuncDesc: base,
 		Mode:         PBAggFuncModeToAggFuncMode(aggFunc.AggFuncMode),

@@ -910,10 +910,10 @@ func buildPartialPaths4MVIndex(
 			return nil, false, false, nil
 		}
 	}
-
+	cc := make(expression.CloneContext, 2)
 	for _, v := range virColVals {
 		// rewrite json functions to EQ to calculate range, `(1 member of j)` -> `j=1`.
-		eq, err := expression.NewFunction(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
+		eq, err := expression.NewFunction(sctx.GetExprCtx(), cc, ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
 		if err != nil {
 			return nil, false, false, err
 		}
@@ -998,8 +998,9 @@ func PrepareIdxColsAndUnwrapArrayType(
 			return nil, false
 		}
 		if col.GetStaticType().IsArray() {
+			cc := make(expression.CloneContext, 2)
 			virColNum++
-			col = col.Clone().(*expression.Column)
+			col = col.Clone(cc).(*expression.Column)
 			col.RetType = col.GetStaticType().ArrayType() // use the underlying type directly: JSON-ARRAY(INT) --> INT
 			col.RetType.SetCharset(charset.CharsetBin)
 			col.RetType.SetCollate(charset.CollationBin)

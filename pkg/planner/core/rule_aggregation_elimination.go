@@ -194,7 +194,7 @@ func ConvertAggToProj(agg *logicalop.LogicalAggregation, schema *expression.Sche
 		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
-	proj.SetSchema(schema.Clone())
+	proj.SetSchema(schema.Clone(nil))
 	return true, proj
 }
 
@@ -222,29 +222,31 @@ func rewriteCount(ctx expression.BuildContext, exprs []expression.Expression, ta
 	// If is count(distinct x, y, z), we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	// If is count(expr not null), we will change it to constant 1.
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
+	cc := make(expression.CloneContext, 4)
 	for _, expr := range exprs {
 		if mysql.HasNotNullFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag()) {
 			isNullExprs = append(isNullExprs, expression.NewZero())
 		} else {
-			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+			isNullExpr := expression.NewFunctionInternal(ctx, cc, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 			isNullExprs = append(isNullExprs, isNullExpr)
 		}
 	}
 
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
-	newExpr := expression.NewFunctionInternal(ctx, ast.If, targetTp, innerExpr, expression.NewZero(), expression.NewOne())
+	newExpr := expression.NewFunctionInternal(ctx, cc, ast.If, targetTp, innerExpr, expression.NewZero(), expression.NewOne())
 	return newExpr
 }
 
 func rewriteBitFunc(ctx expression.BuildContext, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// For not integer type. We need to cast(cast(arg as signed) as unsigned) to make the bit function work.
-	innerCast := expression.WrapWithCastAsInt(ctx, arg, nil)
+	cc := make(expression.CloneContext, 4)
+	innerCast := expression.WrapWithCastAsInt(ctx, cc, arg, nil)
 	outerCast := wrapCastFunction(ctx, innerCast, targetTp)
 	var finalExpr expression.Expression
 	if funcType != ast.AggFuncBitAnd {
-		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, targetTp, outerCast, expression.NewZero())
+		finalExpr = expression.NewFunctionInternal(ctx, cc, ast.Ifnull, targetTp, outerCast, expression.NewZero())
 	} else {
-		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, outerCast.GetType(ctx.GetEvalCtx()), outerCast, &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: targetTp})
+		finalExpr = expression.NewFunctionInternal(ctx, cc, ast.Ifnull, outerCast.GetType(ctx.GetEvalCtx()), outerCast, &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: targetTp})
 	}
 	return finalExpr
 }
@@ -254,7 +256,8 @@ func wrapCastFunction(ctx expression.BuildContext, arg expression.Expression, ta
 	if arg.GetType(ctx.GetEvalCtx()).Equal(targetTp) {
 		return arg
 	}
-	return expression.BuildCastFunction(ctx, arg, targetTp)
+	cc := make(expression.CloneContext, 4)
+	return expression.BuildCastFunction(ctx, cc, arg, targetTp)
 }
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.

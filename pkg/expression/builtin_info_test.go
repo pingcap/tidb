@@ -33,7 +33,8 @@ import (
 func TestDatabase(t *testing.T) {
 	fc := funcs[ast.Database]
 	ctx := mock.NewContext()
-	f, err := fc.getFunction(ctx, nil)
+	cc := make(CloneContext, 2)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -42,26 +43,27 @@ func TestDatabase(t *testing.T) {
 	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "test", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 
 	// Test case for schema().
 	fc = funcs[ast.Schema]
 	require.NotNil(t, fc)
-	f, err = fc.getFunction(ctx, nil)
+	f, err = fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	d, err = evalBuiltinFunc(f, ctx, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, "test", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 }
 
 func TestFoundRows(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.LastFoundRows = 2
 
 	fc := funcs[ast.FoundRows]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -71,49 +73,53 @@ func TestFoundRows(t *testing.T) {
 func TestUser(t *testing.T) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
+	cc := make(CloneContext, 2)
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 
 	fc := funcs[ast.User]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "root@localhost", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 }
 
 func TestCurrentUser(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "root@localhost", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 }
 
 func TestCurrentResourceGroup(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.ResourceGroupName = "rg1"
 
 	fc := funcs[ast.CurrentResourceGroup]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "rg1", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 }
 
 func TestCurrentRole(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.CurrentRole]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 
 	// empty roles
@@ -121,7 +127,7 @@ func TestCurrentRole(t *testing.T) {
 	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "NONE", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 
 	// add roles
 	sessionVars := ctx.GetSessionVars()
@@ -132,36 +138,39 @@ func TestCurrentRole(t *testing.T) {
 	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "`r_1`@`%`,`r_2`@`localhost`", d.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 }
 
 func TestConnectionID(t *testing.T) {
 	ctx := mock.NewContext()
+	cc := make(CloneContext, 2)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ConnectionID = uint64(1)
 
 	fc := funcs[ast.ConnectionID]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), d.GetUint64())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 }
 
 func TestVersion(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.Version]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := fc.getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, mysql.ServerVersion, v.GetString())
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 }
 
 func TestBenchMark(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	cases := []struct {
 		LoopCount  int
 		Expression any
@@ -196,15 +205,16 @@ func TestBenchMark(t *testing.T) {
 		}
 
 		// test clone
-		b1 := f.Clone().(*ScalarFunction).Function.(*builtinBenchmarkSig)
+		b1 := f.Clone(cc).(*ScalarFunction).Function.(*builtinBenchmarkSig)
 		require.Equal(t, int64(c.LoopCount), b1.constLoopCount)
 	}
 }
 
 func TestCharset(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.Charset]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
 	require.NoError(t, err)
 	require.Equal(t, 64, f.getRetTp().GetFlen())
@@ -212,16 +222,18 @@ func TestCharset(t *testing.T) {
 
 func TestCoercibility(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.Coercibility]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
 	require.NoError(t, err)
 }
 
 func TestCollation(t *testing.T) {
 	ctx := createContext(t)
+	cc := make(CloneContext, 2)
 	fc := funcs[ast.Collation]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(ctx, cc, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
 	require.NoError(t, err)
 	require.Equal(t, 64, f.getRetTp().GetFlen())
@@ -230,9 +242,10 @@ func TestCollation(t *testing.T) {
 func TestRowCount(t *testing.T) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
+	cc := make(CloneContext, 2)
 	sessionVars.StmtCtx.PrevAffectedRows = 10
 
-	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
+	f, err := funcs[ast.RowCount].getFunction(ctx, cc, nil)
 	require.NoError(t, err)
 	require.NotNil(t, f)
 	sig, ok := f.(*builtinRowCountSig)
@@ -242,7 +255,7 @@ func TestRowCount(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(10), intResult)
-	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+	require.Equal(t, f.PbCode(), f.Clone(cc).PbCode())
 }
 
 // TestTiDBVersion for tidb_server().
@@ -306,8 +319,8 @@ func TestLastInsertID(t *testing.T) {
 			}
 		}
 	}
-
-	_, err := funcs[ast.LastInsertId].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.LastInsertId].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -329,10 +342,10 @@ func TestFormatBytes(t *testing.T) {
 		{float64(-18446644073709551615), "-16.00 EiB"},
 	}
 	Dtbl := tblToDtbl(tbl)
-
+	cc := make(CloneContext, 2)
 	for _, tt := range Dtbl {
 		fc := funcs[ast.FormatBytes]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -358,10 +371,10 @@ func TestFormatNanoTime(t *testing.T) {
 		{float64(-9999999991), "-10.00 s"},
 	}
 	Dtbl := tblToDtbl(tbl)
-
+	cc := make(CloneContext, 2)
 	for _, tt := range Dtbl {
 		fc := funcs[ast.FormatNanoTime]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		f, err := fc.getFunction(ctx, cc, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)

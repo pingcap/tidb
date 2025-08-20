@@ -62,8 +62,8 @@ func TestUnary(t *testing.T) {
 			require.Error(t, err)
 		}
 	}
-
-	_, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err := funcs[ast.UnaryMinus].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -125,8 +125,8 @@ func TestLogicAnd(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.LogicAnd, NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.LogicAnd].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.LogicAnd].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -196,8 +196,8 @@ func TestRightShift(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.RightShift, NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.RightShift].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.RightShift].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -235,8 +235,8 @@ func TestBitXor(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.Xor, NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.Xor].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.Xor].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -281,8 +281,8 @@ func TestBitOr(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.Or, NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.Or].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.Or].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -348,8 +348,8 @@ func TestLogicOr(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.LogicOr, NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.LogicOr].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.LogicOr].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -387,8 +387,8 @@ func TestBitAnd(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.And, NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.And].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.And].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }
 
@@ -433,8 +433,8 @@ func TestBitNeg(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.BitNeg, NewZero(), NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.BitNeg].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.BitNeg].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -487,8 +487,8 @@ func TestUnaryNot(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.UnaryNot, NewZero(), NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.UnaryNot].getFunction(ctx, []Expression{NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.UnaryNot].getFunction(ctx, cc, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
@@ -577,9 +577,9 @@ func TestIsTrueOrFalse(t *testing.T) {
 			isFalse: 1,
 		},
 	}
-
+	cc := make(CloneContext, 2)
 	for _, tc := range testCases {
-		isTrueSig, err := funcs[ast.IsTruthWithoutNull].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		isTrueSig, err := funcs[ast.IsTruthWithoutNull].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, isTrueSig)
 
@@ -587,9 +587,8 @@ func TestIsTrueOrFalse(t *testing.T) {
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
 	}
-
 	for _, tc := range testCases {
-		isFalseSig, err := funcs[ast.IsFalsity].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		isFalseSig, err := funcs[ast.IsFalsity].getFunction(ctx, cc, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, isFalseSig)
 
@@ -658,7 +657,7 @@ func TestLogicXor(t *testing.T) {
 	// Test incorrect parameter count.
 	_, err := newFunctionForTest(ctx, ast.LogicXor, NewZero())
 	require.Error(t, err)
-
-	_, err = funcs[ast.LogicXor].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	cc := make(CloneContext, 2)
+	_, err = funcs[ast.LogicXor].getFunction(ctx, cc, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
 }

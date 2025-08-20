@@ -53,9 +53,10 @@ func (col *CorrelatedColumn) SafeToShareAcrossSession() bool {
 }
 
 // Clone implements Expression interface.
-func (col *CorrelatedColumn) Clone() Expression {
+func (col *CorrelatedColumn) Clone(cc CloneContext) Expression {
+	nc := col.Column.Clone(cc).(*Column)
 	return &CorrelatedColumn{
-		Column: col.Column,
+		Column: *nc,
 		Data:   col.Data,
 	}
 }
@@ -211,7 +212,7 @@ func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ *Schema) (Expression, error) {
+func (col *CorrelatedColumn) ResolveIndices(CloneContext, *Schema) (Expression, error) {
 	return col, nil
 }
 
@@ -220,7 +221,7 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ EvalContext, _ *Schema) (Expression, bool) {
+func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(EvalContext, CloneContext, *Schema) (Expression, bool) {
 	return col, true
 }
 
@@ -635,11 +636,12 @@ func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.Vect
 }
 
 // Clone implements Expression interface.
-func (col *Column) Clone() Expression {
+func (col *Column) Clone(cc CloneContext) Expression {
 	newCol := *col
 	if col.hashcode != nil {
 		newCol.hashcode = slices.Clone(col.hashcode)
 	}
+	newCol.RetType = cc.Clone(col.RetType)
 	return &newCol
 }
 
@@ -680,8 +682,8 @@ func (col *Column) CleanHashCode() {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema *Schema) (Expression, error) {
-	newCol := col.Clone()
+func (col *Column) ResolveIndices(cc CloneContext, schema *Schema) (Expression, error) {
+	newCol := col.Clone(cc)
 	err := newCol.resolveIndices(schema)
 	return newCol, err
 }
@@ -695,8 +697,8 @@ func (col *Column) resolveIndices(schema *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (col *Column) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
-	newCol := col.Clone()
+func (col *Column) ResolveIndicesByVirtualExpr(ctx EvalContext, cc CloneContext, schema *Schema) (Expression, bool) {
+	newCol := col.Clone(cc)
 	isOk := newCol.resolveIndicesByVirtualExpr(ctx, schema)
 	return newCol, isOk
 }

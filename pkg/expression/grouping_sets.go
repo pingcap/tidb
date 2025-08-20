@@ -253,10 +253,10 @@ func (gs GroupingSet) ExtractCols() []*Column {
 }
 
 // Clone is used to clone a copy of current grouping set.
-func (gs GroupingSet) Clone() GroupingSet {
+func (gs GroupingSet) Clone(cc CloneContext) GroupingSet {
 	gc := make(GroupingSet, 0, len(gs))
 	for _, one := range gs {
-		gc = append(gc, one.Clone())
+		gc = append(gc, one.Clone(cc))
 	}
 	return gc
 }
@@ -380,10 +380,10 @@ func (g GroupingExprs) IDSet() *intset.FastIntSet {
 }
 
 // Clone is used to clone a copy of current grouping expressions.
-func (g GroupingExprs) Clone() GroupingExprs {
+func (g GroupingExprs) Clone(cc CloneContext) GroupingExprs {
 	gc := make(GroupingExprs, 0, len(g))
 	for _, one := range g {
-		gc = append(gc, one.Clone())
+		gc = append(gc, one.Clone(cc))
 	}
 	return gc
 }
@@ -543,10 +543,10 @@ func DeduplicateGbyExpression(exprs []Expression) ([]Expression, []int) {
 }
 
 // RestoreGbyExpression restore the new gby expression according to recorded idxes reference.
-func RestoreGbyExpression(exprs []*Column, idxes []int) []Expression {
+func RestoreGbyExpression(cc CloneContext, exprs []*Column, idxes []int) []Expression {
 	res := make([]Expression, 0, len(idxes))
 	for _, pos := range idxes {
-		res = append(res, exprs[pos].Clone())
+		res = append(res, exprs[pos].Clone(cc))
 	}
 	return res
 }
