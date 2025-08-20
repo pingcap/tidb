@@ -1191,7 +1191,7 @@ func wrapWithIsTrue(ctx BuildContext, cc CloneContext, keepNull bool, arg Expres
 	} else {
 		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
 	}
-	f, err := fc.getFunction(ctx, cc, []Expression{arg})
+	f, err := fc.getFunction(ctx, cc, []Expression{arg.Clone(cc)})
 	if err != nil {
 		return nil, err
 	}

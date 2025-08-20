@@ -282,7 +282,7 @@ func BuildJSONSumCrc32FunctionWithCheck(ctx BuildContext, cc CloneContext, expr 
 	}
 
 	fc := &jsonSumCRC32FunctionClass{baseFunctionClass{ast.JSONSumCrc32, 1, 1}, tp}
-	f, err := fc.getFunction(ctx, cc, []Expression{expr})
+	f, err := fc.getFunction(ctx, cc, []Expression{expr.Clone(cc)})
 	return &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.JSONSumCrc32),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),

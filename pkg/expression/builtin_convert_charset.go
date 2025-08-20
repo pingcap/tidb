@@ -254,7 +254,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 // BuildToBinaryFunction builds to_binary function.
 func BuildToBinaryFunction(ctx BuildContext, cc CloneContext, expr Expression) (res Expression) {
 	fc := &tidbToBinaryFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}}
-	f, err := fc.getFunction(ctx, cc, []Expression{expr})
+	f, err := fc.getFunction(ctx, cc, []Expression{expr.Clone(cc)})
 	if err != nil {
 		return expr
 	}
@@ -269,13 +269,13 @@ func BuildToBinaryFunction(ctx BuildContext, cc CloneContext, expr Expression) (
 // BuildFromBinaryFunction builds from_binary function.
 func BuildFromBinaryFunction(ctx BuildContext, cc CloneContext, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp, cannotConvertStringAsWarning}
-	f, err := fc.getFunction(ctx, cc, []Expression{expr})
+	f, err := fc.getFunction(ctx, cc, []Expression{expr.Clone(cc)})
 	if err != nil {
 		return expr
 	}
 	res = &ScalarFunction{
 		FuncName: ast.NewCIStr(InternalFuncFromBinary),
-		RetType:  tp,
+		RetType:  tp.DeepCopy(),
 		Function: f,
 	}
 	return FoldConstant(ctx, cc, res)

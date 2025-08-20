@@ -1205,7 +1205,7 @@ func BuildGetVarFunction(ctx BuildContext, cc CloneContext, expr Expression, ret
 	default:
 		fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	}
-	f, err := fc.getFunction(ctx, cc, []Expression{expr})
+	f, err := fc.getFunction(ctx, cc, []Expression{expr.Clone(cc)})
 	if err != nil {
 		return nil, err
 	}
