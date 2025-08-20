@@ -2216,6 +2216,58 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	}
 }
 
+func TestExtractCastArrayExpr(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tc := []struct {
+		sql            string
+		arrayExprIndex int
+	}{
+		{
+			sql:            "CREATE TABLE t (a int, b JSON, KEY mv_idx_binary(a, (( ( CAST(b->'$[*]' AS BINARY(12) ARRAY ) ) ) )))",
+			arrayExprIndex: 1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b JSON, KEY mv_idx_binary((a * 2), ( ( CAST(b->'$[*]' AS BINARY(12) ARRAY ) ) ) ))",
+			arrayExprIndex: 1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, CAST_AS_ARRAY int as (a * 2), case_array JSON, KEY mv_idx_binary(CAST_AS_ARRAY, (a * 2), (( ( CAST(case_array->'$[*]' AS BINARY(12) ARRAY ) ) ) )))",
+			arrayExprIndex: 2,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b int as (a * 2), CAST_AS_ARRAY JSON, KEY mv_idx_binary(b, (a * 2), (( ( CAST(`CAST_AS_ARRAY` AS CHAR(16)) ) ) )))",
+			arrayExprIndex: -1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b int as (a * 2), CAST_AS_ARRAY JSON, KEY mv_idx_binary(b, (a * 2), (( ( CAST(CAST_AS_ARRAY AS CHAR(16)  ARRAY ) ) ) )))",
+			arrayExprIndex: 2,
+		},
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+
+	for _, tt := range tc {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(tt.sql)
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		meta := tbl.Meta()
+
+		for i, col := range meta.Indices[0].Columns {
+			tblCol := meta.Columns[col.Offset]
+			extracted := executor.ExtractCastArrayExpr(tblCol)
+			if i == tt.arrayExprIndex {
+				require.True(t, len(extracted) > 0, "Expected to extract cast array expression, got empty result")
+			} else {
+				require.True(t, len(extracted) == 0, "Expected to extract nothing, got non-empty result")
+			}
+		}
+	}
+}
+
 func TestAdminCheckMVIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 

@@ -330,7 +330,6 @@ go_test(
         "benchmark_test.go",
         "brie_test.go",
         "brie_utils_test.go",
-        "check_table_index_test.go",
         "checksum_test.go",
         "chunk_size_control_test.go",
         "cluster_table_test.go",
