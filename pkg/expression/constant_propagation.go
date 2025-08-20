@@ -34,6 +34,9 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
+// VaildConstantPropagationExpressionFuncType is to filter the unsuitable expression when to propagate the constant.
+type VaildConstantPropagationExpressionFuncType func(Expression) bool
+
 type basePropConstSolver struct {
 	colMapper map[int64]int             // colMapper maps column to its index
 	eqMapper  map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
@@ -472,9 +475,6 @@ var propSpecialJoinConstSolverPool = sync.Pool{
 		return solver
 	},
 }
-
-// VaildConstantPropagationExpressionFuncType is to filter the unsuitable expression when to propagate the constant.
-type VaildConstantPropagationExpressionFuncType func(Expression) bool
 
 type propSpecialJoinConstSolver struct {
 	basePropConstSolver
