@@ -443,6 +443,8 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 			}
 			assert = inactiveRCTxnAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "READ-COMMITTED")
+			// simulate that the session is in an insert statement, so pessimistic-auto-commit can take effect
+			se.GetSessionVars().StmtCtx.InInsertStmt = true
 			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
