@@ -163,7 +163,7 @@ func (p *PhysicalTableReader) GetTableScan() (*physicalop.PhysicalTableScan, err
 
 // GetAvgRowSize return the average row size of this plan.
 func (p *PhysicalTableReader) GetAvgRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 }
 
 // MemoryUsage return the memory usage of PhysicalTableReader
@@ -234,14 +234,14 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 		return nil, err
 	}
 	// TablePlans are actually the flattened plans in tablePlan, so can't copy them, just need to extract from tablePlan
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
+	cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)
 	return cloned, nil
 }
 
 // SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 	p.tablePlan = children[0]
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.TablePlans = physicalop.FlattenPushDownPlan(p.tablePlan)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -294,7 +294,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	if cloned.indexPlan, err = p.indexPlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
-	if cloned.IndexPlans, err = clonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
+	if cloned.IndexPlans, err = physicalop.ClonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
 		return nil, err
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
@@ -304,13 +304,13 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
-		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+		p.IndexPlans = physicalop.FlattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
 		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
 		default:
-			is := p.IndexPlans[0].(*PhysicalIndexScan)
-			p.PhysicalSchemaProducer.SetSchema(is.dataSourceSchema)
+			is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+			p.PhysicalSchemaProducer.SetSchema(is.DataSourceSchema)
 		}
 		p.OutputColumns = p.Schema().Clone().Columns
 	}
@@ -369,8 +369,8 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
-	is := p.IndexPlans[0].(*PhysicalIndexScan)
-	loadTableStats(ctx, is.Table, is.physicalTableID)
+	is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+	loadTableStats(ctx, is.Table, is.PhysicalTableID)
 }
 
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
@@ -408,10 +408,10 @@ func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.Physica
 		return nil, err
 	}
 	cloned.PhysicalSchemaProducer = *base
-	if cloned.IndexPlans, err = clonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
+	if cloned.IndexPlans, err = physicalop.ClonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
 		return nil, err
 	}
-	if cloned.TablePlans, err = clonePhysicalPlan(newCtx, p.TablePlans); err != nil {
+	if cloned.TablePlans, err = physicalop.ClonePhysicalPlan(newCtx, p.TablePlans); err != nil {
 		return nil, err
 	}
 	if cloned.indexPlan, err = p.indexPlan.Clone(newCtx); err != nil {

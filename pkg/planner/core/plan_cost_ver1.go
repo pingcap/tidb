@@ -225,7 +225,7 @@ func getPlanCostVer14PhysicalIndexReader(pp base.PhysicalPlan, _ property.TaskTy
 	indexPlanCost = childCost
 	p.PlanCost = indexPlanCost
 	// net I/O cost: rows * row-size * net-factor
-	tblStats := getTblStats(p.IndexPlan)
+	tblStats := physicalop.GetTblStats(p.IndexPlan)
 	rowSize = cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.IndexPlan.Schema().Columns, true, false)
 	rowCount = getCardinality(p.IndexPlan, costFlag)
 	netFactor = getTableNetFactor(p.IndexPlan)

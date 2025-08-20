@@ -104,7 +104,7 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *physicalop.Physical
 	if res == nil {
 		return access.DynamicPartitionAccessObjects(nil)
 	}
-	return DynamicPartitionAccessObjects{res}
+	return access.DynamicPartitionAccessObjects{res}
 }
 
 // AccessObject implements PartitionAccesser interface.

@@ -17,6 +17,7 @@ package physicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -64,7 +65,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	if cloned.IndexPlan, err = p.IndexPlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
-	if cloned.IndexPlans, err = utilfuncp.ClonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
+	if cloned.IndexPlans, err = ClonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
 		return nil, err
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
@@ -74,13 +75,13 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.IndexPlan != nil {
-		p.IndexPlans = utilfuncp.FlattenPushDownPlan(p.IndexPlan)
+		p.IndexPlans = FlattenPushDownPlan(p.IndexPlan)
 		switch p.IndexPlan.(type) {
 		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.IndexPlan.Schema())
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
-			p.PhysicalSchemaProducer.SetSchema(is.dataSourceSchema)
+			p.PhysicalSchemaProducer.SetSchema(is.DataSourceSchema)
 		}
 		p.OutputColumns = p.Schema().Clone().Columns
 	}
@@ -113,7 +114,7 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.IndexPlan != nil {
-		utilfuncp.AppendChildCandidate(p, p.IndexPlan, op)
+		appendChildCandidate(p, p.IndexPlan, op)
 	}
 }
 
@@ -150,12 +151,24 @@ func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
 	is := p.IndexPlans[0].(*PhysicalIndexScan)
-	utilfuncp.LoadTableStats(ctx, is.Table, is.physicalTableID)
+	utilfuncp.LoadTableStats(ctx, is.Table, is.PhysicalTableID)
 }
 
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	return utilfuncp.GetAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
+	is := p.IndexPlans[0].(*PhysicalIndexScan)
+	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return access.DynamicPartitionAccessObjects(nil)
+	}
+	asName := ""
+	if is.TableAsName != nil && len(is.TableAsName.O) > 0 {
+		asName = is.TableAsName.O
+	}
+	res := GetDynamicAccessPartition(sctx, is.Table, p.PlanPartInfo, asName)
+	if res == nil {
+		return access.DynamicPartitionAccessObjects(nil)
+	}
+	return access.DynamicPartitionAccessObjects{res}
 }
 
 // ExplainInfo implements Plan interface.
@@ -170,7 +183,7 @@ func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 
 // GetNetDataSize calculates the cost of the plan in network data transfer.
 func (p *PhysicalIndexReader) GetNetDataSize() float64 {
-	tblStats := utilfuncp.GetTblStats(p.IndexPlan)
+	tblStats := GetTblStats(p.IndexPlan)
 	rowSize := cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.IndexPlan.Schema().Columns, true, false)
 	return p.IndexPlan.StatsCount() * rowSize
 }
@@ -200,7 +213,7 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		}
 		cloned.IndexPlan = indexPlan.(base.PhysicalPlan)
 	}
-	cloned.IndexPlans = utilfuncp.FlattenPushDownPlan(cloned.IndexPlan)
+	cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)
 	cloned.OutputColumns = utilfuncp.CloneColumnsForPlanCache(op.OutputColumns, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
@@ -231,4 +244,16 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 		p.OutputColumns[i] = newCol.(*expression.Column)
 	}
 	return
+}
+
+func ClonePhysicalPlan(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
+	cloned := make([]base.PhysicalPlan, 0, len(plans))
+	for _, p := range plans {
+		c, err := p.Clone(sctx)
+		if err != nil {
+			return nil, err
+		}
+		cloned = append(cloned, c)
+	}
+	return cloned, nil
 }

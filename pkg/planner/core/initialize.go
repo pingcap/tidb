@@ -148,7 +148,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	if p.tablePlan == nil {
 		return &p
 	}
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.TablePlans = physicalop.FlattenPushDownPlan(p.tablePlan)
 	p.SetSchema(p.tablePlan.Schema())
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
