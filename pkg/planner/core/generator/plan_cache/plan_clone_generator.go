@@ -37,7 +37,7 @@ import (
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
-		core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
+		core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}}
 
 	// todo: add all back with physicalop.x

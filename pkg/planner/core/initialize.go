@@ -54,15 +54,6 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = physicalop.FlattenPushDownPlan(p.tablePlan)
-	p.IndexPlans = physicalop.FlattenPushDownPlan(p.indexPlan)
-	p.SetSchema(p.tablePlan.Schema())
-	return &p
-}
-
 // Init initializes PhysicalIndexMergeReader.
 func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexMergeReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexMerge, &p, offset)

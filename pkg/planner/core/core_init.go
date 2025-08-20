@@ -130,6 +130,13 @@ func init() {
 	utilfuncp.GetCost4PhysicalApply = getCost4PhysicalApply
 	utilfuncp.GetPlanCostVer14PhysicalApply = getPlanCostVer14PhysicalApply
 	utilfuncp.GetPlanCostVer24PhysicalApply = getPlanCostVer24PhysicalApply
+
+	// for physical index look up reader
+	utilfuncp.GetCost4PhysicalIndexLookUpReader = getCost4PhysicalIndexLookUpReader
+	utilfuncp.GetPlanCostVer14PhysicalIndexLookUpReader = getPlanCostVer14PhysicalIndexLookUpReader
+	utilfuncp.GetPlanCostVer24PhysicalIndexLookUpReader = getPlanCostVer24PhysicalIndexLookUpReader
+	utilfuncp.ResolveIndices4PhysicalIndexLookUpReader = resolveIndices4PhysicalIndexLookUpReader
+
 	// for physical window
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
 	// for physical sequence

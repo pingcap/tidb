@@ -90,7 +90,7 @@ type CheckTable struct {
 	DBName             string
 	Table              table.Table
 	IndexInfos         []*model.IndexInfo
-	IndexLookUpReaders []*PhysicalIndexLookUpReader
+	IndexLookUpReaders []*physicalop.PhysicalIndexLookUpReader
 	CheckIndex         bool
 }
 
@@ -1499,11 +1499,11 @@ func (e *Explain) prepareTaskDot(pa *pair, taskTp string, buffer *bytes.Buffer) 
 		case *PhysicalIndexReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
-		case *PhysicalIndexLookUpReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
+		case *physicalop.PhysicalIndexLookUpReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.IndexPlan.ExplainID()))
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan, isChildOfINL: true})
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.IndexPlan})
 		case *PhysicalIndexMergeReader:
 			for i := range copPlan.partialPlans {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))

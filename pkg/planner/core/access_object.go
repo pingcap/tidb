@@ -113,11 +113,6 @@ func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObj
 }
 
 // AccessObject implements PartitionAccesser interface.
-func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*physicalop.PhysicalIndexScan), p.PlanPartInfo)
-}
-
-// AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return access.DynamicPartitionAccessObjects(nil)

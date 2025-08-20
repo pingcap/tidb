@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -170,18 +169,6 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 func (p *PhysicalTableReader) GetNetDataSize() float64 {
 	rowSize := cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
 	return p.TablePlan.StatsCount() * rowSize
-}
-
-// GetTblStats returns the tbl-stats of this plan, which contains all columns before pruning.
-func GetTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
-	switch x := copTaskPlan.(type) {
-	case *PhysicalTableScan:
-		return x.TblColHists
-	case *PhysicalIndexScan:
-		return x.TblColHists
-	default:
-		return GetTblStats(copTaskPlan.Children()[0])
-	}
 }
 
 // AccessObject implements PartitionAccesser interface.
@@ -387,25 +374,6 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 			}
 		}
 	}
-}
-
-// FlattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func FlattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
-	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = flattenTreePlan(p, plans)
-	for i := range len(plans) / 2 {
-		j := len(plans) - i - 1
-		plans[i], plans[j] = plans[j], plans[i]
-	}
-	return plans
-}
-
-func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
-	plans = append(plans, plan)
-	for _, child := range plan.Children() {
-		plans = flattenTreePlan(child, plans)
-	}
-	return plans
 }
 
 // setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.

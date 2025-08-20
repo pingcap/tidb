@@ -130,22 +130,23 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = physicalop.ResolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
+// resolveIndices4PhysicalIndexLookUpReader implements Plan interface.
+func resolveIndices4PhysicalIndexLookUpReader(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalIndexLookUpReader)
+	err = physicalop.ResolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}
-	err = p.tablePlan.ResolveIndices()
+	err = p.TablePlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
-	err = p.indexPlan.ResolveIndices()
+	err = p.IndexPlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
 	if p.ExtraHandleCol != nil {
-		newCol, err := p.ExtraHandleCol.ResolveIndices(p.tablePlan.Schema())
+		newCol, err := p.ExtraHandleCol.ResolveIndices(p.TablePlan.Schema())
 		if err != nil {
 			return err
 		}
