@@ -426,6 +426,7 @@ go_test(
         "//pkg/expression/exprstatic",
         "//pkg/extension",
         "//pkg/infoschema",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/log",
         "//pkg/meta",

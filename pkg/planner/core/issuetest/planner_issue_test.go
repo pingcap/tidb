@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -44,11 +43,11 @@ func TestIssue43461(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, p)
 
-	var idxLookUpPlan *core.PhysicalIndexLookUpReader
+	var idxLookUpPlan *physicalop.PhysicalIndexLookUpReader
 	var ok bool
 
 	for {
-		idxLookUpPlan, ok = p.(*core.PhysicalIndexLookUpReader)
+		idxLookUpPlan, ok = p.(*physicalop.PhysicalIndexLookUpReader)
 		if ok {
 			break
 		}
