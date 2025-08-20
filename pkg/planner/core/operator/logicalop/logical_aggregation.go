@@ -650,7 +650,8 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 func (la *LogicalAggregation) getAggFuncsCols() (aggFuncsCols []*expression.Column) {
 	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
 	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.Name == ast.AggFuncFirstRow {
+		switch aggFunc.Name {
+		case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin:
 			cols := expression.ExtractColumns(aggFunc.Args[0])
 			aggFuncsCols = append(aggFuncsCols, cols...)
 		}
