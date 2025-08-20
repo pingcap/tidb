@@ -60,6 +60,94 @@ type FieldType struct {
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
+<<<<<<< HEAD
+=======
+// DeepCopy returns a deep copy of the FieldType.
+func (ft *FieldType) DeepCopy() *FieldType {
+	if ft == nil {
+		return nil
+	}
+	ret := &FieldType{
+		tp:      ft.tp,
+		flag:    ft.flag,
+		flen:    ft.flen,
+		decimal: ft.decimal,
+		charset: ft.charset,
+		collate: ft.collate,
+		array:   ft.array,
+	}
+	if len(ft.elems) > 0 {
+		ret.elems = make([]string, len(ft.elems))
+		copy(ret.elems, ft.elems)
+	}
+	if len(ft.elemsIsBinaryLit) > 0 {
+		ret.elemsIsBinaryLit = make([]bool, len(ft.elemsIsBinaryLit))
+		copy(ret.elemsIsBinaryLit, ft.elemsIsBinaryLit)
+	}
+	return ret
+}
+
+// Hash64 implements the cascades/base.Hasher.<0th> interface.
+func (ft *FieldType) Hash64(h IHasher) {
+	h.HashByte(ft.tp)
+	h.HashUint64(uint64(ft.flag))
+	h.HashInt(ft.flen)
+	h.HashInt(ft.decimal)
+	h.HashString(ft.charset)
+	h.HashString(ft.collate)
+	h.HashInt(len(ft.elems))
+	for _, elem := range ft.elems {
+		h.HashString(elem)
+	}
+	h.HashInt(len(ft.elemsIsBinaryLit))
+	for _, elem := range ft.elemsIsBinaryLit {
+		h.HashBool(elem)
+	}
+	h.HashBool(ft.array)
+}
+
+// Equals implements the cascades/base.Hasher.<1th> interface.
+func (ft *FieldType) Equals(other any) bool {
+	ft2, ok := other.(*FieldType)
+	if !ok {
+		return false
+	}
+	if ft == nil {
+		return ft2 == nil
+	}
+	if other == nil {
+		return false
+	}
+	ok = ft.tp == ft2.tp &&
+		ft.flag == ft2.flag &&
+		ft.flen == ft2.flen &&
+		ft.decimal == ft2.decimal &&
+		ft.charset == ft2.charset &&
+		ft.collate == ft2.collate &&
+		ft.array == ft2.array
+	if !ok {
+		return false
+	}
+	if len(ft.elems) != len(ft2.elems) {
+		return false
+	}
+	for i, one := range ft.elems {
+		if one != ft2.elems[i] {
+			return false
+		}
+	}
+	if len(ft.elemsIsBinaryLit) != len(ft2.elemsIsBinaryLit) {
+		return false
+	}
+	for i, one := range ft.elemsIsBinaryLit {
+		if one != ft2.elemsIsBinaryLit[i] {
+			return false
+		}
+	}
+	return true
+}
+
+>>>>>>> 73ee7e2d2b0 (expression: fix unexpected modification of shared return type of cast expr (#63072))
 // NewFieldType returns a FieldType,
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
