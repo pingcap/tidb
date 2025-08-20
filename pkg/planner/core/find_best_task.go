@@ -1229,11 +1229,13 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 }
 
 func isFullIndexMatch(candidate *candidatePath) bool {
-	if candidate.path.IsDNFCond {
-		return candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns) && candidate.hasOnlyEqualPredicatesInDNF(true)
-	} else {
-		return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
+	// Check if the DNF condition is a full match
+	if candidate.path.IsDNFCond && candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns) &&
+		candidate.hasOnlyEqualPredicatesInDNF(true) {
+		return true
 	}
+	// Return the non-DNF full index match result
+	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
