@@ -30,11 +30,9 @@ type SimpleDataSource[T workerpool.TaskMayPanic] struct {
 }
 
 // NewSimpleDataSource creates a new SimpleOperator with the given inputs.
-// The input Operator.Context is used to quit this operator.
-// As the source of the pipeline, this operator should be able to quit
-// if any of the downstream operators encounter an error or panic.
-// So we need to call ctx.OnError in other operators when they encounter
-// an error or panic.
+// The input workerpool.Context is used to quit this operator.
+// By using the same context as the downstream operators, we can ensure that
+// this operator will quit when other operators encounter an error or panic.
 func NewSimpleDataSource[T workerpool.TaskMayPanic](
 	ctx *workerpool.Context,
 	inputs []T,
