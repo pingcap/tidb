@@ -341,6 +341,7 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
+		var scanedRows uint64 = 3
 		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
 		defer func() {
 			ti.LoadDataController.Close()
@@ -382,8 +383,11 @@ func TestProcessChunkWith(t *testing.T) {
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		if kerneltype.IsClassic() { // Fixme: how is the checksum calculated in next-gen(9580998779111664884)?
+		if kerneltype.IsClassic() {
 			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111, 3, 18171781844378606789),
+				*checksumMap[verify.DataKVGroupID])
+		} else if kerneltype.IsNextGen() {
+			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111+scanedRows*prefixLenForOneRow, 3, 9580998779111664884),
 				*checksumMap[verify.DataKVGroupID])
 		}
 	})
