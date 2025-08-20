@@ -198,24 +198,24 @@ func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexReader)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *p
+	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	if op.IndexPlan != nil {
-		indexPlan, ok := op.IndexPlan.CloneForPlanCache(newCtx)
+	if p.IndexPlan != nil {
+		indexPlan, ok := p.IndexPlan.CloneForPlanCache(newCtx)
 		if !ok {
 			return nil, false
 		}
 		cloned.IndexPlan = indexPlan.(base.PhysicalPlan)
 	}
 	cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)
-	cloned.OutputColumns = utilfuncp.CloneColumnsForPlanCache(op.OutputColumns, nil)
-	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
+	cloned.OutputColumns = utilfuncp.CloneColumnsForPlanCache(p.OutputColumns, nil)
+	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
 }
 

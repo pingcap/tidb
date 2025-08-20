@@ -319,7 +319,7 @@ var GetPlanCostVer14PhysicalIndexScan func(pp base.PhysicalPlan, taskType proper
 var GetPlanCostVer14PhysicalTableScan func(pp base.PhysicalPlan,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
-// GetPlanCostVer14PhysicalIndexReader calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// GetPlanCostVer14PhysicalIndexReader calculates the cost of the plan if it has not been calculated yet
 var GetPlanCostVer14PhysicalIndexReader func(pp base.PhysicalPlan, _ property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
