@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -141,4 +143,32 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	require.NoError(t, h.InitStats(context.Background(), is))
+}
+
+func TestSkipStatsInitWithSkipGrantTable(t *testing.T) {
+	config.GetGlobalConfig().Security.SkipGrantTable = true
+	defer func() {
+		config.GetGlobalConfig().Security.SkipGrantTable = false
+	}()
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer store.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "create table t( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "analyze table t all columns;")
+	dom.Close()
+
+	vardef.SetStatsLease(3)
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	<-h.InitStatsDone
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	_, ok := h.StatsCache.Get(tbl.Meta().ID)
+	require.False(t, ok)
+	dom.Close()
 }
