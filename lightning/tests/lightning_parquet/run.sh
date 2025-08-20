@@ -31,6 +31,7 @@ for BACKEND in local tidb; do
     run_sql 'CREATE DATABASE test'
     run_sql "source $CUR/db.sql;" -D test
 
+    export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount=return(10)"
     run_lightning --backend $BACKEND
 
     check_row_count customer 20
