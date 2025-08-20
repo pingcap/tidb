@@ -80,6 +80,7 @@ func Selectivity(
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
+		ctx.GetSessionVars().RecordRelevantOptVar(TiDBOptSelectivityFactor)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
@@ -441,6 +442,7 @@ OUTER:
 		if sc.EnableOptimizerDebugTrace {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Default Selectivity", minSelectivity)
 		}
+		ctx.GetSessionVars().RecordRelevantOptVar(TiDBOptSelectivityFactor)
 	}
 
 	if sc.EnableOptimizerCETrace {

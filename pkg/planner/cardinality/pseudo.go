@@ -36,6 +36,10 @@ const (
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
 const selectionFactor = 0.8
 
+const (
+	TiDBOptSelectivityFactor = "tidb_opt_selectivity_factor"
+)
+
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
 func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
