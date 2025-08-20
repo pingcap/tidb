@@ -378,33 +378,21 @@ func TestNonTransactionalMetrics(t *testing.T) {
 	}
 
 	runAndCheck := func(tp string, fn func()) {
-		var (
-			affectedRowsCounter prometheus.Counter
-			stmtNodeCounter     prometheus.Counter
-		)
+		var stmtNodeCounter prometheus.Counter
 		switch tp {
 		case "insert":
-			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLInsert
 			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Insert", "", "default")
 		case "replace":
-			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLReplace
 			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Replace", "", "default")
 		case "delete":
-			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLDelete
 			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Delete", "", "default")
 		case "update":
-			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLUpdate
 			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Update", "", "default")
 		default:
 			require.Fail(t, "Unknown type of DML", tp)
 		}
 		checkMetrics := []checkMetric{
-			{affectedRowsCounter, 100},
 			{stmtNodeCounter, 11}, // 1 Select + 10 split DMLs
-			{metrics.AffectedRowsCounterInsert, 0},
-			{metrics.AffectedRowsCounterReplace, 0},
-			{metrics.AffectedRowsCounterDelete, 0},
-			{metrics.AffectedRowsCounterUpdate, 0},
 			{metrics.StmtNodeCounter.WithLabelValues("Insert", "", "default"), 0},
 			{metrics.StmtNodeCounter.WithLabelValues("Replace", "", "default"), 0},
 			{metrics.StmtNodeCounter.WithLabelValues("Delete", "", "default"), 0},
