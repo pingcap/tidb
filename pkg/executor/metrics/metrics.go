@@ -140,11 +140,6 @@ var (
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone prometheus.Counter
 )
 
-func init() {
-	InitMetricsVars()
-	InitPhaseDurationObserverMap()
-}
-
 // InitMetricsVars init executor metrics vars.
 func InitMetricsVars() {
 	TotalQueryProcHistogramGeneral = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
@@ -234,10 +229,12 @@ func InitMetricsVars() {
 	ExecutorNetworkTransmissionSentTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("sent_tiflash_cross_zone")
 	ExecutorNetworkTransmissionReceivedTiFlashTotal = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_total")
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_cross_zone")
+
+	initPhaseDurationObserverMap()
 }
 
-// InitPhaseDurationObserverMap init observer map
-func InitPhaseDurationObserverMap() {
+// initPhaseDurationObserverMap init observer map
+func initPhaseDurationObserverMap() {
 	PhaseDurationObserverMap = map[string]prometheus.Observer{
 		PhaseBuildLocking:       ExecBuildLocking,
 		PhaseOpenLocking:        ExecOpenLocking,
