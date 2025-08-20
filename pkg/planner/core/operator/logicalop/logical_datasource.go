@@ -660,6 +660,9 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		_, isSingleFTS := expression.FTSFuncMap[sf.FuncName.L]
 		if !isSingleFTS {
 			containsFTS := expression.ContainsFullTextSearchFn(cond)
+			if !containsFTS {
+				continue
+			}
 			onlyLogicOpAndFTS := expression.ExprOnlyContainsLogicOpAndFTS(cond)
 			if containsFTS && !onlyLogicOpAndFTS {
 				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)

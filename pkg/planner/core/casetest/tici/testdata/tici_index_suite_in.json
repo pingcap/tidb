@@ -13,6 +13,8 @@
       "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10",
       "explain format='brief' select id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
       "explain format='brief' select * from t1 where fts_match_word('hello', title) limit 1",
+      "explain format='brief' select id from t1 where fts_match_word('hello', title) and fts_match_word('world', title)",
+      "explain format='brief' select id from t1 where (fts_match_word('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
       "explain format='brief' select /*+ inl_join(t1) */ * from t1, t2 where t2.col=t1.title"
     ]
   }
