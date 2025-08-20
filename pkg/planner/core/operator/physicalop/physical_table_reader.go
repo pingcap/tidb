@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -172,18 +171,6 @@ func (p *PhysicalTableReader) GetNetDataSize() float64 {
 	return p.TablePlan.StatsCount() * rowSize
 }
 
-// GetTblStats returns the tbl-stats of this plan, which contains all columns before pruning.
-func GetTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
-	switch x := copTaskPlan.(type) {
-	case *PhysicalTableScan:
-		return x.TblColHists
-	case *PhysicalIndexScan:
-		return x.TblColHists
-	default:
-		return GetTblStats(copTaskPlan.Children()[0])
-	}
-}
-
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -285,7 +272,7 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 // AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
-	appendChildCandidate(p, p.TablePlan, op)
+	AppendChildCandidate(p, p.TablePlan, op)
 }
 
 // ExplainInfo implements Plan interface.
@@ -389,25 +376,6 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 	}
 }
 
-// FlattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func FlattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
-	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = flattenTreePlan(p, plans)
-	for i := range len(plans) / 2 {
-		j := len(plans) - i - 1
-		plans[i], plans[j] = plans[j], plans[i]
-	}
-	return plans
-}
-
-func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
-	plans = append(plans, plan)
-	for _, child := range plan.Children() {
-		plans = flattenTreePlan(child, plans)
-	}
-	return plans
-}
-
 // setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
 func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
@@ -459,21 +427,6 @@ func GetDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 		res.Partitions = append(res.Partitions, pi.Definitions[idx].Name.O)
 	}
 	return res
-}
-
-// TODO: keep one replica is ok after all physical reader is migrated.
-func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp) {
-	candidate := &tracing.CandidatePlanTrace{
-		PlanTrace: &tracing.PlanTrace{
-			ID:          pp.ID(),
-			TP:          pp.TP(),
-			ExplainInfo: pp.ExplainInfo(),
-			// TODO: trace the cost
-		},
-	}
-	op.AppendCandidate(candidate)
-	pp.AppendChildCandidate(op)
-	op.GetTracer().Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }
 
 // ResolveIndicesForVirtualColumn resolves dependent columns's indices for virtual columns.

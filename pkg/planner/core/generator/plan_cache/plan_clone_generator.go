@@ -36,8 +36,8 @@ import (
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{
-		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
-		core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
+		core.PointGetPlan{}, core.BatchPointGetPlan{},
+		core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}}
 
 	// todo: add all back with physicalop.x
