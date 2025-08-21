@@ -65,7 +65,6 @@ func TestAddIndexMergeProcess(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add index idx(c1);")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.True(t, backfillDone)
 	require.True(t, runDML)
 	require.NoError(t, checkErr)

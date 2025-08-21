@@ -140,10 +140,7 @@ type mergeIndexWorker struct {
 
 	indexes []table.Index
 
-	tmpIdxRecords []*temporaryIndexRecord
-	originIdxKeys []kv.Key
-	tmpIdxKeys    []kv.Key
-
+	buffers      *tempIdxBuffers
 	currentIndex *model.IndexInfo
 }
 
@@ -158,6 +155,7 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements
 	return &mergeIndexWorker{
 		backfillCtx: bfCtx,
 		indexes:     allIndexes,
+		buffers:     newTempIdxBuffers(bfCtx.batchCnt),
 	}
 }
 
@@ -192,27 +190,22 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
 			txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
-
 			rs, err := fetchTempIndexVals(
 				w.jobContext, w.store, w.table, w.currentIndex, txn,
 				taskRange.startKey, taskRange.endKey,
-				bfCtx.batchCnt, &tempIdxBuffers{
-					tmpIdxRecords: w.tmpIdxRecords,
-					originIdxKeys: w.originIdxKeys,
-					tmpIdxKeys:    w.tmpIdxKeys,
-				})
+				bfCtx.batchCnt, w.buffers)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			taskCtx.nextKey = rs.nextKey
 			taskCtx.done = rs.done
 
-			err = batchCheckTemporaryUniqueKey(txn, w.table, w.currentIndex, w.originIdxKeys, w.tmpIdxRecords)
+			err = batchCheckTemporaryUniqueKey(txn, w.table, w.currentIndex, w.buffers.originIdxKeys, w.buffers.tmpIdxRecords)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			for i, idxRecord := range w.tmpIdxRecords {
+			for i, idxRecord := range w.buffers.tmpIdxRecords {
 				// The index is already exists, we skip it, no needs to backfill it.
 				// The following update, delete, insert on these rows, TiDB can handle it correctly.
 				// If all batch are skipped, update first index key to make txn commit to release lock.
@@ -220,7 +213,7 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 					continue
 				}
 
-				originIdxKey := w.originIdxKeys[i]
+				originIdxKey := w.buffers.originIdxKeys[i]
 				if idxRecord.delete {
 					err = txn.GetMemBuffer().Delete(originIdxKey)
 				} else {
@@ -230,7 +223,7 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 					return err
 				}
 
-				err = txn.GetMemBuffer().Delete(w.tmpIdxKeys[i])
+				err = txn.GetMemBuffer().Delete(w.buffers.tmpIdxKeys[i])
 				if err != nil {
 					return err
 				}
