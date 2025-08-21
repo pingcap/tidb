@@ -18,7 +18,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
