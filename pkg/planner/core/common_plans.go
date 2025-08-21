@@ -1390,7 +1390,7 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 		out.StoreType = tipb.StoreType_tidb
 	case kv.TiKV:
 		out.StoreType = tipb.StoreType_tikv
-	case kv.TiFlash:
+	case kv.TiFlash, kv.TiCI:
 		out.StoreType = tipb.StoreType_tiflash
 	}
 	if fop.IsRoot {

@@ -13,7 +13,13 @@
       "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10",
       "explain format='brief' select id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
       "explain format='brief' select * from t1 where fts_match_word('hello', title) limit 1",
-      "explain format='brief' select /*+ inl_join(t1) */ * from t1, t2 where t2.col=t1.title"
+      "explain format='brief' select /*+ inl_join(t1) */ * from t1, t2 where t2.col=t1.title",
+      "explain format='brief' select a from t3 where fts_match_word('hello', title)",
+      "explain format='brief' select /*+ LIMIT_TO_COP() */ a from t3 where fts_match_word('hello', title) limit 1",
+      "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
+      "explain format='brief' select b from t3 where fts_match_word('hello', title)",
+      "explain format='brief' select a, b from t3 where fts_match_word('hello', title)",
+      "explain format='brief' select b, a from t3 where fts_match_word('hello', title)"
     ]
   }
 ]

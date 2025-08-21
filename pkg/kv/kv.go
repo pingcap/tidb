@@ -362,6 +362,7 @@ const (
 	// data, such as for information_schema.cluster_slow_query.
 	TiDB
 	// UnSpecified means the store engine type is unknown
+	TiCI
 	UnSpecified = 255
 )
 
@@ -373,6 +374,8 @@ func (t StoreType) Name() string {
 		return "tidb"
 	} else if t == TiKV {
 		return "tikv"
+	} else if t == TiCI {
+		return "tici"
 	}
 	return "unspecified"
 }

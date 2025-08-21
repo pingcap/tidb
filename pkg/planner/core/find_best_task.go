@@ -2399,15 +2399,13 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 }
 
 func indexCoveringColumn(ds *logicalop.DataSource, column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
-		return true
-	}
-	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+	coveredByPK, coveredByClusteredIndex := pkCoveringColumn(ds, column, ignoreLen)
+	// Original int pk can always cover the column.
+	if coveredByPK && !coveredByClusteredIndex {
 		return true
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
-	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
 	if !coveredByPlainIndex && !coveredByClusteredIndex {
 		return false
 	}
@@ -2420,9 +2418,32 @@ func indexCoveringColumn(ds *logicalop.DataSource, column *expression.Column, in
 	return true
 }
 
+// pkCoveringColumn checks if the column is covered by the primary key or extra handle columns.
+// The second return value indicates if the column is covered by the clustered index.
+func pkCoveringColumn(ds *logicalop.DataSource, column *expression.Column, ignoreLen bool) (bool, bool) {
+	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
+		return true, false
+	}
+	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+		return true, false
+	}
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
+	return coveredByClusteredIndex, true
+}
+
 func isIndexCoveringColumns(ds *logicalop.DataSource, columns, indexColumns []*expression.Column, idxColLens []int) bool {
 	for _, col := range columns {
 		if !indexCoveringColumn(ds, col, indexColumns, idxColLens, false) {
+			return false
+		}
+	}
+	return true
+}
+
+func isPKCoveringColumns(ds *logicalop.DataSource, columns []*expression.Column) bool {
+	for _, col := range columns {
+		if coveredByPK, _ := pkCoveringColumn(ds, col, false); !coveredByPK {
 			return false
 		}
 	}
@@ -2466,6 +2487,14 @@ func isSingleScan(lp base.LogicalPlan, indexColumns []*expression.Column, idxCol
 		}
 	}
 	return true
+}
+
+func isTiCISingleScan(lp *logicalop.DataSource) bool {
+	// No filter can be calculated in TiCI.
+	if len(lp.PushedDownConds) > 0 {
+		return false
+	}
+	return isPKCoveringColumns(lp, lp.Schema().Columns)
 }
 
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
@@ -3450,7 +3479,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	if is.FtsQueryInfo != nil {
-		is.StoreType = kv.TiFlash
+		is.StoreType = kv.TiCI
 	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)

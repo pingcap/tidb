@@ -706,6 +706,8 @@ func (ds *DataSource) analyzeFTSFunc() error {
 
 	// Remove the matched condition from PushedDownConds.
 	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
+	// Re-construct the AllConds because column pruning relays on AllConds.
+	ds.AllConds = slices.Clone(ds.PushedDownConds)
 	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc)
 }
 
