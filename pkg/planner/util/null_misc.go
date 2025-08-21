@@ -110,7 +110,7 @@ func isSimpleExpr(expr expression.Expression) bool {
 		switch e.FuncName.L {
 		case ast.LogicAnd, ast.LogicOr, ast.In:
 			for _, arg := range e.GetArgs() {
-				if !isSimpleExpr(arg) {
+				if scalarFunctionCount(arg) > 1 {
 					return false
 				}
 			}
