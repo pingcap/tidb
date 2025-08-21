@@ -14,29 +14,6 @@
 
 package core
 
-import (
-	"strconv"
-	"strings"
-)
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalIndexMergeReader) ExplainInfo() string {
-	var str strings.Builder
-	if p.IsIntersectionType {
-		str.WriteString("type: intersection")
-	} else {
-		str.WriteString("type: union")
-	}
-	if p.PushedLimit != nil {
-		str.WriteString(", limit embedded(offset:")
-		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
-		str.WriteString(", count:")
-		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
-		str.WriteString(")")
-	}
-	return str.String()
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
 	return p.PhysicalIndexJoin.ExplainInfoInternal(false, true)
