@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/kv"
-	_ "github.com/pingcap/tidb/pkg/metrics"
+	_ "github.com/pingcap/tidb/pkg/metrics" // init metrics
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
