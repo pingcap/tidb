@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -728,8 +729,8 @@ func TestPrevStmtDesensitization(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec(fmt.Sprintf("set @@session.%v=1", vardef.TiDBRedactLog))
-	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", vardef.TiDBRedactLog))
+	tk.MustExec(fmt.Sprintf("set @@global.%v=1", vardef.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@global.%v=0", vardef.TiDBRedactLog))
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
@@ -781,7 +782,7 @@ func TestOOMActionPriority(t *testing.T) {
 func TestUnreasonablyClose(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -789,28 +790,28 @@ func TestUnreasonablyClose(t *testing.T) {
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
 	var opsNeedsCovered = []base.PhysicalPlan{
-		&plannercore.PhysicalHashJoin{},
-		&plannercore.PhysicalMergeJoin{},
-		&plannercore.PhysicalIndexJoin{},
-		&plannercore.PhysicalIndexHashJoin{},
-		&plannercore.PhysicalTableReader{},
-		&plannercore.PhysicalIndexReader{},
-		&plannercore.PhysicalIndexLookUpReader{},
-		&plannercore.PhysicalIndexMergeReader{},
-		&plannercore.PhysicalApply{},
-		&plannercore.PhysicalHashAgg{},
-		&plannercore.PhysicalStreamAgg{},
+		&physicalop.PhysicalHashJoin{},
+		&physicalop.PhysicalMergeJoin{},
+		&physicalop.PhysicalIndexJoin{},
+		&physicalop.PhysicalIndexHashJoin{},
+		&physicalop.PhysicalTableReader{},
+		&physicalop.PhysicalIndexReader{},
+		&physicalop.PhysicalIndexLookUpReader{},
+		&physicalop.PhysicalIndexMergeReader{},
+		&physicalop.PhysicalApply{},
+		&physicalop.PhysicalHashAgg{},
+		&physicalop.PhysicalStreamAgg{},
 		&physicalop.PhysicalLimit{},
 		&physicalop.PhysicalSort{},
 		&physicalop.PhysicalTopN{},
-		&plannercore.PhysicalCTE{},
-		&plannercore.PhysicalCTETable{},
+		&physicalop.PhysicalCTE{},
+		&physicalop.PhysicalCTETable{},
 		&physicalop.PhysicalMaxOneRow{},
 		&physicalop.PhysicalProjection{},
 		&physicalop.PhysicalSelection{},
 		&physicalop.PhysicalTableDual{},
-		&plannercore.PhysicalWindow{},
-		&plannercore.PhysicalShuffle{},
+		&physicalop.PhysicalWindow{},
+		&physicalop.PhysicalShuffle{},
 		&physicalop.PhysicalUnionAll{},
 	}
 
@@ -870,12 +871,12 @@ func TestUnreasonablyClose(t *testing.T) {
 				}
 				require.True(t, found, fmt.Sprintf("case: %v sql: %s operator %v is not registered in opsNeedsCoveredMask", i, tc, reflect.TypeOf(ch)))
 				switch x := ch.(type) {
-				case *plannercore.PhysicalCTE:
+				case *physicalop.PhysicalCTE:
 					newChild = append(newChild, x.RecurPlan)
 					newChild = append(newChild, x.SeedPlan)
 					hasCTE = true
 					continue
-				case *plannercore.PhysicalShuffle:
+				case *physicalop.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
 					newChild = append(newChild, x.Tails...)
 					continue
@@ -920,7 +921,7 @@ func TestUnreasonablyClose(t *testing.T) {
 func TestTwiceCloseUnionExec(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 

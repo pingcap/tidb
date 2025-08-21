@@ -20,15 +20,15 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
 
 func TestNewExprIterFromGroupElem(t *testing.T) {
 	defer view.Stop()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	schema := expression.NewSchema()
 	defer func() {
 		do := domain.GetDomain(ctx)
@@ -76,7 +76,7 @@ func TestNewExprIterFromGroupElem(t *testing.T) {
 
 func TestExprIterNext(t *testing.T) {
 	defer view.Stop()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	schema := expression.NewSchema()
 	defer func() {
 		do := domain.GetDomain(ctx)
@@ -129,7 +129,7 @@ func TestExprIterNext(t *testing.T) {
 
 func TestExprIterReset(t *testing.T) {
 	defer view.Stop()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	schema := expression.NewSchema()
 	defer func() {
 		do := domain.GetDomain(ctx)
@@ -206,7 +206,7 @@ func TestExprIterReset(t *testing.T) {
 
 func TestExprIterWithEngineType(t *testing.T) {
 	defer view.Stop()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	schema := expression.NewSchema()
 	defer func() {
 		do := domain.GetDomain(ctx)

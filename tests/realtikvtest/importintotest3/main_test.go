@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -85,7 +84,7 @@ func prepareAndUseDB(db string, tk *testkit.TestKit) {
 }
 
 func init() {
-	testutils.UpdateTiDBConfig()
+	realtikvtest.UpdateTiDBConfig()
 }
 
 func TestMain(m *testing.M) {

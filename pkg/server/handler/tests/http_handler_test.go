@@ -53,7 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -974,6 +975,9 @@ func TestGetSchema(t *testing.T) {
 }
 
 func TestAllHistory(t *testing.T) {
+	// TestGetSchema will set schema lease to -1, while this test needs a valid
+	// schema lease.
+	vardef.SetStatsLease(time.Second)
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -1151,7 +1155,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1165,7 +1169,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
 
 	// Two tables in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1513,14 +1517,14 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	// test upgrade show for 1 server
 	checkUpgradeShow(1, 100, 0)
 	// test upgrade show for 3 servers
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo")
 	// test upgrade show again with 3 different version servers
 	checkUpgradeShow(3, 33, 3)
 	// test upgrade show again with 3 servers of the same version
 	mockedAllServerInfos["s2"].Version = mockedAllServerInfos["s0"].Version
 	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	checkUpgradeShow(3, 100, 0)
 }
 

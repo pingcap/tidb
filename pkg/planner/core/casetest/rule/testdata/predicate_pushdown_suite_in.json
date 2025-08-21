@@ -6,7 +6,9 @@
       "select * from t where name='a' and length(name)=1; -- without constant propagated",
       "set names utf8mb4",
       "select * from t where name='a' and length(name)=1; -- without constant propagated",
-      "select * from (select 'test' as b from t) n where length(b) > 2; -- can be substituted"
+      "select * from (select 'test' as b from t) n where length(b) > 2; -- can be substituted",
+      "select foo.a, foo.b, bar.c from foo join bar on foo.a=bar.a where (foo.a,foo.b) in ((1,2),(3,4));",
+      "select foo.a, foo.b, bar.c from foo left join bar on foo.a=bar.a where (foo.a,foo.b) in ((1,2),(3,4));"
     ]
   }
 ]

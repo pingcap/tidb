@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -264,7 +265,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 	if e.corColInAccess {
-		ts := e.plans[0].(*plannercore.PhysicalTableScan)
+		ts := e.plans[0].(*physicalop.PhysicalTableScan)
 		e.ranges, err = ts.ResolveCorrelatedColumns()
 		if err != nil {
 			return err

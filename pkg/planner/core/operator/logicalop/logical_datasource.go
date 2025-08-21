@@ -155,7 +155,7 @@ func (ds *DataSource) ExplainInfo() string {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
-	predicates = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), predicates, true)
+	predicates = ruleutil.ApplyPredicateSimplification(ds.SCtx(), predicates, true, nil)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
@@ -174,7 +174,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.Schema())
 
-	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.AllConds, nil)
+	exprCols := expression.ExtractColumnsFromExpressions(ds.AllConds, nil)
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 
@@ -292,8 +292,8 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true)
-	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true)
+	p.PushedDownConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true, nil)
+	p.AllConds = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true, nil)
 	return p
 }
 

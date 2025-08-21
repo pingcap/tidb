@@ -582,7 +582,7 @@ id	estRows	task	access object	operator info
 Limit	2.00	root		offset:0, count:2
 └─IndexReader	2.00	root		index:Limit
   └─Limit	2.00	cop[tikv]		offset:0, count:2
-    └─IndexRangeScan	2.62	cop[tikv]	table:t0, index:a(a, b)	range:[2,2], keep order:true, stats:pseudo
+    └─IndexRangeScan	2.50	cop[tikv]	table:t0, index:a(a, b)	range:[2,2], keep order:true, stats:pseudo
 explain format = 'brief' select * from t1 where a >= 2 and a <= 2 and b = 2 and c > 2;
 id	estRows	task	access object	operator info
 IndexReader	1.25	root		index:IndexRangeScan
@@ -1151,15 +1151,15 @@ TableReader_8	3.00	130.42	root		data:Selection_7
   └─TableFullScan_6	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_13	1.00	98.74	root		offset:0, count:1
-└─TableReader_33	1.00	98.74	root		data:Limit_32
+Limit_13	1.00	105.07	root		offset:0, count:1
+└─TableReader_33	1.00	105.07	root		data:Limit_32
   └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_9	1.00	98.74	root		offset:0, count:1
-└─TableReader_16	1.00	98.74	root		data:Limit_15
+Limit_9	1.00	105.07	root		offset:0, count:1
+└─TableReader_16	1.00	105.07	root		data:Limit_15
   └─Limit_15	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_14	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_13	5.00	1136.54	cop[tikv]	table:t	keep order:false
@@ -1171,15 +1171,15 @@ TableReader_8	3.00	130.42	root		data:Selection_7
   └─TableFullScan_6	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_13	1.00	98.74	root		offset:0, count:1
-└─TableReader_33	1.00	98.74	root		data:Limit_32
+Limit_13	1.00	105.07	root		offset:0, count:1
+└─TableReader_33	1.00	105.07	root		data:Limit_32
   └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_9	1.00	98.74	root		offset:0, count:1
-└─TableReader_16	1.00	98.74	root		data:Limit_15
+Limit_9	1.00	105.07	root		offset:0, count:1
+└─TableReader_16	1.00	105.07	root		data:Limit_15
   └─Limit_15	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_14	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_13	5.00	1136.54	cop[tikv]	table:t	keep order:false
@@ -1826,18 +1826,17 @@ create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,
 explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Projection	0.00	root		test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#18, Column#19, Column#20, Column#21
-  └─IndexJoin	0.00	root		inner join, inner:TableReader, outer key:Column#20, Column#21, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#20, test.tt.c), eq(Column#21, test.tt.d), other cond:or(or(and(eq(Column#20, 11), eq(test.tt.d, 111)), and(eq(Column#20, 22), eq(test.tt.d, 222))), or(and(eq(Column#20, 33), eq(test.tt.d, 333)), and(eq(Column#20, 44), eq(test.tt.d, 444)))), or(or(and(eq(test.tt.c, 11), eq(Column#21, 111)), and(eq(test.tt.c, 22), eq(Column#21, 222))), or(and(eq(test.tt.c, 33), eq(Column#21, 333)), and(eq(test.tt.c, 44), eq(Column#21, 444))))
-    ├─Union(Build)	0.00	root		
-    │ ├─Projection	0.00	root		1->Column#18, 2->Column#19, 3->Column#20, 4->Column#21
-    │ │ └─TableDual	0.00	root		rows:0
-    │ ├─Projection	0.00	root		2->Column#18, 3->Column#19, 4->Column#20, 5->Column#21
-    │ │ └─TableDual	0.00	root		rows:0
-    │ └─Projection	0.00	root		3->Column#18, 4->Column#19, 5->Column#20, 6->Column#21
-    │   └─TableDual	0.00	root		rows:0
-    └─TableReader(Probe)	0.00	root		data:Selection
-      └─Selection	0.00	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))
-        └─TableRangeScan	0.00	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo
+└─IndexJoin	3.75	root		inner join, inner:TableReader, outer key:Column#20, Column#21, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#20, test.tt.c), eq(Column#21, test.tt.d)
+  ├─Union(Build)	3.00	root		
+  │ ├─Projection	1.00	root		1->Column#18, 2->Column#19, 3->Column#20, 4->Column#21
+  │ │ └─TableDual	1.00	root		rows:1
+  │ ├─Projection	1.00	root		2->Column#18, 3->Column#19, 4->Column#20, 5->Column#21
+  │ │ └─TableDual	1.00	root		rows:1
+  │ └─Projection	1.00	root		3->Column#18, 4->Column#19, 5->Column#20, 6->Column#21
+  │   └─TableDual	1.00	root		rows:1
+  └─TableReader(Probe)	0.00	root		data:Selection
+    └─Selection	0.00	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444))))
+      └─TableRangeScan	3.00	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo
 CREATE TABLE test_62564(c0 DECIMAL);
 INSERT INTO test_62564 VALUES (0);
 SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);
