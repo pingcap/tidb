@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	tidbutils "github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 )
 
@@ -49,14 +50,16 @@ func listen(statusAddr string) (net.Listener, error) {
 	return listener, nil
 }
 
-// StartPProfListener forks a new goroutine listening on specified port and provide pprof info.
-func StartPProfListener(statusAddr string, wrapper *tidbutils.TLS) error {
+// StartStatusListener forks a new goroutine listening on specified port and provide metrics and pprof info.
+func StartStatusListener(statusAddr string, wrapper *tidbutils.TLS) error {
 	listener, err := listen(statusAddr)
 	if err != nil {
 		return err
 	}
 
 	go func() {
+		http.DefaultServeMux.Handle("/metrics", promhttp.Handler())
+
 		if e := http.Serve(wrapper.WrapListener(listener), nil); e != nil {
 			log.Warn("failed to serve pprof", zap.String("addr", startedPProf), zap.Error(e))
 			mu.Lock()

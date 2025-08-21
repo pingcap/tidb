@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -81,8 +82,7 @@ func (*AggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.AggFu
 // 0 stands for left, 1 stands for right, -1 stands for both, 2 stands for neither (e.g. count(*), sum(1) ...)
 func (*AggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, lSchema, rSchema *expression.Schema) int {
 	fromLeft, fromRight := false, false
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.Args, nil)
+	cols := expression.ExtractColumnsMapFromExpressions(nil, aggFunc.Args...)
 	for _, col := range cols {
 		if lSchema.Contains(col) {
 			fromLeft = true
@@ -264,7 +264,7 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAg
 		return child, nil
 	}
 	tmpSchema := expression.NewSchema(gbyCols...)
-	for _, key := range child.Schema().Keys {
+	for _, key := range child.Schema().PKOrUK {
 		if tmpSchema.ColumnsIndices(key) != nil { // gby item need to be covered by key.
 			return child, nil
 		}
@@ -297,8 +297,9 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAg
 func (*AggregationPushDownSolver) getDefaultValues(agg *logicalop.LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.SCtx().GetExprCtx(), agg.Children()[0].Schema())
-		if !existsDefaultValue {
+		value, existsDefaultValue, err := aggFunc.EvalNullValueInOuterJoin(agg.SCtx().GetExprCtx(), agg.Children()[0].Schema())
+		// if err is not null, just treat it as no default value.
+		if err != nil || !existsDefaultValue {
 			return nil, false
 		}
 		defaultValues = append(defaultValues, value)
@@ -363,7 +364,7 @@ func (a *AggregationPushDownSolver) makeNewAgg(ctx base.PlanContext, aggFuncs []
 }
 
 func (*AggregationPushDownSolver) splitPartialAgg(agg *logicalop.LogicalAggregation) (pushedAgg *logicalop.LogicalAggregation) {
-	partial, final, _ := BuildFinalModeAggregation(agg.SCtx(), &AggInfo{
+	partial, final, _ := physicalop.BuildFinalModeAggregation(agg.SCtx(), &physicalop.AggInfo{
 		AggFuncs:     agg.AggFuncs,
 		GroupByItems: agg.GroupByItems,
 		Schema:       agg.Schema(),
@@ -426,7 +427,7 @@ func (*AggregationPushDownSolver) pushAggCrossUnion(agg *logicalop.LogicalAggreg
 	// e.g. Union distinct will add a aggregation like `select join_agg_0, join_agg_1, join_agg_2 from t group by a, b, c` above UnionAll.
 	// And the pushed agg will be something like `select a, b, c, a, b, c from t group by a, b, c`. So if we just return child as join does,
 	// this will cause error during executor phase.
-	for _, key := range unionChild.Schema().Keys {
+	for _, key := range unionChild.Schema().PKOrUK {
 		if tmpSchema.ColumnsIndices(key) != nil {
 			if ok, proj := ConvertAggToProj(newAgg, newAgg.Schema()); ok {
 				proj.SetChildren(unionChild)

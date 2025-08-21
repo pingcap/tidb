@@ -24,13 +24,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -47,8 +47,8 @@ func testRenameTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID, oldSchemaID int64,
-	oldSchemaName pmodel.CIStr,
-	newSchemaName pmodel.CIStr,
+	oldSchemaName ast.CIStr,
+	newSchemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -81,8 +81,8 @@ func testRenameTable(
 
 func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest,
 	oldSchemaIDs, newSchemaIDs []int64,
-	newTableNames []pmodel.CIStr, oldTableIDs []int64,
-	oldSchemaNames, oldTableNames []pmodel.CIStr) *model.Job {
+	newTableNames []ast.CIStr, oldTableIDs []int64,
+	oldSchemaNames, oldTableNames []ast.CIStr) *model.Job {
 	job := &model.Job{
 		Version:    model.GetJobVerInUse(),
 		Type:       model.ActionRenameTables,
@@ -93,9 +93,12 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 		},
 	}
 
-	args := model.GetRenameTablesArgsFromV1(
-		oldSchemaIDs, oldSchemaNames, oldTableNames,
-		newSchemaIDs, newTableNames, oldTableIDs)
+	args := &model.RenameTablesArgs{
+		RenameTableInfos: model.GetRenameTablesArgsFromV1(
+			oldSchemaIDs, oldSchemaNames, oldTableNames,
+			newSchemaIDs, newTableNames, oldTableIDs,
+		),
+	}
 
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
@@ -111,9 +114,9 @@ func testLockTable(
 	d ddl.ExecutorForTest,
 	uuid string,
 	newSchemaID int64,
-	schemaName pmodel.CIStr,
+	schemaName ast.CIStr,
 	tblInfo *model.TableInfo,
-	lockTp pmodel.TableLockType,
+	lockTp ast.TableLockType,
 ) *model.Job {
 	args := &model.LockTablesArgs{
 		LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
@@ -141,7 +144,7 @@ func testLockTable(
 	return job
 }
 
-func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp pmodel.TableLockType) {
+func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp ast.TableLockType) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMutator(txn)
@@ -268,10 +271,10 @@ func TestTable(t *testing.T) {
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
 
-	job = testLockTable(t, ctx, de, d.GetID(), dbInfo1.ID, dbInfo1.Name, tblInfo, pmodel.TableLockWrite)
+	job = testLockTable(t, ctx, de, d.GetID(), dbInfo1.ID, dbInfo1.Name, tblInfo, ast.TableLockWrite)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
-	checkTableLockedTest(t, store, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, pmodel.TableLockWrite)
+	checkTableLockedTest(t, store, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, ast.TableLockWrite)
 	// for alter cache table
 	job = testAlterCacheTable(t, ctx, de, dbInfo1.ID, dbInfo1.Name, tblInfo)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
@@ -399,7 +402,7 @@ func testAlterCacheTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID int64,
-	newSchemaName pmodel.CIStr,
+	newSchemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -426,7 +429,7 @@ func testAlterNoCacheTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID int64,
-	newSchemaName pmodel.CIStr,
+	newSchemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -475,10 +478,10 @@ func TestRenameTables(t *testing.T) {
 	job := testRenameTables(t, ctx, de,
 		[]int64{dbInfo.ID, dbInfo.ID},
 		[]int64{dbInfo.ID, dbInfo.ID},
-		[]pmodel.CIStr{newTblInfos[0].Name, newTblInfos[1].Name},
+		[]ast.CIStr{newTblInfos[0].Name, newTblInfos[1].Name},
 		[]int64{tblInfos[0].ID, tblInfos[1].ID},
-		[]pmodel.CIStr{dbInfo.Name, dbInfo.Name},
-		[]pmodel.CIStr{tblInfos[0].Name, tblInfos[1].Name})
+		[]ast.CIStr{dbInfo.Name, dbInfo.Name},
+		[]ast.CIStr{tblInfos[0].Name, tblInfos[1].Name})
 
 	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
 	require.NoError(t, err)
@@ -503,11 +506,11 @@ func TestCreateTables(t *testing.T) {
 	args := &model.BatchCreateTableArgs{
 		Tables: make([]*model.CreateTableArgs, 0, 3),
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		args.Tables = append(args.Tables, &model.CreateTableArgs{
 			TableInfo: &model.TableInfo{
 				ID:   genIDs[i],
-				Name: pmodel.NewCIStr(fmt.Sprintf("s%d", i+1)),
+				Name: ast.NewCIStr(fmt.Sprintf("s%d", i+1)),
 			},
 		})
 	}
@@ -649,7 +652,7 @@ func TestRenameTableIntermediateState(t *testing.T) {
 	for _, tc := range testCases {
 		runInsert := false
 		var jobID int64 = 0
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 			if job.ID <= finishedJobID {
 				// The job has been done, OnJobUpdated may be invoked later asynchronously.
 				// We should skip the done job.
@@ -717,7 +720,7 @@ func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
 	)
 	enableWaitSubmit.Store(true)
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func() { time.Sleep(300 * time.Millisecond) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStepAndWaitSync", func() { time.Sleep(300 * time.Millisecond) })
 	// create and wait all jobs are submitted to tidb_ddl_job before they are run.
 	// we are creating same table/database, only the first will success.
 	var wg util.WaitGroupWrapper
@@ -760,4 +763,205 @@ func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
 	wg.Wait()
 	finished.Store(true)
 	ownerWg.Wait()
+}
+
+func TestDropTableAccessibleInInfoSchema(t *testing.T) {
+	// The dropped table should always be accessible until the state reaches `StateNone`.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("create table t (id int key)")
+
+	var errs []error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionDropTable && job.TableName == "t" {
+			if job.SchemaState == model.StateDeleteOnly || job.SchemaState == model.StateWriteOnly {
+				_, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+				errs = append(errs, err)
+			}
+		}
+	})
+	tkDDL.MustExec("drop table t")
+
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+	require.True(t, len(errs) > 0)
+}
+
+func TestCreateViewTwice(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_raw (id int)")
+	tk2.MustExec("use test")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	first := true
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
+		if first {
+			first = false
+			go func() {
+				defer wg.Done()
+				tk2.MustExecToErr("create view v as select * from t_raw where id > 666")
+			}()
+		}
+	})
+	tk.MustExec("create view v as select * from t_raw")
+	wg.Wait()
+}
+
+func TestIssue59238(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t ( a INT, b INT, INDEX idx(b))" +
+		" PARTITION BY RANGE(a) (" +
+		" PARTITION p1 VALUES LESS THAN (10000)," +
+		" PARTITION p2 VALUES LESS THAN (20000)," +
+		" PARTITION p3 VALUES LESS THAN (MAXVALUE))")
+
+	rs := tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").String()
+
+	tk.MustExec("alter table t truncate partition p1")
+	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
+
+	tk.MustExec("create table t1 (a int, b int, index idx(b))")
+	tk.MustExec("alter table t exchange partition p1 with table t1")
+	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
+}
+
+// TestRefreshMetaBasic tests few scenarios of meta kv inconsistent with infoschema.
+func TestRefreshMetaBasic(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	de := domain.DDLExecutor()
+	tk := testkit.NewTestKit(t, store)
+	sctx := testkit.NewTestKit(t, store).Session()
+
+	// get t1 table info
+	tk.MustExec("create placement policy p1 followers=1")
+	tk.MustExec("create placement policy p2 followers=2")
+	tk.MustExec("create database test1 placement policy p1")
+	tk.MustExec("use test1")
+	tk.MustExec("create table t1(id int)")
+	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test1"))
+	require.True(t, ok)
+	clonedTableInfo := getClonedTableInfoFromDomain(t, "test1", "t1", domain)
+	// update t1 table name to t2 by txn
+	clonedTableInfo.Name = ast.NewCIStr("t2")
+	updateTableMeta(t, store, dbInfo.ID, clonedTableInfo)
+	t2TableInfo := testutil.GetTableInfoByTxn(t, store, dbInfo.ID, clonedTableInfo.ID)
+	require.Equal(t, clonedTableInfo, t2TableInfo)
+	// validate infoschema doesn't conatain t2 table info
+	_, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
+	require.ErrorContains(t, err, "Table 'test1.t2' doesn't exist")
+	// refresh meta, validate infoschema store table t2 and schema version increase 1
+	oldSchemaVer := getSchemaVer(t, sctx)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
+	newSchemaVer := getSchemaVer(t, sctx)
+	require.Equal(t, oldSchemaVer+1, newSchemaVer)
+	_, err = domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	// table not exists in kv, exists in infoschema
+	tk.MustExec("create table t3(id int) placement policy p2")
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	clonedTableInfo = getClonedTableInfoFromDomain(t, "test1", "t3", domain)
+	// drop table t3 by txn
+	err = meta.NewMutator(txn).DropTableOrView(dbInfo.ID, clonedTableInfo.ID)
+	require.NoError(t, err)
+	txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	kvTableInfo, err := meta.NewMutator(txn).GetTable(dbInfo.ID, clonedTableInfo.ID)
+	require.NoError(t, err)
+	require.Nil(t, kvTableInfo)
+	// t3 table info exists in infoschema
+	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
+	require.True(t, ok)
+	// after refresh meta, t3 table info should be not exists in infoschema
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
+	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
+	require.False(t, ok)
+	_, ok = domain.InfoSchema().PlacementBundleByPhysicalTableID(clonedTableInfo.ID)
+	require.False(t, ok)
+
+	// table exists in kv, not exists in infoschema
+	clonedTableInfo.Name = ast.NewCIStr("t4")
+	clonedTableInfo.ID = 40000
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	// create table t4 by txn
+	err = meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, clonedTableInfo)
+	require.NoError(t, err)
+	txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	kvTableInfo, err = meta.NewMutator(txn).GetTable(dbInfo.ID, clonedTableInfo.ID)
+	require.NoError(t, err)
+	require.Equal(t, clonedTableInfo, kvTableInfo)
+	// t4 table info not exists in infoschema
+	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
+	require.False(t, ok)
+	// refresh meta, t4 table info should be equal with kv table info
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
+	infoschemaTableInfo, ok := domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, kvTableInfo.ID, infoschemaTableInfo.Meta().ID)
+	require.Equal(t, kvTableInfo.Name, infoschemaTableInfo.Meta().Name)
+	require.Equal(t, kvTableInfo.PlacementPolicyRef, infoschemaTableInfo.Meta().PlacementPolicyRef)
+	_, ok = domain.InfoSchema().PlacementBundleByPhysicalTableID(clonedTableInfo.ID)
+	require.True(t, ok)
+
+	// schema not exists in kv, exists in infoschema
+	clonedDBInfo, ok := getClonedDatabase(domain, "test1")
+	require.True(t, ok)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	// create table t4 by txn
+	err = meta.NewMutator(txn).DropDatabase(clonedDBInfo.ID)
+	require.NoError(t, err)
+	txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	kvDBInfo, err := meta.NewMutator(txn).GetDatabase(clonedDBInfo.ID)
+	require.NoError(t, err)
+	require.Nil(t, kvDBInfo)
+	// test db info exists in infoschema
+	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
+	require.True(t, ok)
+	// refresh meta, t4 table info should be equal with kv table info
+	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0, clonedDBInfo.Name.O, model.InvolvingAll)
+	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
+	require.False(t, ok)
+
+	// schema exists in kv, not exists in infoschema
+	clonedDBInfo.Name = ast.NewCIStr("test2")
+	clonedDBInfo.ID = 20000
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	// create database test2 by txn
+	err = meta.NewMutator(txn).CreateDatabase(clonedDBInfo)
+	require.NoError(t, err)
+	txn.Commit(context.Background())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	kvDBInfo, err = meta.NewMutator(txn).GetDatabase(clonedDBInfo.ID)
+	require.NoError(t, err)
+	// test2 db info not exists in infoschema
+	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
+	require.False(t, ok)
+	// refresh meta, test2 db info should exists in infoschema
+	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0, clonedDBInfo.Name.O, model.InvolvingAll)
+	infoschemaDBInfo, ok := domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, kvDBInfo, infoschemaDBInfo)
 }

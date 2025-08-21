@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"path"
@@ -41,9 +40,12 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -52,17 +54,22 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -187,7 +194,7 @@ func TestRangeProperties(t *testing.T) {
 	collector := newRangePropertiesCollector()
 	for _, p := range cases {
 		v := make([]byte, p.vLen)
-		for i := 0; i < p.count; i++ {
+		for range p.count {
 			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: uint64(pebble.InternalKeyKindSet)}, v)
 		}
 	}
@@ -240,10 +247,10 @@ func TestRangeProperties(t *testing.T) {
 		return true
 	})
 
-	fullRange := common.Range{Start: []byte("a"), End: []byte("z")}
+	fullRange := engineapi.Range{Start: []byte("a"), End: []byte("z")}
 	ranges := splitRangeBySizeProps(fullRange, sizeProps, 2*defaultPropSizeIndexDistance, defaultPropKeysIndexDistance*5/2)
 
-	require.Equal(t, []common.Range{
+	require.Equal(t, []engineapi.Range{
 		{Start: []byte("a"), End: []byte("e")},
 		{Start: []byte("e"), End: []byte("k")},
 		{Start: []byte("k"), End: []byte("mm")},
@@ -252,7 +259,7 @@ func TestRangeProperties(t *testing.T) {
 	}, ranges)
 
 	ranges = splitRangeBySizeProps(fullRange, sizeProps, 2*defaultPropSizeIndexDistance, defaultPropKeysIndexDistance)
-	require.Equal(t, []common.Range{
+	require.Equal(t, []engineapi.Range{
 		{Start: []byte("a"), End: []byte("e")},
 		{Start: []byte("e"), End: []byte("h")},
 		{Start: []byte("h"), End: []byte("k")},
@@ -296,9 +303,9 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 	}
 	writeOpt := &pebble.WriteOptions{Sync: false}
 	value := make([]byte, 100)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wb := db.NewBatch()
-		for j := 0; j < 100; j++ {
+		for j := range 100 {
 			key := make([]byte, 8)
 			valueLen := rand.Intn(50)
 			binary.BigEndian.PutUint64(key, uint64(i*100+j))
@@ -353,6 +360,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -369,7 +377,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	ctx := context.Background()
 	var kvs []common.KvPair
 	value := make([]byte, 128)
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
 	}
 	var keys [][]byte
@@ -510,12 +518,12 @@ func TestLocalIngestLoop(t *testing.T) {
 	count := 500
 	var metaSeqLock sync.Mutex
 	maxMetaSeq := int32(0)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			defer wg.Done()
 			flushCnt := rand.Int31n(10) + 1
 			seq := int32(0)
-			for i := 0; i < count; i++ {
+			for i := range count {
 				size := int64(rand.Int31n(50) + 1)
 				m := &sstMeta{totalSize: size, totalCount: 1}
 				atomic.AddInt64(&totalSize, size)
@@ -552,14 +560,6 @@ func TestLocalIngestLoop(t *testing.T) {
 	require.Equal(t, atomic.LoadInt32(&maxMetaSeq), f.finishedMetaSeq.Load())
 }
 
-func makeRanges(input []string) []common.Range {
-	ranges := make([]common.Range, 0, len(input)/2)
-	for i := 0; i < len(input)-1; i += 2 {
-		ranges = append(ranges, common.Range{Start: []byte(input[i]), End: []byte(input[i+1])})
-	}
-	return ranges
-}
-
 func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
@@ -587,6 +587,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 		},
 		logger: log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -622,9 +623,9 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 
 func TestMergeSSTs(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		var pairs []common.KvPair
-		for j := 0; j < 10; j++ {
+		for j := range 10 {
 			var kv common.KvPair
 			kv.Key = make([]byte, 16)
 			key := i*100 + j
@@ -640,9 +641,9 @@ func TestMergeSSTs(t *testing.T) {
 
 func TestMergeSSTsDuplicated(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		var pairs []common.KvPair
-		for j := 0; j < 10; j++ {
+		for j := range 10 {
 			var kv common.KvPair
 			kv.Key = make([]byte, 16)
 			key := i*100 + j
@@ -662,14 +663,14 @@ func TestMergeSSTsDuplicated(t *testing.T) {
 type mockPdClient struct {
 	pd.Client
 	stores  []*metapb.Store
-	regions []*pd.Region
+	regions []*router.Region
 }
 
-func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, nil
 }
 
-func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
 	return c.regions, nil
 }
 
@@ -797,7 +798,7 @@ type mockImportClientFactory struct {
 	apiInvokeRecorder map[string][]uint64
 }
 
-func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+func (f *mockImportClientFactory) create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	for _, store := range f.stores {
 		if store.Id == storeID {
 			return f.createClientFn(store), nil
@@ -806,7 +807,7 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 	return nil, fmt.Errorf("store %d not found", storeID)
 }
 
-func (f *mockImportClientFactory) Close() {}
+func (f *mockImportClientFactory) close() {}
 
 func TestMultiIngest(t *testing.T) {
 	allStores := []*metapb.Store{
@@ -1084,27 +1085,26 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	bak := Backend{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
 	}()
-	jobCh := make(chan *regionJob, 1)
-	jobCh <- &regionJob{}
-	jobOutCh := make(chan *regionJob, 1)
-	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil, nil)
+	toCh := make(chan *regionJob, 1)
+	worker := bak.newRegionJobWorker(1, toCh, make(chan *regionJob, 1), nil, nil)
+
+	toCh <- &regionJob{}
+	err := worker.run(context.Background())
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
-	require.Len(t, jobCh, 0)
-}
-
-func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
-	l := Backend{}
-	require.True(t, l.isRetryableImportTiKVError(io.EOF))
-	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
+	require.Len(t, toCh, 0)
 }
 
 // mockIngestData must be ordered on the first element of each [2][]byte.
+// there cannot be duplicated items.
 type mockIngestData [][2][]byte
 
 func (m mockIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
@@ -1139,13 +1139,18 @@ func (m mockIngestData) getFirstAndLastKeyIdx(lowerBound, upperBound []byte) (in
 		if i == 0 {
 			return -1, -1
 		}
-		last = i - 1
+		if i == len(m) || !bytes.Equal(upperBound, m[i][1]) {
+			last = i - 1
+		} else {
+			last = i
+		}
 	}
 	return first, last
 }
 
 type mockIngestIter struct {
-	data                     mockIngestData
+	data mockIngestData
+	// [startIdx, endIdx)
 	startIdx, endIdx, curIdx int
 }
 
@@ -1171,12 +1176,12 @@ func (m *mockIngestIter) Error() error { return nil }
 
 func (m *mockIngestIter) ReleaseBuf() {}
 
-func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte, _ *membuf.Pool) common.ForwardIter {
+func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte, _ *membuf.Pool) engineapi.ForwardIter {
 	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
-	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
+	return &mockIngestIter{data: m, startIdx: i, endIdx: j + 1, curIdx: i}
 }
 
-func (m mockIngestData) GetTS() uint64 { return 0 }
+func (m mockIngestData) GetTS() uint64 { return oracle.GoTimeToTS(time.Now()) }
 
 func (m mockIngestData) IncRef() {}
 
@@ -1185,6 +1190,9 @@ func (m mockIngestData) DecRef() {}
 func (m mockIngestData) Finish(_, _ int64) {}
 
 func TestCheckPeersBusy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 300
 	t.Cleanup(func() {
@@ -1223,7 +1231,7 @@ func TestCheckPeersBusy(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
@@ -1240,7 +1248,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	retryJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("b")},
+		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1260,7 +1268,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	jobCh <- retryJob
 
 	jobCh <- &regionJob{
-		keyRange: common.Range{Start: []byte("b"), End: []byte("")},
+		keyRange: engineapi.Range{Start: []byte("b"), End: []byte("")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 4,
@@ -1293,7 +1301,8 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil, nil)
+		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, nil, nil)
+		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
 
@@ -1317,6 +1326,9 @@ func TestCheckPeersBusy(t *testing.T) {
 }
 
 func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	log.InitLogger(&log.Config{Level: "debug"}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1347,7 +1359,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
@@ -1364,7 +1376,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	staleJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("b")},
+		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1400,7 +1412,8 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
+		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
+		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
 
@@ -1418,6 +1431,9 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 }
 
 func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1446,7 +1462,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
@@ -1462,7 +1478,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	partialWriteJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("c")},
+		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("c")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1500,7 +1516,8 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
+		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
+		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
 
@@ -1513,6 +1530,9 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 }
 
 func TestPartialWriteIngestBusy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1542,7 +1562,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
@@ -1565,6 +1585,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	err = db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -1574,7 +1595,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	partialWriteJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("c")},
+		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("c")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1620,7 +1641,8 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
+		worker := local.newRegionJobWorker(1, jobCh, jobOutCh, &jobWg, nil)
+		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
 
@@ -1708,6 +1730,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		regionSplitKeysCache: [][]byte{{1}, {11}},
 		regionSplitSize:      1 << 30,
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	// keys starts with 0 is meta keys, so we start with 1.
 	for i := byte(1); i <= 10; i++ {
@@ -1729,7 +1752,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 10)
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
@@ -1746,6 +1769,9 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx := context.Background()
 	local := &Backend{
 		splitCli: initTestSplitClient(
@@ -1767,6 +1793,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	extEngine := external.NewExternalEngine(
+		ctx,
 		memStore,
 		dataFiles,
 		statFiles,
@@ -1774,15 +1801,14 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		[]byte{10},
 		keys,
 		[][]byte{{1}, {11}},
-		common.NoopKeyAdapter{},
-		false,
-		nil,
-		common.DupDetectOpt{},
 		10,
 		123,
 		456,
 		789,
 		true,
+		16*units.GiB,
+		engineapi.OnDuplicateKeyIgnore,
+		"",
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -1797,7 +1823,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 9)
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
@@ -1820,9 +1846,7 @@ func getSuccessInjectedBehaviour() []injectedBehaviour {
 			},
 		},
 		{
-			ingest: injectedIngestBehaviour{
-				nextStage: ingested,
-			},
+			ingest: injectedIngestBehaviour{},
 		},
 	}
 }
@@ -1838,14 +1862,16 @@ func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
 		},
 		{
 			ingest: injectedIngestBehaviour{
-				nextStage: needRescan,
-				err:       common.ErrKVEpochNotMatch,
+				err: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch},
 			},
 		},
 	}
 }
 
 func TestDoImport(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -1871,16 +1897,22 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
-					injected:   getSuccessInjectedBehaviour(),
+					injected: append([]injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								err: status.Error(codes.Unknown, "RequestTooNew"),
+							},
+						},
+					}, getSuccessInjectedBehaviour()...),
 				},
 			},
 		},
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					keyRange:   engineapi.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
 					injected: []injectedBehaviour{
 						{
@@ -1891,9 +1923,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 						{
-							ingest: injectedIngestBehaviour{
-								nextStage: ingested,
-							},
+							ingest: injectedIngestBehaviour{},
 						},
 						{
 							write: injectedWriteBehaviour{
@@ -1903,9 +1933,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 						{
-							ingest: injectedIngestBehaviour{
-								nextStage: ingested,
-							},
+							ingest: injectedIngestBehaviour{},
 						},
 					},
 				},
@@ -1914,12 +1942,12 @@ func TestDoImport(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
 				},
 				{
-					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected: []injectedBehaviour{
 						{
@@ -1935,7 +1963,7 @@ func TestDoImport(t *testing.T) {
 		{"c", "c2"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -1944,7 +1972,7 @@ func TestDoImport(t *testing.T) {
 		{"c2", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -1976,7 +2004,7 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -1998,12 +2026,12 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'a', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'a', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
 				},
 				{
-					keyRange:   common.Range{Start: []byte{'a', '2'}, End: []byte{'b'}},
+					keyRange:   engineapi.Range{Start: []byte{'a', '2'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2012,7 +2040,7 @@ func TestDoImport(t *testing.T) {
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					keyRange:   engineapi.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2021,7 +2049,7 @@ func TestDoImport(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2044,7 +2072,7 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
@@ -2054,7 +2082,7 @@ func TestDoImport(t *testing.T) {
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					keyRange:   engineapi.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
@@ -2064,7 +2092,7 @@ func TestDoImport(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
@@ -2081,14 +2109,12 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
-	for _, v := range fakeRegionJobs {
-		for _, job := range v.jobs {
-			require.Len(t, job.injected, 0)
-		}
-	}
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2112,7 +2138,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
 					retryCount: MaxWriteAndIngestRetryTimes,
@@ -2127,7 +2153,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					},
 				},
 				{
-					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 					retryCount: MaxWriteAndIngestRetryTimes,
@@ -2146,7 +2172,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		{"c", "c2"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 					region: &split.RegionInfo{
@@ -2180,6 +2206,9 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 }
 
 func TestCtxCancelIsIgnored(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2205,7 +2234,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2214,7 +2243,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		{"d", "e"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'d'}, End: []byte{'e'}},
+					keyRange:   engineapi.Range{Start: []byte{'d'}, End: []byte{'e'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2234,6 +2263,9 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 }
 
 func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2290,16 +2322,10 @@ func (r *recordScanRegionsHook) AfterScanRegions(infos []*split.RegionInfo, err 
 }
 
 func TestExternalEngine(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
 	ctx := context.Background()
 	dir := t.TempDir()
 	storageURI := "file://" + filepath.ToSlash(dir)
@@ -2310,8 +2336,8 @@ func TestExternalEngine(t *testing.T) {
 	keys := make([][]byte, 100)
 	values := make([][]byte, 100)
 	for i := range keys {
-		keys[i] = []byte(fmt.Sprintf("key%06d", i))
-		values[i] = []byte(fmt.Sprintf("value%06d", i))
+		keys[i] = fmt.Appendf(nil, "key%06d", i)
+		values[i] = fmt.Appendf(nil, "value%06d", i)
 	}
 	// simple append 0x00
 	endKey := make([]byte, len(keys[99])+1)
@@ -2330,6 +2356,7 @@ func TestExternalEngine(t *testing.T) {
 		SplitKeys:     [][]byte{keys[0], keys[50], endKey},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
+		MemCapacity:   8 * units.GiB,
 	}
 	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}
@@ -2352,7 +2379,7 @@ func TestExternalEngine(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 7; i++ {
+		for range 7 {
 			jobs = append(jobs, <-jobToWorkerCh)
 			testJobWg.Done()
 		}
@@ -2377,7 +2404,7 @@ func TestExternalEngine(t *testing.T) {
 	sort.Slice(jobs, func(i, j int) bool {
 		return bytes.Compare(jobs[i].keyRange.Start, jobs[j].keyRange.Start) < 0
 	})
-	expectedKeyRanges := []common.Range{
+	expectedKeyRanges := []engineapi.Range{
 		{Start: keys[0], End: keys[20]},
 		{Start: keys[20], End: keys[30]},
 		{Start: keys[30], End: keys[50]},
@@ -2517,11 +2544,11 @@ func TestTotalMemoryConsume(t *testing.T) {
 	require.NoError(t, err)
 	// write about 150 MiB data
 	val := make([]byte, 35)
-	for i := 0; i < 1024*1024; i++ {
+	for i := range 1024 * 1024 {
 		err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
-			{Key: []byte(fmt.Sprintf("key_a_%09d", i)), Val: val},
-			{Key: []byte(fmt.Sprintf("key_b_%09d", i)), Val: val},
-			{Key: []byte(fmt.Sprintf("key_c_%09d", i)), Val: val},
+			{Key: fmt.Appendf(nil, "key_a_%09d", i), Val: val},
+			{Key: fmt.Appendf(nil, "key_b_%09d", i), Val: val},
+			{Key: fmt.Appendf(nil, "key_c_%09d", i), Val: val},
 		}))
 		require.NoError(t, err)
 	}

@@ -35,7 +35,7 @@ func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*s
 	sc := stmtctx.NewStmtCtxWithTimeZone(tz)
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, partitions)
-	for i := 0; i < partitions; i++ {
+	for i := range partitions {
 		// Construct TopN, should be key1 -> rand(0, 1000), key2 -> rand(0, 1000), key3 -> rand(0, 1000)...
 		topN := statistics.NewTopN(500)
 		{
@@ -54,7 +54,7 @@ func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*s
 
 	// Prepare Hists.
 	hists := make([]*statistics.Histogram, 0, partitions)
-	for i := 0; i < partitions; i++ {
+	for range partitions {
 		// Construct Hist
 		h := statistics.NewHistogram(1, 500, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
 		for j := 1; j <= 500; j++ {

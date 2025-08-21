@@ -34,9 +34,9 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -47,7 +47,7 @@ import (
 )
 
 // NewRPCServer creates a new rpc server.
-func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
+func NewRPCServer(config *config.Config, dom *domain.Domain, sm sessmgr.Manager) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("r", v),
@@ -89,7 +89,7 @@ type rpcServer struct {
 	*sysutil.DiagnosticsServer
 	tikvpb.TikvServer
 	dom *domain.Domain
-	sm  util.SessionManager
+	sm  sessmgr.Manager
 }
 
 // Coprocessor implements the TiKVServer interface.
@@ -216,7 +216,7 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	return h.HandleRequest(ctx, req)
 }
 
-func (s *rpcServer) createSession() (sessiontypes.Session, error) {
+func (s *rpcServer) createSession() (sessionapi.Session, error) {
 	se, err := session.CreateSessionWithDomain(s.dom.Store(), s.dom)
 	if err != nil {
 		return nil, err
@@ -237,11 +237,11 @@ func (s *rpcServer) createSession() (sessiontypes.Session, error) {
 	vars.SetHashAggFinalConcurrency(1)
 	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, -1)
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
-	if variable.OOMAction.Load() == variable.OOMActionCancel {
+	if vardef.OOMAction.Load() == vardef.OOMActionCancel {
 		action := &memory.PanicOnExceed{Killer: &vars.SQLKiller}
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	if err = vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10)); err != nil {
+	if err = vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10)); err != nil {
 		return nil, err
 	}
 	se.SetExtensions(extensions.NewSessionExtensions())

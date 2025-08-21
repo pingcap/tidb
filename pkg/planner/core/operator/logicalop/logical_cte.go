@@ -19,7 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -36,8 +36,8 @@ type LogicalCTE struct {
 	LogicalSchemaProducer
 
 	Cte       *CTEClass
-	CteAsName model.CIStr
-	CteName   model.CIStr
+	CteAsName ast.CIStr
+	CteName   ast.CIStr
 	SeedStat  *property.StatsInfo
 
 	OnlyUsedAsStorage bool
@@ -105,13 +105,13 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 // HashCode inherits the BaseLogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	if p.Cte.RecursivePartLogicalPlan != nil {
 		// Doesn't support recursive CTE yet.
-		return predicates, p.Self()
+		return predicates, p.Self(), nil
 	}
 	if !p.Cte.IsOuterMostCTE {
-		return predicates, p.Self()
+		return predicates, p.Self(), nil
 	}
 	pushedPredicates := make([]expression.Expression, len(predicates))
 	copy(pushedPredicates, predicates)
@@ -128,7 +128,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 	}
 	if len(pushedPredicates) == 0 {
 		p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.NewOne())
-		return predicates, p.Self()
+		return predicates, p.Self(), nil
 	}
 	newPred := make([]expression.Expression, 0, len(predicates))
 	for i := range pushedPredicates {
@@ -136,7 +136,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 		ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
 	}
 	p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
-	return predicates, p.Self()
+	return predicates, p.Self(), nil
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -175,9 +175,13 @@ func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimiz
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements the base.LogicalPlan.<11th> interface.
-func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 
 	var err error
@@ -192,7 +196,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		}
 		p.Cte.SeedPartLogicalPlan, p.Cte.SeedPartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.SeedPartLogicalPlan)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	if p.OnlyUsedAsStorage {
@@ -212,7 +216,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		if p.Cte.RecursivePartPhysicalPlan == nil {
 			_, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
 		recurStat := p.Cte.RecursivePartLogicalPlan.StatsInfo()
@@ -225,7 +229,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.StatsInfo().RowCount += recurStat.RowCount
 		}
 	}
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

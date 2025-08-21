@@ -15,6 +15,7 @@
 
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
+NEXT_GEN=$NEXT_GEN
 
 build=1
 mysql_tester="./mysql_tester"
@@ -28,7 +29,7 @@ stats="s"
 collation_opt=2
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
+trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -58,29 +59,55 @@ function help_message()
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
 
-    -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
-
 "
 }
 
-function build_portgenerator()
-{
-    portgenerator="./portgenerator"
-    echo "building portgenerator binary: $portgenerator"
-    rm -rf $portgenerator
-    GO111MODULE=on go build -o $portgenerator github.com/pingcap/tidb/cmd/portgenerator
+# Function to find an available port starting from a given port
+function find_available_port() {
+    local port=$1
+
+    while :; do
+        if [ "$port" -ge 65536 ]; then
+            echo "Error: No available ports found below 65536." >&2
+            exit 1
+        fi
+        if ! lsof -i :"$port" &> /dev/null; then
+            echo $port
+            return 0
+        fi
+        ((port++))
+    done
 }
 
+# Function to find multiple available ports starting from a given port
+function find_multiple_available_ports() {
+    local start_port=$1
+    local count=$2
+    local ports=()
+
+    while [ ${#ports[@]} -lt $count ]; do
+        local available_port=$(find_available_port $start_port)
+        if [ $? -eq 0 ]; then
+            ports+=($available_port)
+            ((start_port = available_port + 1))
+        else
+            echo "Error: Could not find an available port." >&2
+            exit 1
+        fi
+    done
+
+    echo "${ports[@]}"
+}
 
 function build_tidb_server()
 {
-    tidb_server="./integrationtest_tidb-server"
+    tidb_server="$(pwd)/integrationtest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
+        make -C ../.. server SERVER_OUT=$tidb_server
     else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
+        make -C ../.. server SERVER_OUT=$tidb_server RACE_FLAG="-race"
     fi
 }
 
@@ -88,7 +115,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@314107b26aa8fce86beb0dd48e75827fb269b365
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@0d83955ea569706e5296cd3e2f54efb7f1206d0b
     mv src mysql_tester
 }
 
@@ -99,7 +126,7 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:d:c:i:h:p" opt; do
+while getopts "t:s:r:b:d:c:i:h" opt; do
     case $opt in
         t)
             tests="$OPTARG"
@@ -146,9 +173,6 @@ while getopts "t:s:r:b:d:c:i:h:p" opt; do
             help_message
             exit 0
             ;;
-        p)  
-            portgenerator="$OPTARG"
-            ;;
         *)
             help_message 1>&2
             exit 1
@@ -163,11 +187,6 @@ if [ $build -eq 1 ]; then
         build_tidb_server
     else
         echo "skip building tidb-server, using existing binary: $tidb_server"
-    fi
-    if [[ -z "$portgenerator" ]]; then
-        build_portgenerator
-    else
-        echo "skip building portgenerator, using existing binary: $portgenerator"
     fi
     build_mysql_tester
 else
@@ -187,23 +206,11 @@ else
             echo "skip building mysql-tester, using existing binary: $mysql_tester"
         fi
     fi
-    if [ -z "$portgenerator" ]; then
-        portgenerator="./portgenerator"
-        if [[ ! -f "$portgenerator" ]]; then
-            build_portgenerator
-        else
-            echo "skip building portgenerator, using existing binary: $portgenerator"
-        fi
-    fi
 fi
 
 rm -rf $mysql_tester_log
 
-ports=()
-for port in $($portgenerator -count 2); do
-    ports+=("$port")
-done
-
+ports=($(find_multiple_available_ports 4000 2))
 port=${ports[0]}
 status=${ports[1]}
 
@@ -213,14 +220,21 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
-    echo "start tidb-server, log file: $mysql_tester_log"
+    start_options="-P $port -status $status -config $config_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
-        SERVER_PID=$!
+        start_options="$start_options -store tikv -path ${TIKV_PATH}"
     else
-        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
-        SERVER_PID=$!
+        start_options="$start_options -store unistore -path ''"
     fi
+
+    if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
+        start_options="$start_options -keyspace-name SYSTEM"
+    fi
+
+    echo "start tidb-server, log file: $mysql_tester_log"
+    $tidb_server -V
+    $tidb_server $start_options > $mysql_tester_log 2>&1 &
+    SERVER_PID=$!
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 

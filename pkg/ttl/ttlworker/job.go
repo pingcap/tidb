@@ -20,11 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 const finishJobTemplate = `UPDATE mysql.tidb_ttl_table_status
@@ -113,7 +112,11 @@ type ttlJob struct {
 	createTime    time.Time
 	ttlExpireTime time.Time
 
-	tbl *cache.PhysicalTable
+	// assignTime is the time when the job is assigned to the current manager.
+	// The `assignTime` may be greater than `createTime` if the job is reassigned to another manager.
+	assignTime time.Time
+
+	tableID int64
 
 	// status is the only field which should be protected by a mutex, as `Cancel` may be called at any time, and will
 	// change the status
@@ -122,12 +125,13 @@ type ttlJob struct {
 }
 
 // finish turns current job into last job, and update the error message and statistics summary
-func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) {
+func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) error {
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
+
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
 	err := se.RunInTxn(context.TODO(), func() error {
-		sql, args := finishJobSQL(job.tbl.ID, now, summary.SummaryText, job.id)
+		sql, args := finishJobSQL(job.tableID, now, summary.SummaryText, job.id)
 		_, err := se.ExecuteSQL(context.TODO(), sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)
@@ -145,10 +149,9 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		return nil
-	}, session.TxnModeOptimistic)
+		failpoint.InjectCall("ttl-finish", &err)
+		return err
+	}, session.TxnModePessimistic)
 
-	if err != nil {
-		logutil.BgLogger().Error("fail to finish a ttl job", zap.Error(err), zap.Int64("tableID", job.tbl.ID), zap.String("jobID", job.id))
-	}
+	return err
 }

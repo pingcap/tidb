@@ -21,7 +21,7 @@ import (
 )
 
 const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
-const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
+const sizeOfElementSize = int(unsafe.Sizeof(uint32(1)))
 const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
@@ -63,7 +63,7 @@ func init() {
 //   - If the system is big-endian, the bit masks are set sequentially from the highest bit (bit 31) to the lowest bit (bit 0),
 //     ensuring that atomic operations can be performed correctly on different endian systems
 func initializeBitMasks(isLittleEndian bool) {
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		if isLittleEndian {
 			// On little-endian systems, bit masks are arranged in order from high to low within each byte
 			bitMaskInUint32[i] = uint32(1) << (7 - (i % 8) + (i/8)*8)
@@ -131,7 +131,8 @@ func (rts *rowTableSegment) initTaggedBits() {
 	rts.taggedBits = getTaggedBitsFromUintptr(endPtr | startPtr)
 }
 
-const maxRowTableSegmentSize = 1024
+// This variable should be const, but we need to modify it for test
+var maxRowTableSegmentSize = int64(1024)
 
 // 64 MB
 const maxRowTableSegmentByteSize = 64 * 1024 * 1024
@@ -153,6 +154,18 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
 }
 
+func (rts *rowTableSegment) getRowNum() int {
+	return len(rts.hashValues)
+}
+
+func (rts *rowTableSegment) getRowBytes(idx int) []byte {
+	rowNum := rts.getRowNum()
+	if idx == rowNum-1 {
+		return rts.rawData[rts.rowStartOffset[idx]:]
+	}
+	return rts.rawData[rts.rowStartOffset[idx]:rts.rowStartOffset[idx+1]]
+}
+
 func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress taggedPtr) {
 	*(*taggedPtr)(rowStart) = nextRowAddress
 }
@@ -167,13 +180,30 @@ func getNextRowAddress(rowStart unsafe.Pointer, tagHelper *tagPtrHelper, hashVal
 }
 
 type rowTable struct {
-	meta     *joinTableMeta
 	segments []*rowTableSegment
+}
+
+func (rt *rowTable) getTotalMemoryUsage() int64 {
+	totalMemoryUsage := int64(0)
+	for _, seg := range rt.segments {
+		if seg.finalized {
+			totalMemoryUsage += seg.totalUsedBytes()
+		}
+	}
+	return totalMemoryUsage
+}
+
+func (rt *rowTable) getSegments() []*rowTableSegment {
+	return rt.segments
+}
+
+func (rt *rowTable) clearSegments() {
+	rt.segments = nil
 }
 
 // used for test
 func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
-	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+	for segIndex := range rt.segments {
 		if rowIndex < len(rt.segments[segIndex].rowStartOffset) {
 			return rt.segments[segIndex].getRowPointer(rowIndex)
 		}
@@ -184,7 +214,7 @@ func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
 
 func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 	startOffset := 0
-	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+	for segIndex := range rt.segments {
 		if rowIndex < len(rt.segments[segIndex].validJoinKeyPos) {
 			return startOffset + rt.segments[segIndex].validJoinKeyPos[rowIndex]
 		}
@@ -194,9 +224,18 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 	return -1
 }
 
-func newRowTable(meta *joinTableMeta) *rowTable {
+func (rt *rowTable) getTotalUsedBytesInSegments() int64 {
+	totalUsedBytes := int64(0)
+	for _, seg := range rt.segments {
+		if seg.finalized {
+			totalUsedBytes += seg.totalUsedBytes()
+		}
+	}
+	return totalUsedBytes
+}
+
+func newRowTable() *rowTable {
 	return &rowTable{
-		meta:     meta,
 		segments: make([]*rowTableSegment, 0),
 	}
 }

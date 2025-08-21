@@ -17,25 +17,24 @@ b	c
 2	2
 explain format = 'brief' select * from t where t.a = '1' and t.b = 4;
 id	estRows	task	access object	operator info
-Selection	0.00	root		eq(planner__core__casetest__point_get_plan.t.b, 4)
+Selection	1.00	root		eq(planner__core__casetest__point_get_plan.t.b, 4)
 └─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
 select * from t where t.a = '1' and t.b = 4;
 a	b	c	d
 1	4	4	1
 explain format = 'brief' select * from t where t.a in ('1','3') and t.d = 3;
 id	estRows	task	access object	operator info
-Selection	0.00	root		eq(planner__core__casetest__point_get_plan.t.d, 3)
+Selection	1.00	root		eq(planner__core__casetest__point_get_plan.t.d, 3)
 └─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a)	keep order:false, desc:false
 select * from t where t.a in ('1','3') and t.d = 3;
 a	b	c	d
 3	2	2	3
 explain format = 'brief' select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2));
 id	estRows	task	access object	operator info
-Projection	0.00	root		planner__core__casetest__point_get_plan.t.a, planner__core__casetest__point_get_plan.t.b, planner__core__casetest__point_get_plan.t.c, planner__core__casetest__point_get_plan.t.d, planner__core__casetest__point_get_plan.t.a, planner__core__casetest__point_get_plan.t.b, planner__core__casetest__point_get_plan.t.c, planner__core__casetest__point_get_plan.t.d
-└─MergeJoin	0.00	root		inner join, left key:planner__core__casetest__point_get_plan.t.a, right key:planner__core__casetest__point_get_plan.t.a
-  ├─Point_Get(Build)	1.00	root	table:t, index:PRIMARY(a)	
-  └─Selection(Probe)	0.00	root		or(and(eq(planner__core__casetest__point_get_plan.t.b, 1), eq(planner__core__casetest__point_get_plan.t.c, 1)), and(eq(planner__core__casetest__point_get_plan.t.b, 2), eq(planner__core__casetest__point_get_plan.t.c, 2)))
-    └─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+MergeJoin	1.00	root		inner join, left key:planner__core__casetest__point_get_plan.t.a, right key:planner__core__casetest__point_get_plan.t.a
+├─Selection(Build)	1.00	root		or(and(eq(planner__core__casetest__point_get_plan.t.b, 1), eq(planner__core__casetest__point_get_plan.t.c, 1)), and(eq(planner__core__casetest__point_get_plan.t.b, 2), eq(planner__core__casetest__point_get_plan.t.c, 2)))
+│ └─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+└─Point_Get(Probe)	1.00	root	table:t, index:PRIMARY(a)	
 select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2));
 a	b	c	d	a	b	c	d
 4	1	1	4	4	1	1	4
@@ -130,7 +129,7 @@ id	d
 asdf	t
 explain format = 'brief' select * from t4 where (id, d, c) in ((1, 'b', 0));
 id	estRows	task	access object	operator info
-Selection	0.80	root		eq(cast(planner__core__casetest__point_get_plan.t4.c, double BINARY), 0)
+Selection	1.00	root		eq(cast(planner__core__casetest__point_get_plan.t4.c, double BINARY), 0)
 └─Point_Get	1.00	root	table:t4, index:id(id, d)	
 select * from t4 where (id, d, c) in ((1, 'b', 0));
 id	d	c

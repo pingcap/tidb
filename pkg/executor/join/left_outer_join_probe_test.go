@@ -48,7 +48,7 @@ func genLeftOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter
 			filterVector, err = expression.VectorizedFilter(sessCtx.GetExprCtx().GetEvalCtx(), sessCtx.GetSessionVars().EnableVectorizedExpression, leftFilter, chunk.NewIterator4Chunk(leftChunk), filterVector)
 			require.NoError(t, err)
 		}
-		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
+		for leftIndex := range leftChunk.NumRows() {
 			filterIndex := leftIndex
 			if leftChunk.Sel() != nil {
 				filterIndex = leftChunk.Sel()[leftIndex]
@@ -65,7 +65,7 @@ func genLeftOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter
 			leftRow := leftChunk.GetRow(leftIndex)
 			hasAtLeastOneMatch := false
 			for _, rightChunk := range rightChunks {
-				for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
+				for rightIndex := range rightChunk.NumRows() {
 					if resultChk.IsFull() {
 						returnChks = append(returnChks, resultChk)
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
@@ -120,7 +120,9 @@ func TestLeftOuterJoinProbeBasic(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
 	rTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
+	rTypes = append(rTypes, retTypes...)
 	rTypes1 := []*types.FieldType{uintTp, stringTp, intTp, stringTp, tinyTp}
+	rTypes1 = append(rTypes1, rTypes1...)
 
 	rightAsBuildSide := []bool{true, false}
 	partitionNumber := 4
@@ -129,7 +131,7 @@ func TestLeftOuterJoinProbeBasic(t *testing.T) {
 
 	testCases := []testCase{
 		// normal case
-		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{0, 1, 2, 3}, nil, nil, nil},
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, nil, nil, nil, nil, nil},
 		// rightUsed is empty
 		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{}, nil, nil, nil},
 		// leftUsed is empty
@@ -211,7 +213,7 @@ func TestLeftOuterJoinProbeAllJoinKeys(t *testing.T) {
 	rightAsBuildSide := []bool{true, false}
 
 	// single key
-	for i := 0; i < len(lTypes); i++ {
+	for i := range lTypes {
 		lKeyTypes := []*types.FieldType{lTypes[i]}
 		rKeyTypes := []*types.FieldType{rTypes[i]}
 		for _, rightAsBuild := range rightAsBuildSide {
@@ -262,6 +264,7 @@ func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes = append(rTypes, rTypes...)
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	a := &expression.Column{Index: 1, RetType: nullableIntTp}
@@ -285,6 +288,7 @@ func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
 			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 200)
 			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{}, []int{}, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 200)
 			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 200)
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, nil, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 200)
 		}
 	}
 }
@@ -303,6 +307,7 @@ func TestLeftOuterJoinProbeWithSel(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes = append(rTypes, rTypes...)
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	a := &expression.Column{Index: 1, RetType: nullableIntTp}
@@ -326,6 +331,7 @@ func TestLeftOuterJoinProbeWithSel(t *testing.T) {
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 500)
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{}, []int{}, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 500)
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 500)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, nil, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 500)
 		}
 	}
 }

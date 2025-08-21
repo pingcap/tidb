@@ -16,13 +16,15 @@ package ast
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
 var (
 	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &DropStatsStmt{}
 	_ StmtNode = &LoadStatsStmt{}
+	_ StmtNode = &RefreshStatsStmt{}
+	_ StmtNode = &LockStatsStmt{}
+	_ StmtNode = &UnlockStatsStmt{}
 )
 
 // AnalyzeTableStmt is used to create table statistics.
@@ -30,8 +32,8 @@ type AnalyzeTableStmt struct {
 	stmtNode
 
 	TableNames     []*TableName
-	PartitionNames []model.CIStr
-	IndexNames     []model.CIStr
+	PartitionNames []CIStr
+	IndexNames     []CIStr
 	AnalyzeOpts    []AnalyzeOpt
 
 	// IndexFlag is true when we only analyze indices for a table.
@@ -41,8 +43,8 @@ type AnalyzeTableStmt struct {
 	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
 	HistogramOperation HistogramOperationType
 	// ColumnNames indicate the columns whose statistics need to be collected.
-	ColumnNames  []model.CIStr
-	ColumnChoice model.ColumnChoice
+	ColumnNames  []CIStr
+	ColumnChoice ColumnChoice
 }
 
 // AnalyzeOptType is the type for analyze options.
@@ -139,11 +141,11 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	switch n.ColumnChoice {
-	case model.AllColumns:
+	case AllColumns:
 		ctx.WriteKeyWord(" ALL COLUMNS")
-	case model.PredicateColumns:
+	case PredicateColumns:
 		ctx.WriteKeyWord(" PREDICATE COLUMNS")
-	case model.ColumnList:
+	case ColumnList:
 		ctx.WriteKeyWord(" COLUMNS ")
 		for i, columnName := range n.ColumnNames {
 			if i != 0 {
@@ -199,7 +201,7 @@ type DropStatsStmt struct {
 	stmtNode
 
 	Tables         []*TableName
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 	IsGlobalStats  bool
 }
 
@@ -348,4 +350,74 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
+}
+
+// RefreshStatsStmt is the statement node for refreshing statistics.
+// It is used to refresh the statistics of a table, database, or all databases.
+// For example:
+// REFRESH STATS table1, db1.*
+// REFRESH STATS *.*
+type RefreshStatsStmt struct {
+	stmtNode
+
+	RefreshObjects []*RefreshObject
+}
+
+func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("REFRESH STATS ")
+	for index, refreshObject := range n.RefreshObjects {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := refreshObject.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore RefreshStatsStmt.RefreshObjects[%d]", index)
+		}
+	}
+	return nil
+}
+
+func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshStatsStmt)
+	return v.Leave(n)
+}
+
+type RefreshObjectScopeType int
+
+const (
+	// RefreshObjectScopeTable is the scope of a table.
+	RefreshObjectScopeTable RefreshObjectScopeType = iota + 1
+	// RefreshObjectScopeDatabase is the scope of a database.
+	RefreshObjectScopeDatabase
+	// RefreshObjectScopeGlobal is the scope of all databases.
+	RefreshObjectScopeGlobal
+)
+
+type RefreshObject struct {
+	RefreshObjectScope RefreshObjectScopeType
+	DBName             CIStr
+	TableName          CIStr
+}
+
+func (o *RefreshObject) Restore(ctx *format.RestoreCtx) error {
+	switch o.RefreshObjectScope {
+	case RefreshObjectScopeTable:
+		if o.DBName.O != "" {
+			ctx.WriteName(o.DBName.O)
+			ctx.WritePlain(".")
+		}
+		ctx.WriteName(o.TableName.O)
+	case RefreshObjectScopeDatabase:
+		ctx.WriteName(o.DBName.O)
+		ctx.WritePlain(".*")
+	case RefreshObjectScopeGlobal:
+		ctx.WritePlain("*.*")
+	default:
+		// This should never happen.
+		return errors.Errorf("invalid refresh object scope: %d", o.RefreshObjectScope)
+	}
+	return nil
 }

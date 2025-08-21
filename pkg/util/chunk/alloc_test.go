@@ -69,7 +69,7 @@ func TestAllocator(t *testing.T) {
 	check()
 
 	// Check maxFreeListLen
-	for i := 0; i < maxFreeChunks+10; i++ {
+	for range maxFreeChunks + 10 {
 		alloc.Alloc(fieldTypes, initCap, maxChunkSize)
 	}
 	alloc.Reset()
@@ -105,7 +105,7 @@ func TestColumnAllocator(t *testing.T) {
 	ft := fieldTypes[2]
 	// Test reuse.
 	cols := make([]*Column, 0, maxFreeColumnsPerType+10)
-	for i := 0; i < maxFreeColumnsPerType+10; i++ {
+	for range maxFreeColumnsPerType + 10 {
 		col := alloc1.NewColumn(ft, 20)
 		cols = append(cols, col)
 	}
@@ -135,7 +135,7 @@ func TestNoDuplicateColumnReuse(t *testing.T) {
 		types.NewFieldType(mysql.TypeDatetime),
 	}
 	alloc := NewAllocator()
-	for i := 0; i < maxFreeChunks+10; i++ {
+	for range maxFreeChunks + 10 {
 		chk := alloc.Alloc(fieldTypes, 5, 10)
 		chk.MakeRef(1, 3)
 	}
@@ -170,7 +170,7 @@ func TestAvoidColumnReuse(t *testing.T) {
 		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
 	}
 	alloc := NewAllocator()
-	for i := 0; i < maxFreeChunks+10; i++ {
+	for range maxFreeChunks + 10 {
 		chk := alloc.Alloc(fieldTypes, 5, 10)
 		for _, col := range chk.columns {
 			col.avoidReusing = true
@@ -186,7 +186,7 @@ func TestAvoidColumnReuse(t *testing.T) {
 
 	// test decoder will set avoid reusing flag.
 	chk := alloc.Alloc(fieldTypes, 5, 1024)
-	for i := 0; i <= 10; i++ {
+	for range 10 {
 		for _, col := range chk.columns {
 			col.AppendNull()
 		}
@@ -220,7 +220,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	InitChunkAllocSize(10, 20)
 	alloc := NewAllocator()
 	require.True(t, alloc.CheckReuseAllocSize())
-	for i := 0; i < maxFreeChunks+10; i++ {
+	for range maxFreeChunks + 10 {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
 	alloc.Reset()
@@ -232,7 +232,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	//Reduce capacity
 	InitChunkAllocSize(5, 10)
 	alloc = NewAllocator()
-	for i := 0; i < maxFreeChunks+10; i++ {
+	for range maxFreeChunks + 10 {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
 	alloc.Reset()
@@ -244,7 +244,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	//increase capacity
 	InitChunkAllocSize(50, 100)
 	alloc = NewAllocator()
-	for i := 0; i < maxFreeChunks+10; i++ {
+	for range maxFreeChunks + 10 {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
 	alloc.Reset()
@@ -259,7 +259,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	nu := len(alloc.columnAlloc.pool[VarElemLen].allocColumns)
 	require.Equal(t, nu, 1)
 	for _, col := range rs.columns {
-		for i := 0; i < 20480; i++ {
+		for range 20480 {
 			col.data = append(col.data, byte('a'))
 		}
 	}
@@ -280,7 +280,7 @@ func TestColumnAllocatorCheck(t *testing.T) {
 	}
 	InitChunkAllocSize(10, 20)
 	alloc := NewAllocator()
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
 	col := alloc.columnAlloc.NewColumn(types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(), 10)
@@ -343,11 +343,11 @@ func TestSyncAllocator(t *testing.T) {
 	alloc := NewSyncAllocator(NewAllocator())
 
 	wg := &sync.WaitGroup{}
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		wg.Add(1)
 		go func() {
-			for j := 0; j < 10; j++ {
-				for k := 0; k < 100; k++ {
+			for range 10 {
+				for range 100 {
 					chk := alloc.Alloc(fieldTypes, 5, 100)
 					require.NotNil(t, chk)
 				}

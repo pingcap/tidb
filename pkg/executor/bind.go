@@ -47,10 +47,6 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 		return e.dropSQLBindByDigest()
 	case plannercore.OpFlushBindings:
 		return e.flushBindings()
-	case plannercore.OpCaptureBindings:
-		e.captureBindings()
-	case plannercore.OpEvolveBindings:
-		return nil // not support yet
 	case plannercore.OpReloadBindings:
 		return e.reloadBindings()
 	case plannercore.OpSetBindingStatus:
@@ -60,7 +56,6 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
-	return nil
 }
 
 func (e *SQLBindExec) dropSQLBind() error {
@@ -72,7 +67,7 @@ func (e *SQLBindExec) dropSQLBind() error {
 		err := handle.DropSessionBinding([]string{e.details[0].SQLDigest})
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding([]string{e.details[0].SQLDigest})
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindingHandle().DropBinding([]string{e.details[0].SQLDigest})
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
@@ -90,7 +85,7 @@ func (e *SQLBindExec) dropSQLBindByDigest() error {
 		err := handle.DropSessionBinding(sqlDigests)
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(sqlDigests)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindingHandle().DropBinding(sqlDigests)
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
@@ -100,7 +95,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 		return errors.New("SQLBindExec: setBindingStatus should only have one SQLBindOpDetail")
 	}
 	_, sqlDigest := parser.NormalizeDigestForBinding(e.details[0].NormdOrigSQL)
-	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.details[0].NewStatus, sqlDigest.String())
+	ok, err := domain.GetDomain(e.Ctx()).BindingHandle().SetBindingStatus(e.details[0].NewStatus, sqlDigest.String())
 	if err == nil && !ok {
 		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
@@ -112,7 +107,7 @@ func (e *SQLBindExec) setBindingStatusByDigest() error {
 	if len(e.details) != 1 {
 		return errors.New("SQLBindExec: setBindingStatusByDigest should only have one SQLBindOpDetail")
 	}
-	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(
+	ok, err := domain.GetDomain(e.Ctx()).BindingHandle().SetBindingStatus(
 		e.details[0].NewStatus,
 		e.details[0].SQLDigest,
 	)
@@ -143,7 +138,7 @@ func (e *SQLBindExec) createSQLBind() error {
 			BindSQL:     detail.BindSQL,
 			Charset:     detail.Charset,
 			Collation:   detail.Collation,
-			Status:      bindinfo.Enabled,
+			Status:      bindinfo.StatusEnabled,
 			Source:      detail.Source,
 			SQLDigest:   detail.SQLDigest,
 			PlanDigest:  detail.PlanDigest,
@@ -155,17 +150,13 @@ func (e *SQLBindExec) createSQLBind() error {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		return handle.CreateSessionBinding(e.Ctx(), bindings)
 	}
-	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), bindings)
+	return domain.GetDomain(e.Ctx()).BindingHandle().CreateBinding(e.Ctx(), bindings)
 }
 
 func (e *SQLBindExec) flushBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().FlushGlobalBindings()
-}
-
-func (e *SQLBindExec) captureBindings() {
-	domain.GetDomain(e.Ctx()).BindHandle().CaptureBaselines()
+	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(false)
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().LoadFromStorageToCache(true)
+	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(true)
 }

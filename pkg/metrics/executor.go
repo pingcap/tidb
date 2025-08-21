@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -54,11 +55,23 @@ var (
 
 	// AffectedRowsCounterReplace records the number of replace affected rows.
 	AffectedRowsCounterReplace prometheus.Counter
+
+	// AffectedRowsCounterNTDMLUpdate records the number of NT-DML update affected rows.
+	AffectedRowsCounterNTDMLUpdate prometheus.Counter
+	// AffectedRowsCounterNTDMLDelete records the number of NT-DML delete affected rows.
+	AffectedRowsCounterNTDMLDelete prometheus.Counter
+	// AffectedRowsCounterNTDMLInsert records the number of NT-DML insert affected rows.
+	AffectedRowsCounterNTDMLInsert prometheus.Counter
+	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
+	AffectedRowsCounterNTDMLReplace prometheus.Counter
+
+	// NetworkTransmissionStats records the network transmission for queries
+	NetworkTransmissionStats *prometheus.CounterVec
 )
 
 // InitExecutorMetrics initializes excutor metrics.
 func InitExecutorMetrics() {
-	ExecutorCounter = NewCounterVec(
+	ExecutorCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -67,7 +80,7 @@ func InitExecutorMetrics() {
 		}, []string{LblType},
 	)
 
-	StmtNodeCounter = NewCounterVec(
+	StmtNodeCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -75,7 +88,7 @@ func InitExecutorMetrics() {
 			Help:      "Counter of StmtNode.",
 		}, []string{LblType, LblDb, LblResourceGroup})
 
-	DbStmtNodeCounter = NewCounterVec(
+	DbStmtNodeCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -83,7 +96,7 @@ func InitExecutorMetrics() {
 			Help:      "Counter of StmtNode by Database.",
 		}, []string{LblDb, LblType})
 
-	ExecPhaseDuration = NewSummaryVec(
+	ExecPhaseDuration = metricscommon.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -91,7 +104,7 @@ func InitExecutorMetrics() {
 			Help:      "Summary of each execution phase duration.",
 		}, []string{LblPhase, LblInternal})
 
-	OngoingTxnDurationHistogram = NewHistogramVec(
+	OngoingTxnDurationHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -100,7 +113,7 @@ func InitExecutorMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(60, 2, 15), // 60s ~ 273hours
 		}, []string{LblType})
 
-	MppCoordinatorStats = NewGaugeVec(
+	MppCoordinatorStats = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -108,7 +121,7 @@ func InitExecutorMetrics() {
 			Help:      "Mpp Coordinator related stats",
 		}, []string{LblType})
 
-	MppCoordinatorLatency = NewHistogramVec(
+	MppCoordinatorLatency = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -117,7 +130,7 @@ func InitExecutorMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
-	AffectedRowsCounter = NewCounterVec(
+	AffectedRowsCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -129,4 +142,16 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterUpdate = AffectedRowsCounter.WithLabelValues("Update")
 	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
 	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
+	AffectedRowsCounterNTDMLUpdate = AffectedRowsCounter.WithLabelValues("NTDML-Update")
+	AffectedRowsCounterNTDMLDelete = AffectedRowsCounter.WithLabelValues("NTDML-Delete")
+	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
+	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
+
+	NetworkTransmissionStats = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "network_transmission",
+			Help:      "Counter of network transmission bytes.",
+		}, []string{LblType})
 }

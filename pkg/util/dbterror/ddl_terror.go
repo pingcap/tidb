@@ -50,6 +50,8 @@ var (
 	// ErrRepairTableFail is used to repair tableInfo in repair mode.
 	ErrRepairTableFail = ClassDDL.NewStd(mysql.ErrRepairTable)
 
+	// ErrUnsupportedAddColumnarIndex means add columnar index is unsupported
+	ErrUnsupportedAddColumnarIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add columnar index: %s"), nil))
 	// ErrUnsupportedAddVectorIndex means add vector index is unsupported
 	ErrUnsupportedAddVectorIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add vector index: %s"), nil))
 	// ErrCantDropColWithIndex means can't drop the column with index. We don't support dropping column with index covered now.
@@ -58,6 +60,8 @@ var (
 	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
 	// ErrCantDropColWithCheckConstraint means can't drop column with check constraint
 	ErrCantDropColWithCheckConstraint = ClassDDL.NewStd(mysql.ErrDependentByCheckConstraint)
+	// ErrUnsupportedEngineAttribute means engine attribute option is unsupported
+	ErrUnsupportedEngineAttribute = ClassDDL.NewStd(mysql.ErrEngineAttributeNotSupported)
 	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
@@ -180,7 +184,7 @@ var (
 	// ErrFkDupName returns for duplicated FK name.
 	ErrFkDupName = ClassDDL.NewStd(mysql.ErrFkDupName)
 	// ErrInvalidDDLState returns for invalid ddl model object state.
-	ErrInvalidDDLState = ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
+	ErrInvalidDDLState = ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw, nil))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
 	// It's exported for testing.
 	ErrUnsupportedModifyPrimaryKey = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s primary key"), nil))
@@ -229,6 +233,8 @@ var (
 	ErrErrorOnRename = ClassDDL.NewStd(mysql.ErrErrorOnRename)
 	// ErrViewSelectClause returns error for create view with select into clause
 	ErrViewSelectClause = ClassDDL.NewStd(mysql.ErrViewSelectClause)
+	// ErrViewSelectVariable returns error for create view with select into clause
+	ErrViewSelectVariable = ClassDDL.NewStd(mysql.ErrViewSelectVariable)
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partition with unsupported expression type.
 	ErrNotAllowedTypeInPartition = ClassDDL.NewStd(mysql.ErrFieldTypeNotAllowedAsPartitionField)
@@ -419,9 +425,9 @@ var (
 	// ErrAlterTiFlashModeForTableWithoutTiFlashReplica returns when set tiflash mode on table whose tiflash_replica is null or tiflash_replica_count = 0
 	ErrAlterTiFlashModeForTableWithoutTiFlashReplica = ClassDDL.NewStdErr(0, parser_mysql.Message("TiFlash mode will take effect after at least one TiFlash replica is set for the table", nil))
 	// ErrUnsupportedTiFlashOperationForSysOrMemTable means we don't support the alter tiflash related action(e.g. set tiflash mode, set tiflash replica) for system table.
-	ErrUnsupportedTiFlashOperationForSysOrMemTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for system table and memory table"), nil))
+	ErrUnsupportedTiFlashOperationForSysOrMemTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for system table and memory table"), nil))
 	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
-	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for tables not supported by TiFlash: table contains %s charset"), nil))
+	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for table contains %s charset"), nil))
 	// ErrTiFlashBackfillIndex is the error that tiflash backfill the index failed.
 	ErrTiFlashBackfillIndex = ClassDDL.NewStdErr(mysql.ErrTiFlashBackfillIndex,
 		parser_mysql.Message(mysql.MySQLErrName[mysql.ErrTiFlashBackfillIndex].Raw, nil))
@@ -501,16 +507,21 @@ var (
 	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
 	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
+
+	// ErrEngineAttributeInvalidFormat is returned when meeting invalid format of engine attribute.
+	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
+	// ErrStorageClassInvalidSpec is reserved for future use.
+	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
 )
 
-// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
+// ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
 var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrPDServerTimeout:           {},
 	mysql.ErrTiKVServerTimeout:         {},
 	mysql.ErrTiKVServerBusy:            {},
 	mysql.ErrResolveLockTimeout:        {},
 	mysql.ErrRegionUnavailable:         {},
-	mysql.ErrGCTooEarly:                {},
+	mysql.ErrTxnAbortedByGC:            {},
 	mysql.ErrWriteConflict:             {},
 	mysql.ErrTiKVStoreLimit:            {},
 	mysql.ErrTiKVStaleCommand:          {},
@@ -522,7 +533,15 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrWriteConflictInTiDB:       {},
 	mysql.ErrTxnRetryable:              {},
 	mysql.ErrNotOwner:                  {},
+	mysql.ErrInvalidSplitRegionRanges:  {}, // PD client returns regions with no leader.
 
 	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},
+}
+
+// ReorgRetryableErrMsgs are the error messages that are retryable for reorganization.
+var ReorgRetryableErrMsgs = []string{
+	"context deadline exceeded",
+	"requested lease not found",
+	"mvcc: required revision has been compacted",
 }

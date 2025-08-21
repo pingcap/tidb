@@ -14,7 +14,9 @@
 
 package proto
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Step is the step of task.
 type Step int64
@@ -47,10 +49,11 @@ func Step2Str(t TaskType, s Step) string {
 	return fmt.Sprintf("unknown type %s", t)
 }
 
-// Steps of example task type, they can either have 1 or 2 steps.
+// Steps of example task type.
 const (
-	StepOne Step = 1
-	StepTwo Step = 2
+	StepOne   Step = 1
+	StepTwo   Step = 2
+	StepThree Step = 3
 )
 
 func exampleStep2Str(s Step) string {
@@ -59,6 +62,8 @@ func exampleStep2Str(s Step) string {
 		return "one"
 	case StepTwo:
 		return "two"
+	case StepThree:
+		return "three"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}
@@ -94,11 +99,11 @@ func importIntoStep2Str(s Step) string {
 	case ImportStepPostProcess:
 		return "post-process"
 	case ImportStepEncodeAndSort:
-		return "encode&sort"
+		return "encode"
 	case ImportStepMergeSort:
 		return "merge-sort"
 	case ImportStepWriteAndIngest:
-		return "write&ingest"
+		return "ingest"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}
@@ -131,7 +136,7 @@ func backfillStep2Str(s Step) string {
 	case BackfillStepMergeSort:
 		return "merge-sort"
 	case BackfillStepWriteAndIngest:
-		return "write&ingest"
+		return "ingest"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}

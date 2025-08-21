@@ -13,16 +13,19 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessiontxn",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",
         "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )
 
@@ -31,6 +34,7 @@ go_test(
     timeout = "short",
     srcs = ["session_pool_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":session",
         "//pkg/testkit",

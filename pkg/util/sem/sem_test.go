@@ -17,18 +17,19 @@ package sem
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestInvisibleSchema(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.True(IsInvisibleSchema(metricsSchema))
+	assert.True(IsInvisibleSchema(metadef.MetricSchemaName.L))
 	assert.True(IsInvisibleSchema("METRICS_ScHEma"))
 	assert.False(IsInvisibleSchema("mysql"))
-	assert.False(IsInvisibleSchema(informationSchema))
+	assert.False(IsInvisibleSchema(metadef.InformationSchemaName.L))
 	assert.False(IsInvisibleSchema("Bogusname"))
 }
 
@@ -46,14 +47,14 @@ func TestIsInvisibleTable(t *testing.T) {
 		assert.True(IsInvisibleTable(mysql.SystemDB, tbl))
 	}
 	for _, tbl := range infoSchemaTbls {
-		assert.True(IsInvisibleTable(informationSchema, tbl))
+		assert.True(IsInvisibleTable(metadef.InformationSchemaName.L, tbl))
 	}
 	for _, tbl := range perfSChemaTbls {
-		assert.True(IsInvisibleTable(performanceSchema, tbl))
+		assert.True(IsInvisibleTable(metadef.PerformanceSchemaName.L, tbl))
 	}
 
-	assert.True(IsInvisibleTable(metricsSchema, "acdc"))
-	assert.True(IsInvisibleTable(metricsSchema, "fdsgfd"))
+	assert.True(IsInvisibleTable(metadef.MetricSchemaName.L, "acdc"))
+	assert.True(IsInvisibleTable(metadef.MetricSchemaName.L, "fdsgfd"))
 	assert.False(IsInvisibleTable("test", "t1"))
 }
 
@@ -79,29 +80,29 @@ func TestIsInvisibleStatusVar(t *testing.T) {
 func TestIsInvisibleSysVar(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.False(IsInvisibleSysVar(variable.Hostname))                   // changes the value to default, but is not invisible
-	assert.False(IsInvisibleSysVar(variable.TiDBEnableEnhancedSecurity)) // should be able to see the mode is on.
-	assert.False(IsInvisibleSysVar(variable.TiDBAllowRemoveAutoInc))
+	assert.False(IsInvisibleSysVar(vardef.Hostname))                   // changes the value to default, but is not invisible
+	assert.False(IsInvisibleSysVar(vardef.TiDBEnableEnhancedSecurity)) // should be able to see the mode is on.
+	assert.False(IsInvisibleSysVar(vardef.TiDBAllowRemoveAutoInc))
 
-	assert.True(IsInvisibleSysVar(variable.TiDBCheckMb4ValueInUTF8))
-	assert.True(IsInvisibleSysVar(variable.TiDBConfig))
-	assert.True(IsInvisibleSysVar(variable.TiDBEnableSlowLog))
-	assert.True(IsInvisibleSysVar(variable.TiDBExpensiveQueryTimeThreshold))
-	assert.True(IsInvisibleSysVar(variable.TiDBForcePriority))
-	assert.True(IsInvisibleSysVar(variable.TiDBGeneralLog))
-	assert.True(IsInvisibleSysVar(variable.TiDBMetricSchemaRangeDuration))
-	assert.True(IsInvisibleSysVar(variable.TiDBMetricSchemaStep))
-	assert.True(IsInvisibleSysVar(variable.TiDBOptWriteRowID))
-	assert.True(IsInvisibleSysVar(variable.TiDBPProfSQLCPU))
-	assert.True(IsInvisibleSysVar(variable.TiDBRecordPlanInSlowLog))
-	assert.True(IsInvisibleSysVar(variable.TiDBSlowQueryFile))
-	assert.True(IsInvisibleSysVar(variable.TiDBSlowLogThreshold))
-	assert.True(IsInvisibleSysVar(variable.TiDBEnableCollectExecutionInfo))
-	assert.True(IsInvisibleSysVar(variable.TiDBMemoryUsageAlarmRatio))
-	assert.True(IsInvisibleSysVar(variable.TiDBEnableTelemetry))
-	assert.True(IsInvisibleSysVar(variable.TiDBRowFormatVersion))
-	assert.True(IsInvisibleSysVar(variable.TiDBRedactLog))
-	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
-	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
+	assert.True(IsInvisibleSysVar(vardef.TiDBCheckMb4ValueInUTF8))
+	assert.True(IsInvisibleSysVar(vardef.TiDBConfig))
+	assert.True(IsInvisibleSysVar(vardef.TiDBEnableSlowLog))
+	assert.True(IsInvisibleSysVar(vardef.TiDBExpensiveQueryTimeThreshold))
+	assert.True(IsInvisibleSysVar(vardef.TiDBForcePriority))
+	assert.True(IsInvisibleSysVar(vardef.TiDBGeneralLog))
+	assert.True(IsInvisibleSysVar(vardef.TiDBMetricSchemaRangeDuration))
+	assert.True(IsInvisibleSysVar(vardef.TiDBMetricSchemaStep))
+	assert.True(IsInvisibleSysVar(vardef.TiDBOptWriteRowID))
+	assert.True(IsInvisibleSysVar(vardef.TiDBPProfSQLCPU))
+	assert.True(IsInvisibleSysVar(vardef.TiDBRecordPlanInSlowLog))
+	assert.True(IsInvisibleSysVar(vardef.TiDBSlowQueryFile))
+	assert.True(IsInvisibleSysVar(vardef.TiDBSlowLogThreshold))
+	assert.True(IsInvisibleSysVar(vardef.TiDBEnableCollectExecutionInfo))
+	assert.True(IsInvisibleSysVar(vardef.TiDBMemoryUsageAlarmRatio))
+	assert.True(IsInvisibleSysVar(vardef.TiDBEnableTelemetry))
+	assert.True(IsInvisibleSysVar(vardef.TiDBRowFormatVersion))
+	assert.True(IsInvisibleSysVar(vardef.TiDBRedactLog))
+	assert.True(IsInvisibleSysVar(vardef.TiDBTopSQLMaxTimeSeriesCount))
+	assert.True(IsInvisibleSysVar(vardef.TiDBServiceScope))
 	assert.True(IsInvisibleSysVar(tidbAuditRetractLog))
 }

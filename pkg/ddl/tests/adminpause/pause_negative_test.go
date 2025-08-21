@@ -48,7 +48,7 @@ func TestPauseOnWriteConflict(t *testing.T) {
 
 	jobID := atomic.NewInt64(0)
 	// Test when pause cannot be retried and adding index succeeds.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
@@ -70,7 +70,7 @@ func TestPauseOnWriteConflict(t *testing.T) {
 
 	var cancelRS []sqlexec.RecordSet
 	var cancelErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
@@ -110,7 +110,7 @@ func TestPauseFailedOnCommit(t *testing.T) {
 	var adminMutex sync.RWMutex
 
 	// Test when pause cannot be retried and adding index succeeds.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {

@@ -21,16 +21,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	timerrt "github.com/pingcap/tidb/pkg/timer/runtime"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
-)
-
-const (
-	defaultCheckTTLJobInterval = 10 * time.Second
 )
 
 type ttlTimerSummary struct {
@@ -78,7 +74,7 @@ func newTTLTimerHook(adapter TTLJobAdapter, cli timerapi.TimerClient) *ttlTimerH
 		cli:                 cli,
 		ctx:                 ctx,
 		cancel:              cancel,
-		checkTTLJobInterval: defaultCheckTTLJobInterval,
+		checkTTLJobInterval: getCheckJobInterval(),
 	}
 }
 
@@ -90,7 +86,7 @@ func (t *ttlTimerHook) Stop() {
 }
 
 func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerShedEvent) (r timerapi.PreSchedEventResult, err error) {
-	if !variable.EnableTTLJob.Load() {
+	if !vardef.EnableTTLJob.Load() {
 		r.Delay = time.Minute
 		return
 	}
@@ -100,7 +96,7 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 		return r, err
 	}
 
-	windowStart, windowEnd := variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load()
+	windowStart, windowEnd := vardef.TTLJobScheduleWindowStartTime.Load(), vardef.TTLJobScheduleWindowEndTime.Load()
 	if !timeutil.WithinDayTimePeriod(windowStart, windowEnd, now) {
 		r.Delay = time.Minute
 		return
@@ -211,7 +207,7 @@ func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, t
 				return
 			}
 
-			logger.Error("GetTimerByID failed", zap.Error(err))
+			logger.Warn("GetTimerByID failed", zap.Error(err))
 			continue
 		}
 
@@ -222,7 +218,7 @@ func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, t
 
 		job, err := t.adapter.GetJob(t.ctx, data.TableID, data.PhysicalID, eventID)
 		if err != nil {
-			logger.Error("GetJob error", zap.Error(err))
+			logger.Warn("GetJob error", zap.Error(err))
 			continue
 		}
 
@@ -248,7 +244,7 @@ func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, t
 		}
 
 		if err = t.cli.CloseTimerEvent(t.ctx, timerID, eventID, timerapi.WithSetWatermark(eventStart), timerapi.WithSetSummaryData(summaryData)); err != nil {
-			logger.Error("CloseTimerEvent error", zap.Error(err))
+			logger.Warn("CloseTimerEvent error", zap.Error(err))
 			continue
 		}
 

@@ -43,6 +43,7 @@ import (
 
 const (
 	tableNameGlobalStatus                    = "global_status"
+	tableNameGlobalVariables                 = "global_variables"
 	tableNameSessionStatus                   = "session_status"
 	tableNameSetupActors                     = "setup_actors"
 	tableNameSetupObjects                    = "setup_objects"
@@ -111,6 +112,7 @@ var tableIDMap = map[string]int64{
 	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
 	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 	tableNameSessionAccountConnectAttrs:      autoid.PerformanceSchemaDBID + 33,
+	tableNameGlobalVariables:                 autoid.PerformanceSchemaDBID + 34,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.

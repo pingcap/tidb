@@ -50,7 +50,7 @@ grant select on ddl__sequence.t to 'myuser'@'localhost';
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create sequence seq;
 Error 1142 (42000): SHOW command denied to user 'myuser'@'localhost' for table 'seq'

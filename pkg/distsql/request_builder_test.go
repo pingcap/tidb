@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -177,7 +177,7 @@ func TestTableRangesToKVRanges(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xd, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 		},
 	}
-	for i := 0; i < len(expect); i++ {
+	for i := range expect {
 		require.Equal(t, expect[i], actual[i])
 	}
 }
@@ -316,7 +316,7 @@ func TestRequestBuilder1(t *testing.T) {
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		NotFillCache:      false,
@@ -400,7 +400,7 @@ func TestRequestBuilder2(t *testing.T) {
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		NotFillCache:      false,
@@ -450,7 +450,7 @@ func TestRequestBuilder3(t *testing.T) {
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		NotFillCache:      false,
@@ -499,7 +499,7 @@ func TestRequestBuilder4(t *testing.T) {
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		NotFillCache:      false,
@@ -593,8 +593,6 @@ func TestRequestBuilder7(t *testing.T) {
 		{kv.ReplicaReadFollower, "Follower"},
 		{kv.ReplicaReadMixed, "Mixed"},
 	} {
-		// copy iterator variable into a new variable, see issue #27779
-		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
 			dctx := NewDistSQLContextForTest()
 			dctx.ReplicaReadType = replicaRead.replicaReadType
@@ -639,7 +637,7 @@ func TestRequestBuilder8(t *testing.T) {
 		StartTs:           0x0,
 		Data:              []uint8(nil),
 		KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
-		Concurrency:       variable.DefDistSQLScanConcurrency,
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
 		MemTracker:        (*memory.Tracker)(nil),
@@ -665,7 +663,7 @@ func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
 		StartTs:               0x0,
 		Data:                  []uint8(nil),
 		KeyRanges:             kv.NewNonPartitionedKeyRanges(nil),
-		Concurrency:           variable.DefDistSQLScanConcurrency,
+		Concurrency:           vardef.DefDistSQLScanConcurrency,
 		IsolationLevel:        0,
 		Priority:              0,
 		MemTracker:            (*memory.Tracker)(nil),
@@ -673,6 +671,33 @@ func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
 		ReadReplicaScope:      kv.GlobalReplicaScope,
 		TiKVClientReadTimeout: 100,
 		ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+	}
+	expect.Paging.MinPagingSize = paging.MinPagingSize
+	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	actual.ResourceGroupTagger = nil
+	require.Equal(t, expect, actual)
+}
+
+func TestRequestBuilderMaxExecutionTime(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	dctx.MaxExecutionTime = 100
+	actual, err := (&RequestBuilder{}).
+		SetFromSessionVars(dctx).
+		Build()
+	require.NoError(t, err)
+	expect := &kv.Request{
+		Tp:                0,
+		StartTs:           0x0,
+		Data:              []uint8(nil),
+		KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
+		Concurrency:       vardef.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		MemTracker:        (*memory.Tracker)(nil),
+		SchemaVar:         0,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		MaxExecutionTime:  100,
+		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -696,7 +721,7 @@ func TestTableRangesToKVRangesWithFbs(t *testing.T) {
 		},
 	}
 
-	for i := 0; i < len(actual); i++ {
+	for i := range actual {
 		require.Equal(t, expect[i], actual[i])
 	}
 }
@@ -717,7 +742,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5},
 		},
 	}
-	for i := 0; i < len(actual.FirstPartitionRange()); i++ {
+	for i := range actual.FirstPartitionRange() {
 		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
 	}
 }
@@ -735,8 +760,6 @@ func TestScanLimitConcurrency(t *testing.T) {
 		{tipb.ExecType_TypeTableScan, 1000000, dctx.DistSQLConcurrency, "TblScan_SessionVars"},
 		{tipb.ExecType_TypeIndexScan, 1000000, dctx.DistSQLConcurrency, "IdxScan_SessionVars"},
 	} {
-		// copy iterator variable into a new variable, see issue #27779
-		tt := tt
 		t.Run(tt.src, func(t *testing.T) {
 			firstExec := &tipb.Executor{Tp: tt.tp}
 			switch tt.tp {
@@ -861,7 +884,7 @@ func TestRequestBuilderHandle(t *testing.T) {
 	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
 		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
 
-	resourceTagBuilder := kv.NewResourceGroupTagBuilder()
+	resourceTagBuilder := kv.NewResourceGroupTagBuilder(nil)
 	tableID := int64(15)
 	actual, err := (&RequestBuilder{}).SetTableHandles(tableID, handles).
 		SetDAGRequest(&tipb.DAGRequest{}).

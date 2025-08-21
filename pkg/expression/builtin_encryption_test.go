@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -61,9 +62,9 @@ var cryptTests = []struct {
 func TestSQLDecode(t *testing.T) {
 	ctx := createContext(t)
 	for _, tt := range cryptTests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CollationConnection, tt.chs)
+		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CollationConnection, tt.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Decode, primitiveValsToConstants(ctx, []any{tt.origin, tt.password})...)
 		require.NoError(t, err)
@@ -80,9 +81,9 @@ func TestSQLDecode(t *testing.T) {
 func TestSQLEncode(t *testing.T) {
 	ctx := createContext(t)
 	for _, test := range cryptTests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, test.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, test.chs)
 		require.NoError(t, err)
-		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CollationConnection, test.chs)
+		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CollationConnection, test.chs)
 		require.NoError(t, err)
 		var h []byte
 		if test.crypt != nil {
@@ -150,7 +151,7 @@ func TestAESEncrypt(t *testing.T) {
 
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
-		err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
+		err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err)
 		args := []types.Datum{types.NewDatum(tt.origin)}
 		for _, param := range tt.params {
@@ -162,7 +163,7 @@ func TestAESEncrypt(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
 	}
-	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	testNullInput(t, ctx, ast.AesEncrypt)
 	testAmbiguousInput(t, ctx, ast.AesEncrypt)
@@ -195,9 +196,9 @@ func TestAESEncrypt(t *testing.T) {
 
 	for _, tt := range gbkTests {
 		msg := fmt.Sprintf("%v", tt)
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, tt.chs)
 		require.NoError(t, err, msg)
-		err = ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
+		err = ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err, msg)
 
 		args := primitiveValsToConstants(ctx, []any{tt.origin})
@@ -217,7 +218,7 @@ func TestAESDecrypt(t *testing.T) {
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
 		msg := fmt.Sprintf("%v", tt)
-		err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
+		err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err, msg)
 		args := []types.Datum{fromHex(tt.crypt)}
 		for _, param := range tt.params {
@@ -233,7 +234,7 @@ func TestAESDecrypt(t *testing.T) {
 		}
 		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str, msg)
 	}
-	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	testNullInput(t, ctx, ast.AesDecrypt)
 	testAmbiguousInput(t, ctx, ast.AesDecrypt)
@@ -267,9 +268,9 @@ func TestAESDecrypt(t *testing.T) {
 
 	for _, tt := range gbkTests {
 		msg := fmt.Sprintf("%v", tt)
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, tt.chs)
 		require.NoError(t, err, msg)
-		err = ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
+		err = ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err, msg)
 		// Set charset and collate except first argument
 		args := datumsToConstants([]types.Datum{fromHex(tt.crypt)})
@@ -283,7 +284,7 @@ func TestAESDecrypt(t *testing.T) {
 }
 
 func testNullInput(t *testing.T, ctx *mock.Context, fnName string) {
-	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
@@ -305,7 +306,7 @@ func testAmbiguousInput(t *testing.T, ctx *mock.Context, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	// test for modes that require init_vector
-	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-cbc")
+	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-cbc")
 	require.NoError(t, err)
 	_, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg}))
 	require.Error(t, err)
@@ -315,7 +316,7 @@ func testAmbiguousInput(t *testing.T, ctx *mock.Context, fnName string) {
 	require.Error(t, err)
 
 	// test for modes that do not require init_vector
-	err = ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
+	err = ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, arg}))
 	require.NoError(t, err)
@@ -366,7 +367,7 @@ func TestSha1Hash(t *testing.T) {
 
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
 		f, _ := fc.getFunction(ctx, primitiveValsToConstants(ctx, []any{tt.origin}))
 		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -437,7 +438,7 @@ func TestSha2Hash(t *testing.T) {
 
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
 		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, []any{tt.origin, tt.hashLength}))
 		require.NoError(t, err)
@@ -479,7 +480,7 @@ func TestMD5Hash(t *testing.T) {
 		{nil, "", "", true, false},
 	}
 	for _, c := range cases {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.charset)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.charset)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
@@ -573,7 +574,7 @@ func TestCompress(t *testing.T) {
 		{"gbk", "你好", string(decodeHex("04000000789C3AF278D76140000000FFFF07F40325"))},
 	}
 	for _, test := range tests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, test.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, test.chs)
 		require.NoErrorf(t, err, "%v", test)
 		arg := primitiveValsToConstants(ctx, []any{test.in})
 		f, err := fc.getFunction(ctx, arg)
@@ -658,7 +659,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testuser"}
 	globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 	ctx.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
-	err := globalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "1234")
+	err := globalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordDictionary, "1234")
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -690,7 +691,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 		}
 	}
 	// enable password validation
-	err = globalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordEnable, "ON")
+	err = globalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordEnable, "ON")
 	require.NoError(t, err)
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
@@ -726,7 +727,7 @@ func TestPassword(t *testing.T) {
 
 	warnCount := len(ctx.GetSessionVars().StmtCtx.GetWarnings())
 	for _, c := range cases {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.charset)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.charset)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.PasswordFunc, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)

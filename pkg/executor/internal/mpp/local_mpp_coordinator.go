@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -35,22 +36,26 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
 const (
-	receiveReportTimeout = 3 * time.Second
+	receiveReportTimeout = 100 * time.Millisecond
 )
 
 // mppResponse wraps mpp data packet.
@@ -175,18 +180,26 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 		reqMap:          make(map[int64]*mppRequestReport),
 	}
 
-	if len(coordinatorAddr) > 0 && needReportExecutionSummary(coord.originalPlan) {
-		coord.reportExecutionInfo = true
+	value := sctx.GetSessionVars().StmtCtx.GetPlan()
+	if value != nil {
+		if p, ok := value.(base.Plan); ok {
+			pp := getActualPhysicalPlan(p)
+			if pp != nil {
+				if len(coordinatorAddr) > 0 && needReportExecutionSummary(pp, coord.originalPlan.ID(), false) {
+					coord.reportExecutionInfo = true
+				}
+			}
+		}
 	}
 	return coord
 }
 
-func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) error {
-	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
+func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, allTiFlashZoneInfo map[string]string) error {
+	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.Sink}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := range pf.ExchangeSender.Schema().Columns {
+	for i := range pf.Sink.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	if !pf.IsRoot {
@@ -194,7 +207,9 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
-	for _, mppTask := range pf.ExchangeSender.Tasks {
+	zoneHelper := taskZoneInfoHelper{}
+	zoneHelper.init(allTiFlashZoneInfo)
+	for _, mppTask := range pf.Sink.GetSelfTasks() {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
@@ -209,21 +224,24 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		if err != nil {
 			return err
 		}
+		zoneHelper.isRoot = pf.IsRoot
+		zoneHelper.currentTaskZone = zoneHelper.allTiFlashZoneInfo[mppTask.Meta.GetAddress()]
+		zoneHelper.fillSameZoneFlagForExchange(dagReq.RootExecutor)
 		pbData, err := dagReq.Marshal()
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
-		if !variable.EnableResourceControl.Load() {
+		if !vardef.EnableResourceControl.Load() {
 			rgName = ""
 		}
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
+			zap.String("plan", plannercore.ToString(pf.Sink)),
 			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
+			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
 			zap.Uint64("GatherID", c.gatherID),
 			zap.String("resource_group", rgName),
 		)
@@ -335,15 +353,175 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 	return nil
 }
 
-// DFS to check if plan needs report execution summary through ReportMPPTaskStatus mpp service
-// Currently, return true if plan contains limit operator
-func needReportExecutionSummary(plan base.PhysicalPlan) bool {
+// taskZoneInfoHelper used to help reset exchange executor's same zone flags
+type taskZoneInfoHelper struct {
+	allTiFlashZoneInfo map[string]string
+	// exchangeZoneInfo is used to cache one mpp task's zone info:
+	// key is executor id, value is zone info array
+	// for ExchangeSender, it's target tiflash nodes' zone info; for ExchangeReceiver, it's source tiflash nodes' zone info
+	exchangeZoneInfo map[string][]string
+	tidbZone         string
+	currentTaskZone  string
+	isRoot           bool
+}
+
+func (h *taskZoneInfoHelper) init(allTiFlashZoneInfo map[string]string) {
+	h.tidbZone = config.GetGlobalConfig().Labels[placement.DCLabelKey]
+	h.allTiFlashZoneInfo = allTiFlashZoneInfo
+	// initial capacity to 2, for one exchange sender and one exchange receiver
+	h.exchangeZoneInfo = make(map[string][]string, 2)
+}
+
+func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor, slots int, sameZoneFlags []bool) (bool, []bool) {
+	if exec.ExecutorId == nil || len(h.currentTaskZone) == 0 {
+		for range slots {
+			sameZoneFlags = append(sameZoneFlags, true)
+		}
+		return true, sameZoneFlags
+	}
+	if h.isRoot && exec.Tp == tipb.ExecType_TypeExchangeSender {
+		sameZoneFlags = append(sameZoneFlags, len(h.tidbZone) == 0 || h.currentTaskZone == h.tidbZone)
+		return true, sameZoneFlags
+	}
+
+	// For CTE exchange nodes, data is passed locally, set all to true
+	if (exec.Tp == tipb.ExecType_TypeExchangeSender && len(exec.ExchangeSender.UpstreamCteTaskMeta) != 0) ||
+		(exec.Tp == tipb.ExecType_TypeExchangeReceiver && len(exec.ExchangeReceiver.OriginalCtePrdocuerTaskMeta) != 0) {
+		for range slots {
+			sameZoneFlags = append(sameZoneFlags, true)
+		}
+		return true, sameZoneFlags
+	}
+
+	return false, sameZoneFlags
+}
+
+func (h *taskZoneInfoHelper) collectExchangeZoneInfos(encodedTaskMeta [][]byte, slots int) []string {
+	zoneInfos := make([]string, 0, slots)
+	for _, taskBytes := range encodedTaskMeta {
+		taskMeta := &mpp.TaskMeta{}
+		err := taskMeta.Unmarshal(taskBytes)
+		if err != nil {
+			zoneInfos = append(zoneInfos, "")
+			continue
+		}
+		zoneInfos = append(zoneInfos, h.allTiFlashZoneInfo[taskMeta.GetAddress()])
+	}
+	return zoneInfos
+}
+
+func (h *taskZoneInfoHelper) inferSameZoneFlag(exec *tipb.Executor, encodedTaskMeta [][]byte) []bool {
+	slots := len(encodedTaskMeta)
+	sameZoneFlags := make([]bool, 0, slots)
+	filled := false
+	if filled, sameZoneFlags = h.tryQuickFillWithUncertainZones(exec, slots, sameZoneFlags); filled {
+		return sameZoneFlags
+	}
+	zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
+	if !exist {
+		zoneInfos = h.collectExchangeZoneInfos(encodedTaskMeta, slots)
+		h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
+	}
+
+	if len(zoneInfos) != slots {
+		// This branch is for safety purpose, not expected
+		for range slots {
+			sameZoneFlags = append(sameZoneFlags, true)
+		}
+		return sameZoneFlags
+	}
+
+	for i := range slots {
+		sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
+	}
+	return sameZoneFlags
+}
+
+func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
+	children := make([]*tipb.Executor, 0, 2)
+	switch exec.Tp {
+	case tipb.ExecType_TypeTableScan, tipb.ExecType_TypePartitionTableScan, tipb.ExecType_TypeIndexScan:
+	case tipb.ExecType_TypeSelection:
+		children = append(children, exec.Selection.Child)
+	case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
+		children = append(children, exec.Aggregation.Child)
+	case tipb.ExecType_TypeTopN:
+		children = append(children, exec.TopN.Child)
+	case tipb.ExecType_TypeLimit:
+		children = append(children, exec.Limit.Child)
+	case tipb.ExecType_TypeExchangeSender:
+		children = append(children, exec.ExchangeSender.Child)
+		exec.ExchangeSender.SameZoneFlag = h.inferSameZoneFlag(exec, exec.ExchangeSender.EncodedTaskMeta)
+	case tipb.ExecType_TypeExchangeReceiver:
+		exec.ExchangeReceiver.SameZoneFlag = h.inferSameZoneFlag(exec, exec.ExchangeReceiver.EncodedTaskMeta)
+	case tipb.ExecType_TypeJoin:
+		children = append(children, exec.Join.Children...)
+	case tipb.ExecType_TypeProjection:
+		children = append(children, exec.Projection.Child)
+	case tipb.ExecType_TypeWindow:
+		children = append(children, exec.Window.Child)
+	case tipb.ExecType_TypeSort:
+		children = append(children, exec.Sort.Child)
+	case tipb.ExecType_TypeExpand:
+		children = append(children, exec.Expand.Child)
+	case tipb.ExecType_TypeExpand2:
+		children = append(children, exec.Expand2.Child)
+	default:
+		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %d", exec.Tp))
+	}
+	for _, child := range children {
+		h.fillSameZoneFlagForExchange(child)
+	}
+}
+
+func getActualPhysicalPlan(plan base.Plan) base.PhysicalPlan {
+	if plan == nil {
+		return nil
+	}
+	if pp, ok := plan.(base.PhysicalPlan); ok {
+		return pp
+	}
 	switch x := plan.(type) {
-	case *plannercore.PhysicalLimit:
-		return true
+	case *plannercore.Explain:
+		return getActualPhysicalPlan(x.TargetPlan)
+	case *plannercore.SelectInto:
+		return getActualPhysicalPlan(x.TargetPlan)
+	case *plannercore.Insert:
+		return x.SelectPlan
+	case *plannercore.ImportInto:
+		return x.SelectPlan
+	case *plannercore.Update:
+		return x.SelectPlan
+	case *plannercore.Delete:
+		return x.SelectPlan
+	case *plannercore.Execute:
+		return getActualPhysicalPlan(x.Plan)
+	}
+	return nil
+}
+
+// DFS to check if plan needs report execution summary through ReportMPPTaskStatus mpp service
+// Currently, return true if there is a limit operator in the path from current TableReader to root
+func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, foundLimit bool) bool {
+	switch x := plan.(type) {
+	case *physicalop.PhysicalLimit:
+		return needReportExecutionSummary(x.Children()[0], destTablePlanID, true)
+	case *physicalop.PhysicalTableReader:
+		if foundLimit {
+			return x.GetTablePlan().ID() == destTablePlanID
+		}
+	case *physicalop.PhysicalShuffleReceiverStub:
+		return needReportExecutionSummary(x.DataSource, destTablePlanID, foundLimit)
+	case *physicalop.PhysicalCTE:
+		if needReportExecutionSummary(x.SeedPlan, destTablePlanID, foundLimit) {
+			return true
+		}
+		if x.RecurPlan != nil {
+			return needReportExecutionSummary(x.RecurPlan, destTablePlanID, foundLimit)
+		}
 	default:
 		for _, child := range x.Children() {
-			if needReportExecutionSummary(child) {
+			if needReportExecutionSummary(child, destTablePlanID, foundLimit) {
 				return true
 			}
 		}
@@ -497,7 +675,17 @@ func (c *localMppCoordinator) cancelMppTasks() {
 }
 
 func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta, bo *backoff.Backoffer) {
-	stream, err := c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta})
+	var stream *tikvrpc.MPPStreamResponse
+	var err error
+	var retry bool
+	for {
+		stream, retry, err = c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta, Bo: bo.TiKVBackoffer()})
+		if retry {
+			logutil.BgLogger().Warn("establish mpp connection meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+			continue
+		}
+		break
+	}
 	if err != nil {
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
@@ -593,7 +781,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 					if detail != nil && detail.TimeProcessedNs != nil &&
 						detail.NumProducedRows != nil && detail.NumIterations != nil {
 						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
+							RecordOneCopTask(-1, kv.TiFlash, detail)] = 0
 					}
 				}
 				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
@@ -602,10 +790,10 @@ func (c *localMppCoordinator) handleAllReports() error {
 					}
 				}
 			}
-			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, kv.TiFlash, c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
-			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
+			logutil.BgLogger().Info(fmt.Sprintf("Mpp coordinator not received all reports within %d ms", int(receiveReportTimeout.Milliseconds())),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("gatherID", c.gatherID),
 				zap.Int("expectCount", len(c.mppReqs)),
@@ -631,8 +819,10 @@ func (c *localMppCoordinator) closeWithoutReport() {
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		close(c.finishCh)
 	}
-	c.cancelFunc()
-	<-c.wgDoneChan
+	if c.cancelFunc != nil {
+		c.cancelFunc()
+		<-c.wgDoneChan
+	}
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
@@ -730,7 +920,7 @@ func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error)
 // Execute implements MppCoordinator interface
 func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.KeyRange, error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
-	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
+	sender := c.originalPlan.(*physicalop.PhysicalExchangeSender)
 	sctx := c.sessionCtx
 	frags, kvRanges, nodeInfo, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {
@@ -741,8 +931,24 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	}
 	c.nodeCnt = len(nodeInfo)
 
+	var allTiFlashZoneInfo map[string]string
+	if c.sessionCtx.GetStore() == nil {
+		allTiFlashZoneInfo = make(map[string]string)
+	} else if tikvStore, ok := c.sessionCtx.GetStore().(helper.Storage); ok {
+		cache := tikvStore.GetRegionCache()
+		allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+		allTiFlashZoneInfo = make(map[string]string, len(allTiFlashStores))
+		for _, tiflashStore := range allTiFlashStores {
+			tiflashStoreAddr := tiflashStore.GetAddr()
+			if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
+				allTiFlashZoneInfo[tiflashStoreAddr] = tiflashZone
+			}
+		}
+	} else {
+		allTiFlashZoneInfo = make(map[string]string)
+	}
 	for _, frag := range frags {
-		err = c.appendMPPDispatchReq(frag)
+		err = c.appendMPPDispatchReq(frag, allTiFlashZoneInfo)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

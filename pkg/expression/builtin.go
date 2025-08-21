@@ -21,6 +21,7 @@
 //go:generate go run generator/other_vec.go
 //go:generate go run generator/string_vec.go
 //go:generate go run generator/time_vec.go
+//go:generate go run generator/builtin_threadsafe.go
 
 package expression
 
@@ -57,7 +58,18 @@ type baseBuiltinFunc struct {
 	childrenVectorized     bool
 	childrenVectorizedOnce *sync.Once
 
+	safeToShareAcrossSessionFlag uint32 // 0 not-initialized, 1 safe, 2 unsafe
+
 	collationInfo
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+// SafeToShareAcrossSession implements the builtinFunc interface.
+func (*baseBuiltinFunc) SafeToShareAcrossSession() bool {
+	return false
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -188,7 +200,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
+			args[i] = WrapWithCastAsInt(ctx, args[i], nil)
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETDecimal:
@@ -254,7 +266,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	for i := range args {
 		switch argTps[i].EvalType() {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
+			args[i] = WrapWithCastAsInt(ctx, args[i], argTps[i])
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
@@ -419,7 +431,7 @@ func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 }
 
 func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
-	b.args = make([]Expression, 0, len(b.args))
+	b.args = make([]Expression, 0, len(from.args))
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
@@ -530,6 +542,7 @@ type vecBuiltinFunc interface {
 type builtinFunc interface {
 	expropt.RequireOptionalEvalProps
 	vecBuiltinFunc
+	SafeToShareAcrossSession
 
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)
@@ -852,7 +865,6 @@ var funcs = map[string]functionClass{
 	ast.IsIPv6:          &isIPv6FunctionClass{baseFunctionClass{ast.IsIPv6, 1, 1}},
 	ast.IsUsedLock:      &isUsedLockFunctionClass{baseFunctionClass{ast.IsUsedLock, 1, 1}},
 	ast.IsUUID:          &isUUIDFunctionClass{baseFunctionClass{ast.IsUUID, 1, 1}},
-	ast.MasterPosWait:   &masterPosWaitFunctionClass{baseFunctionClass{ast.MasterPosWait, 2, 4}},
 	ast.NameConst:       &nameConstFunctionClass{baseFunctionClass{ast.NameConst, 2, 2}},
 	ast.ReleaseAllLocks: &releaseAllLocksFunctionClass{baseFunctionClass{ast.ReleaseAllLocks, 0, 0}},
 	ast.UUID:            &uuidFunctionClass{baseFunctionClass{ast.UUID, 0, 0}},
@@ -913,12 +925,8 @@ var funcs = map[string]functionClass{
 	ast.AesEncrypt:               &aesEncryptFunctionClass{baseFunctionClass{ast.AesEncrypt, 2, 3}},
 	ast.Compress:                 &compressFunctionClass{baseFunctionClass{ast.Compress, 1, 1}},
 	ast.Decode:                   &decodeFunctionClass{baseFunctionClass{ast.Decode, 2, 2}},
-	ast.DesDecrypt:               &desDecryptFunctionClass{baseFunctionClass{ast.DesDecrypt, 1, 2}},
-	ast.DesEncrypt:               &desEncryptFunctionClass{baseFunctionClass{ast.DesEncrypt, 1, 2}},
 	ast.Encode:                   &encodeFunctionClass{baseFunctionClass{ast.Encode, 2, 2}},
-	ast.Encrypt:                  &encryptFunctionClass{baseFunctionClass{ast.Encrypt, 1, 2}},
 	ast.MD5:                      &md5FunctionClass{baseFunctionClass{ast.MD5, 1, 1}},
-	ast.OldPassword:              &oldPasswordFunctionClass{baseFunctionClass{ast.OldPassword, 1, 1}},
 	ast.PasswordFunc:             &passwordFunctionClass{baseFunctionClass{ast.PasswordFunc, 1, 1}},
 	ast.RandomBytes:              &randomBytesFunctionClass{baseFunctionClass{ast.RandomBytes, 1, 1}},
 	ast.SHA1:                     &sha1FunctionClass{baseFunctionClass{ast.SHA1, 1, 1}},
@@ -969,6 +977,9 @@ var funcs = map[string]functionClass{
 	ast.VecFromText:             &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
 	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
 
+	// fts functions
+	ast.FTSMatchWord: &ftsMatchWordFunctionClass{baseFunctionClass{ast.FTSMatchWord, 2, 2}},
+
 	// TiDB internal function.
 	ast.TiDBDecodeKey:       &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
 	ast.TiDBMVCCInfo:        &tidbMVCCInfoFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBMVCCInfo, 1, 1}},
@@ -979,7 +990,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBIsDDLOwner:       &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBDecodePlan:       &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
 	ast.TiDBDecodeBinaryPlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodeBinaryPlan, 1, 1}},
-	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
+	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
 
 	// TiDB Sequence function.

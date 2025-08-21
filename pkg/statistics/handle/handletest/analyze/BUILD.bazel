@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "analyze_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "analyze_test.go",
         "main_test.go",
@@ -12,7 +12,7 @@ go_test(
     shard_count = 5,
     deps = [
         "//pkg/domain",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/testkit",

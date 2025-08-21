@@ -26,10 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -52,13 +50,10 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 func TestModifyColumnReorgInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	originalTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
-	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(5)
+	limit := vardef.GetDDLErrorCountLimit()
+	vardef.SetDDLErrorCountLimit(5)
 	defer func() {
-		ddl.ReorgWaitTimeout = originalTimeout
-		variable.SetDDLErrorCountLimit(limit)
+		vardef.SetDDLErrorCountLimit(limit)
 	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -82,27 +77,14 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID || checkErr != nil || job.SchemaState != model.StateWriteReorganization {
 			return
 		}
 		if job.Type == model.ActionModifyColumn {
 			if times == 0 {
 				times++
-				return
 			}
-			currJob = job
-			var (
-				_newCol                *model.ColumnInfo
-				_oldColName            *pmodel.CIStr
-				_pos                   = &ast.ColumnPosition{}
-				_modifyColumnTp        byte
-				_updatedAutoRandomBits uint64
-				changingCol            *model.ColumnInfo
-				changingIdxs           []*model.IndexInfo
-			)
-			checkErr = job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
-			elements = ddl.BuildElements(changingCol, changingIdxs)
 		}
 		if job.Type == model.ActionAddIndex {
 			if times == 1 {
@@ -114,6 +96,18 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			elements = []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 		}
 	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(job *model.Job, args model.JobArgs) {
+		if tbl.Meta().ID == job.TableID &&
+			checkErr == nil &&
+			job.SchemaState == model.StateDeleteOnly &&
+			job.Type == model.ActionModifyColumn {
+			currJob = job
+			a := args.(*model.ModifyColumnArgs)
+			elements = ddl.BuildElements(a.ChangingColumn, a.ChangingIdxs)
+		}
+	})
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
 	err := tk.ExecToErr(sql)
 	require.EqualError(t, err, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
@@ -203,7 +197,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -218,7 +212,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -255,7 +249,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -270,12 +264,15 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
 
 		if job.State != model.JobStateRunning {
+			return
+		}
+		if job.SchemaState == model.StatePublic {
 			return
 		}
 		// now c2 has PreventNullInsertFlag, an error is expected.
@@ -548,10 +545,65 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	// Make the regions scale like: [1, 1024), [1024, 2048), [2048, 3072), [3072, 4096]
 	tk.MustQuery("split table t between(0) and (4096) regions 4")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockReorgTimeoutInOneRegion", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockReorgTimeoutInOneRegion"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockReorgTimeoutInOneRegion", `return(true)`)
 	tk.MustExec("alter table t modify column b decimal(3,1)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4096 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '11.22'"))
+}
+
+func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_general_log=1;")
+	tk.MustExec(`
+		CREATE TABLE t (
+			id int NOT NULL AUTO_INCREMENT,
+			val0 bigint NOT NULL,
+			val1 int NOT NULL,
+			padding varchar(256) NOT NULL DEFAULT '',
+			PRIMARY KEY (id)
+		);
+	`)
+	tk.MustExec("CREATE INDEX val0_idx ON t (val0)")
+	tk.MustExec("insert into t (val0, val1, padding) values (1, 1, 'a'), (2, 2, 'b'), (3, 3, 'c');")
+
+	conflictOnce := sync.Once{}
+	conflictCh := make(chan struct{})
+	tk1 := testkit.NewTestKit(t, store)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/table/tables/duringTableCommonRemoveRecord", func(tblInfo *model.TableInfo) {
+		if tblInfo.Name.L == "t" {
+			conflictOnce.Do(func() {
+				tk1.MustExec("use test")
+				// inject a write conflict for the delete DML.
+				tk1.MustExec("update t set val0 = 100 where id = 1;")
+				close(conflictCh)
+			})
+		}
+	})
+	deleteOnce := sync.Once{}
+	insertOnce := sync.Once{}
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
+		deleteOnce.Do(func() {
+			go func() {
+				tk2.MustExec("use test")
+				tk2.MustExec("delete from t where id = 1;")
+			}()
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
+				insertOnce.Do(func() {
+					tk3.MustExec("use test")
+					tk3.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
+				})
+			})
+			<-conflictCh
+		})
+	})
+	tk.MustExec("alter table t modify column val0 int not null;")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
+		"2 2 2 b",
+		"3 3 3 c",
+		"4 4 4 d"))
 }

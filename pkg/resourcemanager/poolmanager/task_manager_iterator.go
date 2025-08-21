@@ -40,9 +40,9 @@ func (t *TaskManager) pauseTask() {
 	}
 }
 
-func (t *TaskManager) iter(fn func(m *Meta, max time.Time) (bool, bool)) (tid uint64, result *Meta) {
+func (t *TaskManager) iter(fn func(m *Meta, maxv time.Time) (bool, bool)) (tid uint64, result *Meta) {
 	var compareTS time.Time
-	for i := 0; i < shard; i++ {
+	for i := range shard {
 		breakFind := func(int) (breakFind bool) {
 			t.task[i].rw.RLock()
 			defer t.task[i].rw.RUnlock()
@@ -74,13 +74,13 @@ func (t *TaskManager) iter(fn func(m *Meta, max time.Time) (bool, bool)) (tid ui
 	return tid, result
 }
 
-func canPause(m *Meta, min time.Time) (find bool, toBreakFind bool) {
+func canPause(m *Meta, minv time.Time) (find bool, toBreakFind bool) {
 	if m.initialConcurrency < m.running.Load() {
 		if m.running.Load() != 0 {
 			return true, true
 		}
 	}
-	if m.createTS.Before(min) {
+	if m.createTS.Before(minv) {
 		if m.running.Load() != 0 {
 			return true, false
 		}
@@ -88,11 +88,11 @@ func canPause(m *Meta, min time.Time) (find bool, toBreakFind bool) {
 	return false, false
 }
 
-func canBoost(m *Meta, max time.Time) (find bool, toBreakFind bool) {
+func canBoost(m *Meta, maxv time.Time) (find bool, toBreakFind bool) {
 	if m.running.Load() < m.initialConcurrency {
 		return true, true
 	}
-	if m.createTS.After(max) {
+	if m.createTS.After(maxv) {
 		return true, false
 	}
 	return false, false

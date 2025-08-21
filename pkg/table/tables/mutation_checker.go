@@ -88,6 +88,7 @@ func checkDataConsistency(
 	extraIndexesLayout table.IndexesLayout,
 ) error {
 	if t.Meta().GetPartitionInfo() != nil {
+		// TODO: Support check for partitions as well
 		return nil
 	}
 	if txn.IsPipelined() {
@@ -414,7 +415,7 @@ func CompareIndexAndVal(tc types.Context, rowVal types.Datum, idxVal types.Datum
 		// If it is multi-valued index, we should check the JSON contains the indexed value.
 		bj := rowVal.GetMysqlJSON()
 		count := bj.GetElemCount()
-		for elemIdx := 0; elemIdx < count; elemIdx++ {
+		for elemIdx := range count {
 			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
 			cmpRes, err = jsonDatum.Compare(tc, &idxVal, collate.GetBinaryCollator())
 			if err != nil {

@@ -14,9 +14,11 @@ dynamic
 set @@session.tidb_partition_prune_mode = "static";
 show warnings;
 Level	Code	Message
+Warning	1681	static prune mode is deprecated and will be removed in the future release.
 set @@global.tidb_partition_prune_mode = "static";
 show warnings;
 Level	Code	Message
+Warning	1681	static prune mode is deprecated and will be removed in the future release.
 select @@session.tidb_partition_prune_mode;
 @@session.tidb_partition_prune_mode
 static

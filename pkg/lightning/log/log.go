@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -74,6 +75,11 @@ type Logger struct {
 	*zap.Logger
 }
 
+// Wrap wraps a zap.Logger into a Logger.
+func Wrap(logger *zap.Logger) Logger {
+	return Logger{Logger: logger}
+}
+
 // logger for lightning, different from tidb logger.
 var (
 	appLogger = Logger{zap.NewNop()}
@@ -96,7 +102,7 @@ func InitLogger(cfg *Config, _ string) error {
 				"github.com/pingcap/tidb/br/",
 				"/lightning/",
 				"main.main",
-				"github.com/tikv/pd/client/http",
+				"github.com/tikv/pd/client",
 			)
 		}))
 	}
@@ -197,11 +203,7 @@ func IsContextCanceledError(err error) bool {
 	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
 	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
 	if v, ok := err.(awserr.BatchedErrors); ok {
-		for _, origErr := range v.OrigErrs() {
-			if IsContextCanceledError(origErr) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(v.OrigErrs(), IsContextCanceledError)
 	}
 	return false
 }
@@ -280,20 +282,21 @@ func (task *Task) End(level zapcore.Level, err error, extraFields ...zap.Field) 
 	return elapsed
 }
 
-type ctxKeyType struct{}
-
-var ctxKey ctxKeyType
-
-// NewContext returns a new context with the provided logger.
-func NewContext(ctx context.Context, logger Logger) context.Context {
-	return context.WithValue(ctx, ctxKey, logger)
-}
-
-// FromContext returns the logger stored in the context.
-func FromContext(ctx context.Context) Logger {
-	m, ok := ctx.Value(ctxKey).(Logger)
-	if !ok {
-		return appLogger
+// End2 is similar to End except we don't check cancel, and we print full error.
+func (task *Task) End2(level zapcore.Level, err error, extraFields ...zap.Field) time.Duration {
+	elapsed := time.Since(task.since)
+	var verb string
+	errField := zap.Skip()
+	adjustedLevel := task.level
+	verb = " completed"
+	if err != nil {
+		adjustedLevel = level
+		verb = " failed"
+		extraFields = nil
+		errField = zap.Error(err)
 	}
-	return m
+	if ce := task.WithOptions(zap.AddCallerSkip(1)).Check(adjustedLevel, task.name+verb); ce != nil {
+		ce.Write(append(extraFields, zap.Duration("takeTime", elapsed), errField)...)
+	}
+	return elapsed
 }

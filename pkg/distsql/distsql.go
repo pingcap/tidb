@@ -16,15 +16,18 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -80,7 +83,22 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		EnabledRateLimitAction:     enabledRateLimitAction,
 		EventCb:                    eventCb,
 		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
+		TryCopLiteWorker:           &dctx.TryCopLiteWorker,
 	}
+
+	// Force the CopLiteWorker to be used or not used for testing purposes
+	failpoint.Inject("TryCopLiteWorker", func(val failpoint.Value) {
+		n, ok := val.(int)
+		if !ok {
+			panic(fmt.Sprintf("TryCopLiteWorker: expected int, got %T (%v)", val, val))
+		}
+
+		option.TryCopLiteWorker.Store(uint32(n))
+
+		logutil.Logger(ctx).Info("setting TryCopLiteWorker for test",
+			zap.String("value", option.TryCopLiteWorker.String()),
+		)
+	})
 
 	if kvReq.StoreType == kv.TiFlash {
 		ctx = SetTiFlashConfVarsInContext(ctx, dctx)
@@ -118,23 +136,24 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 // SetTiFlashConfVarsInContext set some TiFlash config variables in context.
 func SetTiFlashConfVarsInContext(ctx context.Context, dctx *distsqlctx.DistSQLContext) context.Context {
 	if dctx.TiFlashMaxThreads != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(dctx.TiFlashMaxThreads, 10))
+		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiDBMaxTiFlashThreads, strconv.FormatInt(dctx.TiFlashMaxThreads, 10))
 	}
 	if dctx.TiFlashMaxBytesBeforeExternalJoin != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(dctx.TiFlashMaxBytesBeforeExternalJoin, 10))
+		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(dctx.TiFlashMaxBytesBeforeExternalJoin, 10))
 	}
 	if dctx.TiFlashMaxBytesBeforeExternalGroupBy != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(dctx.TiFlashMaxBytesBeforeExternalGroupBy, 10))
+		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(dctx.TiFlashMaxBytesBeforeExternalGroupBy, 10))
 	}
 	if dctx.TiFlashMaxBytesBeforeExternalSort != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(dctx.TiFlashMaxBytesBeforeExternalSort, 10))
+		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(dctx.TiFlashMaxBytesBeforeExternalSort, 10))
 	}
 	if dctx.TiFlashMaxQueryMemoryPerNode <= 0 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMemQuotaQueryPerNode, "0")
+		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashMemQuotaQueryPerNode, "0")
 	} else {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(dctx.TiFlashMaxQueryMemoryPerNode, 10))
+		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(dctx.TiFlashMaxQueryMemoryPerNode, 10))
 	}
-	ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashQuerySpillRatio, strconv.FormatFloat(dctx.TiFlashQuerySpillRatio, 'f', -1, 64))
+	ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashQuerySpillRatio, strconv.FormatFloat(dctx.TiFlashQuerySpillRatio, 'f', -1, 64))
+	ctx = metadata.AppendToOutgoingContext(ctx, "tiflash_use_hash_join_v2", strconv.FormatBool(joinversion.IsOptimizedVersion(dctx.TiFlashHashJoinVersion)))
 	return ctx
 }
 

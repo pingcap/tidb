@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -73,16 +72,18 @@ type TableCommon struct {
 	fullHiddenColsAndVisibleColumns []*table.Column
 	writableConstraints             []*table.Constraint
 
-	indices                 []table.Index
-	meta                    *model.TableInfo
-	allocs                  autoid.Allocators
-	sequence                *sequenceCommon
-	dependencyColumnOffsets []int
-	Constraints             []*table.Constraint
+	indices     []table.Index
+	meta        *model.TableInfo
+	allocs      autoid.Allocators
+	sequence    *sequenceCommon
+	Constraints []*table.Constraint
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
+
+	// skipAssert is used for partitions that are in WriteOnly/DeleteOnly state.
+	skipAssert bool
 }
 
 // ResetColumnsCache implements testingKnob interface.
@@ -251,11 +252,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
 	}
-	for _, col := range cols {
-		if col.ChangeStateInfo != nil {
-			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
-		}
-	}
 	t.ResetColumnsCache()
 }
 
@@ -302,6 +298,9 @@ func (t *TableCommon) Indices() []table.Index {
 func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 	for _, idx := range t.Indices() {
 		if !IsIndexWritable(idx) {
+			continue
+		}
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		if idxName == idx.Meta().Name.L {
@@ -408,31 +407,6 @@ func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
-// shouldAssert checks if the partition should be in consistent
-// state and can have assertion.
-func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
-	p := t.Meta().Partition
-	if p != nil {
-		// This disables asserting during Reorganize Partition.
-		switch level {
-		case variable.AssertionLevelFast:
-			// Fast option, just skip assertion for all partitions.
-			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
-				return false
-			}
-		case variable.AssertionLevelStrict:
-			// Strict, only disable assertion for intermediate partitions.
-			// If there were an easy way to get from a TableCommon back to the partitioned table...
-			for i := range p.AddingDefinitions {
-				if t.physicalTableID == p.AddingDefinitions[i].ID {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
-
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -504,9 +478,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		checkRowBuffer.AddColVal(value)
 	}
 	// check data constraint
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err := table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err := table.CheckRowConstraint(sctx.GetExprCtx(), constraints, checkRowBuffer.GetRowToCheck(), t.Meta()); err != nil {
 			return err
 		}
 	}
@@ -517,8 +490,9 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	}
 
 	key := t.RecordKey(h)
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
 		return err
 	}
@@ -535,10 +509,10 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		}
 	})
 
-	if t.shouldAssert(sctx.TxnAssertionLevel()) {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
-	} else {
+	if t.skipAssert {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
 	}
 	if err != nil {
 		return err
@@ -556,21 +530,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	memBuffer.Release(sh)
 
 	if s, ok := sctx.GetStatisticsSupport(); ok {
-		colSizeBuffer := mutateBuffers.GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		for id, col := range t.Cols() {
-			size, err := codec.EstimateValueSize(tc, newData[id])
-			if err != nil {
-				continue
-			}
-			newLen := size - 1
-			size, err = codec.EstimateValueSize(tc, oldData[id])
-			if err != nil {
-				continue
-			}
-			oldLen := size - 1
-			colSizeBuffer.AddColSizeDelta(col.ID, int64(newLen-oldLen))
-		}
-		s.UpdatePhysicalTableDelta(t.physicalTableID, 0, 1, colSizeBuffer)
+		s.UpdatePhysicalTableDelta(t.physicalTableID, 0, 1)
 	}
 	return nil
 }
@@ -582,6 +542,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 ) error {
 	for _, idx := range t.DeletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
+			continue
+		}
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		for _, ic := range idx.Meta().Columns {
@@ -601,6 +564,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 	createIdxOpt := opt.GetCreateIdxOpt()
 	for _, idx := range t.Indices() {
 		if !IsIndexWritable(idx) {
+			continue
+		}
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
@@ -734,10 +700,12 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 
 	var hasRecordID bool
 	cols := t.Cols()
-	// opt.IsUpdate is a flag for update.
+	// opt.GenerateRecordID is used for normal update.
 	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
-	// Currently, only insert can set _tidb_rowid, update can not update _tidb_rowid.
-	if len(r) > len(cols) && !opt.IsUpdate() {
+	// Currently, insert can set _tidb_rowid.
+	// Update can only update _tidb_rowid during reorganize partition, to keep the generated _tidb_rowid
+	// the same between the old/new sets of partitions, where possible.
+	if len(r) > len(cols) && !opt.GenerateRecordID() {
 		// The last value is _tidb_rowid.
 		recordID = kv.IntHandle(r[len(r)-1].GetInt64())
 		hasRecordID = true
@@ -848,8 +816,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 	}
-	// check data constraint
-	if err = table.CheckRowConstraintWithDatum(evalCtx, t.WritableConstraint(), r); err != nil {
+	if err = table.CheckRowConstraintWithDatum(sctx.GetExprCtx(), t.WritableConstraint(), r, t.meta); err != nil {
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
@@ -871,6 +838,8 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
+			// If Global Index and reorganization truncate/drop partition, old partition,
+			// Accept and set Assertion key to kv.SetAssertUnknown for overwrite instead
 			dupErr := getDuplicateError(t.Meta(), recordID, r)
 			return recordID, dupErr
 		} else if !kv.ErrNotExist.Equal(err) {
@@ -886,7 +855,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 	}
 
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
 	if err != nil {
 		return nil, err
 	}
@@ -929,15 +898,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	memBuffer.Release(sh)
 
 	if s, ok := sctx.GetStatisticsSupport(); ok {
-		colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		for id, col := range t.Cols() {
-			size, err := codec.EstimateValueSize(tc, r[id])
-			if err != nil {
-				continue
-			}
-			colSizeBuffer.AddColSizeDelta(col.ID, int64(size-1))
-		}
-		s.UpdatePhysicalTableDelta(t.physicalTableID, 1, 1, colSizeBuffer)
+		s.UpdatePhysicalTableDelta(t.physicalTableID, 1, 1)
 	}
 	return recordID, nil
 }
@@ -967,6 +928,9 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
 	for _, v := range t.Indices() {
 		if !IsIndexWritable(v) {
+			continue
+		}
+		if v.Meta().IsColumnarIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
@@ -1180,6 +1144,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
+	failpoint.InjectCall("duringTableCommonRemoveRecord", t.meta)
 
 	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
 	if ctx.EnableMutationChecker() {
@@ -1190,33 +1155,8 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	memBuffer.Release(sh)
 
 	if s, ok := ctx.GetStatisticsSupport(); ok {
-		// a reusable buffer to save malloc
-		// Note: The buffer should not be referenced or modified outside this function.
-		// It can only act as a temporary buffer for the current function call.
-		colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		pruned, notPruned := 0, 0
-		columnSizeOpt := opt.GetColumnSizeOpt()
-		var size int
-		for id, col := range t.Cols() {
-			columnOffset := id
-			if columnSizeOpt != nil {
-				if !columnSizeOpt.NotPruned.Test(uint(id)) {
-					size = int(columnSizeOpt.AvgSizes[pruned])
-					pruned++
-					colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
-					continue
-				}
-				columnOffset = columnSizeOpt.PublicColsLayout[notPruned]
-				notPruned++
-			}
-			size, err = codec.EstimateValueSize(tc, r[columnOffset])
-			if err != nil {
-				continue
-			}
-			colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
-		}
 		s.UpdatePhysicalTableDelta(
-			t.physicalTableID, -1, 1, colSizeBuffer,
+			t.physicalTableID, -1, 1,
 		)
 	}
 	return err
@@ -1236,10 +1176,10 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 			}
 		}
 	})
-	if t.shouldAssert(ctx.TxnAssertionLevel()) {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
-	} else {
+	if t.skipAssert {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
 	}
 	if err != nil {
 		return err
@@ -1251,6 +1191,9 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum, opt *table.RemoveRecordOpt) (err error) {
 	for _, v := range t.DeletableIndices() {
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
+		if v.Meta().IsColumnarIndex() {
 			continue
 		}
 		var vals []types.Datum
@@ -1436,7 +1379,7 @@ func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table
 	meta := t.Meta()
 	base, maxID, err := t.Allocators(mctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, errors.Trace(err)
 	}
 	if meta.ShardRowIDBits > 0 {
 		shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), meta.ShardRowIDBits, autoid.RowIDBitLength)
@@ -1514,11 +1457,6 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 		return true
 	}
 	return false
-}
-
-// canSkipUpdateBinlog checks whether the column can be skipped or not.
-func (t *TableCommon) canSkipUpdateBinlog(col *table.Column) bool {
-	return col.IsVirtualGenerated()
 }
 
 // FindIndexByColName returns a public table index containing only one column named `name`.

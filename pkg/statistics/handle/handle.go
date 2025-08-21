@@ -15,9 +15,10 @@
 package handle
 
 import (
+	"context"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -35,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -44,6 +47,18 @@ const (
 	// StatsPrompt is the prompt for stats owner manager.
 	StatsPrompt = "stats"
 )
+
+// AttachStatsCollector attaches the stats collector for the session.
+// this function is registered in BootstrapSession in pkg/session/session.go
+var AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
+
+// DetachStatsCollector removes the stats collector for the session
+// this function is registered in BootstrapSession in pkg/session/session.go
+var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
 
 // Handle can update stats info periodically.
 type Handle struct {
@@ -109,12 +124,12 @@ func (h *Handle) Clear() {
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(
-	_, /* ctx, keep it for feature usage */
+	ctx context.Context,
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	is infoschema.InfoSchema,
-	pool pkgutil.SessionPool,
+	pool pkgutil.DestroyableSessionPool,
 	tracker sysproctrack.Tracker,
+	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,
 	releaseAutoAnalyzeProcID func(uint64),
 ) (*Handle, error) {
@@ -137,68 +152,69 @@ func NewHandle(
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
-	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker)
-	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
+	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
+	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
 		handle,
 	)
+	if ddlNotifier != nil {
+		// In test environments, we use a channel-based approach to handle DDL events.
+		// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+		// In production, DDL events are handled by the notifier system instead.
+		if !intest.InTest {
+			ddlNotifier.RegisterHandler(notifier.StatsMetaHandlerID, handle.DDL.HandleDDLEvent)
+		}
+	}
 	return handle, nil
 }
 
-// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-// TODO: remove GetTableStats later on.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
-	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+// GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
+// physicalTableID can be a table ID or partition ID.
+func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
+	tblStats, found := h.getStatsByPhysicalID(physicalTableID, tblInfo)
+	intest.Assert(tblStats != nil, "stats shoud not be nil")
+	intest.Assert(found, "stats shoud not be nil")
+	return tblStats
 }
 
-// GetTableStatsForAutoAnalyze is to get table stats but it will not return pseudo stats.
-func (h *Handle) GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table {
-	return h.getPartitionStats(tblInfo, tblInfo.ID, false)
+// GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
+// physicalTableID can be a table ID or partition ID.
+// Note: this function may return nil if the table is not found in the cache.
+func (h *Handle) GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool) {
+	return h.getStatsByPhysicalID(physicalTableID, nil)
 }
 
-// GetPartitionStats retrieves the partition stats from cache.
-// TODO: remove GetTableStats later on.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	return h.getPartitionStats(tblInfo, pid, true)
-}
-
-// GetPartitionStatsForAutoAnalyze is to get partition stats but it will not return pseudo stats.
-func (h *Handle) GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	return h.getPartitionStats(tblInfo, pid, false)
-}
-
-func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
-	var tbl *statistics.Table
+func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.TableInfo) (*statistics.Table, bool) {
 	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo, false, false)
-		tbl.PhysicalID = pid
-		return tbl
-	}
-	tbl, ok := h.Get(pid)
-	if !ok {
-		if returnPseudo {
-			tbl = statistics.PseudoTable(tblInfo, false, true)
-			tbl.PhysicalID = pid
-			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
-				h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
-			}
-			return tbl
+		if tblInfo != nil {
+			tbl := statistics.PseudoTable(tblInfo, false, false)
+			tbl.PhysicalID = physicalTableID
+			return tbl, true
 		}
-		return nil
+		return nil, false
 	}
-	return tbl
+
+	tbl, ok := h.Get(physicalTableID)
+	if ok {
+		return tbl, true
+	}
+	if tblInfo != nil {
+		tbl = statistics.PseudoTable(tblInfo, false, true)
+		tbl.PhysicalID = physicalTableID
+		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
+			h.UpdateStatsCache(types.CacheUpdate{
+				Updated: []*statistics.Table{tbl},
+			})
+		}
+		return tbl, true
+	}
+	return nil, false
 }
 
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
-	for len(h.DDLEventCh()) > 0 {
-		e := <-h.DDLEventCh()
-		if err := h.HandleDDLEvent(e); err != nil {
-			statslogutil.StatsLogger().Error("handle ddl event fail", zap.Error(err))
-		}
-	}
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
 		statslogutil.StatsLogger().Error("dump stats delta fail", zap.Error(err))
 	}

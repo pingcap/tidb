@@ -29,23 +29,23 @@ import (
 	"go.uber.org/zap"
 )
 
-func intRangeValue(column *column, min int64, max int64) (int64, int64) {
+func intRangeValue(column *column, minv, maxv int64) (int64, int64) {
 	var err error
 	if len(column.min) > 0 {
-		min, err = strconv.ParseInt(column.min, 10, 64)
+		minv, err = strconv.ParseInt(column.min, 10, 64)
 		if err != nil {
 			log.Fatal(err.Error())
 		}
 
 		if len(column.max) > 0 {
-			max, err = strconv.ParseInt(column.max, 10, 64)
+			maxv, err = strconv.ParseInt(column.max, 10, 64)
 			if err != nil {
 				log.Fatal(err.Error())
 			}
 		}
 	}
 
-	return min, max
+	return minv, maxv
 }
 
 func randStringValue(column *column, n int) string {
@@ -62,7 +62,7 @@ func randStringValue(column *column, n int) string {
 	return randString(randInt(1, n))
 }
 
-func randInt64Value(column *column, min int64, max int64) int64 {
+func randInt64Value(column *column, minv, maxv int64) int64 {
 	if column.hist != nil {
 		return column.hist.randInt()
 	}
@@ -75,13 +75,13 @@ func randInt64Value(column *column, min int64, max int64) int64 {
 		return data
 	}
 
-	min, max = intRangeValue(column, min, max)
-	return randInt64(min, max)
+	minv, maxv = intRangeValue(column, minv, maxv)
+	return randInt64(minv, maxv)
 }
 
-func nextInt64Value(column *column, min int64, max int64) int64 {
-	min, max = intRangeValue(column, min, max)
-	column.data.setInitInt64Value(min, max)
+func nextInt64Value(column *column, minv int64, maxv int64) int64 {
+	minv, maxv = intRangeValue(column, minv, maxv)
+	column.data.setInitInt64Value(minv, maxv)
 	return column.data.nextInt64()
 }
 
@@ -105,7 +105,7 @@ func intToDecimalString(intValue int64, decimal int) string {
 
 func genRowDatas(table *table, count int) ([]string, error) {
 	datas := make([]string, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		data, err := genRowData(table)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -338,7 +338,7 @@ func closeDB(db *sql.DB) error {
 
 func createDBs(cfg DBConfig, count int) ([]*sql.DB, error) {
 	dbs := make([]*sql.DB, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		db, err := createDB(cfg)
 		if err != nil {
 			return nil, errors.Trace(err)

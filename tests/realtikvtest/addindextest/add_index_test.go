@@ -15,19 +15,17 @@
 package addindextest
 
 import (
+	"sync"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -37,36 +35,41 @@ func init() {
 }
 
 func TestCreateNonUniqueIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
 		{3, 6, 9, 12, 15, 18, 21, 24, 27},
 	}
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexNonUnique)
+	ctx := testutils.InitTest(t)
+	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexNonUnique)
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	var colIDs [][]int = [][]int{
 		{1, 6, 7, 8, 11, 13, 15, 16, 18, 19, 22, 26},
 		{2, 9, 11, 17},
 		{3, 12, 25},
 	}
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexUnique)
+	ctx := testutils.InitTest(t)
+	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexUnique)
 }
 
 func TestCreatePrimaryKey(t *testing.T) {
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneIndexFrame(ctx, 0, addindextestutil.AddIndexPK)
+	testutil.ReduceCheckInterval(t)
+	ctx := testutils.InitTest(t)
+	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
 
 func TestCreateGenColIndex(t *testing.T) {
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneIndexFrame(ctx, 29, addindextestutil.AddIndexGenCol)
+	testutil.ReduceCheckInterval(t)
+	ctx := testutils.InitTest(t)
+	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
 
 func TestCreateMultiColsIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	var coliIDs = [][]int{
 		{1, 4, 7},
 		{2, 5},
@@ -90,11 +93,12 @@ func TestCreateMultiColsIndex(t *testing.T) {
 			{18, 21, 24, 27},
 		}
 	}
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestTwoColsFrame(ctx, coliIDs, coljIDs, addindextestutil.AddIndexMultiCols)
+	ctx := testutils.InitTest(t)
+	testutils.TestTwoColsFrame(ctx, coliIDs, coljIDs, testutils.AddIndexMultiCols)
 }
 
 func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists fk_index;")
@@ -103,7 +107,7 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
 	tk.MustExec("create table employee (id bigint auto_increment key, pid bigint)")
 	tk.MustExec("insert into employee (id) values (1),(2),(3),(4),(5),(6),(7),(8)")
-	for i := 0; i < 14; i++ {
+	for range 14 {
 		tk.MustExec("insert into employee (pid) select pid from employee")
 	}
 	tk.MustExec("update employee set pid=id-1 where id>1")
@@ -169,7 +173,7 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 
 	tk1.Exec("INSERT INTO t VALUES (-18585,'duplicatevalue',0);")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("delete from t where c = 0;")
@@ -181,19 +185,37 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")
-	ingest.MockDMLExecutionStateBeforeImport = func() {
-		tk3.MustExec("replace INTO t VALUES (-18585,'duplicatevalue',4);")
-		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
-	}
-	ddl.MockDMLExecutionStateBeforeMerge = func() {
-		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
-		tk3.MustExec("replace into t values (-18585,'duplicatevalue',0);")
-	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "return(true)"))
+	beforeIngestOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", func() {
+		beforeIngestOnce.Do(func() {
+			tk3.MustExec("replace INTO t VALUES (-18585,'duplicatevalue',4);")
+			tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+		})
+	})
+	beforeMergeOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
+		beforeMergeOnce.Do(func() {
+			tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+			tk3.MustExec("replace into t values (-18585,'duplicatevalue',0);")
+		})
+	})
+
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
+}
+
+func TestAddIndexOnGB18030Bin(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		a varchar(198) COLLATE gb18030_bin NOT NULL,
+		b varchar(178) COLLATE gb18030_bin NOT NULL,
+		PRIMARY KEY (b,a),
+		KEY k1 (b,a),
+		KEY k2 (b)
+	) ENGINE=InnoDB DEFAULT CHARSET=gb18030 COLLATE=gb18030_bin;`)
+	tk.MustExec("insert into t values ('a', 'b');")
+	tk.MustExec("admin check table t;")
 }

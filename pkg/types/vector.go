@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	jsoniter "github.com/json-iterator/go"
@@ -33,6 +34,32 @@ func init() {
 		return
 	}
 	panic("VectorFloat32 only supports little endian")
+}
+
+// CreateVectorFloat32 creates a VectorFloat32. Returns error if there are invalid values like NaN and Inf.
+func CreateVectorFloat32(vector []float32) (VectorFloat32, error) {
+	for _, v := range vector {
+		if math.IsNaN(float64(v)) {
+			valueError := errors.Errorf("NaN not allowed in vector")
+			return ZeroVectorFloat32, valueError
+		}
+		if math.IsInf(float64(v), 0) {
+			valueError := errors.Errorf("infinite value not allowed in vector")
+			return ZeroVectorFloat32, valueError
+		}
+	}
+	vec := InitVectorFloat32(len(vector))
+	copy(vec.Elements(), vector)
+	return vec, nil
+}
+
+// MustCreateVectorFloat32 creates a VectorFloat32. Panics if there are invalid values like NaN and Inf.
+func MustCreateVectorFloat32(v []float32) VectorFloat32 {
+	r, err := CreateVectorFloat32(v)
+	if err != nil {
+		panic(err)
+	}
+	return r
 }
 
 // VectorFloat32 represents a vector of float32.
@@ -193,6 +220,12 @@ func ZeroCopyDeserializeVectorFloat32(b []byte) (VectorFloat32, []byte, error) {
 
 // ParseVectorFloat32 parses a string into a vector.
 func ParseVectorFloat32(s string) (VectorFloat32, error) {
+	// issue #57143 jsoniter parse null will return as []
+	// Trim whitespace and check for null string and reject it
+	if strings.TrimSpace(s) == "null" {
+		return ZeroVectorFloat32, errors.Errorf("Invalid vector text: %s", s)
+	}
+
 	var values []float32
 	var valueError error
 	// We explicitly use a JSON float parser to reject other JSON types.
@@ -207,6 +240,11 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 			valueError = errors.Errorf("infinite value not allowed in vector")
 			return false
 		}
+		// Check if the value can be safely converted to float32
+		if v < -math.MaxFloat32 || v > math.MaxFloat32 {
+			valueError = errors.Errorf("value %v out of range for float32", v)
+			return false
+		}
 		values = append(values, float32(v))
 		return true
 	})
@@ -215,6 +253,17 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 	}
 	if valueError != nil {
 		return ZeroVectorFloat32, valueError
+	}
+
+	// Check if there are any remaining characters after the JSON array
+	// This ensures we reject strings like "[1,2,3]extra"
+	remaining := parser.SkipAndReturnBytes()
+	if len(remaining) > 0 {
+		// Check if the remaining bytes are only whitespace
+		trimmed := strings.TrimSpace(string(remaining))
+		if len(trimmed) > 0 {
+			return ZeroVectorFloat32, errors.Errorf("Invalid vector text: %s", s)
+		}
 	}
 
 	dim := len(values)

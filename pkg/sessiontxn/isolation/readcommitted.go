@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
@@ -106,7 +108,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
 func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() &&
+	if sessionVars.ConnectionID > 0 && vardef.EnableRCReadCheckTS.Load() &&
 		sessionVars.InTxn() && !sessionVars.RetryInfo.Retrying &&
 		plannercore.IsReadOnly(node, sessionVars) {
 		return true
@@ -231,6 +233,11 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 			return sessiontxn.ErrorAction(err)
 		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+		sessVars := p.sctx.GetSessionVars()
+		waitTime := time.Since(sessVars.StmtCtx.GetLockWaitStartTime())
+		if waitTime.Milliseconds() >= sessVars.LockWaitTimeout {
+			return sessiontxn.ErrorAction(tikverr.ErrLockWaitTimeout)
+		}
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
@@ -272,7 +279,7 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWrite
 		if len(v.Children()) == 0 {
 			return false
 		}
-		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
+		_, isPhysicalLock := v.(*physicalop.PhysicalLock)
 		for _, p := range v.Children() {
 			if !planSkipGetTsoFromPD(sctx, p, isPhysicalLock || inLockOrWriteStmt) {
 				return false

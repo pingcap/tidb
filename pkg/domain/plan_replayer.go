@@ -17,6 +17,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -151,7 +153,7 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
 		instance = "unknown"
 	} else {
-		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+		instance = net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
 	}
 	for _, record := range records {
 		if len(record.FailedReason) > 0 {
@@ -464,7 +466,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture, task.IsContinuesCapture, variable.EnableHistoricalStatsForCapture.Load())
+	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture, task.IsContinuesCapture, vardef.EnableHistoricalStatsForCapture.Load())
 	if err != nil {
 		logutil.BgLogger().Warn("generate task file failed", zap.String("category", "plan-replayer-capture"),
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -571,7 +573,7 @@ type PlanReplayerDumpTask struct {
 
 	// variables used to dump the plan
 	StartTS           uint64
-	SessionBindings   []bindinfo.Bindings
+	SessionBindings   [][]*bindinfo.Binding
 	EncodedPlan       string
 	SessionVars       *variable.SessionVars
 	ExecStmts         []ast.StmtNode

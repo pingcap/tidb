@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -26,13 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -94,9 +95,9 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				}
 			}
 		}
-		dbNameStr := model.NewCIStr(dbName)
-		schema := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-		tbl, err := schema.TableByName(ctx, dbNameStr, model.NewCIStr(e.Level.TableName))
+		dbNameStr := ast.NewCIStr(dbName)
+		schema := e.Ctx().GetDomain().(*domain.Domain).InfoSchema()
+		tbl, err := schema.TableByName(ctx, dbNameStr, ast.NewCIStr(e.Level.TableName))
 		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
 			allowed := false
@@ -154,20 +155,29 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
+	if err != nil {
+		return err
+	}
 	// Check which user is not exist.
 	for _, user := range e.Users {
+		if user.User.CurrentUser {
+			user.User.Username = e.Ctx().GetSessionVars().User.AuthUsername
+			user.User.Hostname = e.Ctx().GetSessionVars().User.AuthHostname
+		}
 		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
-		if !exists && e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
-			return exeerrors.ErrCantCreateUserWithGrant
-		} else if !exists {
+		if !exists {
+			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
+				return exeerrors.ErrCantCreateUserWithGrant
+			}
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0
 			// since it results in a massive security issue:
 			// spelling errors will create users with no passwords.
-			authPlugin := mysql.AuthNativePassword
+			authPlugin := defaultAuthPlugin
 			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
 				authPlugin = user.AuthOpt.AuthPlugin
 			}
@@ -176,11 +186,11 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(extErr.Error())
 			}
 			authPluginImpl := extensions.GetAuthPlugins()[authPlugin]
-			pwd, ok := encodePassword(user, authPluginImpl)
+			pwd, ok := encodePasswordWithPlugin(*user, authPluginImpl, defaultAuthPlugin)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
-			_, err := internalSession.GetSQLExecutor().ExecuteInternal(internalCtx,
+			_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx,
 				`INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`,
 				mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, authPlugin)
 			if err != nil {
@@ -253,7 +263,8 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	users := userSpecToUserList(e.Users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
 }
 
 func containsNonDynamicPriv(privList []*ast.PrivElem) bool {
@@ -519,10 +530,8 @@ func (*GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, inter
 
 // grantDBLevel manipulates mysql.db table.
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	for _, v := range mysql.StaticGlobalOnlyPrivs {
-		if v == priv.Priv {
-			return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
-		}
+	if slices.Contains(mysql.StaticGlobalOnlyPrivs, priv.Priv) {
+		return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 	}
 
 	dbName := e.Level.DBName
@@ -773,8 +782,8 @@ func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbNam
 			return "", nil, errors.New("miss DB name for grant privilege")
 		}
 	}
-	name := model.NewCIStr(tableName)
-	tbl, err := is.TableByName(ctx, model.NewCIStr(dbName), name)
+	name := ast.NewCIStr(tableName)
+	tbl, err := is.TableByName(ctx, ast.NewCIStr(dbName), name)
 	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return dbName, nil, err
 	}

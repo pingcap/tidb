@@ -12,6 +12,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/store/mockstore/mockcopr",
         "//pkg/store/mockstore/mockstorage",
@@ -19,10 +21,13 @@ go_library(
         "//pkg/testkit/testenv",
         "@com_github_otiai10_copy//:copy",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_client_go_v2//util/async",
         "@com_github_tikv_pd_client//:client",
     ],
 )
@@ -37,6 +42,7 @@ go_test(
     ],
     embed = [":mockstore"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/kv",

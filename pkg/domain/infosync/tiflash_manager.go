@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/clients/router"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -54,6 +55,8 @@ type TiFlashReplicaManager interface {
 	SetPlacementRule(ctx context.Context, rule *pd.Rule) error
 	// SetPlacementRuleBatch is a helper function to set a batch of placement rules.
 	SetPlacementRuleBatch(ctx context.Context, rules []*pd.Rule) error
+	// GetPlacementRule is a helper function to get placement rule.
+	GetPlacementRule(ctx context.Context, tableID int64) (*pd.Rule, error)
 	// DeletePlacementRule is to delete placement rule for certain group.
 	DeletePlacementRule(ctx context.Context, group string, ruleID string) error
 	// GetGroupRules to get all placement rule in a certain group.
@@ -86,6 +89,13 @@ type TiFlashReplicaManagerCtx struct {
 	sync.RWMutex         // protect tiflashProgressCache
 	tiflashProgressCache map[int64]float64
 	codec                tikv.Codec
+}
+
+// GetPlacementRule is a helper function to get placement rule by table id.
+func (m *TiFlashReplicaManagerCtx) GetPlacementRule(ctx context.Context, tableID int64) (*pd.Rule, error) {
+	ruleID := MakeRuleID(tableID)
+	ruleID = encodeRuleID(m.codec, ruleID)
+	return m.pdHTTPCli.GetPlacementRule(ctx, placement.TiFlashRuleGroupID, ruleID)
 }
 
 // Close is called to close TiFlashReplicaManagerCtx.
@@ -294,7 +304,7 @@ func (m *TiFlashReplicaManagerCtx) PostAccelerateScheduleBatch(ctx context.Conte
 	if len(tableIDs) == 0 {
 		return nil
 	}
-	input := make([]*pd.KeyRange, 0, len(tableIDs))
+	input := make([]*router.KeyRange, 0, len(tableIDs))
 	for _, tableID := range tableIDs {
 		startKey := tablecodec.GenTableRecordPrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -346,6 +356,10 @@ func makeBaseRule() pd.Rule {
 			},
 		},
 	}
+}
+
+func (*mockTiFlashReplicaManagerCtx) GetPlacementRule(context.Context, int64) (*pd.Rule, error) {
+	return nil, errors.New("not implemented")
 }
 
 // MakeNewRule creates a pd rule for TiFlash.

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -67,9 +67,6 @@ type Record struct {
 	// default value is 1.
 	Repeats int
 }
-
-// recordMap is used to save records which will be inserted into `mysql.tidb_runaway_queries` by function `flushRunawayRecords`.
-var recordMap map[recordKey]*Record
 
 // recordKey represents the composite key for record key in `tidb_runaway_queries`.
 type recordKey struct {
@@ -221,7 +218,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		tableName = "tidb_runaway_queries"
 		colName   = "start_time"
 	)
-	var systemSchemaCIStr = model.NewCIStr("mysql")
+	var systemSchemaCIStr = ast.NewCIStr("mysql")
 
 	if !rm.ddl.OwnerManager().IsOwner() {
 		return
@@ -230,7 +227,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		expiredDuration = time.Second * 1
 	})
 	expiredTime := time.Now().Add(-expiredDuration)
-	tbCIStr := model.NewCIStr(tableName)
+	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
@@ -242,7 +239,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), col)
+	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), col)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -419,7 +416,7 @@ func (rm *Manager) AddRunawayWatch(record *QuarantineRecord) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	for retry := 0; retry < maxIDRetries; retry++ {
+	for retry := range maxIDRetries {
 		if retry > 0 {
 			select {
 			case <-rm.exit:
@@ -463,4 +460,20 @@ func (rm *Manager) RemoveRunawayWatch(recordID int64) error {
 
 	err = handleRunawayWatchDone(rm.sysSessionPool, records[0])
 	return err
+}
+
+// RemoveRunawayResourceGroupWatch is used to remove all runaway watch items of a resource group.
+func (rm *Manager) RemoveRunawayResourceGroupWatch(groupName string) error {
+	rm.runawaySyncer.mu.Lock()
+	defer rm.runawaySyncer.mu.Unlock()
+	records, err := rm.runawaySyncer.getWatchRecordByGroup(groupName)
+	if err != nil {
+		return errors.Annotate(err, "get watch records by resource group failed")
+	}
+	for _, record := range records {
+		if err := handleRunawayWatchDone(rm.sysSessionPool, record); err != nil {
+			return errors.Annotatef(err, "remove watch for resource group %s failed", groupName)
+		}
+	}
+	return nil
 }

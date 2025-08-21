@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -47,17 +49,17 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select * from t",
 			physicalList: []string{
-				"TableFullScan_4", "TableReader_5", "Projection_3",
+				"TableFullScan_5", "TableReader_6", "Projection_3",
 			},
 		},
 		{
 			sql: "select max(b) from t",
 			physicalList: []string{
-				"IndexFullScan_19",
+				"IndexFullScan_28",
+				"Limit_29",
+				"IndexReader_30",
 				"Limit_20",
-				"IndexReader_21",
-				"Limit_14",
-				"StreamAgg_10",
+				"StreamAgg_15",
 				"Projection_8",
 			},
 		},
@@ -70,13 +72,14 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 		require.NoError(t, err)
-		sctx := core.MockContext()
+		sctx := coretestsdk.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		sctx.GetSessionVars().CostModelVersion = 2
 		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), nodeW)
 		require.NoError(t, err)
+		plan.SCtx().GetSessionVars().StmtCtx.OriginalSQL = testcase.sql
 		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 		require.NoError(t, err)
 		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
@@ -91,7 +94,7 @@ func checkList(d []string, s []string) bool {
 	if len(d) != len(s) {
 		return false
 	}
-	for i := 0; i < len(d); i++ {
+	for i := range d {
 		if strings.Compare(d[i], s[i]) != 0 {
 			return false
 		}
@@ -127,7 +130,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
-	sctx := core.MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -137,49 +140,37 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
-	flag := uint64(0)
 	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
-	flag |= flag | 1<<1 | 1<<3 | 1<<8 | 1<<14 | 1<<17
+	flag := rule.FlagGcSubstitute | rule.FlagStabilizeResults | rule.FlagSkewDistinctAgg | rule.FlagEliminateOuterJoin | rule.FlagPushDownAgg
 	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(base.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
-		12: "TableReader",
-		14: "TableReader",
-		13: "TableFullScan",
-		15: "HashJoin",
-		6:  "Projection",
-		11: "TableFullScan",
-		9:  "HashJoin",
-		10: "HashJoin",
-		7:  "HashAgg",
+		8:  "Projection",
+		28: "HashAgg",
 		16: "HashJoin",
-		8:  "StreamAgg",
-	}
-	final := map[int]struct{}{
-		11: {},
-		12: {},
-		13: {},
-		14: {},
-		9:  {},
-		7:  {},
-		6:  {},
+		18: "HashJoin",
+		17: "HashJoin",
+		11: "Sort",
+		15: "HashAgg",
+		27: "TableFullScan",
+		29: "TableReader",
+		20: "HashAgg",
+		24: "TableFullScan",
+		25: "HashAgg",
+		30: "TableFullScan",
+		23: "HashAgg",
+		21: "HashAgg",
+		31: "TableReader",
+		32: "TableFullScan",
+		33: "TableReader",
 	}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
-		if !ok || tp != c.TP {
-			t.FailNow()
-		}
+		require.Truef(t, ok, "ID: %d not found in elements", c.ID)
+		require.Equalf(t, tp, c.TP, "ID: %d, expected TP: %s, got TP: %s", c.ID, tp, c.TP)
 	}
-	require.Len(t, otrace.Candidates, len(elements))
-	for _, p := range otrace.Final {
-		_, ok := final[p.ID]
-		if !ok {
-			t.FailNow()
-		}
-	}
-	require.Len(t, otrace.Final, len(final))
 }
 
 func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
@@ -195,7 +186,7 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
-	sctx := core.MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

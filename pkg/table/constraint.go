@@ -17,10 +17,9 @@ package table
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -30,7 +29,6 @@ import (
 // Constraint provides meta and map dependency describing a table constraint.
 type Constraint struct {
 	*model.ConstraintInfo
-	ConstraintExpr expression.Expression
 }
 
 // LoadCheckConstraint load check constraint
@@ -39,11 +37,7 @@ func LoadCheckConstraint(tblInfo *model.TableInfo) ([]*Constraint, error) {
 
 	constraints := make([]*Constraint, 0, len(tblInfo.Constraints))
 	for _, conInfo := range tblInfo.Constraints {
-		con, err := ToConstraint(conInfo, tblInfo)
-		if err != nil {
-			return nil, err
-		}
-		constraints = append(constraints, con)
+		constraints = append(constraints, &Constraint{conInfo})
 	}
 	return constraints, nil
 }
@@ -67,17 +61,13 @@ func removeInvalidCheckConstraintsInfo(tblInfo *model.TableInfo) {
 	tblInfo.Constraints = conInfos
 }
 
-// ToConstraint converts model.ConstraintInfo to Constraint
-func ToConstraint(constraintInfo *model.ConstraintInfo, tblInfo *model.TableInfo) (*Constraint, error) {
-	ctx := exprstatic.NewExprContext()
-	expr, err := buildConstraintExpression(ctx, constraintInfo.ExprString, "", tblInfo)
+// BuildConstraintExprWithCtx converts model.ConstraintInfo to Constraint
+func BuildConstraintExprWithCtx(ctx expression.BuildContext, constraintInfo *model.ConstraintInfo, tblInfo *model.TableInfo, dbName string) (expression.Expression, error) {
+	expr, err := buildConstraintExpression(ctx, constraintInfo.ExprString, dbName, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Constraint{
-		constraintInfo,
-		expr,
-	}, nil
+	return expr, nil
 }
 
 func buildConstraintExpression(ctx expression.BuildContext, exprString string, db string, tblInfo *model.TableInfo) (expression.Expression, error) {
@@ -174,7 +164,7 @@ func (checker *checkConstraintChecker) Leave(in ast.Node) (out ast.Node, ok bool
 }
 
 // ContainsAutoIncrementCol checks if there is auto-increment col in given cols
-func ContainsAutoIncrementCol(cols []pmodel.CIStr, tblInfo *model.TableInfo) bool {
+func ContainsAutoIncrementCol(cols []ast.CIStr, tblInfo *model.TableInfo) bool {
 	if autoIncCol := tblInfo.GetAutoIncrementColInfo(); autoIncCol != nil {
 		for _, col := range cols {
 			if col.L == autoIncCol.Name.L {
@@ -186,7 +176,7 @@ func ContainsAutoIncrementCol(cols []pmodel.CIStr, tblInfo *model.TableInfo) boo
 }
 
 // HasForeignKeyRefAction checks if there is foreign key with referential action in check constraints
-func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constraint, checkConstr *ast.Constraint, dependedCols []pmodel.CIStr) error {
+func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constraint, checkConstr *ast.Constraint, dependedCols []ast.CIStr) error {
 	if fkInfos != nil {
 		return checkForeignKeyRefActionByFKInfo(fkInfos, checkConstr, dependedCols)
 	}
@@ -195,8 +185,8 @@ func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constrai
 			continue
 		}
 		refCol := cons.Refer
-		if refCol.OnDelete.ReferOpt != pmodel.ReferOptionNoOption || refCol.OnUpdate.ReferOpt != pmodel.ReferOptionNoOption {
-			var fkCols []pmodel.CIStr
+		if refCol.OnDelete.ReferOpt != ast.ReferOptionNoOption || refCol.OnUpdate.ReferOpt != ast.ReferOptionNoOption {
+			var fkCols []ast.CIStr
 			for _, key := range cons.Keys {
 				fkCols = append(fkCols, key.Column.Name)
 			}
@@ -210,7 +200,7 @@ func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constrai
 	return nil
 }
 
-func checkForeignKeyRefActionByFKInfo(fkInfos []*model.FKInfo, checkConstr *ast.Constraint, dependedCols []pmodel.CIStr) error {
+func checkForeignKeyRefActionByFKInfo(fkInfos []*model.FKInfo, checkConstr *ast.Constraint, dependedCols []ast.CIStr) error {
 	for _, fkInfo := range fkInfos {
 		if fkInfo.OnDelete != 0 || fkInfo.OnUpdate != 0 {
 			for _, col := range dependedCols {
@@ -223,7 +213,7 @@ func checkForeignKeyRefActionByFKInfo(fkInfos []*model.FKInfo, checkConstr *ast.
 	return nil
 }
 
-func hasSpecifiedCol(cols []pmodel.CIStr, col pmodel.CIStr) bool {
+func hasSpecifiedCol(cols []ast.CIStr, col ast.CIStr) bool {
 	for _, c := range cols {
 		if c.L == col.L {
 			return true
@@ -233,13 +223,14 @@ func hasSpecifiedCol(cols []pmodel.CIStr, col pmodel.CIStr) bool {
 }
 
 // IfCheckConstraintExprBoolType checks whether the check expression is bool type
-func IfCheckConstraintExprBoolType(ctx expression.EvalContext, info *model.ConstraintInfo, tableInfo *model.TableInfo) error {
-	cons, err := ToConstraint(info, tableInfo)
+func IfCheckConstraintExprBoolType(ctx exprctx.ExprContext, info *model.ConstraintInfo, tableInfo *model.TableInfo) error {
+	evalCtx := ctx.GetEvalCtx()
+	expr, err := BuildConstraintExprWithCtx(ctx, info, tableInfo, evalCtx.CurrentDB())
 	if err != nil {
 		return err
 	}
-	if !mysql.HasIsBooleanFlag(cons.ConstraintExpr.GetType(ctx).GetFlag()) {
-		return dbterror.ErrNonBooleanExprForCheckConstraint.GenWithStackByArgs(cons.Name)
+	if !mysql.HasIsBooleanFlag(expr.GetType(evalCtx).GetFlag()) {
+		return dbterror.ErrNonBooleanExprForCheckConstraint.GenWithStackByArgs(info.Name)
 	}
 	return nil
 }

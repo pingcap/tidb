@@ -2,15 +2,15 @@ drop table if exists test_gv_ddl, table_with_gen_col_blanks, table_with_gen_col_
 CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);
 DESC test_gv_ddl;
 Field	Type	Null	Key	Default	Extra
-a	int(11)	YES		NULL	
-b	int(11)	YES		NULL	VIRTUAL GENERATED
-c	int(11)	YES		NULL	STORED GENERATED
+a	int	YES		NULL	
+b	int	YES		NULL	VIRTUAL GENERATED
+c	int	YES		NULL	STORED GENERATED
 show create table test_gv_ddl;
 Table	Create Table
 test_gv_ddl	CREATE TABLE `test_gv_ddl` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL,
-  `c` int(11) GENERATED ALWAYS AS (`b` + 2) STORED
+  `a` int DEFAULT NULL,
+  `b` int GENERATED ALWAYS AS (`a` + 8) VIRTUAL,
+  `c` int GENERATED ALWAYS AS (`b` + 2) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create table table_with_gen_col_blanks (a int, b char(20) as (cast(
 a
@@ -18,9 +18,9 @@ as  char)), c int as (a+100));
 show create table table_with_gen_col_blanks;
 Table	Create Table
 table_with_gen_col_blanks	CREATE TABLE `table_with_gen_col_blanks` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(20) GENERATED ALWAYS AS (cast(`a` as char)) VIRTUAL,
-  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL
+  `c` int GENERATED ALWAYS AS (`a` + 100) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create table table_with_gen_col_latin1 (a int, b char(20) as (cast(
 a
@@ -28,9 +28,9 @@ as  char charset latin1)), c int as (a+100));
 show create table table_with_gen_col_latin1;
 Table	Create Table
 table_with_gen_col_latin1	CREATE TABLE `table_with_gen_col_latin1` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` char(20) GENERATED ALWAYS AS (cast(`a` as char charset latin1)) VIRTUAL,
-  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL
+  `c` int GENERATED ALWAYS AS (`a` + 100) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create table table_with_gen_col_string (first_name varchar(10), last_name varchar(10), full_name varchar(255) AS (CONCAT(first_name,' ',last_name)));
 show create table table_with_gen_col_string;
@@ -90,15 +90,15 @@ alter table test_gv_ddl modify column c bigint as (b+200) stored;
 Error 3106 (HY000): 'modifying a stored column' is not supported for generated columns.
 DESC test_gv_ddl;
 Field	Type	Null	Key	Default	Extra
-a	int(11)	YES		NULL	
-b	int(11)	YES		NULL	VIRTUAL GENERATED
-c	int(11)	YES		NULL	STORED GENERATED
+a	int	YES		NULL	
+b	int	YES		NULL	VIRTUAL GENERATED
+c	int	YES		NULL	STORED GENERATED
 alter table test_gv_ddl change column c cnew bigint;
 DESC test_gv_ddl;
 Field	Type	Null	Key	Default	Extra
-a	int(11)	YES		NULL	
-b	int(11)	YES		NULL	VIRTUAL GENERATED
-cnew	bigint(20)	YES		NULL	
+a	int	YES		NULL	
+b	int	YES		NULL	VIRTUAL GENERATED
+cnew	bigint	YES		NULL	
 drop table if exists t;
 CREATE TABLE t(c0 TEXT AS ('\\'));
 insert into t values ();
@@ -117,7 +117,7 @@ alter table t change a a int default 0.00;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT '0'
+  `a` int DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 create table t (a int default 1.25);
@@ -125,7 +125,7 @@ alter table t change a a int default 2.8;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT '3'
+  `a` int DEFAULT '3'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 create table t (a float default 1.25);
@@ -255,16 +255,16 @@ alter table test_rename_column rename column col1 to col1;
 show create table test_rename_column;
 Table	Create Table
 test_rename_column	CREATE TABLE `test_rename_column` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `col1` int(11) DEFAULT NULL,
+  `id` int NOT NULL AUTO_INCREMENT,
+  `col1` int DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table test_rename_column rename column col1 to col2;
 show create table test_rename_column;
 Table	Create Table
 test_rename_column	CREATE TABLE `test_rename_column` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `col2` int(11) DEFAULT NULL,
+  `id` int NOT NULL AUTO_INCREMENT,
+  `col2` int DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table test_rename_column rename column non_exist_col to col3;
@@ -277,15 +277,15 @@ alter table test_rename_column rename column col1 to col2;
 show create table test_rename_column;
 Table	Create Table
 test_rename_column	CREATE TABLE `test_rename_column` (
-  `id` int(11) DEFAULT NULL,
-  `col2` int(11) GENERATED ALWAYS AS (`id` + 1) VIRTUAL
+  `id` int DEFAULT NULL,
+  `col2` int GENERATED ALWAYS AS (`id` + 1) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table test_rename_column rename column col2 to col1;
 show create table test_rename_column;
 Table	Create Table
 test_rename_column	CREATE TABLE `test_rename_column` (
-  `id` int(11) DEFAULT NULL,
-  `col1` int(11) GENERATED ALWAYS AS (`id` + 1) VIRTUAL
+  `id` int DEFAULT NULL,
+  `col1` int GENERATED ALWAYS AS (`id` + 1) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table test_rename_column rename column id to id1;
 Error 3108 (HY000): Column 'id' has a generated column dependency.
@@ -307,9 +307,9 @@ alter table test2 change c2 a int not null;
 show create table test2;
 Table	Create Table
 test2	CREATE TABLE `test2` (
-  `c1` int(11) DEFAULT NULL,
-  `a` int(11) NOT NULL,
-  `c3` int(11) DEFAULT '1',
+  `c1` int DEFAULT NULL,
+  `a` int NOT NULL,
+  `c3` int DEFAULT '1',
   KEY `c1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists test2;

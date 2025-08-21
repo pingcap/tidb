@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 )
 
@@ -57,8 +56,8 @@ var (
 // ValueExpr define a interface for ValueExpr.
 type ValueExpr interface {
 	ExprNode
-	SetValue(val interface{})
-	GetValue() interface{}
+	SetValue(val any)
+	GetValue() any
 	GetDatumString() string
 	GetString() string
 	GetProjectionOffset() int
@@ -66,7 +65,7 @@ type ValueExpr interface {
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
-var NewValueExpr func(value interface{}, charset string, collate string) ValueExpr
+var NewValueExpr func(value any, charset string, collate string) ValueExpr
 
 // NewParamMarkerExpr creates a ParamMarkerExpr.
 var NewParamMarkerExpr func(offset int) ParamMarkerExpr
@@ -86,6 +85,9 @@ type BetweenExpr struct {
 
 // Restore implements Node interface.
 func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
+		ctx.WritePlain("(")
+	}
 	if err := n.Expr.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Expr")
 	}
@@ -100,6 +102,9 @@ func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(" AND ")
 	if err := n.Right.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Right ")
+	}
+	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
+		ctx.WritePlain(")")
 	}
 	return nil
 }
@@ -173,8 +178,10 @@ func restoreBinaryOpWithSpacesAround(ctx *format.RestoreCtx, op opcode.Op) error
 
 // Restore implements Node interface.
 func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
+	originalFlags := ctx.Flags
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain("(")
+		ctx.Flags |= format.RestoreBracketAroundBetweenExpr
 	}
 	if err := n.L.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
@@ -187,6 +194,7 @@ func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	}
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain(")")
+		ctx.Flags = originalFlags
 	}
 	return nil
 }
@@ -505,9 +513,9 @@ func (n *TableNameExpr) Accept(v Visitor) (Node, bool) {
 // ColumnName represents column name.
 type ColumnName struct {
 	node
-	Schema model.CIStr
-	Table  model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Table  CIStr
+	Name   CIStr
 }
 
 // Restore implements Node interface.
@@ -1473,34 +1481,45 @@ func (n *SetCollationExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type exprTextPositionCleaner struct {
+type exprCleaner struct {
+	// for Text Position clean.
 	oldTextPos []int
 	restore    bool
+	// for Name.O clean, ast.FuncCallExpr should be case-insensitive.
+	oldOriginFuncName []string
 }
 
-func (e *exprTextPositionCleaner) BeginRestore() {
+func (e *exprCleaner) BeginRestore() {
 	e.restore = true
 }
 
-func (e *exprTextPositionCleaner) Enter(n Node) (node Node, skipChildren bool) {
+func (e *exprCleaner) Enter(n Node) (node Node, skipChildren bool) {
 	if e.restore {
 		n.SetOriginTextPosition(e.oldTextPos[0])
 		e.oldTextPos = e.oldTextPos[1:]
+		if f, ok := n.(*FuncCallExpr); ok {
+			f.FnName.O = e.oldOriginFuncName[0]
+			e.oldOriginFuncName = e.oldOriginFuncName[1:]
+		}
 		return n, false
 	}
 	e.oldTextPos = append(e.oldTextPos, n.OriginTextPosition())
 	n.SetOriginTextPosition(0)
+	if f, ok := n.(*FuncCallExpr); ok {
+		e.oldOriginFuncName = append(e.oldOriginFuncName, f.FnName.O)
+		f.FnName.O = f.FnName.L
+	}
 	return n, false
 }
 
-func (e *exprTextPositionCleaner) Leave(n Node) (node Node, ok bool) {
+func (e *exprCleaner) Leave(n Node) (node Node, ok bool) {
 	return n, true
 }
 
 // ExpressionDeepEqual compares the equivalence of two expressions.
 func ExpressionDeepEqual(a ExprNode, b ExprNode) bool {
-	cleanerA := &exprTextPositionCleaner{}
-	cleanerB := &exprTextPositionCleaner{}
+	cleanerA := &exprCleaner{}
+	cleanerB := &exprCleaner{}
 	a.Accept(cleanerA)
 	b.Accept(cleanerB)
 	result := reflect.DeepEqual(a, b)

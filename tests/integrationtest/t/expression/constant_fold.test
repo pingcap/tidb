@@ -11,3 +11,9 @@ select collation(ifnull(concat(NULL),ifnull(concat(id),'~'))) from t;
 select collation(ifnull(concat(id),ifnull(concat(id),'~'))) from t;
 select collation(ifnull(concat(NULL),id)) from t1;
 select collation(ifnull(concat(NULL),ifnull(concat(NULL),id))) from t1;
+
+# https://github.com/pingcap/tidb/issues/53546
+drop table if exists t1;
+create table t1 (c1 int);
+insert into t1 values (null);
+select truncate(1,c1), truncate(1,c1) is not NULL from t1;

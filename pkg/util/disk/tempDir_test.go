@@ -40,7 +40,7 @@ func TestRemoveDir(t *testing.T) {
 	require.NoError(t, os.RemoveAll(config.GetGlobalConfig().TempStoragePath))
 	require.Equal(t, checkTempDirExist(), false)
 	wg := sync.WaitGroup{}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func(t *testing.T) {
 			err := CheckAndInitTempDir()

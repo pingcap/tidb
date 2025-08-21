@@ -18,14 +18,18 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	jobCtx.inInnerRunOneJobStep = true
+	defer func() {
+		jobCtx.inInnerRunOneJobStep = false
+	}()
 	metaMut := jobCtx.metaMut
 	if job.MultiSchemaInfo.Revertible {
 		// Handle the rolling back job.
@@ -186,14 +190,13 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
 		Type:        jobW.Type,
-		Args:        jobW.Args,
+		JobArgs:     jobW.JobArgs,
 		RawArgs:     jobW.RawArgs,
 		SchemaState: jobW.SchemaState,
 		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
 		CtxVars:     jobW.CtxVars,
 		ReorgTp:     reorgTp,
-		UseCloud:    false,
 	})
 	return nil
 }
@@ -205,7 +208,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		col, pos := args.Col, args.Pos
 		info.AddColumns = append(info.AddColumns, col.Name)
 		for colName := range col.Dependences {
-			info.RelativeColumns = append(info.RelativeColumns, pmodel.CIStr{L: colName, O: colName})
+			info.RelativeColumns = append(info.RelativeColumns, ast.CIStr{L: colName, O: colName})
 		}
 		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
@@ -214,31 +217,30 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		colName := job.JobArgs.(*model.TableColumnArgs).Col.Name
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		indexName := job.Args[0].(pmodel.CIStr)
-		info.DropIndexes = append(info.DropIndexes, indexName)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		info.DropIndexes = append(info.DropIndexes, args.IndexArgs[0].IndexName)
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		indexName := job.Args[1].(pmodel.CIStr)
-		indexPartSpecifications := job.Args[2].([]*ast.IndexPartSpecification)
-		info.AddIndexes = append(info.AddIndexes, indexName)
-		for _, indexPartSpecification := range indexPartSpecifications {
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		// This job has not been merged, len(args) should be one.
+		intest.Assert(len(args.IndexArgs) == 1, "len(args.IndexArgs) != 1")
+		indexArg := args.IndexArgs[0]
+		info.AddIndexes = append(info.AddIndexes, indexArg.IndexName)
+		for _, indexPartSpecification := range indexArg.IndexPartSpecifications {
 			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
 		}
-		if hiddenCols, ok := job.Args[4].([]*model.ColumnInfo); ok {
-			for _, c := range hiddenCols {
-				for depColName := range c.Dependences {
-					info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
-				}
+		for _, c := range indexArg.HiddenCols {
+			for depColName := range c.Dependences {
+				info.RelativeColumns = append(info.RelativeColumns, ast.NewCIStr(depColName))
 			}
 		}
 	case model.ActionRenameIndex:
-		from := job.Args[0].(pmodel.CIStr)
-		to := job.Args[1].(pmodel.CIStr)
-		info.AddIndexes = append(info.AddIndexes, to)
-		info.DropIndexes = append(info.DropIndexes, from)
+		args := job.JobArgs.(*model.ModifyIndexArgs)
+		from, to := args.GetRenameIndexes()
+		info.AddIndexes = append(info.AddIndexes, from)
+		info.DropIndexes = append(info.DropIndexes, to)
 	case model.ActionModifyColumn:
-		newCol := *job.Args[0].(**model.ColumnInfo)
-		oldColName := job.Args[1].(pmodel.CIStr)
-		pos := job.Args[2].(*ast.ColumnPosition)
+		args := job.JobArgs.(*model.ModifyColumnArgs)
+		newCol, oldColName, pos := args.Column, args.OldColumnName, args.Position
 		if newCol.Name.L != oldColName.L {
 			info.AddColumns = append(info.AddColumns, newCol.Name)
 			info.DropColumns = append(info.DropColumns, oldColName)
@@ -262,6 +264,8 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 			Name: fkInfo.Name,
 			Cols: fkInfo.Cols,
 		})
+	case model.ActionDropForeignKey:
+		// there is nothing to verify for `DROP FOREIGN KEY`
 	default:
 		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
 	}
@@ -272,7 +276,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	modifyCols := make(map[string]struct{})
 	modifyIdx := make(map[string]struct{})
 
-	checkColumns := func(colNames []pmodel.CIStr, addToModifyCols bool) error {
+	checkColumns := func(colNames []ast.CIStr, addToModifyCols bool) error {
 		for _, colName := range colNames {
 			name := colName.L
 			if _, ok := modifyCols[name]; ok {
@@ -285,7 +289,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 		return nil
 	}
 
-	checkIndexes := func(idxNames []pmodel.CIStr, addToModifyIdx bool) error {
+	checkIndexes := func(idxNames []ast.CIStr, addToModifyIdx bool) error {
 		for _, idxName := range idxNames {
 			name := idxName.L
 			if _, ok := modifyIdx[name]; ok {
@@ -334,40 +338,31 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		if subJob.Type == model.ActionAddIndex {
 			mergeCnt++
 			if mergedSubJob == nil {
-				clonedSubJob := *subJob
-				mergedSubJob = &clonedSubJob
-				mergedSubJob.Args = nil
+				mergedSubJob = subJob.Clone()
 				mergedSubJob.RawArgs = nil
 			}
 		}
 	}
 
 	if mergeCnt <= 1 {
-		// no add index job in this multi-schema change.
+		// No multiple add index jobs in this multi-schema change.
 		return
 	}
 
-	var unique []bool
-	var indexNames []pmodel.CIStr
-	var indexPartSpecifications [][]*ast.IndexPartSpecification
-	var indexOption []*ast.IndexOption
-	var hiddenCols [][]*model.ColumnInfo
-
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
+	newAddIndexesArgs := &model.ModifyIndexArgs{OpType: model.OpAddIndex}
+
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			unique = append(unique, subJob.Args[0].(bool))
-			indexNames = append(indexNames, subJob.Args[1].(pmodel.CIStr))
-			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
-			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
-			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			newAddIndexesArgs.IndexArgs = append(newAddIndexesArgs.IndexArgs, args.IndexArgs...)
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
 
-	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols}
 	// place the merged add index job at the end of the sub-jobs.
+	mergedSubJob.JobArgs = newAddIndexesArgs
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
 }

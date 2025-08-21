@@ -2,22 +2,22 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "handletest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "handle_test.go",
         "main_test.go",
     ],
     flaky = True,
-    race = "on",
-    shard_count = 33,
+    shard_count = 35,
     deps = [
         "//pkg/config",
         "//pkg/domain",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",

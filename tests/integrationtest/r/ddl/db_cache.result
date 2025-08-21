@@ -34,14 +34,14 @@ alter table nocache_t1 cache;
 show create table nocache_t1;
 Table	Create Table
 nocache_t1	CREATE TABLE `nocache_t1` (
-  `n` int(11) NOT NULL AUTO_INCREMENT,
+  `n` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`n`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */
 alter table nocache_t1 nocache;
 show create table nocache_t1;
 Table	Create Table
 nocache_t1	CREATE TABLE `nocache_t1` (
-  `n` int(11) NOT NULL AUTO_INCREMENT,
+  `n` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`n`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t1;

@@ -15,6 +15,7 @@
 package mockstore
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,7 +23,11 @@ import (
 
 	cp "github.com/otiai10/copy"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
@@ -40,7 +45,7 @@ func (d MockTiKVDriver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !strings.EqualFold(u.Scheme, "mocktikv") {
+	if config.StoreType(strings.ToLower(u.Scheme)) != config.StoreTypeMockTiKV {
 		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
 	}
 
@@ -62,7 +67,7 @@ func (d EmbedUnistoreDriver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !strings.EqualFold(u.Scheme, "unistore") {
+	if config.StoreType(strings.ToLower(u.Scheme)) != config.StoreTypeUniStore {
 		return nil, errors.Errorf("Uri scheme expected(unistore) but found (%s)", u.Scheme)
 	}
 
@@ -97,6 +102,7 @@ type mockOptions struct {
 	ddlCheckerHijack bool
 	tikvOptions      []tikv.Option
 	pdAddrs          []string
+	keyspaceMeta     *keyspacepb.KeyspaceMeta
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -177,6 +183,33 @@ func WithDDLChecker() MockTiKVStoreOption {
 	}
 }
 
+// WithMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func WithMockTiFlash(nodes int) MockTiKVStoreOption {
+	return WithMultipleOptions(
+		WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		WithStoreType(EmbedUnistore),
+	)
+}
+
+// WithKeyspaceMeta lets user set the keyspace meta.
+func WithKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.keyspaceMeta = keyspaceMeta
+	}
+}
+
 // DDLCheckerInjector is used to break import cycle.
 var DDLCheckerInjector func(kv.Storage) kv.Storage
 
@@ -192,6 +225,16 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	}
 	for _, f := range options {
 		f(&opt)
+	}
+	if kerneltype.IsNextGen() {
+		// in nextgen, all stores must have a keyspace meta set. to simplify the
+		// test, we set the default keyspace meta to system keyspace.
+		if opt.keyspaceMeta == nil {
+			opt.keyspaceMeta = &keyspacepb.KeyspaceMeta{
+				Id:   uint32(0xFFFFFF) - 1,
+				Name: keyspace.System,
+			}
+		}
 	}
 
 	var (

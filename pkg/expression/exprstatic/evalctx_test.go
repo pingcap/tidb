@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -57,15 +59,11 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *EvalContext) {
 	require.Equal(t, types.NewContext(types.StrictFlags, time.UTC, ctx), ctx.TypeCtx())
 	require.Equal(t, errctx.NewContextWithLevels(errctx.LevelMap{}, ctx), ctx.ErrCtx())
 	require.Equal(t, "", ctx.CurrentDB())
-	require.Equal(t, variable.DefMaxAllowedPacket, ctx.GetMaxAllowedPacket())
-	require.Equal(t, variable.DefDefaultWeekFormat, ctx.GetDefaultWeekFormatMode())
-	require.Equal(t, variable.DefDivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
+	require.Equal(t, vardef.DefMaxAllowedPacket, ctx.GetMaxAllowedPacket())
+	require.Equal(t, vardef.DefDefaultWeekFormat, ctx.GetDefaultWeekFormatMode())
+	require.Equal(t, vardef.DefDivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
 	require.Empty(t, ctx.AllParamValues())
 	require.Equal(t, variable.NewUserVars(), ctx.GetUserVarsReader())
-	require.Nil(t, ctx.requestVerificationFn)
-	require.Nil(t, ctx.requestDynamicVerificationFn)
-	require.True(t, ctx.RequestVerification("test", "t1", "", mysql.CreatePriv))
-	require.True(t, ctx.RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
 	require.True(t, ctx.GetOptionalPropSet().IsEmpty())
 	p, ok := ctx.GetOptionalPropProvider(exprctx.OptPropAdvisoryLock)
 	require.Nil(t, p)
@@ -82,13 +80,11 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *EvalContext) {
 }
 
 type evalCtxOptionsTestState struct {
-	now           time.Time
-	loc           *time.Location
-	warnHandler   *contextutil.StaticWarnHandler
-	userVars      *variable.UserVars
-	ddlOwner      bool
-	privCheckArgs []any
-	privRet       bool
+	now         time.Time
+	loc         *time.Location
+	warnHandler *contextutil.StaticWarnHandler
+	userVars    *variable.UserVars
+	ddlOwner    bool
 }
 
 func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTestState) {
@@ -116,6 +112,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTes
 		WithTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck),
 		WithErrLevelMap(errctx.LevelMap{
 			errctx.ErrGroupBadNull:       errctx.LevelError,
+			errctx.ErrGroupNoDefault:     errctx.LevelError,
 			errctx.ErrGroupDividedByZero: errctx.LevelWarn,
 		}),
 		WithLocation(loc),
@@ -127,16 +124,6 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTes
 		WithDefaultWeekFormatMode("3"),
 		WithDivPrecisionIncrement(5),
 		WithUserVarsReader(s.userVars),
-		WithPrivCheck(func(db, table, column string, priv mysql.PrivilegeType) bool {
-			require.Nil(t, s.privCheckArgs)
-			s.privCheckArgs = []any{db, table, column, priv}
-			return s.privRet
-		}),
-		WithDynamicPrivCheck(func(privName string, grantable bool) bool {
-			require.Nil(t, s.privCheckArgs)
-			s.privCheckArgs = []any{privName, grantable}
-			return s.privRet
-		}),
 		WithOptionalProperty(provider1, provider2),
 	}, s
 }
@@ -150,6 +137,7 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *EvalContext, s *evalCtxOptions
 	)
 	require.Equal(t, errctx.NewContextWithLevels(errctx.LevelMap{
 		errctx.ErrGroupBadNull:       errctx.LevelError,
+		errctx.ErrGroupNoDefault:     errctx.LevelError,
 		errctx.ErrGroupDividedByZero: errctx.LevelWarn,
 	}, ctx), ctx.ErrCtx())
 	require.Same(t, s.loc, ctx.Location())
@@ -162,19 +150,6 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *EvalContext, s *evalCtxOptions
 	require.Equal(t, "3", ctx.GetDefaultWeekFormatMode())
 	require.Equal(t, 5, ctx.GetDivPrecisionIncrement())
 	require.Same(t, s.userVars, ctx.GetUserVarsReader())
-
-	s.privCheckArgs, s.privRet = nil, false
-	require.False(t, ctx.RequestVerification("db", "table", "column", mysql.CreatePriv))
-	require.Equal(t, []any{"db", "table", "column", mysql.CreatePriv}, s.privCheckArgs)
-	s.privCheckArgs, s.privRet = nil, true
-	require.True(t, ctx.RequestVerification("db2", "table2", "column2", mysql.UpdatePriv))
-	require.Equal(t, []any{"db2", "table2", "column2", mysql.UpdatePriv}, s.privCheckArgs)
-	s.privCheckArgs, s.privRet = nil, false
-	require.False(t, ctx.RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
-	require.Equal(t, []any{"RESTRICTED_USER_ADMIN", true}, s.privCheckArgs)
-	s.privCheckArgs, s.privRet = nil, true
-	require.True(t, ctx.RequestDynamicVerification("RESTRICTED_TABLES_ADMIN", false))
-	require.Equal(t, []any{"RESTRICTED_TABLES_ADMIN", false}, s.privCheckArgs)
 
 	var optSet exprctx.OptionalEvalPropKeySet
 	optSet = optSet.Add(exprctx.OptPropCurrentUser).Add(exprctx.OptPropDDLOwnerInfo)
@@ -447,7 +422,7 @@ func TestParamList(t *testing.T) {
 	ctx := NewEvalContext(
 		WithParamList(paramList),
 	)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := ctx.GetParamValue(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
@@ -456,7 +431,7 @@ func TestParamList(t *testing.T) {
 	// after reset the paramList and append new one, the value is still persisted
 	paramList.Reset()
 	paramList.Append(types.NewDatum(4))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := ctx.GetParamValue(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
@@ -493,12 +468,6 @@ func TestMakeEvalContextStatic(t *testing.T) {
 		WithMaxAllowedPacket(12345),
 		WithDefaultWeekFormatMode("3"),
 		WithDivPrecisionIncrement(5),
-		WithPrivCheck(func(db, table, column string, priv mysql.PrivilegeType) bool {
-			return true
-		}),
-		WithDynamicPrivCheck(func(privName string, grantable bool) bool {
-			return true
-		}),
 		WithParamList(paramList),
 		WithUserVarsReader(userVars),
 		WithOptionalProperty(provider),
@@ -517,10 +486,7 @@ func TestMakeEvalContextStatic(t *testing.T) {
 	}
 	deeptest.AssertRecursivelyNotEqual(t, obj, NewEvalContext(),
 		deeptest.WithIgnorePath(ignorePath),
-		deeptest.WithPointerComparePath([]string{
-			"$.evalCtxState.requestVerificationFn",
-			"$.evalCtxState.requestDynamicVerificationFn",
-		}))
+	)
 
 	staticObj := MakeEvalContextStatic(obj)
 
@@ -529,8 +495,6 @@ func TestMakeEvalContextStatic(t *testing.T) {
 		deeptest.WithPointerComparePath([]string{
 			"$.evalCtxState.warnHandler",
 			"$.evalCtxState.paramList*.b",
-			"$.evalCtxState.requestVerificationFn",
-			"$.evalCtxState.requestDynamicVerificationFn",
 		}),
 	)
 
@@ -596,7 +560,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		},
 		{
 			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
-			val:   "on",
+			val:   "ON",
 			field: "$.enableRedactLog",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "ON", ctx.GetTiDBRedactLog())
@@ -609,7 +573,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 			field: "$.defaultWeekFormatMode",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "5", ctx.GetDefaultWeekFormatMode())
-				mode, ok := vars.GetSystemVar(variable.DefaultWeekFormat)
+				mode, ok := vars.GetSystemVar(vardef.DefaultWeekFormat)
 				require.True(t, ok)
 				require.Equal(t, mode, ctx.GetDefaultWeekFormatMode())
 			},
@@ -634,8 +598,6 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		"$.typeCtx.warnHandler",
 		"$.errCtx",
 		"$.currentDB",
-		"$.requestVerificationFn",
-		"$.requestDynamicVerificationFn",
 		"$.paramList",
 		"$.userVars",
 		"$.props",
@@ -650,7 +612,13 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		if sysVar.field != "" {
 			varsRelatedFields = append(varsRelatedFields, sysVar.field)
 		}
-		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		sv := variable.GetSysVar(sysVar.name)
+		require.NotNil(t, sv)
+		if sv.HasSessionScope() {
+			require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		} else if sv.HasGlobalScope() {
+			require.NoError(t, sv.SetGlobalFromHook(context.TODO(), sessionVars, sysVar.val, false))
+		}
 	}
 
 	defaultEvalCtx := NewEvalContext()
@@ -701,7 +669,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 	// additional check about @@timestamp
 	// setting to `variable.DefTimestamp` should return the current timestamp
 	ctx, err = defaultEvalCtx.LoadSystemVars(map[string]string{
-		"timestamp": variable.DefTimestamp,
+		"timestamp": vardef.DefTimestamp,
 	})
 	require.NoError(t, err)
 	tm, err := ctx.CurrentTime()

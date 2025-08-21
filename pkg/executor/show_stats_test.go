@@ -17,12 +17,14 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -47,6 +49,51 @@ func TestShowStatsMeta(t *testing.T) {
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "t", result.Rows()[0][1])
+
+	// Create different database to test the like pattern.
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("analyze table t all columns")
+	// Test it works under different database.
+	tk.MustExec("use test")
+	// Test it is not case sensitive.
+	result = tk.MustQuery("show stats_meta like 'Test2%'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test2", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	result = tk.MustQuery("show stats_meta like 'test2'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test2", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+
+	// For dynamic partitioned table, we need to display the global table as well.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by range(a) (partition p0 values less than (6))")
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec("analyze table t all columns")
+	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "global", result.Rows()[0][2])
+	require.Equal(t, "test", result.Rows()[1][0])
+	require.Equal(t, "t", result.Rows()[1][1])
+	require.Equal(t, "p0", result.Rows()[1][2])
+
+	// For static partitioned table, there is no global table.
+	tk.MustExec("set @@global.tidb_partition_prune_mode='static'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int) partition by range(a) (partition p0 values less than (6))")
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec("analyze table t")
+	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "p0", result.Rows()[0][2])
 }
 
 func TestShowStatsLocked(t *testing.T) {
@@ -368,9 +415,9 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
 
 	is := dom.InfoSchema()
-	t1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	t2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	t2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, null, '2021-10-20 08:00:00')", t1.Meta().ID, t1.Meta().Columns[0].ID))
 	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", t2.Meta().ID, t2.Meta().Columns[0].ID))
@@ -421,7 +468,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[0][8])
 	serverInfo, err := infosync.GetServerInfo()
 	require.NoError(t, err)
-	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	addr := net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
 	require.Equal(t, addr, rows[0][9])
 	require.Equal(t, "<nil>", rows[0][10])
 

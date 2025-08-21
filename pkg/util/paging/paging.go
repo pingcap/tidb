@@ -31,17 +31,17 @@ const (
 )
 
 // GrowPagingSize grows the paging size and ensures it does not exceed MaxPagingSize
-func GrowPagingSize(size uint64, max uint64) uint64 {
-	if max < MaxPagingSize {
+func GrowPagingSize(size uint64, maxv uint64) uint64 {
+	if maxv < MaxPagingSize {
 		// Defensive programing, for example, call with max = 0.
 		// max should never less than MaxPagingSize.
 		// Otherwise the session variable maybe wrong, or the distsql request does not obey the session variable setting.
-		max = MaxPagingSize
+		maxv = MaxPagingSize
 	}
 
 	size <<= 1
-	if size > max {
-		return max
+	if size > maxv {
+		return maxv
 	}
 	return size
 }

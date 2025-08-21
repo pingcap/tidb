@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"go.uber.org/atomic"
 )
 
 func TestContextDetach(t *testing.T) {
@@ -67,6 +69,7 @@ func TestContextDetach(t *testing.T) {
 		TiFlashMaxBytesBeforeExternalSort:    1,
 		TiFlashMaxQueryMemoryPerNode:         1,
 		TiFlashQuerySpillRatio:               1.0,
+		TiFlashHashJoinVersion:               joinversion.HashJoinVersionLegacy,
 
 		DistSQLConcurrency:            1,
 		ReplicaReadType:               kv.ReplicaReadFollower,
@@ -84,11 +87,14 @@ func TestContextDetach(t *testing.T) {
 		ResourceGroupName:             "c",
 		LoadBasedReplicaReadThreshold: time.Second,
 		TiKVClientReadTimeout:         1,
+		MaxExecutionTime:              1,
 
 		ReplicaClosestReadThreshold: 1,
 		ConnectionID:                1,
 		SessionAlias:                "c",
+		TryCopLiteWorker:            atomic.Uint32{},
 	}
+	obj.TryCopLiteWorker.Store(1)
 
 	obj.AppendWarning(errors.New("test warning"))
 	deeptest.AssertRecursivelyNotEqual(t, obj, &DistSQLContext{},
@@ -100,6 +106,7 @@ func TestContextDetach(t *testing.T) {
 			"$.ResourceGroupTagger",
 			// The following fields are on stmtctx and will be recreated before the new statement
 			"$.RunawayChecker",
+			"$.RUConsumptionReporter",
 			"$.ExecDetails",
 		}))
 
@@ -114,6 +121,7 @@ func TestContextDetach(t *testing.T) {
 			// The following fields are on stmtctx and will be recreated before the new statement,
 			// so keep the same pointer is fine
 			"$.RunawayChecker",
+			"$.RUConsumptionReporter",
 			"$.ExecDetails",
 			"$.KVVars.Killed",
 			"$.KvExecCounter",

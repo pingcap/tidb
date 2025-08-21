@@ -83,7 +83,7 @@ func TestSelectionWithSerialCase(t *testing.T) {
 
 func randomTestCase(size int) testSlice {
 	data := make(testSlice, 0, size)
-	for i := 0; i < size; i++ {
+	for range size {
 		data = append(data, rand.Int()%100)
 	}
 	return data
@@ -91,7 +91,7 @@ func randomTestCase(size int) testSlice {
 
 func serialTestCase(size int) testSlice {
 	data := make(testSlice, 0, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		data = append(data, i)
 	}
 	return data

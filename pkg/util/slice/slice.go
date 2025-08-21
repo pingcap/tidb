@@ -14,28 +14,13 @@
 
 package slice
 
-import "reflect"
-
-// AnyOf returns true if any element in the slice matches the predict func.
-func AnyOf(s any, p func(int) bool) bool {
-	l := reflect.ValueOf(s).Len()
-	for i := 0; i < l; i++ {
-		if p(i) {
-			return true
-		}
-	}
-	return false
-}
-
-// NoneOf returns true if no element in the slice matches the predict func.
-func NoneOf(s any, p func(int) bool) bool {
-	return !AnyOf(s, p)
-}
+import "slices"
 
 // AllOf returns true if all elements in the slice match the predict func.
-func AllOf(s any, p func(int) bool) bool {
-	np := func(i int) bool {
-		return !p(i)
-	}
-	return NoneOf(s, np)
+func AllOf[T any](s []T, p func(T) bool) bool {
+	// Use the inverse of ContainsFunc with negated predicate
+	// AllOf(s, p) is equivalent to !ContainsFunc(s, !p)
+	return !slices.ContainsFunc(s, func(x T) bool {
+		return !p(x)
+	})
 }

@@ -115,7 +115,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		globalInnerTxnTsBox.deleteInnerTxnTS(originalTxnTS)
 	}()
 
-	for i := uint(0); i < MaxRetryCnt; i++ {
+	for i := range MaxRetryCnt {
 		txn, err = store.Begin()
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
@@ -212,10 +212,8 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if intest.InTest {
-		panic("unexpected no source type context, if you see this error, " +
-			"the `RequestSourceTypeKey` is missing in your context")
-	}
+	intest.Assert(true, "unexpected no source type context, if you see this error, "+
+		"the `RequestSourceTypeKey` is missing in your context")
 	logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
 		"the `RequestSourceTypeKey` is missing in the context")
 }
@@ -228,6 +226,7 @@ func SetTxnResourceGroup(txn Transaction, name string) {
 		validateRNameInterceptor := func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				var rgName *string
+				tikvrpc.AttachContext(req, req.Context)
 				switch r := req.Req.(type) {
 				case *kvrpcpb.PrewriteRequest:
 					rgName = &r.Context.ResourceControlContext.ResourceGroupName

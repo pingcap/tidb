@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -95,6 +95,8 @@ type InsertValues struct {
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
+
+	ignoreErr bool
 }
 
 type defaultVal struct {
@@ -202,7 +204,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	e := base.insertCommon()
 	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
 
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
@@ -319,6 +321,17 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = completeLoadErr(c, rowIdx, err)
 	} else {
 		err = completeInsertErr(c, val, rowIdx, err)
+	}
+	if col != nil && col.GetType() == mysql.TypeTimestamp &&
+		types.ErrTimestampInDSTTransition.Equal(err) {
+		newErr := exeerrors.ErrTruncateWrongInsertValue.FastGenByArgs(types.TypeStr(col.GetType()), val.GetString(), col.Name.O, rowIdx+1)
+		// IGNORE takes precedence over STRICT mode.
+		if !e.ignoreErr && e.Ctx().GetSessionVars().SQLMode.HasStrictMode() {
+			return newErr
+		}
+		// timestamp already adjusted to end of DST transition, convert error to warning
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(newErr)
+		return nil
 	}
 
 	// TODO: should not filter all types of errors here.
@@ -456,7 +469,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
@@ -540,7 +553,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
 
-	for i := 0; i < e.rowLen; i++ {
+	for i := range e.rowLen {
 		col := e.insertColumns[i].ToInfo()
 		casted, err := table.CastValue(e.Ctx(), vals[i], col, false, false)
 		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
@@ -873,19 +886,19 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			}
 			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
 			// The max value can be derived from adding the increment value to min for cnt-1 times.
-			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.Ctx(), cnt)
+			minv, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.Ctx(), cnt)
 			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
 			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min)
+				e.lastInsertID = uint64(minv)
 			}
 			// Assign autoIDs to rows.
-			for j := 0; j < cnt; j++ {
+			for j := range cnt {
 				offset := j + start
-				id := int64(uint64(min) + uint64(j)*uint64(increment))
+				id := int64(uint64(minv) + uint64(j)*uint64(increment))
 				err = setDatumAutoIDAndCast(e.Ctx(), &rows[offset][idx], id, col)
 				if err != nil {
 					return nil, err
@@ -1172,18 +1185,14 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
-	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
+	handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn)
 	if err != nil {
 		return false, err
 	}
 	if handle == nil {
 		return false, nil
 	}
-	_, err = e.removeRow(ctx, txn, handle, r, true)
-	if err != nil {
-		return false, err
-	}
-	return false, nil
+	return e.removeRow(ctx, txn, handle, r, true)
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.
@@ -1374,7 +1383,7 @@ func (e *InsertValues) removeRow(
 	if err != nil {
 		return false, err
 	}
-	err = onRemoveRowForFK(e.Ctx(), oldRow, e.fkChecks, e.fkCascades)
+	err = onRemoveRowForFK(e.Ctx(), oldRow, e.fkChecks, e.fkCascades, e.ignoreErr)
 	if err != nil {
 		return false, err
 	}
@@ -1534,10 +1543,8 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
 		newRs.SnapshotRuntimeStats = snapshotStats
 	}
-	if e.BasicRuntimeStats != nil {
-		basicStats := e.BasicRuntimeStats.Clone()
-		newRs.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-	}
+	// BasicRuntimeStats is unique for all executor instances mapping to the same plan id
+	newRs.BasicRuntimeStats = e.BasicRuntimeStats
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
 	}
@@ -1558,13 +1565,8 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}
 	}
-	if tmp.BasicRuntimeStats != nil {
-		if e.BasicRuntimeStats == nil {
-			basicStats := tmp.BasicRuntimeStats.Clone()
-			e.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-		} else {
-			e.BasicRuntimeStats.Merge(tmp.BasicRuntimeStats)
-		}
+	if tmp.BasicRuntimeStats != nil && e.BasicRuntimeStats == nil {
+		e.BasicRuntimeStats = tmp.BasicRuntimeStats
 	}
 	if tmp.AllocatorRuntimeStats != nil {
 		if e.AllocatorRuntimeStats == nil {

@@ -634,11 +634,8 @@ func (a StringList) Compare(other Lattice) (int, error) {
 	if !ok {
 		return 0, typeMismatchError(a, other)
 	}
-	minLen := len(a)
-	if minLen > len(b) {
-		minLen = len(b)
-	}
-	for i := 0; i < minLen; i++ {
+	minLen := min(len(a), len(b))
+	for i := range minLen {
 		if a[i] != b[i] {
 			return 0, &IncompatibleError{
 				Msg:  ErrMsgStringListElemMismatch,

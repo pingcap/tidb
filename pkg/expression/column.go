@@ -46,6 +46,12 @@ type CorrelatedColumn struct {
 	Data *types.Datum
 }
 
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (col *CorrelatedColumn) SafeToShareAcrossSession() bool {
+	// TODO: optimize this to make it's safe.
+	return false // due to col.Data
+}
+
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
 	return &CorrelatedColumn{
@@ -257,16 +263,14 @@ func (col *CorrelatedColumn) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1st> interface.
 func (col *CorrelatedColumn) Equals(other any) bool {
-	if other == nil {
+	col2, ok := other.(*CorrelatedColumn)
+	if !ok {
 		return false
 	}
-	var col2 *CorrelatedColumn
-	switch x := other.(type) {
-	case CorrelatedColumn:
-		col2 = &x
-	case *CorrelatedColumn:
-		col2 = x
-	default:
+	if col == nil {
+		return col2 == nil
+	}
+	if col2 == nil {
 		return false
 	}
 	return col.Column.Equals(&col2.Column)
@@ -306,6 +310,11 @@ type Column struct {
 	collationInfo
 
 	CorrelatedColUniqueID int64
+}
+
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (col *Column) SafeToShareAcrossSession() bool {
+	return col.VirtualExpr == nil // for safety
 }
 
 // Equal implements Expression interface.
@@ -500,21 +509,19 @@ func (col *Column) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1st> interface.
 func (col *Column) Equals(other any) bool {
-	if other == nil {
+	col2, ok := other.(*Column)
+	if !ok {
 		return false
 	}
-	var col2 *Column
-	switch x := other.(type) {
-	case Column:
-		col2 = &x
-	case *Column:
-		col2 = x
-	default:
+	if col == nil {
+		return col2 == nil
+	}
+	if col2 == nil {
 		return false
 	}
 	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
 	// and we should ensure col1.RetType and col2.RetType is not nil ourselves.
-	ok := col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
+	ok = col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
 	ok = ok && (col.VirtualExpr == nil && col2.VirtualExpr == nil || col.VirtualExpr != nil && col2.VirtualExpr != nil && col.VirtualExpr.Equals(col2.VirtualExpr))
 	return ok &&
 		col.ID == col2.ID &&
@@ -631,8 +638,7 @@ func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.Vect
 func (col *Column) Clone() Expression {
 	newCol := *col
 	if col.hashcode != nil {
-		newCol.hashcode = make([]byte, len(col.hashcode))
-		copy(newCol.hashcode, col.hashcode)
+		newCol.hashcode = slices.Clone(col.hashcode)
 	}
 	return &newCol
 }
@@ -860,8 +866,7 @@ func (col *Column) Repertoire() Repertoire {
 
 // SortColumns sort columns based on UniqueID.
 func SortColumns(cols []*Column) []*Column {
-	sorted := make([]*Column, len(cols))
-	copy(sorted, cols)
+	sorted := slices.Clone(cols)
 	slices.SortFunc(sorted, func(i, j *Column) int {
 		return cmp.Compare(i.UniqueID, j.UniqueID)
 	})
@@ -870,12 +875,9 @@ func SortColumns(cols []*Column) []*Column {
 
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
-	for _, c := range cols {
-		if col.EqualColumn(c) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(cols, func(c *Column) bool {
+		return col.EqualColumn(c)
+	})
 }
 
 // GcColumnExprIsTidbShard check whether the expression is tidb_shard()

@@ -6,9 +6,7 @@ go_library(
         "common.go",
         "conn.go",
         "dupdetect.go",
-        "engine.go",
         "errors.go",
-        "ingest_data.go",
         "key_adapter.go",
         "once_error.go",
         "pause.go",
@@ -25,12 +23,13 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/httputil",
         "//br/pkg/logutil",
-        "//br/pkg/membuf",
         "//pkg/errno",
+        "//pkg/ingestor/errdef",
         "//pkg/lightning/log",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/driver/error",
         "//pkg/table/tables",
@@ -39,6 +38,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/dbutil",
         "//pkg/util/format",
+        "//pkg/util/logutil",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
@@ -85,7 +85,13 @@ go_library(
         "@io_bazel_rules_go//go/platform:openbsd": [
             "@org_golang_x_sys//unix",
         ],
+        "@io_bazel_rules_go//go/platform:osx": [
+            "@org_golang_x_sys//unix",
+        ],
         "@io_bazel_rules_go//go/platform:plan9": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:qnx": [
             "@org_golang_x_sys//unix",
         ],
         "@io_bazel_rules_go//go/platform:solaris": [
@@ -115,8 +121,10 @@ go_test(
     shard_count = 29,
     deps = [
         "//br/pkg/errors",
+        "//pkg/autoid_service",
         "//pkg/ddl",
         "//pkg/errno",
+        "//pkg/ingestor/errdef",
         "//pkg/kv",
         "//pkg/lightning/log",
         "//pkg/meta",

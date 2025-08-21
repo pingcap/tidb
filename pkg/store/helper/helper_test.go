@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/log"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -67,7 +67,7 @@ func TestHotRegion(t *testing.T) {
 	require.Equal(t, expected, regionMetric)
 
 	dbInfo := &model.DBInfo{
-		Name: pmodel.NewCIStr("test"),
+		Name: ast.NewCIStr("test"),
 	}
 	require.NoError(t, err)
 
@@ -215,7 +215,7 @@ func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 }
 
 func getMockRegionsTableInfoSchema() []*model.DBInfo {
-	dbInfo := &model.DBInfo{Name: pmodel.NewCIStr("test")}
+	dbInfo := &model.DBInfo{Name: ast.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = []*model.TableInfo{
 		{
 			ID:      41,

@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
@@ -57,12 +57,18 @@ type Builder struct {
 	bundleInfoBuilder
 	infoData *Data
 	store    kv.Storage
+	crossKS  bool
+}
+
+// SetSchemaVersion sets the schema version of the InfoSchema.
+func (b *Builder) SetSchemaVersion(ver int64) {
+	b.schemaMetaVersion = ver
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
-	b.schemaMetaVersion = diff.Version
+	b.SetSchemaVersion(diff.Version)
 	switch diff.Type {
 	case model.ActionCreateSchema:
 		return nil, applyCreateSchema(b, m, diff)
@@ -101,6 +107,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyExchangeTablePartition(b, m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
+	case model.ActionRefreshMeta:
+		return applyRefreshMeta(b, m, diff)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -108,6 +116,143 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 
 func (b *Builder) applyCreateTables(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
+}
+
+// equalPlacementPolicy compares two placement policy references for equality
+func equalPlacementPolicy(a, b *model.PolicyRefInfo) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.ID == b.ID && a.Name.L == b.Name.L
+}
+
+// applyRefreshMeta handles schema and table operations during PITR restore.
+//
+// IMPORTANT: This function relies on BR (Backup & Restore) to send operations in a specific sequence:
+// 1. Delete tables first
+// 2. Delete schemas second
+// 3. Create/Update new schemas third
+// 4. Create/Update new tables fourth
+//
+// This sequence is critical because:
+//   - If schemas are deleted before their tables, the table deletion operations will fail
+//     since the schema context is needed to properly clean up table metadata
+//   - Schema creation must happen before table creation to provide the proper context
+func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	schemaID := diff.SchemaID
+	tableID := diff.TableID
+	oldSchemaID := diff.SchemaID
+	oldTableID := diff.TableID
+
+	// Schema operation
+	if tableID == 0 {
+		dbInfo, err := m.GetDatabase(schemaID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// Schema doesn't exist in kv, drop it from infoschema.
+		if dbInfo == nil {
+			schemaDiff := &model.SchemaDiff{
+				Version:       diff.Version,
+				Type:          model.ActionDropSchema,
+				SchemaID:      schemaID,
+				OldSchemaID:   oldSchemaID,
+				OldTableID:    oldTableID,
+				IsRefreshMeta: true,
+			}
+			return applyDropSchema(b, schemaDiff), nil
+		}
+
+		// Schema exists in kv but not in infoschema, create it to infoschema
+		if _, ok := b.schemaByID(schemaID); !ok {
+			schemaDiff := &model.SchemaDiff{
+				Version:       diff.Version,
+				Type:          model.ActionCreateSchema,
+				SchemaID:      schemaID,
+				OldSchemaID:   oldSchemaID,
+				OldTableID:    oldTableID,
+				IsRefreshMeta: true,
+			}
+			if err := applyCreateSchema(b, m, schemaDiff); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			currentSchema, _ := b.schemaByID(schemaID)
+
+			needsCharsetUpdate := currentSchema.Charset != dbInfo.Charset || currentSchema.Collate != dbInfo.Collate
+			needsPlacementUpdate := !equalPlacementPolicy(currentSchema.PlacementPolicyRef, dbInfo.PlacementPolicyRef)
+
+			if needsCharsetUpdate {
+				charsetDiff := &model.SchemaDiff{
+					Version:       diff.Version,
+					Type:          model.ActionModifySchemaCharsetAndCollate,
+					SchemaID:      schemaID,
+					OldSchemaID:   oldSchemaID,
+					OldTableID:    oldTableID,
+					IsRefreshMeta: true,
+				}
+				if err := applyModifySchemaCharsetAndCollate(b, m, charsetDiff); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+
+			if needsPlacementUpdate {
+				placementDiff := &model.SchemaDiff{
+					Version:       diff.Version,
+					Type:          model.ActionModifySchemaDefaultPlacement,
+					SchemaID:      schemaID,
+					OldSchemaID:   oldSchemaID,
+					OldTableID:    oldTableID,
+					IsRefreshMeta: true,
+				}
+				if err := applyModifySchemaDefaultPlacement(b, m, placementDiff); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
+		return nil, nil
+	}
+
+	// Table operation - check if database exists in infoschema first
+	// if not just return, since infoschema is consistent, if schema is gone then all tables must have gone.
+	if _, ok := b.schemaByID(schemaID); !ok {
+		return nil, nil
+	}
+
+	// Check if table exists in kv
+	tableInfo, err := m.GetTable(schemaID, tableID)
+	if err != nil && !meta.ErrDBNotExists.Equal(err) {
+		return nil, errors.Trace(err)
+	}
+
+	// Table not exists in kv, drop it from infoschema
+	if tableInfo == nil {
+		schemaDiff := &model.SchemaDiff{
+			Version:       diff.Version,
+			Type:          model.ActionDropTable,
+			SchemaID:      schemaID,
+			TableID:       tableID,
+			OldSchemaID:   oldSchemaID,
+			OldTableID:    oldTableID,
+			IsRefreshMeta: true,
+		}
+		return applyDropTableOrPartition(b, m, schemaDiff)
+	}
+	// default update table
+	schemaDiff := &model.SchemaDiff{
+		Version:       diff.Version,
+		Type:          model.ActionCreateTable,
+		SchemaID:      schemaID,
+		TableID:       tableID,
+		OldSchemaID:   oldSchemaID,
+		OldTableID:    oldTableID,
+		IsRefreshMeta: true,
+	}
+	return applyDefaultAction(b, m, schemaDiff)
 }
 
 func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
@@ -119,8 +264,9 @@ func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.Schema
 	// bundle ops
 	if diff.Type == model.ActionTruncateTable {
 		b.deleteBundle(b.infoSchema, diff.OldTableID)
-		b.markTableBundleShouldUpdate(diff.TableID)
 	}
+	b.markTableBundleShouldUpdate(diff.TableID)
+	// TODO: check that all partitions are updated to the cache!
 
 	for _, opt := range diff.AffectedOpts {
 		if diff.Type == model.ActionTruncateTablePartition {
@@ -128,7 +274,6 @@ func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.Schema
 			// While session 1 performs the DML operation associated with partition 1,
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			tblIDs = append(tblIDs, opt.OldTableID)
-			b.markPartitionBundleShouldUpdate(opt.TableID)
 		}
 		b.deleteBundle(b.infoSchema, opt.OldTableID)
 	}
@@ -155,15 +300,17 @@ func applyReorganizePartition(b *Builder, m meta.Reader, diff *model.SchemaDiff)
 		return nil, errors.Trace(err)
 	}
 
+	// The table might have changed TableID
+	if diff.TableID != diff.OldTableID && diff.OldTableID != 0 {
+		b.deleteBundle(b.infoSchema, diff.OldTableID)
+	}
+	b.markTableBundleShouldUpdate(diff.TableID)
+
 	// bundle ops
 	for _, opt := range diff.AffectedOpts {
 		if opt.OldTableID != 0 {
 			b.deleteBundle(b.infoSchema, opt.OldTableID)
 		}
-		if opt.TableID != 0 {
-			b.markTableBundleShouldUpdate(opt.TableID)
-		}
-		// TODO: Should we also check markPartitionBundleShouldUpdate?!?
 	}
 	return tblIDs, nil
 }
@@ -228,6 +375,7 @@ func applyExchangeTablePartition(b *Builder, m meta.Reader, diff *model.SchemaDi
 	}
 	// partID is the new id for the non-partitioned table!
 	b.markTableBundleShouldUpdate(partID)
+	b.markTableBundleShouldUpdate(ptID)
 	// Then the partitioned table, will re-read the whole table, including all partitions!
 	currDiff.TableID = ptID
 	currDiff.SchemaID = ptSchemaID
@@ -238,7 +386,6 @@ func applyExchangeTablePartition(b *Builder, m meta.Reader, diff *model.SchemaDi
 		return nil, errors.Trace(err)
 	}
 	// ntID is the new id for the partition!
-	b.markPartitionBundleShouldUpdate(ntID)
 	err = updateAutoIDForExchangePartition(b.Requirement.Store(), ptSchemaID, ptID, ntSchemaID, ntID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -323,7 +470,7 @@ func applyDefaultAction(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]in
 	return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
 }
 
-func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID int64) {
+func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID, newTableID int64, err error) {
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
@@ -341,6 +488,24 @@ func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID in
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
+		// directly return if this action is initiated by refreshMeta DDL (only used by BR). In the BR case, we don't
+		// care about ON DELETE/UPDATE CASCADE so doesn't need to go through the below logic. The most important
+		// thing in BR is that we might not have DB key so if we go through, m.GetTable will error out.
+		if diff.IsRefreshMeta {
+			return
+		}
+
+		// Still keep the table in infoschema until when the state of table reaches StateNone. This is because
+		// the `ON DELETE/UPDATE CASCADE` function of foreign key may need to find the table in infoschema. Not
+		// only the table with foreign keys are stored in the infoschema to keep a consistent behavior for all
+		// tables.
+		tblInfo, err := m.GetTable(diff.SchemaID, oldTableID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if tblInfo != nil && tblInfo.State != model.StateNone {
+			newTableID = diff.TableID
+		}
 	case model.ActionTruncateTable, model.ActionCreateView,
 		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
 		model.ActionRemovePartitioning:
@@ -356,7 +521,7 @@ func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID in
 func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionAddTablePartition:
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionDropTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
@@ -365,7 +530,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionRecoverTable:
 		b.markTableBundleShouldUpdate(newTableID)
-	case model.ActionAlterTablePlacement:
+	case model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement:
 		b.markTableBundleShouldUpdate(newTableID)
 	}
 }
@@ -421,7 +586,10 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 		)
 	}
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
-	oldTableID, newTableID := b.getTableIDs(diff)
+	oldTableID, newTableID, err := b.getTableIDs(m, diff)
+	if err != nil {
+		return nil, err
+	}
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
 
@@ -600,23 +768,6 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.infoSchema.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) updateBundleForCreateTable(tblInfo *model.TableInfo, tp model.ActionType) {
-	switch tp {
-	case model.ActionDropTablePartition:
-	case model.ActionTruncateTablePartition:
-	// ReorganizePartition handle the bundles in applyReorganizePartition
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
-	default:
-		pi := tblInfo.GetPartitionInfo()
-		if pi != nil {
-			for _, partition := range pi.Definitions {
-				b.markPartitionBundleShouldUpdate(partition.ID)
-			}
-		}
-	}
-}
-
 func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) autoid.Allocators {
 	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
@@ -663,8 +814,6 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		)
 	}
 
-	b.updateBundleForCreateTable(tblInfo, tp)
-
 	if tp != model.ActionTruncateTablePartition {
 		affected = appendAffectedIDs(affected, tblInfo)
 	}
@@ -695,7 +844,16 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 
-	b.infoSchema.addReferredForeignKeys(dbInfo.Name, tblInfo)
+	allIndexPublic := true
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			allIndexPublic = false
+			break
+		}
+	}
+	if allIndexPublic {
+		metrics.DDLResetTempIndexWrite(tblInfo.ID)
+	}
 
 	if !b.enableV2 {
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
@@ -781,7 +939,7 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 			if i == len(tables)-1 {
 				tables = tables[:i]
 			} else {
-				tables = append(tables[:i], tables[i+1:]...)
+				tables = slices.Delete(tables, i, i+1)
 			}
 			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break
@@ -847,6 +1005,10 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 }
 
 func (b *Builder) initVirtualTables(schemaVersion int64) error {
+	if b.crossKS {
+		// cross keyspace sessions are not allowed to access virtual tables.
+		return nil
+	}
 	// Initialize virtual tables.
 	for _, driver := range drivers {
 		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
@@ -900,7 +1062,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
-	b.initMisc(dbInfos, policies, resourceGroups)
+	b.initMisc(policies, resourceGroups)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
@@ -963,12 +1125,12 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			item := tableItem{
 				dbName:        di.Name,
 				dbID:          di.ID,
-				tableName:     pmodel.NewCIStr(name),
+				tableName:     ast.NewCIStr(name),
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
-			b.infoData.byID.Set(item)
-			b.infoData.byName.Set(item)
+			btreeSet(&b.infoData.byID, &item)
+			btreeSet(&b.infoData.byName, &item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
@@ -990,6 +1152,7 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
+		b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
 		b.infoData.add(tableItem{
 			dbName:        di.Name,
 			dbID:          di.ID,
@@ -1000,6 +1163,8 @@ func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model
 	} else {
 		sortedTbls := b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)]
 		b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)] = append(sortedTbls, tbl)
+		// Maintain foreign key reference information.
+		b.infoSchema.addReferredForeignKeys(di.Name, tblInfo)
 	}
 }
 
@@ -1016,7 +1181,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
+func NewBuilder(r autoid.Requirement, schemaCacheSize uint64, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
 	builder := &Builder{
 		Requirement:  r,
 		infoschemaV2: NewInfoSchemaV2(r, factory, infoData),
@@ -1025,7 +1190,6 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		infoData:     infoData,
 		enableV2:     useV2,
 	}
-	schemaCacheSize := variable.SchemaCacheSize.Load()
 	infoData.tableCache.SetCapacity(schemaCacheSize)
 	return builder
 }
@@ -1036,6 +1200,12 @@ func (b *Builder) WithStore(s kv.Storage) *Builder {
 	return b
 }
 
+// WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
+func (b *Builder) WithCrossKS(crossKS bool) *Builder {
+	b.crossKS = crossKS
+	return b
+}
+
 func tableBucketIdx(tableID int64) int {
 	intest.Assert(tableID > 0)
 	return int(tableID % bucketCount)
@@ -1043,4 +1213,17 @@ func tableBucketIdx(tableID int64) int {
 
 func tableIDIsValid(tableID int64) bool {
 	return tableID > 0
+}
+
+// schemaByID returns schema by ID, respecting the enableV2 flag
+func (b *Builder) schemaByID(id int64) (*model.DBInfo, bool) {
+	var dbInfo *model.DBInfo
+	var ok bool
+
+	if b.enableV2 {
+		dbInfo, ok = b.infoschemaV2.SchemaByID(id)
+	} else {
+		dbInfo, ok = b.infoSchema.SchemaByID(id)
+	}
+	return dbInfo, ok
 }

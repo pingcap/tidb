@@ -16,6 +16,7 @@ package meta
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -29,14 +30,19 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/structure"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/partialjson"
@@ -89,10 +95,19 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
-	mBDRRole             = []byte("BDRRole")
-	mMetaDataLock        = []byte("metadataLock")
-	mSchemaCacheSize     = []byte("SchemaCacheSize")
-	mRequestUnitStats    = []byte("RequestUnitStats")
+	// the name doesn't contain nextgen, as we might impl the same logic in classic
+	// kernel later, then we can reuse the same meta key.
+	mBootTableVersion = []byte("BootTableVersion")
+	mBDRRole          = []byte("BDRRole")
+	mMetaDataLock     = []byte("metadataLock")
+	mSchemaCacheSize  = []byte("SchemaCacheSize")
+	mRequestUnitStats = []byte("RequestUnitStats")
+
+	mIngestMaxBatchSplitRangesKey  = []byte("IngestMaxBatchSplitRanges")
+	mIngestMaxSplitRangesPerSecKey = []byte("IngestMaxSplitRangesPerSec")
+	mIngestMaxInflightKey          = []byte("IngestMaxInflight")
+	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
+
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -101,10 +116,10 @@ var (
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate:     math.MaxInt32,
 			BurstLimit: -1,
-			Priority:   pmodel.MediumPriorityValue,
+			Priority:   ast.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  pmodel.NewCIStr(resourcegroup.DefaultResourceGroupName),
+		Name:  ast.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -122,11 +137,6 @@ const (
 	typeUnknown int = 0
 	typeJSON    int = 1
 	// todo: customized handler.
-
-	// MaxInt48 is the max value of int48.
-	MaxInt48 = 0x0000FFFFFFFFFFFF
-	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
-	MaxGlobalID = MaxInt48 - 1000
 )
 
 var (
@@ -152,6 +162,21 @@ var (
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
+// NextGenBootTableVersion is the version of nextgen bootstrapping.
+// it serves the same purpose as DDLTableVersion, to avoid the same table created
+// twice, as we are creating those tables in meta kv directly, without going
+// through DDL.
+type NextGenBootTableVersion int
+
+const (
+	// InitNextGenBootTableVersion means it's a fresh cluster, we haven't bootstrapped yet.
+	InitNextGenBootTableVersion NextGenBootTableVersion = 0
+	// BaseNextGenBootTableVersion is the first version of nextgen bootstrapping, we
+	// will create 52 physical tables.
+	// Note: DDL related tables are created separately, see DDLTableVersion.
+	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
+)
+
 // DDLTableVersion is to display ddl related table versions
 type DDLTableVersion int
 
@@ -164,11 +189,12 @@ const (
 	MDLTableVersion DDLTableVersion = 2
 	// BackfillTableVersion is for support distributed reorg stage, it added tidb_background_subtask, tidb_background_subtask_history.
 	BackfillTableVersion DDLTableVersion = 3
+	// DDLNotifierTableVersion is for support ddl notifier, it added tidb_ddl_notifier.
+	DDLNotifierTableVersion DDLTableVersion = 4
 )
 
-// Bytes returns the byte slice.
-func (ver DDLTableVersion) Bytes() []byte {
-	return []byte(strconv.Itoa(int(ver)))
+func encodeIntVal(i int) []byte {
+	return []byte(strconv.Itoa(i))
 }
 
 // Option is for Mutator option.
@@ -176,9 +202,8 @@ type Option func(m *Mutator)
 
 // Mutator is for handling meta information in a transaction.
 type Mutator struct {
-	txn        *structure.TxStructure
-	StartTS    uint64 // StartTS is the txn's start TS.
-	jobListKey JobListKeyType
+	txn     *structure.TxStructure
+	StartTS uint64 // StartTS is the txn's start TS.
 }
 
 var _ Reader = (*Mutator)(nil)
@@ -190,8 +215,7 @@ func NewMutator(txn kv.Transaction, options ...Option) *Mutator {
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	m := &Mutator{txn: t,
-		StartTS:    txn.StartTS(),
-		jobListKey: DefaultJobListKey,
+		StartTS: txn.StartTS(),
 	}
 	for _, opt := range options {
 		opt(m)
@@ -208,8 +232,8 @@ func (m *Mutator) GenGlobalID() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	return newID, err
 }
@@ -224,8 +248,8 @@ func (m *Mutator) AdvanceGlobalIDs(n int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	return origID, nil
@@ -240,8 +264,8 @@ func (m *Mutator) GenGlobalIDs(n int) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	if newID > MaxGlobalID {
-		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)
@@ -275,11 +299,11 @@ func (m *Mutator) GetPolicyID() (int64, error) {
 }
 
 func (*Mutator) policyKey(policyID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
+	return fmt.Appendf(nil, "%s:%d", mPolicyPrefix, policyID)
 }
 
 func (*Mutator) resourceGroupKey(groupID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mResourceGroupPrefix, groupID))
+	return fmt.Appendf(nil, "%s:%d", mResourceGroupPrefix, groupID)
 }
 
 func (*Mutator) dbKey(dbID int64) []byte {
@@ -288,7 +312,7 @@ func (*Mutator) dbKey(dbID int64) []byte {
 
 // DBkey encodes the dbID into dbKey.
 func DBkey(dbID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
+	return fmt.Appendf(nil, "%s:%d", mDBPrefix, dbID)
 }
 
 // ParseDBKey decodes the dbkey to get dbID.
@@ -313,7 +337,7 @@ func (*Mutator) autoTableIDKey(tableID int64) []byte {
 
 // AutoTableIDKey decodes the auto tableID key.
 func AutoTableIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mTableIDPrefix, tableID)
 }
 
 // IsAutoTableIDKey checks whether the key is auto tableID key.
@@ -338,7 +362,7 @@ func (*Mutator) autoIncrementIDKey(tableID int64) []byte {
 
 // AutoIncrementIDKey decodes the auto inc table key.
 func AutoIncrementIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mIncIDPrefix, tableID)
 }
 
 // IsAutoIncrementIDKey checks whether the key is auto increment key.
@@ -363,7 +387,7 @@ func (*Mutator) autoRandomTableIDKey(tableID int64) []byte {
 
 // AutoRandomTableIDKey encodes the auto random tableID key.
 func AutoRandomTableIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mRandomIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mRandomIDPrefix, tableID)
 }
 
 // IsAutoRandomTableIDKey checks whether the key is auto random tableID key.
@@ -388,7 +412,7 @@ func (*Mutator) tableKey(tableID int64) []byte {
 
 // TableKey encodes the tableID into tableKey.
 func TableKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mTablePrefix, tableID)
 }
 
 // IsTableKey checks whether the tableKey comes from TableKey().
@@ -413,7 +437,7 @@ func (*Mutator) sequenceKey(sequenceID int64) []byte {
 
 // SequenceKey encodes the sequence key.
 func SequenceKey(sequenceID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSequencePrefix, sequenceID))
+	return fmt.Appendf(nil, "%s:%d", mSequencePrefix, sequenceID)
 }
 
 // IsSequenceKey checks whether the key is sequence key.
@@ -433,7 +457,7 @@ func ParseSequenceKey(key []byte) (int64, error) {
 }
 
 func (*Mutator) sequenceCycleKey(sequenceID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSeqCyclePrefix, sequenceID))
+	return fmt.Appendf(nil, "%s:%d", mSeqCyclePrefix, sequenceID)
 }
 
 // DDLJobHistoryKey is only used for testing.
@@ -667,6 +691,17 @@ func (m *Mutator) CreateDatabase(dbInfo *model.DBInfo) error {
 	return nil
 }
 
+// IsDatabaseExist checks whether a database exists by dbID.
+// exported for testing.
+func (m *Mutator) IsDatabaseExist(dbID int64) (bool, error) {
+	dbKey := m.dbKey(dbID)
+	v, err := m.txn.HGet(mDBs, dbKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return v != nil, nil
+}
+
 // UpdateDatabase updates a database with db info.
 func (m *Mutator) UpdateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
@@ -727,29 +762,52 @@ func (m *Mutator) ClearBDRRole() error {
 	return errors.Trace(m.txn.Clear(mBDRRole))
 }
 
-// SetDDLTables write a key into storage.
-func (m *Mutator) SetDDLTables(ddlTableVersion DDLTableVersion) error {
-	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
+// SetDDLTableVersion write a key into storage.
+func (m *Mutator) SetDDLTableVersion(ddlTableVersion DDLTableVersion) error {
+	return m.setTableVersion(mDDLTableVersion, int(ddlTableVersion))
 }
 
-// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
-func (m *Mutator) CheckDDLTableVersion() (DDLTableVersion, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
+// SetNextGenBootTableVersion set the table version on initial bootstrap.
+func (m *Mutator) SetNextGenBootTableVersion(version NextGenBootTableVersion) error {
+	return m.setTableVersion(mBootTableVersion, int(version))
+}
+
+func (m *Mutator) setTableVersion(key []byte, version int) error {
+	return errors.Trace(m.txn.Set(key, encodeIntVal(version)))
+}
+
+// GetDDLTableVersion check if the tables related to concurrent DDL exists.
+func (m *Mutator) GetDDLTableVersion() (DDLTableVersion, error) {
+	v, err := m.getTableVersion(mDDLTableVersion)
+	return DDLTableVersion(v), err
+}
+
+// GetNextGenBootTableVersion checks the version of the bootstrapping tables.
+func (m *Mutator) GetNextGenBootTableVersion() (NextGenBootTableVersion, error) {
+	v, err := m.getTableVersion(mBootTableVersion)
+	return NextGenBootTableVersion(v), err
+}
+
+func (m *Mutator) getTableVersion(key []byte) (int, error) {
+	v, err := m.txn.Get(key)
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
 	if string(v) == "" {
-		return InitDDLTableVersion, nil
+		return 0, nil
 	}
 	ver, err := strconv.Atoi(string(v))
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
-	return DDLTableVersion(ver), nil
+	return ver, nil
 }
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
+	if kerneltype.IsNextGen() {
+		return metadef.SystemDatabaseID, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID)
+	}
 	id, err := m.GetSystemDBID()
 	if id != 0 || err != nil {
 		return id, err
@@ -759,15 +817,33 @@ func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	return id, m.CreateSysDatabaseByID(mysql.SystemDB, id)
+}
+
+// CreateSysDatabaseByIDIfNotExists creates a system database with the given name
+// and ID if it does not already exist.
+func (m *Mutator) CreateSysDatabaseByIDIfNotExists(name string, id int64) error {
+	exist, err := m.IsDatabaseExist(id)
+	if err != nil {
+		return err
+	}
+	if exist {
+		return nil
+	}
+	return m.CreateSysDatabaseByID(name, id)
+}
+
+// CreateSysDatabaseByID creates a system database with the given name and ID.
+// exported for testing.
+func (m *Mutator) CreateSysDatabaseByID(name string, id int64) error {
 	db := model.DBInfo{
 		ID:      id,
-		Name:    pmodel.NewCIStr(mysql.SystemDB),
+		Name:    ast.NewCIStr(name),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
 	}
-	err = m.CreateDatabase(&db)
-	return db.ID, err
+	return m.CreateDatabase(&db)
 }
 
 // GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
@@ -994,6 +1070,87 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 	return errors.Trace(err)
 }
 
+func splitRangeInt64Max(n int64) [][]string {
+	ranges := make([][]string, n)
+
+	// 9999999999999999999 is the max number than maxInt64 in string format.
+	batch := 9999999999999999999 / uint64(n)
+
+	for k := range n {
+		start := batch * uint64(k)
+		end := batch * uint64(k+1)
+
+		startStr := fmt.Sprintf("%019d", start)
+		if k == 0 {
+			startStr = "0"
+		}
+		endStr := fmt.Sprintf("%019d", end)
+
+		ranges[k] = []string{startStr, endStr}
+	}
+
+	return ranges
+}
+
+// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
+// This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+
+	if concurrency >= 15 {
+		concurrency = 15
+	}
+
+	kvRanges := splitRangeInt64Max(int64(concurrency))
+
+	mu := sync.Mutex{}
+	for i := range concurrency {
+		snapshot := store.GetSnapshot(kv.NewVersion(startTs))
+		snapshot.SetOption(kv.RequestSourceInternal, true)
+		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
+		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
+		workGroup.Go(func() error {
+			startKey := fmt.Appendf(nil, "%s:", mDBPrefix)
+			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
+			endKey := fmt.Appendf(nil, "%s:", mDBPrefix)
+			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
+
+			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				select {
+				case <-egCtx.Done():
+					return egCtx.Err()
+				default:
+				}
+				// only handle table meta
+				tableKey := string(field)
+				if !strings.HasPrefix(tableKey, mTablePrefix) {
+					return nil
+				}
+
+				tbInfo := &model.TableInfo{}
+				err := json.Unmarshal(value, tbInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				dbID, err := ParseDBKey(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				tbInfo.DBID = dbID
+
+				mu.Lock()
+				err = fn(tbInfo)
+				mu.Unlock()
+				return errors.Trace(err)
+			})
+		})
+	}
+
+	return errors.Trace(workGroup.Wait())
+}
+
 // GetMetasByDBID return all meta information of a database.
 // Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
 // Ref: https://github.com/pingcap/tiflow/issues/11109
@@ -1129,7 +1286,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 }
 
 // ListTables shows all tables in database.
-func (m *Mutator) ListTables(dbID int64) ([]*model.TableInfo, error) {
+func (m *Mutator) ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error) {
 	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1141,6 +1298,9 @@ func (m *Mutator) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
 			continue
+		}
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
 		}
 
 		tbInfo := &model.TableInfo{}
@@ -1224,7 +1384,7 @@ func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 
 	return &model.TableNameInfo{
 		ID:   id,
-		Name: pmodel.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}, nil
 }
 
@@ -1431,95 +1591,14 @@ func (m *Mutator) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 }
 
 // DDL job structure
-//	DDLJobList: list jobs
 //	DDLJobHistory: hash
-//	DDLJobReorg: hash
 //
 // for multi DDL workers, only one can become the owner
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLJobListKey    = []byte("DDLJobList")
-	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 )
-
-var (
-	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
-	// this and below list are always appended, so the order is the same as the
-	// job's creation order.
-	DefaultJobListKey JobListKeyType = mDDLJobListKey
-	// AddIndexJobListKey only keeps the action of adding index.
-	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
-)
-
-func (m *Mutator) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
-	if err == nil {
-		err = m.txn.RPush(key, b)
-	}
-	return errors.Trace(err)
-}
-
-// EnQueueDDLJob adds a DDL job to the list.
-func (m *Mutator) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) error {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	return m.enQueueDDLJob(listKey, job)
-}
-
-// JobListKeyType is a key type of the DDL job queue.
-type JobListKeyType []byte
-
-func (m *Mutator) getDDLJob(key []byte, index int64) (*model.Job, error) {
-	value, err := m.txn.LIndex(key, index)
-	if err != nil || value == nil {
-		return nil, errors.Trace(err)
-	}
-
-	job := &model.Job{
-		// For compatibility, if the job is enqueued by old version TiDB and Priority field is omitted,
-		// set the default priority to kv.PriorityLow.
-		Priority: kv.PriorityLow,
-	}
-	err = job.Decode(value)
-	// Check if the job.Priority is valid.
-	if job.Priority < kv.PriorityNormal || job.Priority > kv.PriorityHigh {
-		job.Priority = kv.PriorityLow
-	}
-	return job, errors.Trace(err)
-}
-
-// GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
-// The length of jobListKeys can only be 1 or 0.
-// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
-// Otherwise, we use m.jobListKey directly.
-func (m *Mutator) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error) {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	values, err := m.txn.LGetAll(listKey)
-	if err != nil || values == nil {
-		return nil, errors.Trace(err)
-	}
-
-	jobs := make([]*model.Job, 0, len(values))
-	for _, val := range values {
-		job := &model.Job{}
-		err = job.Decode(val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, job)
-	}
-
-	return jobs, nil
-}
 
 func (*Mutator) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)
@@ -1562,6 +1641,78 @@ func (m *Mutator) GetHistoryDDLJob(id int64) (*model.Job, error) {
 // GetHistoryDDLCount the count of all history DDL jobs.
 func (m *Mutator) GetHistoryDDLCount() (uint64, error) {
 	return m.txn.HGetLen(mDDLJobHistoryKey)
+}
+
+// SetIngestMaxBatchSplitRanges sets the ingest max_batch_split_ranges.
+func (m *Mutator) SetIngestMaxBatchSplitRanges(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxBatchSplitRangesKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxBatchSplitRanges gets the ingest max_batch_split_ranges.
+func (m *Mutator) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxBatchSplitRangesKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxSplitRangesPerSec sets the max_split_ranges_per_sec.
+func (m *Mutator) SetIngestMaxSplitRangesPerSec(val float64) error {
+	return errors.Trace(m.txn.Set(mIngestMaxSplitRangesPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
+}
+
+// GetIngestMaxSplitRangesPerSec gets the max_split_ranges_per_sec.
+func (m *Mutator) GetIngestMaxSplitRangesPerSec() (val float64, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxSplitRangesPerSecKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.ParseFloat(string(sVal), 64)
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxInflight sets the max_ingest_concurrency.
+func (m *Mutator) SetIngestMaxInflight(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxInflightKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxInflight gets the max_ingest_concurrency.
+func (m *Mutator) GetIngestMaxInflight() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxInflightKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxPerSec sets the max_ingest_per_sec.
+func (m *Mutator) SetIngestMaxPerSec(val float64) error {
+	return errors.Trace(m.txn.Set(mIngestMaxPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
+}
+
+// GetIngestMaxPerSec gets the max_ingest_per_sec.
+func (m *Mutator) GetIngestMaxPerSec() (val float64, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxPerSecKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.ParseFloat(string(sVal), 64)
+	return val, false, errors.Trace(err)
 }
 
 // LastJobIterator is the iterator for gets latest history.
@@ -1765,7 +1916,7 @@ func DecodeElement(b []byte) (*Element, error) {
 }
 
 func (*Mutator) schemaDiffKey(schemaVersion int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
+	return fmt.Appendf(nil, "%s:%d", mSchemaDiffPrefix, schemaVersion)
 }
 
 // GetSchemaDiff gets the modification information on a given schema version.
@@ -1839,4 +1990,26 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
+// It works by checking the MVCC information (internal txn API) of the schema version meta key.
+// This function is only used by infoschema v2 currently.
+func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
+	ek := make([]byte, 0, len(mMetaPrefix)+len(mSchemaVersionKey)+24)
+	ek = append(ek, mMetaPrefix...)
+	ek = codec.EncodeBytes(ek, mSchemaVersionKey)
+	key := codec.EncodeUint(ek, uint64(structure.StringData))
+	mvccResp, err := h.GetMvccByEncodedKeyWithTS(key, math.MaxUint64)
+	if err != nil {
+		return 0, err
+	}
+	if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
+		return 0, errors.Errorf("There is no Write MVCC info for the schema version key")
+	}
+
+	v := mvccResp.Info.Writes[len(mvccResp.Info.Writes)-1]
+	var n int64
+	n, err = strconv.ParseInt(string(v.ShortValue), 10, 64)
+	return n, errors.Trace(err)
 }

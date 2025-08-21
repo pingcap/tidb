@@ -51,7 +51,8 @@ func init() {
 }
 
 // SetupTopSQL sets up the top-sql worker.
-func SetupTopSQL(updater collector.ProcessCPUTimeUpdater) {
+func SetupTopSQL(keyspaceName []byte, updater collector.ProcessCPUTimeUpdater) {
+	globalTopSQLReport.BindKeyspaceName(keyspaceName)
 	globalTopSQLReport.BindProcessCPUTimeUpdater(updater)
 	globalTopSQLReport.Start()
 	singleTargetDataSink.Start()
@@ -175,7 +176,7 @@ func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
 		if time.Since(start) > 12*time.Millisecond*time.Duration(load) {
 			break
 		}
-		for i := 0; i < 10e5; i++ {
+		for range int(10e5) {
 			continue
 		}
 	}

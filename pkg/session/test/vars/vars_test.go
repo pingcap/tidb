@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -69,7 +70,7 @@ func TestRemovedSysVars(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "bogus_var", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "bogus_var", Value: "acdc"})
 	result := tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'bogus_var'")
 	result.Check(testkit.Rows("bogus_var acdc"))
 	result = tk.MustQuery("SELECT @@GLOBAL.bogus_var")
@@ -249,7 +250,7 @@ func TestTimeZone(t *testing.T) {
 
 func TestGlobalVarAccessor(t *testing.T) {
 	varName := "max_allowed_packet"
-	varValue := strconv.FormatUint(variable.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
+	varValue := strconv.FormatUint(vardef.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
 
 	// The value of max_allowed_packet should be a multiple of 1024,
 	// so the setting of varValue1 and varValue2 would be truncated to varValue0
@@ -390,15 +391,41 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 	for i, check := range hintChecks {
 		// common path
 		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 		// fast path
 		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 	}
+}
+
+func TestTiDBValidateTS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	// default is on
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set off
+	tk.MustExec("set global tidb_enable_ts_validation = off")
+	tk.MustQuery("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set on
+	tk.MustExec("set global tidb_enable_ts_validation = on")
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+}
+
+func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
+	require.Equal(t, time.Hour*100, vardef.AdvancerCheckPointLagLimit.Load())
 }

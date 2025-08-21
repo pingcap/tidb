@@ -22,7 +22,7 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/golangci/golangci-lint/pkg/result"
+	"github.com/golangci/golangci-lint/v2/pkg/result"
 	"github.com/golangci/gosec"
 	"github.com/golangci/gosec/rules"
 	"github.com/pingcap/tidb/build/linter/util"
@@ -61,7 +61,6 @@ func run(pass *analysis.Pass) (any, error) {
 	createdPkgs = append(createdPkgs, util.MakeFakeLoaderPackageInfo(pass))
 	allPkgs := make(map[*types.Package]*loader.PackageInfo)
 	for _, pkg := range createdPkgs {
-		pkg := pkg
 		allPkgs[pkg.Pkg] = pkg
 	}
 	prog := &loader.Program{

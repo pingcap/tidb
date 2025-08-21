@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -72,8 +74,10 @@ func TestIssue24210(t *testing.T) {
 func TestUnionIssue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	// Issue25506
+	// Issue56640
 	tk.MustExec("use test")
+	tk.MustQuery("(select cast('abcdefghijklmnopqrstuvwxyz' as char) as c1) union all (select 1 where false)").Check(testkit.Rows("abcdefghijklmnopqrstuvwxyz"))
+	// Issue25506
 	tk.MustExec("drop table if exists tbl_3, tbl_23")
 	tk.MustExec("create table tbl_3 (col_15 bit(20))")
 	tk.MustExec("insert into tbl_3 values (0xFFFF)")
@@ -90,6 +94,10 @@ func TestUnionIssue(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (id int);")
 	tk.MustExec("create table t2 (id int, c int);")
+	// Issue56587
+	tk.MustQuery("select quote(cast('abc' as char)) union all select '1'").Sort().Check(testkit.Rows("'abc'", "1"))
+	tk.MustQuery(`select elt(2, "1", cast('abc' as char)) union all select "12" where false`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select hex(cast('1' as char)) union all select '1'`).Sort().Check(testkit.Rows("1", "31"))
 
 	testCases := []struct {
 		sql    string
@@ -146,7 +154,7 @@ func TestIssue28650(t *testing.T) {
 	sqls := make([]string, 2)
 	wg.Run(func() {
 		inElems := make([]string, 1000)
-		for i := 0; i < len(inElems); i++ {
+		for i := range inElems {
 			inElems[i] = fmt.Sprintf("wm_%dbDgAAwCD-v1QB%dxky-g_dxxQCw", rand.Intn(100), rand.Intn(100))
 		}
 		sqls[0] = fmt.Sprintf(sql, "inl_join", strings.Join(inElems, "\",\""))
@@ -154,7 +162,7 @@ func TestIssue28650(t *testing.T) {
 	})
 
 	tk.MustExec("insert into t1 select rand()*400;")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into t1 select rand()*400 from t1;")
 	}
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
@@ -315,14 +323,16 @@ func TestIndexJoin31494(t *testing.T) {
 		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
 	}
 	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t1")
 	tk.MustExec("create table t2(a int(11) default null, b int(11) default null, c int(11) default null)")
 	insertStr = "insert into t2 values(1, 1, 1)"
 	for i := 1; i < 32768; i++ {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t2")
 	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+		PS: make([]*sessmgr.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
@@ -331,7 +341,7 @@ func TestIndexJoin31494(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
 	// This bug will be reproduced in 10 times.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
@@ -561,7 +571,7 @@ func TestIssueRaceWhenBuildingExecutorConcurrently(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b))")
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		v := i * 100
 		tk.MustExec("insert into t values(?, ?, ?)", v, v, v)
 	}
@@ -591,9 +601,9 @@ func TestIssue42662(t *testing.T) {
 	tk.Session().GetSessionVars().MemTracker.IsRootTrackerOfSess = true
 
 	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	}
-	sm.Conn = make(map[uint64]sessiontypes.Session)
+	sm.Conn = make(map[uint64]sessionapi.Session)
 	sm.Conn[tk.Session().GetSessionVars().ConnectionID] = tk.Session()
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
@@ -713,7 +723,7 @@ func TestIndexReaderIssue53871AndIssue54160(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b), index idx2(c))")
 	tk.MustExec(" insert into t () values (), (), (), (), (), (), (), ();")
-	for i := 0; i < 9; i++ {
+	for range 9 {
 		tk.MustExec("insert into t (b) select b from t;")
 	}
 	tk.MustExec(`update t set b = rand() * 10000, c = rand() * 10000;`)
@@ -744,4 +754,43 @@ func TestCalculateBatchSize(t *testing.T) {
 	require.Equal(t, 1024, executor.CalculateBatchSize(10, 1024, 20000))
 	require.Equal(t, 258, executor.CalculateBatchSize(10, 1024, 258))
 	require.Equal(t, 1024, executor.CalculateBatchSize(0, 1024, 20000))
+}
+
+func TestIssue55881(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists aaa;")
+	tk.MustExec("drop table if exists bbb;")
+	tk.MustExec("create table aaa(id int, value int);")
+	tk.MustExec("create table bbb(id int, value int);")
+	tk.MustExec("insert into aaa values(1,2),(2,3)")
+	tk.MustExec("insert into bbb values(1,2),(2,3),(3,4)")
+	// set tidb_executor_concurrency to 1 to let the issue happens with high probability.
+	tk.MustExec("set tidb_executor_concurrency=1;")
+	// this is a random issue, so run it 100 times to increase the probability of the issue.
+	for range 100 {
+		tk.MustQuery("with cte as (select * from aaa) select id, (select id from (select * from aaa where aaa.id != bbb.id union all select * from cte union all select * from cte) d limit 1)," +
+			"(select max(value) from (select * from cte union all select * from cte union all select * from aaa where aaa.id > bbb.id) x) from bbb;")
+	}
+}
+
+func TestIssue60926(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (col0 int, col1 int);")
+	tk.MustExec("create table t2 (col0 int, col1 int);")
+	tk.MustExec("insert into t1 values (0, 10), (1, 10), (2, 10), (3, 10), (4, 10), (5, 10), (6, 10), (7, 10), (8, 10), (9, 10), (10, 10);")
+	tk.MustExec("insert into t2 values (0, 5), (0, 5), (1, 5), (2, 5), (2, 5), (3, 5), (4, 5), (5, 5), (5, 5), (6, 5), (7, 5), (8, 5), (8, 5), (9, 5), (9, 5), (10, 5);")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue60926", "panic")
+	tk.MustExec("set tidb_hash_join_version=legacy")
+
+	join.IsChildCloseCalledForTest = false
+	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
+	require.True(t, join.IsChildCloseCalledForTest)
 }

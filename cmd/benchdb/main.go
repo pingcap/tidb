@@ -24,9 +24,11 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -58,7 +60,7 @@ func main() {
 	flag.PrintDefaults()
 	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = store.Register("tikv", driver.TiKVDriver{})
+	err = store.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
@@ -89,18 +91,23 @@ func main() {
 
 type benchDB struct {
 	store   tikv.Storage
-	session sessiontypes.Session
+	session sessionapi.Session
 }
 
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
 	store, err := store.New("tikv://" + *addr + "?disableGC=true")
 	terror.MustNil(err)
+	// maybe close below components, but it's for test anyway.
+	ctx := context.Background()
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	err = ddl.StartOwnerManager(ctx, store)
+	terror.MustNil(err)
 	_, err = session.BootstrapSession(store)
 	terror.MustNil(err)
 	se, err := session.CreateSession(store)
 	terror.MustNil(err)
-	_, err = se.ExecuteInternal(context.Background(), "use test")
+	_, err = se.ExecuteInternal(ctx, "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
@@ -201,11 +208,11 @@ func (ut *benchDB) truncateTable() {
 func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 	var (
 		sum, first, last time.Duration
-		min              = time.Minute
-		max              = time.Nanosecond
+		minv             = time.Minute
+		maxv             = time.Nanosecond
 	)
 	cLogf("%s started", name)
-	for i := 0; i < count; i++ {
+	for range count {
 		before := time.Now()
 		f()
 		dur := time.Since(before)
@@ -213,16 +220,16 @@ func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 			first = dur
 		}
 		last = dur
-		if dur < min {
-			min = dur
+		if dur < minv {
+			minv = dur
 		}
-		if dur > max {
-			max = dur
+		if dur > maxv {
+			maxv = dur
 		}
 		sum += dur
 	}
 	cLogf("%s done, avg %s, count %d, sum %s, first %s, last %s, max %s, min %s\n\n",
-		name, sum/time.Duration(count), count, sum, first, last, max, min)
+		name, sum/time.Duration(count), count, sum, first, last, maxv, minv)
 }
 
 // #nosec G404
@@ -233,7 +240,7 @@ func (ut *benchDB) insertRows(spec string) {
 	ut.runCountTimes("insert", loopCount, func() {
 		ut.mustExec("begin")
 		buf := make([]byte, *blobSize/2)
-		for i := 0; i < *batchSize; i++ {
+		for range *batchSize {
 			if id == end {
 				break
 			}
@@ -253,7 +260,7 @@ func (ut *benchDB) updateRandomRows(spec string) {
 	var runCount = 0
 	ut.runCountTimes("update-random", loopCount, func() {
 		ut.mustExec("begin")
-		for i := 0; i < *batchSize; i++ {
+		for range *batchSize {
 			if runCount == totalCount {
 				break
 			}

@@ -5,4 +5,5 @@ go_library(
     srcs = ["skip.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/skip",
     visibility = ["//visibility:public"],
+    deps = ["//pkg/testkit/testflag"],
 )

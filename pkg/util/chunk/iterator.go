@@ -413,7 +413,7 @@ type multiIterator struct {
 // NewMultiIterator creates a new multiIterator
 func NewMultiIterator(iters ...Iterator) Iterator {
 	iter := &multiIterator{}
-	for i := 0; i < len(iters); i++ {
+	for i := range iters {
 		if iters[i].Len() > 0 {
 			iter.iters = append(iter.iters, iters[i])
 			iter.length += iters[i].Len()

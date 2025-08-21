@@ -28,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -74,8 +75,8 @@ func TestCheckRequirements(t *testing.T) {
 
 	_, err := conn.Execute(ctx, "create table test.t(id int primary key)")
 	require.NoError(t, err)
-	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
-	tableObj, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	tableObj, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	c := &importer.LoadDataController{
@@ -88,40 +89,33 @@ func TestCheckRequirements(t *testing.T) {
 	}
 
 	// create a dummy job
-	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", "", &importer.ImportParameters{}, 0)
 	require.NoError(t, err)
 	// there is active job on the target table already
-	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", "", &importer.ImportParameters{}, 0)
 	require.NoError(t, err)
-	err = c.CheckRequirements(ctx, conn)
+	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "there is active job on the target table already")
 	// cancel the job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
 
 	// source data file size = 0
-	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataPreCheckFailed)
 
 	// make checkTotalFileSize pass
 	c.TotalFileSize = 1
-	// global sort with thread count < 8
-	c.ThreadCnt = 7
-	c.CloudStorageURI = "s3://test"
-	err = c.CheckRequirements(ctx, conn)
-	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
-	require.ErrorContains(t, err, "global sort requires at least 8 threads")
-
-	// reset fields, make global sort thread check pass
 	c.ThreadCnt = 1
 	c.CloudStorageURI = ""
+
 	// non-empty table
 	_, err = conn.Execute(ctx, "insert into test.t values(1)")
 	require.NoError(t, err)
-	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataPreCheckFailed)
 	// table not exists
 	_, err = conn.Execute(ctx, "drop table if exists test.t")
 	require.NoError(t, err)
-	require.ErrorContains(t, c.CheckRequirements(ctx, conn), "doesn't exist")
+	require.ErrorContains(t, c.CheckRequirements(ctx, tk.Session()), "doesn't exist")
 
 	// create table again, now checkTableEmpty pass
 	_, err = conn.Execute(ctx, "create table test.t(id int primary key)")
@@ -133,12 +127,15 @@ func TestCheckRequirements(t *testing.T) {
 		embedEtcd.Close()
 	})
 	backup := importer.GetEtcdClient
-	importer.GetEtcdClient = func() (*etcd.Client, error) {
+	importer.GetEtcdClient = func(kv.Storage) (*clientv3.Client, error) {
 		etcdCli, err := clientv3.New(clientv3.Config{
 			Endpoints: []string{clientAddr},
 		})
 		require.NoError(t, err)
-		return etcd.NewClient(etcdCli, ""), nil
+		if len(store.GetCodec().GetKeyspace()) > 0 {
+			etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
+		}
+		return etcdCli, nil
 	}
 	t.Cleanup(func() {
 		importer.GetEtcdClient = backup
@@ -147,19 +144,22 @@ func TestCheckRequirements(t *testing.T) {
 	etcdCli, err := clientv3.New(clientv3.Config{
 		Endpoints: []string{clientAddr},
 	})
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, etcdCli.Close())
 	})
-	require.NoError(t, err)
+	if len(store.GetCodec().GetKeyspace()) > 0 {
+		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
+	}
 	pitrKey := streamhelper.PrefixOfTask() + "test"
 	_, err = etcdCli.Put(ctx, pitrKey, "")
 	require.NoError(t, err)
-	err = c.CheckRequirements(ctx, conn)
+	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "found PiTR log streaming")
 	// disable precheck, should pass
 	c.DisablePrecheck = true
-	require.NoError(t, c.CheckRequirements(ctx, conn))
+	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
 	c.DisablePrecheck = false // revert back
 
 	// remove PiTR task, and mock a CDC task
@@ -169,23 +169,23 @@ func TestCheckRequirements(t *testing.T) {
 	cdcKey := cdcutil.CDCPrefix + "testcluster/test_ns/changefeed/info/test_cf"
 	_, err = etcdCli.Put(ctx, cdcKey, `{"state":"normal"}`)
 	require.NoError(t, err)
-	err = c.CheckRequirements(ctx, conn)
+	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "found CDC changefeed")
 
 	// remove CDC task, pass
 	_, err = etcdCli.Delete(ctx, cdcKey)
 	require.NoError(t, err)
-	require.NoError(t, c.CheckRequirements(ctx, conn))
+	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
 
-	// with global sort
-	c.Plan.ThreadCnt = 8
+	// with global sort with threadCnt < 8
+	c.Plan.ThreadCnt = 2
 	c.Plan.CloudStorageURI = ":"
-	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
+	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"
-	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
+	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "local:///tmp"
-	require.ErrorContains(t, c.CheckRequirements(ctx, conn), "unsupported cloud storage uri scheme: local")
+	require.ErrorContains(t, c.CheckRequirements(ctx, tk.Session()), "unsupported cloud storage uri scheme: local")
 	// this mock cannot mock credential check, so we just skip it.
 	backend := s3mem.New()
 	faker := gofakes3.New(backend)
@@ -193,5 +193,5 @@ func TestCheckRequirements(t *testing.T) {
 	defer ts.Close()
 	require.NoError(t, backend.CreateBucket("test-bucket"))
 	c.Plan.CloudStorageURI = fmt.Sprintf("s3://test-bucket/path?region=us-east-1&endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", ts.URL)
-	require.NoError(t, c.CheckRequirements(ctx, conn))
+	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
 }

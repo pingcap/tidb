@@ -44,6 +44,7 @@ type Node interface {
 	// SetText sets original text to the Node.
 	SetText(enc charset.Encoding, text string)
 	// SetOriginTextPosition set the start offset of this node in the origin text.
+	// Only be called when `parser.lexer.skipPositionRecording` equals to false.
 	SetOriginTextPosition(offset int)
 	// OriginTextPosition get the start offset of this node in the origin text.
 	OriginTextPosition() int
@@ -105,6 +106,12 @@ type FuncNode interface {
 type StmtNode interface {
 	Node
 	statement()
+	// SEMCommand generates a string that represents the command type of the statement.
+	// It's only used for Security Enforcement Mode (SEM) for now. If it's going to be
+	// re-used for other purposes, we may need to rename and give it a clearer definition.
+	//
+	// The function of this method is similar to `GetStmtLabel`, but it returns more detail.
+	SEMCommand() string
 }
 
 // DDLNode represents DDL statement node.
@@ -157,8 +164,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "AnalyzeTable"
 	case *BeginStmt:
 		return "Begin"
-	case *ChangeStmt:
-		return "Change"
 	case *CommitStmt:
 		return "Commit"
 	case *CompactTableStmt:

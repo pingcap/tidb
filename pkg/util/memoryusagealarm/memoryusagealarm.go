@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	rpprof "runtime/pprof"
 	"slices"
 	"strings"
@@ -26,29 +27,76 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-// Handle is the handler for expensive query.
+// ConfigProvider provides memory usage alarm configuration values
+type ConfigProvider interface {
+	// GetMemoryUsageAlarmRatio returns the ratio of memory usage that triggers an alarm
+	GetMemoryUsageAlarmRatio() float64
+	// GetMemoryUsageAlarmKeepRecordNum returns the number of alarm records to keep
+	GetMemoryUsageAlarmKeepRecordNum() int64
+	// GetLogDir returns the directory for storing logs
+	GetLogDir() string
+	// GetComponentName returns the name of the component (e.g. "tidb-server" or "br")
+	GetComponentName() string
+}
+
+// TiDBConfigProvider implements ConfigProvider using TiDB's vardef variables
+type TiDBConfigProvider struct{}
+
+// GetMemoryUsageAlarmRatio returns the ratio of memory usage that triggers an alarm.
+// When memory usage exceeds this ratio of the total memory limit (or system memory if no limit),
+// the memory monitor will dump profiles and trigger OOM-related actions.
+func (*TiDBConfigProvider) GetMemoryUsageAlarmRatio() float64 {
+	return vardef.MemoryUsageAlarmRatio.Load()
+}
+
+// GetMemoryUsageAlarmKeepRecordNum returns the number of alarm records to keep.
+// When the number of records exceeds this limit, older records will be deleted.
+func (*TiDBConfigProvider) GetMemoryUsageAlarmKeepRecordNum() int64 {
+	return vardef.MemoryUsageAlarmKeepRecordNum.Load()
+}
+
+// GetLogDir returns the directory for storing memory profiles and alarm records.
+func (*TiDBConfigProvider) GetLogDir() string {
+	logDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
+	return logDir
+}
+
+// GetComponentName returns the name of the component for logging and metrics.
+// This helps identify which component triggered the memory alarm.
+func (*TiDBConfigProvider) GetComponentName() string {
+	return "tidb-server"
+}
+
+// Handle is the handler for memory usage alarm.
 type Handle struct {
-	exitCh chan struct{}
-	sm     atomic.Pointer[util.SessionManager]
+	exitCh         chan struct{}
+	sm             atomic.Pointer[sessmgr.Manager]
+	configProvider ConfigProvider
 }
 
 // NewMemoryUsageAlarmHandle builds a memory usage alarm handler.
-func NewMemoryUsageAlarmHandle(exitCh chan struct{}) *Handle {
-	return &Handle{exitCh: exitCh}
+func NewMemoryUsageAlarmHandle(exitCh chan struct{}, provider ConfigProvider) *Handle {
+	return &Handle{
+		exitCh:         exitCh,
+		configProvider: provider,
+	}
 }
 
-// SetSessionManager sets the SessionManager which is used to fetching the info
+// SetSessionManager sets the Manager which is used to fetching the info
 // of all active sessions.
-func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
+func (eqh *Handle) SetSessionManager(sm sessmgr.Manager) *Handle {
 	eqh.sm.Store(&sm)
 	return eqh
 }
@@ -60,7 +108,9 @@ func (eqh *Handle) Run() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := eqh.sm.Load()
-	record := &memoryUsageAlarm{}
+	record := &memoryUsageAlarm{
+		configProvider: eqh.configProvider,
+	}
 	for {
 		select {
 		case <-ticker.C:
@@ -83,14 +133,15 @@ type memoryUsageAlarm struct {
 	serverMemoryLimit             uint64
 	isServerMemoryLimitSet        bool
 	initialized                   bool
+	configProvider                ConfigProvider
 }
 
 func (record *memoryUsageAlarm) updateVariable() {
 	if time.Since(record.lastUpdateVariableTime) < 60*time.Second {
 		return
 	}
-	record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
-	record.memoryUsageAlarmKeepRecordNum = variable.MemoryUsageAlarmKeepRecordNum.Load()
+	record.memoryUsageAlarmRatio = record.configProvider.GetMemoryUsageAlarmRatio()
+	record.memoryUsageAlarmKeepRecordNum = record.configProvider.GetMemoryUsageAlarmKeepRecordNum()
 	record.serverMemoryLimit = memory.ServerMemoryLimit.Load()
 	if record.serverMemoryLimit != 0 {
 		record.isServerMemoryLimitSet = true
@@ -109,7 +160,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	record.lastCheckTime = time.Time{}
 	record.lastUpdateVariableTime = time.Time{}
 	record.updateVariable()
-	tidbLogDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename)
+	tidbLogDir := record.configProvider.GetLogDir()
 	record.baseRecordDir = filepath.Join(tidbLogDir, "oom_record")
 	if record.err = disk.CheckAndCreateDir(record.baseRecordDir); record.err != nil {
 		return
@@ -131,7 +182,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
-func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
+func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm sessmgr.Manager) {
 	if !record.initialized {
 		record.initMemoryUsageAlarmRecord()
 		if record.err != nil {
@@ -199,27 +250,30 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 	return false, NoReason
 }
 
-func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager, alarmReason AlarmReason) {
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm sessmgr.Manager, alarmReason AlarmReason) {
 	fields := make([]zap.Field, 0, 6)
-	fields = append(fields, zap.Bool("is tidb_server_memory_limit set", record.isServerMemoryLimitSet))
+	componentName := record.configProvider.GetComponentName()
+	fields = append(fields, zap.Bool(fmt.Sprintf("is %s_memory_limit set", componentName), record.isServerMemoryLimitSet))
 	if record.isServerMemoryLimitSet {
-		fields = append(fields, zap.Any("tidb_server_memory_limit", record.serverMemoryLimit))
-		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
+		fields = append(fields, zap.Uint64(fmt.Sprintf("%s_memory_limit", componentName), record.serverMemoryLimit))
+		fields = append(fields, zap.Uint64(fmt.Sprintf("%s memory usage", componentName), memUsage))
 	} else {
-		fields = append(fields, zap.Any("system memory total", record.serverMemoryLimit))
-		fields = append(fields, zap.Any("system memory usage", memUsage))
-		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
+		fields = append(fields, zap.Uint64("system memory total", record.serverMemoryLimit))
+		fields = append(fields, zap.Uint64("system memory usage", memUsage))
+		fields = append(fields, zap.Uint64(fmt.Sprintf("%s memory usage", componentName), instanceMemoryUsage))
 	}
-	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
-	fields = append(fields, zap.Any("record path", record.baseRecordDir))
-	logutil.BgLogger().Warn(fmt.Sprintf("tidb-server has the risk of OOM because of %s. Running SQLs and heap profile will be recorded in record path", alarmReason.String()), fields...)
+	fields = append(fields, zap.Float64("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
+	fields = append(fields, zap.String("record path", record.baseRecordDir))
+	logutil.BgLogger().Warn(fmt.Sprintf("%s has the risk of OOM because of %s. Running profiles will be recorded in record path", componentName, alarmReason.String()), fields...)
 	recordDir := filepath.Join(record.baseRecordDir, "record"+record.lastCheckTime.Format(time.RFC3339))
 	if record.err = disk.CheckAndCreateDir(recordDir); record.err != nil {
 		return
 	}
 	record.lastRecordDirName = append(record.lastRecordDirName, recordDir)
-	if record.err = record.recordSQL(sm, recordDir); record.err != nil {
-		return
+	if sm != nil {
+		if record.err = record.recordSQL(sm, recordDir); record.err != nil {
+			return
+		}
 	}
 	if record.err = record.recordProfile(recordDir); record.err != nil {
 		return
@@ -237,17 +291,20 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 	}
 }
 
-func getPlanString(info *util.ProcessInfo) string {
+func getPlanString(info *sessmgr.ProcessInfo) string {
 	var buf strings.Builder
-	rows := info.PlanExplainRows
+	rows, _ := plancodec.DecodeBinaryPlan4Connection(info.BriefBinaryPlan, types.ExplainFormatROW, true)
 	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info"))
 	for _, row := range rows {
-		buf.WriteString(fmt.Sprintf("\n|%v|%v|%v|%v|%v|", row[0], row[1], row[2], row[3], row[4]))
+		buf.WriteString("\n|")
+		for _, col := range row {
+			buf.WriteString(fmt.Sprintf("%v|", col))
+		}
 	}
 	return buf.String()
 }
 
-func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *os.File) {
+func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*sessmgr.ProcessInfo, f *os.File) {
 	if _, err := f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n"); err != nil {
 		logutil.BgLogger().Error("write top 10 memory sql info fail", zap.Error(err))
 	}
@@ -264,11 +321,11 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *
 	}
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) int, pinfo []*util.ProcessInfo) strings.Builder {
+func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *sessmgr.ProcessInfo) int, pinfo []*sessmgr.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
 	var buf strings.Builder
-	oomAction := variable.OOMAction.Load()
+	oomAction := vardef.OOMAction.Load()
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
 	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
 		info := list[i]
@@ -302,21 +359,21 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 	return buf
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*sessmgr.ProcessInfo) strings.Builder {
+	return record.getTop10SqlInfo(func(i, j *sessmgr.ProcessInfo) int {
 		return cmp.Compare(j.MemTracker.MaxConsumed(), i.MemTracker.MaxConsumed())
 	}, pinfo)
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfoByCostTime(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+func (record *memoryUsageAlarm) getTop10SqlInfoByCostTime(pinfo []*sessmgr.ProcessInfo) strings.Builder {
+	return record.getTop10SqlInfo(func(i, j *sessmgr.ProcessInfo) int {
 		return i.Time.Compare(j.Time)
 	}, pinfo)
 }
 
-func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir string) error {
+func (record *memoryUsageAlarm) recordSQL(sm sessmgr.Manager, recordDir string) error {
 	processInfo := sm.ShowProcessList()
-	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
+	pinfo := make([]*sessmgr.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
 		if len(info.Info) != 0 {
 			pinfo = append(pinfo, info)
@@ -346,14 +403,40 @@ type item struct {
 func (*memoryUsageAlarm) recordProfile(recordDir string) error {
 	items := []item{
 		{Name: "heap"},
-		{Name: "goroutine", Debug: 2},
+		// `goroutine` profile is not recorded, but they'll retry multiple times to extend the profile buffer size,
+		// which may cause long STW pauses. We'll use `recordGoroutineProfile` instead to allocate a large buffer
+		// at the beginning.
+		// {Name: "goroutine", Debug: 2},
 	}
 	for _, item := range items {
 		if err := write(item, recordDir); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	return recordGoroutineProfile(recordDir)
+}
+
+func recordGoroutineProfile(recordDir string) error {
+	itemName := "goroutine"
+	fileName := filepath.Join(recordDir, itemName)
+	f, err := os.Create(fileName)
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", itemName), zap.Error(err))
+		return err
+	}
+
+	buf := make([]byte, 1<<26) // 64MB buffer
+	n := runtime.Stack(buf, true)
+	if n >= len(buf) {
+		logutil.BgLogger().Warn("goroutine stack trace is too large, truncating", zap.Int("size", n))
+	}
+
+	_, err = f.Write(buf[:n])
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", itemName), zap.Error(err))
+	}
+	return err
 }
 
 func write(item item, recordDir string) error {

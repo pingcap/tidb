@@ -29,10 +29,8 @@ import (
 )
 
 func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *rowTable {
-	ret := &rowTable{
-		meta: nil,
-	}
-	for i := 0; i < segmentCount; i++ {
+	ret := &rowTable{}
+	for range segmentCount {
 		// no empty segment is allowed
 		rows := maxRowsPerSeg
 		if !fixedSize {
@@ -40,7 +38,7 @@ func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *ro
 		}
 		rowSeg := newRowTableSegment(uint(rows))
 		rowSeg.rawData = make([]byte, rows)
-		for j := 0; j < rows; j++ {
+		for j := range rows {
 			rowSeg.rowStartOffset = append(rowSeg.rowStartOffset, uint64(j))
 			rowSeg.validJoinKeyPos = append(rowSeg.validJoinKeyPos, j)
 		}
@@ -154,7 +152,7 @@ func TestConcurrentBuild(t *testing.T) {
 	tagHelper := &tagPtrHelper{}
 	tagHelper.init(tagBits)
 	wg := util.WaitGroupWrapper{}
-	for i := 0; i < buildThreads; i++ {
+	for i := range buildThreads {
 		segmentStart := segmentCount / buildThreads * i
 		segmentEnd := segmentCount / buildThreads * (i + 1)
 		if i == buildThreads-1 {
@@ -261,7 +259,7 @@ func TestRowIter(t *testing.T) {
 	for _, partitionNumber := range partitionNumbers {
 		// create row tables
 		rowTables := make([]*rowTable, 0, partitionNumber)
-		for i := 0; i < partitionNumber; i++ {
+		for range partitionNumber {
 			rt := createMockRowTable(1024, 16, false)
 			rowTables = append(rowTables, rt)
 		}
@@ -270,10 +268,10 @@ func TestRowIter(t *testing.T) {
 	}
 	// case with empty row table
 	for _, partitionNumber := range partitionNumbers {
-		for i := 0; i < partitionNumber; i++ {
+		for i := range partitionNumber {
 			// the i-th row table is an empty row table
 			rowTables := make([]*rowTable, 0, partitionNumber)
-			for j := 0; j < partitionNumber; j++ {
+			for j := range partitionNumber {
 				if i == j {
 					rt := createMockRowTable(0, 0, true)
 					rowTables = append(rowTables, rt)

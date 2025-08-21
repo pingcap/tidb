@@ -14,6 +14,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestBatchSplit(t *testing.T) {
@@ -300,4 +302,22 @@ func TestSplitMeetErrorAndRetry(t *testing.T) {
 	}
 	_, err = mockClient.SplitKeysAndScatter(ctx, [][]byte{{'d'}})
 	require.ErrorContains(t, err, "no valid key")
+}
+
+func TestPDErrorCanRetry(t *testing.T) {
+	// non-gRPC error should not retry
+	err := errors.New("random failure")
+	require.False(t, PdErrorCanRetry(err))
+
+	e1 := status.Error(codes.Unknown, "region 42 is not fully replicated")
+	require.True(t, PdErrorCanRetry(e1))
+
+	e2 := status.Error(codes.Unknown, "operator canceled because cannot add an operator to the execute queue")
+	require.True(t, PdErrorCanRetry(e2))
+
+	e3 := status.Error(codes.Unknown, "unable to create operator, failed to create scatter region operator for region 13813282")
+	require.True(t, PdErrorCanRetry(e3))
+
+	e4 := status.Error(codes.Unknown, "should be false")
+	require.False(t, PdErrorCanRetry(e4))
 }

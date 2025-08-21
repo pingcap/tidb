@@ -18,22 +18,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
-func Test_fillOneImportJobInfo(t *testing.T) {
-	typeBytes := []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
-	fieldTypes := make([]*types.FieldType, 0, len(typeBytes))
-	for _, tp := range typeBytes {
+func TestFillOneImportJobInfo(t *testing.T) {
+	fieldTypes := make([]*types.FieldType, 0, len(plannercore.ImportIntoSchemaFTypes))
+	for _, tp := range plannercore.ImportIntoSchemaFTypes {
 		fieldType := types.NewFieldType(tp)
 		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(tp)
 		fieldType.SetFlen(flen)
@@ -47,25 +47,44 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	jobInfo := &importer.JobInfo{
 		Parameters: importer.ImportParameters{},
 	}
-	executor.FillOneImportJobInfo(jobInfo, c, -1)
-	require.True(t, c.GetRow(0).IsNull(7))
-	require.True(t, c.GetRow(0).IsNull(10))
-	require.True(t, c.GetRow(0).IsNull(11))
 
-	executor.FillOneImportJobInfo(jobInfo, c, 0)
-	require.False(t, c.GetRow(1).IsNull(7))
-	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(7))
-	require.True(t, c.GetRow(1).IsNull(10))
-	require.True(t, c.GetRow(1).IsNull(11))
+	fmap := plannercore.ImportIntoFieldMap
+	rowCntIdx := fmap["ImportedRows"]
+	startIdx := fmap["StartTime"]
+	endIdx := fmap["EndTime"]
 
-	jobInfo.Summary = &importer.JobSummary{ImportedRows: 123}
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.True(t, c.GetRow(0).IsNull(rowCntIdx))
+	require.True(t, c.GetRow(0).IsNull(startIdx))
+	require.True(t, c.GetRow(0).IsNull(endIdx))
+
+	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0})
+	require.False(t, c.GetRow(1).IsNull(rowCntIdx))
+	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(rowCntIdx))
+	require.True(t, c.GetRow(1).IsNull(startIdx))
+	require.True(t, c.GetRow(1).IsNull(endIdx))
+
+	jobInfo.Status = importer.JobStatusFinished
+	jobInfo.Summary = &importer.Summary{ImportedRows: 123}
 	jobInfo.StartTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	jobInfo.EndTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
-	executor.FillOneImportJobInfo(jobInfo, c, 0)
-	require.False(t, c.GetRow(2).IsNull(7))
-	require.Equal(t, uint64(123), c.GetRow(2).GetUint64(7))
-	require.False(t, c.GetRow(2).IsNull(10))
-	require.False(t, c.GetRow(2).IsNull(11))
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.False(t, c.GetRow(2).IsNull(rowCntIdx))
+	require.Equal(t, uint64(123), c.GetRow(2).GetUint64(rowCntIdx))
+	require.False(t, c.GetRow(2).IsNull(startIdx))
+	require.False(t, c.GetRow(2).IsNull(endIdx))
+
+	ri := &importinto.RuntimeInfo{
+		Processed: 10,
+		Total:     100000,
+		Speed:     2,
+	}
+	jobInfo.Summary = &importer.Summary{ImportedRows: 0}
+	executor.FillOneImportJobInfo(c, jobInfo, ri)
+	require.Equal(t, "10B", c.GetRow(3).GetString(fmap["CurStepProcessedSize"]))
+	require.Equal(t, "97.66KiB", c.GetRow(3).GetString(fmap["CurStepTotalSize"]))
+	require.Equal(t, "0", c.GetRow(3).GetString(fmap["CurStepProgressPct"]))
+	require.Equal(t, "13:53:15", c.GetRow(3).GetString(fmap["CurStepETA"]))
 }
 
 func TestShow(t *testing.T) {
@@ -123,4 +142,14 @@ func TestShowIndexWithGlobalIndex(t *testing.T) {
 	tk.MustExec("insert test_t1 values (1, 1);")
 	tk.MustExec("alter table test_t1 add unique index p_a (a) GLOBAL;")
 	tk.MustQuery("show index from test_t1").Check(testkit.Rows("test_t1 0 p_a 1 a A 0 <nil> <nil> YES BTREE   YES <nil> NO YES"))
+}
+
+func TestShowSessionStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show session_states").CheckAt([]int{1}, testkit.Rows("<nil>"))
+
+	tk1 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk1.MustQuery("show session_states").CheckAt([]int{1}, testkit.Rows("<nil>"))
 }

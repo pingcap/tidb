@@ -18,6 +18,9 @@ import (
 	"bytes"
 	"context"
 	goJSON "encoding/json"
+	"fmt"
+	"hash/crc32"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -34,6 +37,7 @@ import (
 
 var (
 	_ functionClass = &jsonTypeFunctionClass{}
+	_ functionClass = &jsonSumCRC32FunctionClass{}
 	_ functionClass = &jsonExtractFunctionClass{}
 	_ functionClass = &jsonUnquoteFunctionClass{}
 	_ functionClass = &jsonQuoteFunctionClass{}
@@ -63,6 +67,7 @@ var (
 	_ functionClass = &jsonLengthFunctionClass{}
 
 	_ builtinFunc = &builtinJSONTypeSig{}
+	_ builtinFunc = &builtinJSONSumCRC32Sig{}
 	_ builtinFunc = &builtinJSONQuoteSig{}
 	_ builtinFunc = &builtinJSONUnquoteSig{}
 	_ builtinFunc = &builtinJSONArraySig{}
@@ -96,6 +101,9 @@ type jsonTypeFunctionClass struct {
 
 type builtinJSONTypeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONTypeSig) Clone() builtinFunc {
@@ -105,7 +113,7 @@ func (b *builtinJSONTypeSig) Clone() builtinFunc {
 }
 
 func (c *jsonTypeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETJson)
@@ -122,6 +130,51 @@ func (c *jsonTypeFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	return sig, nil
 }
 
+func (c *jsonTypeFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
+}
+
+// verifyJSONArgsType verifies that all args specified in `jsonArgsIndex` are JSON or non-binary string or NULL.
+// the `useJSONErr` specifies to use `ErrIncorrectType` or `ErrInvalidTypeForJSON`. If it's true, the error will be `ErrInvalidTypeForJSON`
+func verifyJSONArgsType(ctx EvalContext, funcName string, useJSONErr bool, args []Expression, jsonArgsIndex ...int) error {
+	if jsonArgsIndex == nil {
+		// if no index is specified, verify all args
+		jsonArgsIndex = make([]int, len(args))
+		for i := range args {
+			jsonArgsIndex[i] = i
+		}
+	}
+	for _, argIndex := range jsonArgsIndex {
+		arg := args[argIndex]
+
+		typ := arg.GetType(ctx)
+		if typ.GetType() == mysql.TypeNull {
+			continue
+		}
+
+		evalType := typ.EvalType()
+		switch evalType {
+		case types.ETString:
+			cs := typ.GetCharset()
+			if cs == charset.CharsetBin {
+				return types.ErrInvalidJSONCharset.GenWithStackByArgs(cs)
+			}
+			continue
+		case types.ETJson:
+			continue
+		default:
+			if useJSONErr {
+				return ErrInvalidTypeForJSON.GenWithStackByArgs(argIndex+1, funcName)
+			}
+			return ErrIncorrectType.GenWithStackByArgs(strconv.Itoa(argIndex+1), funcName)
+		}
+	}
+	return nil
+}
+
 func (b *builtinJSONTypeSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
 	var j types.BinaryJSON
 	j, isNull, err = b.args[0].EvalJSON(ctx, row)
@@ -131,12 +184,121 @@ func (b *builtinJSONTypeSig) evalString(ctx EvalContext, row chunk.Row) (val str
 	return j.Type(), false, nil
 }
 
+type jsonSumCRC32FunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (c *jsonSumCRC32FunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+
+	if args[0].GetType(ctx).EvalType() != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
+	}
+
+	return nil
+}
+
+func (c *jsonSumCRC32FunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
+		return nil, err
+	}
+	arrayType := c.tp.ArrayType()
+	switch arrayType.GetType() {
+	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeFloat, mysql.TypeNewDecimal:
+		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating json_sum_crc32 on array of %s", arrayType.String()))
+	}
+	if arrayType.EvalType() == types.ETString && arrayType.GetCharset() != charset.CharsetUTF8MB4 && arrayType.GetCharset() != charset.CharsetBin {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("unsupported charset")
+	}
+	if arrayType.EvalType() == types.ETString && arrayType.GetFlen() == types.UnspecifiedLength {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("calculating json_sum_crc32 on array of char/binary BLOBs with unspecified length")
+	}
+
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	if err != nil {
+		return nil, err
+	}
+	sig = &builtinJSONSumCRC32Sig{bf}
+	return sig, nil
+}
+
+type builtinJSONSumCRC32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONSumCRC32Sig) Clone() builtinFunc {
+	newSig := &builtinJSONSumCRC32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalJSON(ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	if val.TypeCode != types.JSONTypeCodeArray {
+		return 0, false, ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
+	}
+
+	ft := b.tp.ArrayType()
+	f := convertJSON2Tp(ft.EvalType())
+	if f == nil {
+		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
+	}
+
+	var sum int64
+	for i := range val.GetElemCount() {
+		item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
+		if err != nil {
+			if ErrInvalidJSONForFuncIndex.Equal(err) {
+				err = errors.Errorf("Invalid JSON value for CAST to type %s", ft.CompactStr())
+			}
+			return 0, false, err
+		}
+		sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
+	}
+
+	return sum, false, err
+}
+
+// BuildJSONSumCrc32FunctionWithCheck builds a JSON_SUM_CRC32 ScalarFunction from the Expression and return error if any.
+// The logic is almost the same as build CAST function, except that the return type is fixed to bigint.
+func BuildJSONSumCrc32FunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
+	argType := expr.GetType(ctx.GetEvalCtx())
+	// If source argument's nullable, then target type should be nullable
+	if !mysql.HasNotNullFlag(argType.GetFlag()) {
+		tp.DelFlag(mysql.NotNullFlag)
+	}
+	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
+
+	if tp.EvalType() != types.ETJson || !tp.IsArray() {
+		return nil, errors.Errorf("json_sum_crc32 can only built on JSON array, got type %s", tp.EvalType())
+	}
+
+	fc := &jsonSumCRC32FunctionClass{baseFunctionClass{ast.JSONSumCrc32, 1, 1}, tp}
+	f, err := fc.getFunction(ctx, []Expression{expr})
+	return &ScalarFunction{
+		FuncName: ast.NewCIStr(ast.JSONSumCrc32),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Function: f,
+	}, err
+}
+
 type jsonExtractFunctionClass struct {
 	baseFunctionClass
 }
 
 type builtinJSONExtractSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONExtractSig) Clone() builtinFunc {
@@ -149,10 +311,7 @@ func (c *jsonExtractFunctionClass) verifyArgs(ctx EvalContext, args []Expression
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_extract")
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
 }
 
 func (c *jsonExtractFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -204,6 +363,9 @@ type jsonUnquoteFunctionClass struct {
 
 type builtinJSONUnquoteSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
@@ -216,10 +378,7 @@ func (c *jsonUnquoteFunctionClass) verifyArgs(ctx EvalContext, args []Expression
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, false, args, 0)
 }
 
 func (c *jsonUnquoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -259,6 +418,9 @@ type jsonSetFunctionClass struct {
 
 type builtinJSONSetSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONSetSig) Clone() builtinFunc {
@@ -302,6 +464,9 @@ type jsonInsertFunctionClass struct {
 
 type builtinJSONInsertSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONInsertSig) Clone() builtinFunc {
@@ -345,6 +510,9 @@ type jsonReplaceFunctionClass struct {
 
 type builtinJSONReplaceSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONReplaceSig) Clone() builtinFunc {
@@ -388,6 +556,9 @@ type jsonRemoveFunctionClass struct {
 
 type builtinJSONRemoveSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONRemoveSig) Clone() builtinFunc {
@@ -448,16 +619,14 @@ func (c *jsonMergeFunctionClass) verifyArgs(ctx EvalContext, args []Expression) 
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	for i, arg := range args {
-		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge")
-		}
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args)
 }
 
 type builtinJSONMergeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONMergeSig) Clone() builtinFunc {
@@ -509,6 +678,9 @@ type jsonObjectFunctionClass struct {
 
 type builtinJSONObjectSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONObjectSig) Clone() builtinFunc {
@@ -584,6 +756,9 @@ type jsonArrayFunctionClass struct {
 
 type builtinJSONArraySig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONArraySig) Clone() builtinFunc {
@@ -637,6 +812,9 @@ type jsonContainsPathFunctionClass struct {
 
 type builtinJSONContainsPathSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
@@ -649,10 +827,7 @@ func (c *jsonContainsPathFunctionClass) verifyArgs(ctx EvalContext, args []Expre
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_contains_path")
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
 }
 
 func (c *jsonContainsPathFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -753,6 +928,9 @@ type jsonMemberOfFunctionClass struct {
 
 type builtinJSONMemberOfSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONMemberOfSig) Clone() builtinFunc {
@@ -765,10 +943,7 @@ func (c *jsonMemberOfFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "member of")
-	}
-	return nil
+	return verifyJSONArgsType(ctx, "member of", true, args, 1)
 }
 
 func (c *jsonMemberOfFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -801,7 +976,7 @@ func (b *builtinJSONMemberOfSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 	}
 
 	elemCount := obj.GetElemCount()
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		if types.CompareBinaryJSON(obj.ArrayGetElem(i), target) == 0 {
 			return 1, false, nil
 		}
@@ -816,6 +991,9 @@ type jsonContainsFunctionClass struct {
 
 type builtinJSONContainsSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONContainsSig) Clone() builtinFunc {
@@ -828,13 +1006,7 @@ func (c *jsonContainsFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_contains")
-	}
-	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_contains")
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0, 1)
 }
 
 func (c *jsonContainsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -896,6 +1068,9 @@ type jsonOverlapsFunctionClass struct {
 
 type builtinJSONOverlapsSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONOverlapsSig) Clone() builtinFunc {
@@ -908,13 +1083,7 @@ func (c *jsonOverlapsFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_overlaps")
-	}
-	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_overlaps")
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0, 1)
 }
 
 func (c *jsonOverlapsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -985,6 +1154,9 @@ func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinJSONValidJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
@@ -1002,6 +1174,9 @@ func (b *builtinJSONValidJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val i
 
 type builtinJSONValidStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONValidStringSig) Clone() builtinFunc {
@@ -1027,6 +1202,9 @@ func (b *builtinJSONValidStringSig) evalInt(ctx EvalContext, row chunk.Row) (res
 
 type builtinJSONValidOthersSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
@@ -1038,7 +1216,8 @@ func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
 // evalInt evals a builtinJSONValidOthersSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
 func (b *builtinJSONValidOthersSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	return 0, false, nil
+	datum, err := b.args[0].Eval(ctx, row)
+	return 0, datum.IsNull(), err
 }
 
 type jsonArrayAppendFunctionClass struct {
@@ -1047,6 +1226,9 @@ type jsonArrayAppendFunctionClass struct {
 
 type builtinJSONArrayAppendSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (c *jsonArrayAppendFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
@@ -1136,6 +1318,10 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 		}
 	}
 
+	// wrap the new value `v` into an array explicitly, in case that the `v` is an array itself.
+	// For example, `JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3))` should return `[1, [2, 3]]`
+	v = types.CreateBinaryJSON([]any{v})
+
 	obj = types.MergeBinaryJSON([]types.BinaryJSON{obj, v})
 	res, err = res.Modify([]types.JSONPathExpression{pathExpr}, []types.BinaryJSON{obj}, types.JSONModifySet)
 	return res, false, err
@@ -1147,6 +1333,9 @@ type jsonArrayInsertFunctionClass struct {
 
 type builtinJSONArrayInsertSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -1226,12 +1415,7 @@ func (c *jsonMergePatchFunctionClass) verifyArgs(ctx EvalContext, args []Express
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	for i, arg := range args {
-		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge_patch")
-		}
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args)
 }
 
 func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -1253,6 +1437,9 @@ func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinJSONMergePatchSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONMergePatchSig) Clone() builtinFunc {
@@ -1295,12 +1482,7 @@ func (c *jsonMergePreserveFunctionClass) verifyArgs(ctx EvalContext, args []Expr
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	for i, arg := range args {
-		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge_preserve")
-		}
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args)
 }
 
 func (c *jsonMergePreserveFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -1326,6 +1508,9 @@ type jsonPrettyFunctionClass struct {
 
 type builtinJSONSPrettySig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONSPrettySig) Clone() builtinFunc {
@@ -1373,6 +1558,9 @@ type jsonQuoteFunctionClass struct {
 
 type builtinJSONQuoteSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONQuoteSig) Clone() builtinFunc {
@@ -1428,6 +1616,9 @@ type jsonSearchFunctionClass struct {
 
 type builtinJSONSearchSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONSearchSig) Clone() builtinFunc {
@@ -1440,10 +1631,7 @@ func (c *jsonSearchFunctionClass) verifyArgs(ctx EvalContext, args []Expression)
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_search")
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
 }
 
 func (c *jsonSearchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -1531,6 +1719,9 @@ type jsonStorageFreeFunctionClass struct {
 
 type builtinJSONStorageFreeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONStorageFreeSig) Clone() builtinFunc {
@@ -1568,6 +1759,9 @@ type jsonStorageSizeFunctionClass struct {
 
 type builtinJSONStorageSizeSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONStorageSizeSig) Clone() builtinFunc {
@@ -1606,6 +1800,9 @@ type jsonDepthFunctionClass struct {
 
 type builtinJSONDepthSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONDepthSig) Clone() builtinFunc {
@@ -1649,10 +1846,7 @@ func (c *jsonKeysFunctionClass) verifyArgs(ctx EvalContext, args []Expression) e
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_keys")
-	}
-	return nil
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
 }
 
 func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -1681,6 +1875,9 @@ func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinJSONKeysSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONKeysSig) Clone() builtinFunc {
@@ -1702,6 +1899,9 @@ func (b *builtinJSONKeysSig) evalJSON(ctx EvalContext, row chunk.Row) (res types
 
 type builtinJSONKeys2ArgsSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONKeys2ArgsSig) Clone() builtinFunc {
@@ -1730,10 +1930,7 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 	}
 
 	res, exists := res.Extract([]types.JSONPathExpression{pathExpr})
-	if !exists {
-		return res, true, nil
-	}
-	if res.TypeCode != types.JSONTypeCodeObject {
+	if !exists || res.TypeCode != types.JSONTypeCodeObject {
 		return res, true, nil
 	}
 
@@ -1746,6 +1943,9 @@ type jsonLengthFunctionClass struct {
 
 type builtinJSONLengthSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinJSONLengthSig) Clone() builtinFunc {
@@ -1815,11 +2015,9 @@ func (c *jsonSchemaValidFunctionClass) verifyArgs(ctx EvalContext, args []Expres
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_schema_valid")
-	}
-	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_schema_valid")
+
+	if err := verifyJSONArgsType(ctx, c.funcName, true, args, 0, 1); err != nil {
+		return err
 	}
 	if c, ok := args[0].(*Constant); ok {
 		// If args[0] is NULL, then don't check the length of *both* arguments.

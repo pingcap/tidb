@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -106,7 +107,7 @@ func (conns *GRPCConns) GetGrpcConn(ctx context.Context, storeID uint64,
 	conns.mu.Lock()
 	defer conns.mu.Unlock()
 	if _, ok := conns.conns[storeID]; !ok {
-		conns.conns[storeID] = NewConnPool(tcpConcurrency, newConn, log.FromContext(ctx))
+		conns.conns[storeID] = NewConnPool(tcpConcurrency, newConn, log.Wrap(logutil.Logger(ctx)))
 	}
 	return conns.conns[storeID].get(ctx)
 }

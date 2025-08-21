@@ -87,6 +87,16 @@ type CPUUsage struct {
 	NumCPU int
 }
 
+// Version represents the cgroup version.
+type Version int
+
+// cgroup versions.
+const (
+	Unknown Version = 0
+	V1      Version = 1
+	V2      Version = 2
+)
+
 // SetGOMAXPROCS is to set GOMAXPROCS to the number of CPUs.
 func SetGOMAXPROCS() (func(), error) {
 	const minGOMAXPROCS int = 1
@@ -95,8 +105,8 @@ func SetGOMAXPROCS() (func(), error) {
 		log.Info("maxprocs: No GOMAXPROCS change to reset")
 	}
 
-	if max, exists := os.LookupEnv(_maxProcsKey); exists {
-		log.Info(fmt.Sprintf("maxprocs: Honoring GOMAXPROCS=%q as set in environment", max))
+	if maxv, exists := os.LookupEnv(_maxProcsKey); exists {
+		log.Info(fmt.Sprintf("maxprocs: Honoring GOMAXPROCS=%q as set in environment", maxv))
 		return undoNoop, nil
 	}
 

@@ -56,7 +56,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 		jobID    atomic.Int64
 		res      sqlexec.RecordSet
 	)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.TableID != tbl.Meta().ID {
 			return
 		}

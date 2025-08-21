@@ -18,8 +18,11 @@ go_test(
     timeout = "short",
     srcs = ["analyzer_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":constructor",
+        "//pkg/util/linter/constructor",
+        "@com_github_stretchr_testify//require",
         "@org_golang_x_tools//go/analysis/analysistest",
     ],
 )

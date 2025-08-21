@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/kv",
@@ -23,7 +24,7 @@ go_library(
         "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/store/mockstore/unistore/client",
         "//pkg/store/mockstore/unistore/lockstore",

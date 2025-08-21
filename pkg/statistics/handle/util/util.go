@@ -15,18 +15,19 @@
 package util
 
 import (
-	"cmp"
 	"context"
-	"slices"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -49,9 +49,6 @@ const (
 	StatsMetaHistorySourceSchemaChange = "schema change"
 	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
 	StatsMetaHistorySourceExtendedStats = "extended stats"
-
-	// TiDBGlobalStats represents the global-stats for a partitioned table.
-	TiDBGlobalStats = "global"
 )
 
 var (
@@ -79,19 +76,23 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
 	se, err := pool.Get()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err == nil { // only recycle when no error
 			pool.Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			pool.Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
-		return err
+		return errors.Trace(err)
 	}
 
 	wrapTxn := false
@@ -105,20 +106,20 @@ func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, 
 	} else {
 		err = f(sctx)
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	// async merge global stats
-	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAsyncMergeGlobalStats)
+	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
 
 	// concurrency of save stats to storage
-	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzePartitionConcurrency)
+	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzePartitionConcurrency)
 	if err != nil {
 		return err
 	}
@@ -129,7 +130,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
 
 	// analyzer version
-	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
@@ -140,40 +141,40 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
 	// enable historical stats
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
 
 	// partition mode
-	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
 
 	// enable analyze snapshot
-	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
+	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAnalyzeSnapshot)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
 
 	// enable skip column types
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
 
 	// skip missing partition stats
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBSkipMissingPartitionStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
-	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMergePartitionStatsConcurrency)
+	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
 	if err != nil {
 		return err
 	}
@@ -186,7 +187,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func GetCurrentPruneMode(pool util.SessionPool) (mode string, err error) {
+func GetCurrentPruneMode(pool util.DestroyableSessionPool) (mode string, err error) {
 	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil
@@ -235,6 +236,9 @@ func ExecWithCtx(
 
 // ExecRows is a helper function to execute sql and return rows and fields.
 func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	failpoint.Inject("ExecRowsTimeout", func() {
+		failpoint.Return(nil, nil, errors.New("inject timeout error"))
+	})
 	return ExecRowsWithCtx(StatsCtx, sctx, sql, args...)
 }
 
@@ -266,71 +270,6 @@ func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql s
 // DurationToTS converts duration to timestamp.
 func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
-}
-
-// JSONTable is used for dumping statistics.
-type JSONTable struct {
-	Columns           map[string]*JSONColumn `json:"columns"`
-	Indices           map[string]*JSONColumn `json:"indices"`
-	Partitions        map[string]*JSONTable  `json:"partitions"`
-	DatabaseName      string                 `json:"database_name"`
-	TableName         string                 `json:"table_name"`
-	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
-	PredicateColumns  []*JSONPredicateColumn `json:"predicate_columns"`
-	Count             int64                  `json:"count"`
-	ModifyCount       int64                  `json:"modify_count"`
-	Version           uint64                 `json:"version"`
-	IsHistoricalStats bool                   `json:"is_historical_stats"`
-}
-
-// Sort is used to sort the object in the JSONTable. it is used for testing to avoid flaky test.
-func (j *JSONTable) Sort() {
-	slices.SortFunc(j.PredicateColumns, func(a, b *JSONPredicateColumn) int {
-		return cmp.Compare(a.ID, b.ID)
-	})
-}
-
-// JSONExtendedStats is used for dumping extended statistics.
-type JSONExtendedStats struct {
-	StatsName  string  `json:"stats_name"`
-	StringVals string  `json:"string_vals"`
-	ColIDs     []int64 `json:"cols"`
-	ScalarVals float64 `json:"scalar_vals"`
-	Tp         uint8   `json:"type"`
-}
-
-// JSONColumn is used for dumping statistics.
-type JSONColumn struct {
-	Histogram *tipb.Histogram `json:"histogram"`
-	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
-	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
-	// StatsVer is a pointer here since the old version json file would not contain version information.
-	StatsVer          *int64  `json:"stats_ver"`
-	NullCount         int64   `json:"null_count"`
-	TotColSize        int64   `json:"tot_col_size"`
-	LastUpdateVersion uint64  `json:"last_update_version"`
-	Correlation       float64 `json:"correlation"`
-}
-
-// TotalMemoryUsage returns the total memory usage of this column.
-func (col *JSONColumn) TotalMemoryUsage() (size int64) {
-	if col.Histogram != nil {
-		size += int64(col.Histogram.Size())
-	}
-	if col.CMSketch != nil {
-		size += int64(col.CMSketch.Size())
-	}
-	if col.FMSketch != nil {
-		size += int64(col.FMSketch.Size())
-	}
-	return size
-}
-
-// JSONPredicateColumn contains the information of the columns used in the predicate.
-type JSONPredicateColumn struct {
-	LastUsedAt     *string `json:"last_used_at"`
-	LastAnalyzedAt *string `json:"last_analyzed_at"`
-	ID             int64   `json:"id"`
 }
 
 // IsSpecialGlobalIndex checks a index is a special global index or not.

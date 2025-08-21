@@ -15,15 +15,17 @@
 package logicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
 type LogicalPartitionUnionAll struct {
-	LogicalUnionAll
+	LogicalUnionAll `hash64-equals:"true"`
 }
 
 // Init initializes LogicalPartitionUnionAll.
@@ -33,6 +35,39 @@ func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *Logica
 }
 
 // *************************** start implementation of LogicalPlan interface ***************************
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalPartitionUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	prunedPlan, err := p.LogicalUnionAll.PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+
+	unionAll, ok := prunedPlan.(*LogicalUnionAll)
+	if !ok {
+		// Return the transformed plan if it's no longer a LogicalUnionAll
+		return prunedPlan, nil
+	}
+
+	// Update the wrapped LogicalUnionAll with the pruned result
+	p.LogicalUnionAll = *unionAll
+	return p, nil
+}
+
+// PushDownTopN implements LogicalPlan interface.
+func (p *LogicalPartitionUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	transformedUnionAll := p.LogicalUnionAll.PushDownTopN(topNLogicalPlan, opt)
+
+	unionAll, isUnionAll := transformedUnionAll.(*LogicalUnionAll)
+	if !isUnionAll {
+		// Return the transformed plan if it's no longer a LogicalUnionAll
+		return transformedUnionAll
+	}
+
+	// Update the wrapped LogicalUnionAll with the transformed result
+	p.LogicalUnionAll = *unionAll
+	return p
+}
 
 // ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

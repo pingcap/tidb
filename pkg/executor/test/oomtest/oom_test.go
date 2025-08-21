@@ -102,6 +102,10 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
 	oom.ClearMessageFilter()
+	oom.AddMessageFilter(
+		"background process exited",
+		"initialize slot capacity",
+	)
 	oom.SetTracker("")
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")

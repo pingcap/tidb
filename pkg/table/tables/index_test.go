@@ -16,6 +16,7 @@ package tables_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -179,7 +179,7 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 func TestGenIndexValueFromIndex(t *testing.T) {
 	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
 	tblInfo.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -293,7 +293,6 @@ func TestTableOperationsInDDLDropIndexWriteOnly(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, key a(a), key(b))")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
 	// use MDL to block drop index DDL in `StateWriteOnly`
-	tk.MustExec("set @@global.tidb_enable_metadata_lock='ON'")
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t order by a asc").Check(testkit.Rows("1 1", "2 2", "3 3"))
 	tk2 := testkit.NewTestKit(t, store)
@@ -324,7 +323,7 @@ func TestTableOperationsInDDLDropIndexWriteOnly(t *testing.T) {
 	for {
 		time.Sleep(20 * time.Millisecond)
 		// wait the DDL state change to `StateWriteOnly`
-		tblInfo, err := do.InfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tblInfo, err := do.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		if state := tblInfo.Indices[0].State; state != model.StatePublic {
 			require.Equal(t, model.StateWriteOnly, state)
@@ -347,9 +346,77 @@ func TestTableOperationsInDDLDropIndexWriteOnly(t *testing.T) {
 	// update some rows: 1 in storage, 1 in memory buffer.
 	tk2.MustExec("update t set a = a + 10 where a in (2, 6)")
 	// should be tested in `StateWriteOnly` state.
-	tblInfo, err := tk2.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err := tk2.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, model.StateWriteOnly, tblInfo.Indices[0].State)
 	// commit should success without any assertion fail.
 	tk2.MustExec("commit")
+}
+
+// See issue: https://github.com/pingcap/tidb/issues/62337
+func TestForceLockNonUniqueIndexInDDLMergingTempIndex(t *testing.T) {
+	tblInfo := buildTableInfo(t, "create table t (id int primary key, k int, key k(k))")
+
+	var idxInfo *model.IndexInfo
+	for _, info := range tblInfo.Indices {
+		if info.Name.L == "k" {
+			idxInfo = info
+			break
+		}
+	}
+
+	require.NotNil(t, idxInfo)
+	cases := []struct {
+		idxState      model.SchemaState
+		backfillState model.BackfillState
+		forceLock     bool
+	}{
+		{model.StateWriteReorganization, model.BackfillStateReadyToMerge, true},
+		{model.StateWriteReorganization, model.BackfillStateMerging, true},
+		{model.StatePublic, model.BackfillStateInapplicable, false},
+	}
+
+	mockCtx := mock.NewContext()
+	store := testkit.CreateMockStore(t)
+	h := kv.IntHandle(1)
+	indexedValues := []types.Datum{types.NewIntDatum(100)}
+	idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	indexKey, distinct, err := idx.GenIndexKey(mockCtx.ErrCtx(), time.UTC, indexedValues, h, nil)
+	require.NoError(t, err)
+	require.False(t, distinct)
+
+	for _, c := range cases {
+		idxInfo.State = c.idxState
+		idxInfo.BackfillState = c.backfillState
+
+		t.Run(fmt.Sprintf("DeleteIndex in %s-%s", c.idxState, c.backfillState), func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			defer func() {
+				require.NoError(t, txn.Rollback())
+			}()
+			txn.SetOption(kv.Pessimistic, true)
+
+			err = idx.Delete(mockCtx.GetTableCtx(), txn, []types.Datum{types.NewIntDatum(100)}, kv.IntHandle(1))
+			require.NoError(t, err)
+			flags, err := txn.GetMemBuffer().GetFlags(indexKey)
+			require.NoError(t, err)
+			require.Equal(t, c.forceLock, flags.HasNeedLocked())
+		})
+
+		t.Run(fmt.Sprintf("CreateIndex in %s-%s", c.idxState, c.backfillState), func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			defer func() {
+				require.NoError(t, txn.Rollback())
+			}()
+			txn.SetOption(kv.Pessimistic, true)
+
+			_, err = idx.Create(mockCtx.GetTableCtx(), txn, indexedValues, h, nil)
+			require.NoError(t, err)
+			flags, err := txn.GetMemBuffer().GetFlags(indexKey)
+			require.NoError(t, err)
+			require.Equal(t, c.forceLock, flags.HasNeedLocked())
+		})
+	}
 }

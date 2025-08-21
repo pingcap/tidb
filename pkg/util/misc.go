@@ -43,9 +43,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
@@ -63,7 +64,7 @@ const (
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
-// Function f should have two return value. The first one is an bool which indicate if the err if retryable.
+// Function f should have two return value. The first one is an bool which indicate if the err is retryable.
 // The second is if the f meet any error.
 func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
 	for i := 1; i <= retryCnt; i++ {
@@ -72,6 +73,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		if err == nil || !retryAble {
 			return errors.Trace(err)
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
 		time.Sleep(sleepTime)
 	}
@@ -140,8 +142,8 @@ func HasCancelled(ctx context.Context) (cancel bool) {
 }
 
 const (
-	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
-	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+	// SyntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	SyntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
 )
 
 // SyntaxError converts parser error to TiDB's syntax error.
@@ -159,7 +161,7 @@ func SyntaxError(err error) error {
 		}
 	}
 
-	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+	return parser.ErrParse.GenWithStackByArgs(SyntaxErrorPrefix, err.Error())
 }
 
 // SyntaxWarn converts parser warn to TiDB's syntax warn.
@@ -175,50 +177,7 @@ func SyntaxWarn(err error) error {
 		return err
 	}
 
-	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())
-}
-
-var (
-	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = pmodel.NewCIStr("INFORMATION_SCHEMA")
-	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = pmodel.NewCIStr("PERFORMANCE_SCHEMA")
-	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = pmodel.NewCIStr("METRICS_SCHEMA")
-	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
-	ClusterTableInstanceColumnName = "INSTANCE"
-)
-
-// IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
-func IsMemOrSysDB(dbLowerName string) bool {
-	return IsMemDB(dbLowerName) || IsSysDB(dbLowerName)
-}
-
-// IsMemDB checks whether dbLowerName is memory database.
-func IsMemDB(dbLowerName string) bool {
-	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
-		return true
-	}
-	return false
-}
-
-// IsSysDB checks whether dbLowerName is system database.
-func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
-}
-
-// IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
-func IsSystemView(dbLowerName string) bool {
-	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
-		return true
-	}
-	return false
+	return parser.ErrParse.FastGenByArgs(SyntaxErrorPrefix, err.Error())
 }
 
 // X509NameOnline prints pkix.Name into old X509_NAME_oneline format.
@@ -449,7 +408,7 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence pmodel.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence ast.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
@@ -582,11 +541,14 @@ func initInternalClient() {
 	}
 	if tlsCfg == nil {
 		internalHTTPSchema = "http"
-		internalHTTPClient = http.DefaultClient
+		internalHTTPClient = &http.Client{
+			Timeout: 5 * time.Minute,
+		}
 		return
 	}
 	internalHTTPSchema = "https"
 	internalHTTPClient = &http.Client{
+		Timeout:   5 * time.Minute,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 }
@@ -692,4 +654,23 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
 	// use RSA and unspecified signature algorithm
 	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
+}
+
+// GetTypeFlagsForInsert gets the type flags for insert statement.
+func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreErr bool) types.Flags {
+	strictSQLMode := sqlMode.HasStrictMode()
+	// see comments in ResetContextOfStmt for WithAllowNegativeToUnsigned part.
+	return baseFlags.
+		WithTruncateAsWarning(!strictSQLMode || ignoreErr).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasNoZeroInDateMode() ||
+			!sqlMode.HasNoZeroDateMode() || !strictSQLMode || ignoreErr ||
+			sqlMode.HasAllowInvalidDatesMode()).
+		WithAllowNegativeToUnsigned(false)
+}
+
+// GetTypeFlagsForImportInto gets the type flags for import into statement which
+// has the same flags as normal `INSERT INTO xxx`.
+func GetTypeFlagsForImportInto(baseFlags types.Flags, sqlMode mysql.SQLMode) types.Flags {
+	return GetTypeFlagsForInsert(baseFlags, sqlMode, false)
 }

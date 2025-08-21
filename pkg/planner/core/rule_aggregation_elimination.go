@@ -69,7 +69,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
 	var uniqueKey expression.KeyInfo
-	for _, key := range agg.Children()[0].Schema().Keys {
+	for _, key := range agg.Children()[0].Schema().PKOrUK {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
 			uniqueKey = key
@@ -109,14 +109,14 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.Logica
 				distinctByUniqueKey := false
 				schemaByDistinct := expression.NewSchema(cols...)
 				var uniqueKey expression.KeyInfo
-				for _, key := range agg.Children()[0].Schema().Keys {
+				for _, key := range agg.Children()[0].Schema().PKOrUK {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
 						break
 					}
 				}
-				for _, key := range agg.Children()[0].Schema().UniqueKeys {
+				for _, key := range agg.Children()[0].Schema().NullableUK {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
@@ -170,7 +170,7 @@ func CheckCanConvertAggToProj(agg *logicalop.LogicalAggregation) bool {
 		}
 		// once agg function args has intersection with mayNullSchema, return nil (means elimination fail)
 		for _, fun := range agg.AggFuncs {
-			mayNullCols := expression.ExtractColumnsFromExpressions(nil, fun.Args, func(column *expression.Column) bool {
+			mayNullCols := expression.ExtractColumnsFromExpressions(fun.Args, func(column *expression.Column) bool {
 				// collect may-null cols.
 				return mayNullSchema.Contains(column)
 			})
@@ -238,7 +238,7 @@ func rewriteCount(ctx expression.BuildContext, exprs []expression.Expression, ta
 
 func rewriteBitFunc(ctx expression.BuildContext, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// For not integer type. We need to cast(cast(arg as signed) as unsigned) to make the bit function work.
-	innerCast := expression.WrapWithCastAsInt(ctx, arg)
+	innerCast := expression.WrapWithCastAsInt(ctx, arg, nil)
 	outerCast := wrapCastFunction(ctx, innerCast, targetTp)
 	var finalExpr expression.Expression
 	if funcType != ast.AggFuncBitAnd {

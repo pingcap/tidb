@@ -79,7 +79,7 @@ func TestTuner(t *testing.T) {
 	testHeap = make([]byte, threshold+1024)
 	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
 	runtime.GC()
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		runtime.GC()
 		require.Equal(t, minGCPercent.Load(), tn.getGCPercent())
 	}

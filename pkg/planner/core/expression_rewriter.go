@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,13 +30,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -45,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -243,8 +244,13 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
-			rewriter.schema = p.Schema()
-			rewriter.names = p.OutputNames()
+			if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+				rewriter.schema = join.FullSchema
+				rewriter.names = join.FullNames
+			} else {
+				rewriter.schema = p.Schema()
+				rewriter.names = p.OutputNames()
+			}
 		}
 	}()
 
@@ -402,7 +408,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	switch op {
 	case ast.EQ, ast.NE, ast.NullEQ:
 		funcs := make([]expression.Expression, lLen)
-		for i := 0; i < lLen; i++ {
+		for i := range lLen {
 			var err error
 			funcs[i], err = er.constructBinaryOpFunction(expression.GetFuncArg(l, i), expression.GetFuncArg(r, i), op)
 			if err != nil {
@@ -424,12 +430,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		*/
 		resultDNFList := make([]expression.Expression, 0, lLen)
 		// Step 1
-		for i := 0; i < lLen; i++ {
+		for i := range lLen {
 			exprList := make([]expression.Expression, 0, i+1)
 			// Step 1.1 build prefix equal conditions
 			// (l[0], ... , l[i-1], ...) op (r[0], ... , r[i-1], ...) should be convert to
 			// l[0] = r[0] and l[1] = r[1] and ... and l[i-1] = r[i-1]
-			for j := 0; j < i; j++ {
+			for j := range i {
 				jExpr, err := er.constructBinaryOpFunction(expression.GetFuncArg(l, j), expression.GetFuncArg(r, j), ast.EQ)
 				if err != nil {
 					return nil, err
@@ -472,6 +478,8 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, er.names)
 		b.outerBlockExpand = append(b.outerBlockExpand, b.currentBlockExpand)
+		// set it to nil, otherwise, inner qb will use outer expand meta to rewrite expressions.
+		b.currentBlockExpand = nil
 		defer func() {
 			b.outerSchemas = b.outerSchemas[0 : len(b.outerSchemas)-1]
 			b.outerNames = b.outerNames[0 : len(b.outerNames)-1]
@@ -726,13 +734,8 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 		er.err = err
 		return v, true
 	}
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
 
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
@@ -1037,13 +1040,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		return v, true
 	}
 	np = er.popExistsSubPlan(planCtx, np)
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
@@ -1101,9 +1099,9 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			return v, true
 		}
 		if (row != nil && !v.Not) || (row == nil && v.Not) {
-			er.ctxStackAppend(expression.NewOne(), types.EmptyName)
+			er.ctxStackAppend(expression.NewSignedOne(), types.EmptyName)
 		} else {
-			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			er.ctxStackAppend(expression.NewSignedZero(), types.EmptyName)
 		}
 	}
 	return v, true
@@ -1210,16 +1208,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
 	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
 	// To keep it simple, we forbid this converting if they have different collations.
+	// tested by TestCollateSubQuery.
 	lt, rt := lexpr.GetType(er.sctx.GetEvalCtx()), rexpr.GetType(er.sctx.GetEvalCtx())
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	if len(corCols) == 0 && noDecorrelate {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
 
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
@@ -1230,6 +1223,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		planCtx.builder.optFlag |= rule.FlagEliminateAgg
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
 		planCtx.builder.optFlag |= rule.FlagJoinReOrder
+		planCtx.builder.optFlag |= rule.FlagEmptySelectionEliminator
 		// Build distinct for the inner query.
 		agg, err := planCtx.builder.buildDistinct(np, np.Schema().Len())
 		if err != nil {
@@ -1244,13 +1238,19 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		// set FullSchema and FullNames for this join
+		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
+			join.FullSchema = left.FullSchema
+			join.FullNames = left.FullNames
+		}
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
 			join.SetPreferredJoinTypeAndOrder(planCtx.builder.TableHints())
 		}
 		planCtx.plan = join
 	} else {
-		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, false, noDecorrelate)
+		semiRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, semiRewrite, noDecorrelate)
 		if er.err != nil {
 			return v, true
 		}
@@ -1264,6 +1264,16 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	return v, true
 }
 
+func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64) bool {
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
+	if noDecorrelate && len(corCols) == 0 {
+		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
+		noDecorrelate = false
+	}
+	return noDecorrelate
+}
+
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) (ast.Node, bool) {
 	intest.AssertNotNil(planCtx)
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
@@ -1274,13 +1284,8 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		return v, true
 	}
 	np = planCtx.builder.buildMaxOneRow(np)
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags)
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, logicalop.LeftOuterJoin, noDecorrelate)
@@ -1378,12 +1383,7 @@ func hasCTEConsumerInSubPlan(p base.LogicalPlan) bool {
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return true
 	}
-	for _, child := range p.Children() {
-		if hasCTEConsumerInSubPlan(child) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Children(), hasCTEConsumerInSubPlan)
 }
 
 func initConstantRepertoire(ctx expression.EvalContext, c *expression.Constant) {
@@ -1526,6 +1526,18 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+	case *ast.JSONSumCrc32Expr:
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		jsonSumFunction, err := expression.BuildJSONSumCrc32FunctionWithCheck(er.sctx, arg, v.Tp)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+
+		jsonSumFunction.SetCoercibility(expression.CoercibilityNumeric)
+		jsonSumFunction.SetRepertoire(expression.ASCII)
+		er.ctxStack[len(er.ctxStack)-1] = jsonSumFunction
+		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeOrIlikeExpr:
 		er.patternLikeOrIlikeToExpression(v)
 	case *ast.PatternRegexpExpr:
@@ -1635,6 +1647,11 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	if err != nil {
 		return
 	}
+	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
+		if er.planCtx != nil && er.planCtx.builder != nil {
+			er.planCtx.builder.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
+		}
+	}
 	return
 }
 
@@ -1711,7 +1728,7 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 		}
 		return
 	}
-	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
+	if sysVar.IsNoop && !vardef.EnableNoopVariables.Load() {
 		// The variable does nothing, append a warning to the statement output.
 		sessionVars.StmtCtx.AppendWarning(plannererrors.ErrGettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
@@ -1746,9 +1763,9 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
 	switch nativeType {
 	case mysql.TypeVarString:
-		charset, _ := sessionVars.GetSystemVar(variable.CharacterSetConnection)
+		charset, _ := sessionVars.GetSystemVar(vardef.CharacterSetConnection)
 		e.GetType(er.sctx.GetEvalCtx()).SetCharset(charset)
-		collate, _ := sessionVars.GetSystemVar(variable.CollationConnection)
+		collate, _ := sessionVars.GetSystemVar(vardef.CollationConnection)
 		e.GetType(er.sctx.GetEvalCtx()).SetCollate(collate)
 	case mysql.TypeLong, mysql.TypeLonglong:
 		e.GetType(er.sctx.GetEvalCtx()).SetCharset(charset.CharsetBin)
@@ -1884,7 +1901,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := expression.GetRowLen(er.ctxStack[stkLen-lLen-1])
-	for i := 0; i < lLen; i++ {
+	for i := range lLen {
 		if l != expression.GetRowLen(er.ctxStack[stkLen-lLen+i]) {
 			er.err = expression.ErrOperandColumns.GenWithStackByArgs(l)
 			return
@@ -1902,12 +1919,12 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
-				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
+				if expression.MaybeOverOptimized4PlanCache(er.sctx, c) {
 					if c.GetType(er.sctx.GetEvalCtx()).EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
 					er.sctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", c.StringWithCtx(er.sctx.GetEvalCtx(), errors.RedactLogDisable)))
-					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
+					if err := expression.RemoveMutableConst(er.sctx, c); err != nil {
 						er.err = err
 						return
 					}
@@ -2153,7 +2170,10 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	var castFunc func(expression.BuildContext, expression.Expression) expression.Expression
 	switch expression.ResolveType4Between(er.sctx.GetEvalCtx(), [3]expression.Expression{expr, lexp, rexp}) {
 	case types.ETInt:
-		castFunc = expression.WrapWithCastAsInt
+		expr = expression.WrapWithCastAsInt(er.sctx, expr, nil)
+		lexp = expression.WrapWithCastAsInt(er.sctx, lexp, nil)
+		rexp = expression.WrapWithCastAsInt(er.sctx, rexp, nil)
+		return
 	case types.ETReal:
 		castFunc = expression.WrapWithCastAsReal
 	case types.ETDecimal:
@@ -2356,7 +2376,7 @@ func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewri
 				return
 			}
 			newArg := planCtx.rollExpand.GID.Clone()
-			init := func(groupingFunc *expression.ScalarFunction) (expression.Expression, error) {
+			init := func(groupingFunc *expression.ScalarFunction) (*expression.ScalarFunction, error) {
 				err = groupingFunc.Function.(*expression.BuiltinGroupingImplSig).SetMetadata(planCtx.rollExpand.GroupingMode, planCtx.rollExpand.GenerateGroupingMarks(resolvedCols))
 				return groupingFunc, err
 			}
@@ -2567,7 +2587,7 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
-		dbName = pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
+		dbName = ast.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
 	}
 	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:

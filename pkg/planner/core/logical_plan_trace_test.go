@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -194,8 +195,8 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_6 with children[TableScan_7,TableScan_8]",
+					assertReason: "DataSource_1 doesn't have needed partition table after pruning",
+					assertAction: "DataSource_1 becomes TableDual_4",
 				},
 			},
 		},
@@ -402,21 +403,21 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		// if true, test will too slow to run.
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	s := createPlannerSuite()
+	s := coretestsdk.CreatePlannerSuiteElems()
 	defer s.Close()
 	for i, tc := range tt {
 		sql := tc.sql
 		comment := fmt.Sprintf("case:%v sql:%s", i, sql)
-		stmt, err := s.p.ParseOneStmt(sql, "", "")
+		stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 		require.NoError(t, err, comment)
 		nodeW := resolve.NewNodeW(stmt)
-		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
 		require.NoError(t, err, comment)
-		sctx := MockContext()
+		sctx := coretestsdk.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		sctx.GetSessionVars().AllowAggPushDown = true
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
-		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+		builder, _ := NewPlanBuilder().Init(sctx, s.GetIS(), hint.NewQBHintHandler(nil))
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.GetIS())
 		ctx := context.TODO()
 		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)

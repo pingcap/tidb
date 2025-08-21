@@ -88,10 +88,6 @@ type EvalContext interface {
 	GetDivPrecisionIncrement() int
 	// GetUserVarsReader returns the `UserVarsReader` to read user vars.
 	GetUserVarsReader() variable.UserVarsReader
-	// RequestVerification verifies user privilege
-	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
-	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
-	RequestDynamicVerification(privName string, grantable bool) bool
 	// GetOptionalPropSet returns the optional properties provided by this context.
 	GetOptionalPropSet() OptionalEvalPropKeySet
 	// GetOptionalPropProvider gets the optional property provider by key
@@ -132,6 +128,8 @@ type BuildContext interface {
 	// ConnectionID indicates the connection ID of the current session.
 	// If the context is not in a session, it should return 0.
 	ConnectionID() uint64
+	// IsReadonlyUserVar checks whether the user variable is readonly.
+	IsReadonlyUserVar(name string) bool
 }
 
 // ExprContext contains full context for expression building and evaluating.
@@ -261,6 +259,4 @@ type StaticConvertibleEvalContext interface {
 
 	AllParamValues() []types.Datum
 	GetWarnHandler() contextutil.WarnHandler
-	GetRequestVerificationFn() func(db, table, column string, priv mysql.PrivilegeType) bool
-	GetDynamicPrivCheckFn() func(privName string, grantable bool) bool
 }

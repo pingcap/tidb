@@ -25,9 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -35,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -95,122 +92,6 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
-// physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
-type physicalSchemaProducer struct {
-	schema *expression.Schema
-	physicalop.BasePhysicalPlan
-}
-
-func (s *physicalSchemaProducer) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, bool) {
-	cloned := new(physicalSchemaProducer)
-	cloned.schema = s.Schema().Clone()
-	base, ok := s.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, newSelf)
-	if !ok {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *base
-	return cloned, true
-}
-
-func (s *physicalSchemaProducer) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
-	base, err := s.BasePhysicalPlan.CloneWithSelf(newCtx, newSelf)
-	if err != nil {
-		return nil, err
-	}
-	return &physicalSchemaProducer{
-		BasePhysicalPlan: *base,
-		schema:           s.Schema().Clone(),
-	}, nil
-}
-
-// Schema implements the Plan.Schema interface.
-func (s *physicalSchemaProducer) Schema() *expression.Schema {
-	if s.schema == nil {
-		if len(s.Children()) == 1 {
-			// default implementation for plans has only one child: proprgate child schema.
-			// multi-children plans are likely to have particular implementation.
-			s.schema = s.Children()[0].Schema().Clone()
-		} else {
-			s.schema = expression.NewSchema()
-		}
-	}
-	return s.schema
-}
-
-// SetSchema implements the Plan.SetSchema interface.
-func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
-	s.schema = schema
-}
-
-// MemoryUsage return the memory usage of physicalSchemaProducer
-func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = s.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer
-	return
-}
-
-// baseSchemaProducer stores the schema for the base plans who can produce schema directly.
-type baseSchemaProducer struct {
-	schema *expression.Schema
-	names  types.NameSlice `plan-cache-clone:"shallow"`
-	baseimpl.Plan
-}
-
-// CloneWithNewCtx clones the baseSchemaProducer with new context.
-func (s *baseSchemaProducer) CloneWithNewCtx(newCtx base.PlanContext) *baseSchemaProducer {
-	cloned := new(baseSchemaProducer)
-	cloned.Plan = *s.Plan.CloneWithNewCtx(newCtx)
-	cloned.schema = s.schema.Clone()
-	cloned.names = s.names
-	return cloned
-}
-
-// OutputNames returns the outputting names of each column.
-func (s *baseSchemaProducer) OutputNames() types.NameSlice {
-	return s.names
-}
-
-func (s *baseSchemaProducer) SetOutputNames(names types.NameSlice) {
-	s.names = names
-}
-
-// Schema implements the Plan.Schema interface.
-func (s *baseSchemaProducer) Schema() *expression.Schema {
-	if s.schema == nil {
-		s.schema = expression.NewSchema()
-	}
-	return s.schema
-}
-
-// SetSchema implements the Plan.SetSchema interface.
-func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
-	s.schema = schema
-}
-
-func (s *baseSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
-	s.schema = schema
-	s.names = names
-}
-
-// MemoryUsage return the memory usage of baseSchemaProducer
-func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.Plan.MemoryUsage()
-	if s.schema != nil {
-		sum += s.schema.MemoryUsage()
-	}
-	for _, name := range s.names {
-		sum += name.MemoryUsage()
-	}
-	return
-}
-
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
 func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
@@ -231,26 +112,7 @@ func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan
 	return newSchema
 }
 
-// GetStatsInfoFromFlatPlan gets the statistics info from a FlatPhysicalPlan.
-func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
-	res := make(map[string]uint64)
-	for _, op := range flat.Main {
-		switch p := op.Origin.(type) {
-		case *PhysicalIndexScan:
-			if _, ok := res[p.Table.Name.O]; p.StatsInfo() != nil && !ok {
-				res[p.Table.Name.O] = p.StatsInfo().StatsVersion
-			}
-		case *PhysicalTableScan:
-			if _, ok := res[p.Table.Name.O]; p.StatsInfo() != nil && !ok {
-				res[p.Table.Name.O] = p.StatsInfo().StatsVersion
-			}
-		}
-	}
-	return res
-}
-
 // GetStatsInfo gets the statistics info from a physical plan tree.
-// Deprecated: FlattenPhysicalPlan() + GetStatsInfoFromFlatPlan() is preferred.
 func GetStatsInfo(i any) map[string]uint64 {
 	if i == nil {
 		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
@@ -340,18 +202,6 @@ func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool
 		}
 	}
 	return false
-}
-
-func clonePhysicalPlan(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
-	cloned := make([]base.PhysicalPlan, 0, len(plans))
-	for _, p := range plans {
-		c, err := p.Clone(sctx)
-		if err != nil {
-			return nil, err
-		}
-		cloned = append(cloned, c)
-	}
-	return cloned, nil
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.

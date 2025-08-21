@@ -15,6 +15,8 @@
 package physicalop
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -107,7 +109,7 @@ func (p *BasePhysicalPlan) GetPlanCostVer1(taskType property.TaskType, option *o
 
 // GetPlanCostVer2 implements the base.PhysicalPlan.<1st> interface.
 // which calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BasePhysicalPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+func (p *BasePhysicalPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	if p.PlanCostInit && !costusage.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -146,6 +148,9 @@ func (p *BasePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 
 // StatsCount implements the base.PhysicalPlan.<5th> interface.
 func (p *BasePhysicalPlan) StatsCount() float64 {
+	if p == nil || p.StatsInfo() == nil {
+		fmt.Println(1)
+	}
 	return p.StatsInfo().RowCount
 }
 

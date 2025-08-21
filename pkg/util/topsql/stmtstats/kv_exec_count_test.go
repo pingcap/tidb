@@ -27,12 +27,12 @@ func TestKvExecCounter(t *testing.T) {
 	stats := CreateStatementStats()
 	counter := stats.CreateKvExecCounter([]byte("SQL-1"), []byte(""))
 	interceptor := counter.RPCInterceptor()
-	for n := 0; n < 10; n++ {
+	for range 10 {
 		_, _ = interceptor.Wrap(func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			return nil, nil
 		})("TIKV-1", nil)
 	}
-	for n := 0; n < 10; n++ {
+	for range 10 {
 		_, _ = interceptor.Wrap(func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			return nil, nil
 		})("TIKV-2", nil)

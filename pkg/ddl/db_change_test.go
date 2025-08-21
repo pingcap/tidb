@@ -34,9 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -76,7 +77,7 @@ func TestShowCreateTable(t *testing.T) {
 	}
 	prevState := model.StateNone
 	currTestCaseOffset := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -139,7 +140,7 @@ func TestDropNotNullColumn(t *testing.T) {
 
 	var checkErr error
 	sqlNum := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -172,7 +173,7 @@ func TestDropNotNullColumn(t *testing.T) {
 	sqlNum++
 	tk.MustExec("alter table t4 drop column e")
 	require.NoError(t, checkErr)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	tk.MustExec("drop table t, t1, t2, t3")
 }
 
@@ -188,9 +189,9 @@ func TestTwoStates(t *testing.T) {
 		execCases: cnt,
 		sqlInfos:  make([]*sqlInfo, 4),
 	}
-	for i := 0; i < len(testInfo.sqlInfos); i++ {
+	for i := range testInfo.sqlInfos {
 		sqlInfo := &sqlInfo{cases: make([]*stateCase, cnt)}
-		for j := 0; j < cnt; j++ {
+		for j := range cnt {
 			sqlInfo.cases[j] = new(stateCase)
 		}
 		testInfo.sqlInfos[i] = sqlInfo
@@ -222,7 +223,7 @@ func TestTwoStates(t *testing.T) {
 
 	times := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
 			return
 		}
@@ -279,7 +280,7 @@ func TestTwoStates(t *testing.T) {
 }
 
 type stateCase struct {
-	session            sessiontypes.Session
+	session            sessionapi.Session
 	rawStmt            ast.StmtNode
 	stmt               sqlexec.Statement
 	expectedExecErr    string
@@ -330,7 +331,7 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 	for _, sqlInfo := range t.sqlInfos {
 		seVars := sqlInfo.cases[0].session.GetSessionVars()
 		charset, collation := seVars.GetCharsetInfo()
-		for j := 0; j < t.execCases; j++ {
+		for j := range t.execCases {
 			sqlInfo.cases[j].rawStmt, err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
 			if err != nil {
 				return errors.Trace(err)
@@ -795,13 +796,13 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", cbFunc)
 	} else {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", cbFunc)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", cbFunc)
 	}
 	tk.MustExec(alterTableSQL)
 	require.NoError(t, checkErr)
-	_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(t, store)
@@ -834,12 +835,14 @@ func TestShowIndex(t *testing.T) {
 	prevState := model.StateNone
 	showIndexSQL := `show index from t`
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test_db_state")
 			result, err1 := tk.Exec(showIndexSQL)
 			if err1 != nil {
 				checkErr = err1
@@ -861,7 +864,7 @@ func TestShowIndex(t *testing.T) {
 		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO NO",
 		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES <nil> NO NO",
 	))
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 
 	tk.MustExec(`create table tr(
 		id int, name varchar(50),
@@ -1159,16 +1162,16 @@ func TestParallelAlterAddIndex(t *testing.T) {
 }
 
 func TestParallelAlterAddVectorIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(2))
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec("create table tt (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/"+
-			"ddl/MockCheckVectorIndexProcess"))
+			"ddl/MockCheckColumnarIndexProcess"))
 	}()
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -1183,6 +1186,34 @@ func TestParallelAlterAddVectorIndex(t *testing.T) {
 		require.NoError(t, err1)
 		require.EqualError(t, err2,
 			"[ddl:1061]DDL job rollback, error msg: vector index vecIdx function vec_cosine_distance already exist on column c")
+	}
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
+}
+
+func TestParallelAlterAddColumnarIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table tt (a int, b int, c vector(3), d vector(4));")
+	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
+	}()
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	sql1 := "alter table tt add columnar index colIdx(b) USING INVERTED;"
+	sql2 := "alter table tt add columnar index colIdx1(b) USING INVERTED;"
+	f := func(err1, err2 error) {
+		require.NoError(t, err1)
+		require.EqualError(t, err2,
+			"[ddl:1061]DDL job rollback, error msg: inverted columnar index colIdx already exist on column b")
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
@@ -1322,7 +1353,7 @@ func TestParallelAlterAndDropSchema(t *testing.T) {
 
 func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit.TestKit, *testkit.TestKit, chan struct{}) {
 	times := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if times != 0 {
 			return
 		}
@@ -1423,13 +1454,13 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, sql string) {
 	var wg util.WaitGroupWrapper
 
 	once := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		// sleep a while, let other job enqueue.
 		once.Do(func() {
 			time.Sleep(time.Millisecond * 10)
 		})
 	})
-	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	wg.Run(func() {
 		err2 = tk1.ExecToErr(sql)
 	})
@@ -1636,7 +1667,7 @@ func TestCreateExpressionIndex(t *testing.T) {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1702,7 +1733,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1804,7 +1835,7 @@ func TestDropExpressionIndex(t *testing.T) {
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1859,7 +1890,7 @@ func TestParallelRenameTable(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
 			if !firstDDL {
@@ -1968,7 +1999,7 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 
 	var wg sync.WaitGroup
 	skip := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			if skip {

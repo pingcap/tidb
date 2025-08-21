@@ -15,6 +15,7 @@
 package join
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -72,12 +73,7 @@ func appendToResultChk(leftRow chunk.Row, rightRow chunk.Row, leftUsedColumns []
 }
 
 func containsNullKey(row chunk.Row, keyIndex []int) bool {
-	for _, index := range keyIndex {
-		if row.IsNull(index) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(keyIndex, row.IsNull)
 }
 
 // generate inner join result using nested loop
@@ -92,10 +88,10 @@ func genInnerJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*
 	shallowRow := chunk.MutRowFromTypes(shallowRowTypes)
 	// for right out join, use left as build, for other join, always use right as build
 	for _, leftChunk := range leftChunks {
-		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
+		for leftIndex := range leftChunk.NumRows() {
 			leftRow := leftChunk.GetRow(leftIndex)
 			for _, rightChunk := range rightChunks {
-				for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
+				for rightIndex := range rightChunk.NumRows() {
 					if resultChk.IsFull() {
 						returnChks = append(returnChks, resultChk)
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
@@ -132,7 +128,7 @@ func checkVirtualRows(t *testing.T, resultChunks []*chunk.Chunk) {
 	for _, chk := range resultChunks {
 		require.Equal(t, false, chk.IsInCompleteChunk())
 		numRows := chk.GetNumVirtualRows()
-		for i := 0; i < chk.NumCols(); i++ {
+		for i := range chk.NumCols() {
 			require.Equal(t, numRows, chk.Column(i).Rows())
 		}
 	}
@@ -186,7 +182,7 @@ func checkChunksEqual(t *testing.T, expectedChunks []*chunk.Chunk, resultChunks 
 		return cmp(resultRows[i], resultRows[j]) < 0
 	})
 
-	for i := 0; i < len(expectedRows); i++ {
+	for i := range expectedRows {
 		x := cmp(expectedRows[i], resultRows[i])
 		if x != 0 {
 			// used for debug
@@ -196,10 +192,56 @@ func checkChunksEqual(t *testing.T, expectedChunks []*chunk.Chunk, resultChunks 
 	}
 }
 
+// copy data from src to dst, the caller should ensure that src.NumCols() >= dst.NumCols()
+func copySelectedRows(src *chunk.Chunk, dst *chunk.Chunk, selected []bool) (bool, error) {
+	if src.NumRows() == 0 {
+		return false, nil
+	}
+	if src.Sel() != nil || dst.Sel() != nil {
+		return false, errors.New("copy with sel")
+	}
+	if src.NumCols() == 0 {
+		numSelected := 0
+		for _, s := range selected {
+			if s {
+				numSelected++
+			}
+		}
+		dst.SetNumVirtualRows(dst.GetNumVirtualRows() + numSelected)
+		return numSelected > 0, nil
+	}
+
+	oldLen := dst.NumRows()
+	for j := range src.NumCols() {
+		if j >= dst.NumCols() {
+			break
+		}
+		srcCol := src.Column(j)
+		dstCol := dst.Column(j)
+		chunk.CopySelectedRows(dstCol, srcCol, selected)
+	}
+	numSelected := dst.NumRows() - oldLen
+	dst.SetNumVirtualRows(dst.GetNumVirtualRows() + numSelected)
+	return numSelected > 0, nil
+}
+
 func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex []int, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, rightAsBuildSide bool, leftUsed []int, rightUsed []int,
 	leftUsedByOtherCondition []int, rightUsedByOtherCondition []int, leftFilter expression.CNFExprs, rightFilter expression.CNFExprs,
 	otherCondition expression.CNFExprs, partitionNumber int, joinType logicalop.JoinType, inputRowNumber int) {
+	// leftUsed/rightUsed is nil, it means select all columns
+	if leftUsed == nil {
+		leftUsed = make([]int, 0)
+		for index := range leftTypes {
+			leftUsed = append(leftUsed, index)
+		}
+	}
+	if rightUsed == nil {
+		rightUsed = make([]int, 0)
+		for index := range rightTypes {
+			rightUsed = append(rightUsed, index)
+		}
+	}
 	buildKeyIndex, probeKeyIndex := leftKeyIndex, rightKeyIndex
 	buildKeyTypes, probeKeyTypes := leftKeyTypes, rightKeyTypes
 	buildTypes, probeTypes := leftTypes, rightTypes
@@ -255,6 +297,9 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
+	if joinType == logicalop.LeftOuterSemiJoin || joinType == logicalop.AntiLeftOuterSemiJoin {
+		resultTypes = append(resultTypes, types.NewFieldType(mysql.TypeTiny))
+	}
 
 	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, buildUsedByOtherCondition, buildUsed, needUsedFlag)
 	hashJoinCtx := &HashJoinCtxV2{
@@ -276,6 +321,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	hashJoinCtx.SetupPartitionInfo()
 	// update the partition number
 	partitionNumber = int(hashJoinCtx.partitionNumber)
+	hashJoinCtx.spillHelper = newHashJoinSpillHelper(nil, partitionNumber, nil)
 	hashJoinCtx.initHashTableContext()
 	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide)
 	buildSchema := &expression.Schema{}
@@ -296,7 +342,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	buildChunks := make([]*chunk.Chunk, 0, chunkNumber)
 	probeChunks := make([]*chunk.Chunk, 0, chunkNumber)
 	selected := make([]bool, 0, inputRowNumber)
-	for i := 0; i < inputRowNumber; i++ {
+	for i := range inputRowNumber {
 		if i%3 == 0 {
 			selected = append(selected, true)
 		} else {
@@ -304,23 +350,32 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		}
 	}
 	// check if build column can be inserted to probe column directly
-	for i := 0; i < len(buildTypes); i++ {
+	for i := range min(len(buildTypes), len(probeTypes)) {
 		buildLength := chunk.GetFixedLen(buildTypes[i])
 		probeLength := chunk.GetFixedLen(probeTypes[i])
 		require.Equal(t, buildLength, probeLength, "build type and probe type is not compatible")
 	}
-	for i := 0; i < chunkNumber; i++ {
-		buildChunks = append(buildChunks, testutil.GenRandomChunks(buildTypes, inputRowNumber))
-		probeChunk := testutil.GenRandomChunks(probeTypes, inputRowNumber*2/3)
-		// copy some build data to probe side, to make sure there is some matched rows
-		_, err := chunk.CopySelectedJoinRowsDirect(buildChunks[i], selected, probeChunk)
-		probeChunks = append(probeChunks, probeChunk)
-		require.NoError(t, err)
+	for i := range chunkNumber {
+		if len(buildTypes) >= len(probeTypes) {
+			buildChunks = append(buildChunks, testutil.GenRandomChunks(buildTypes, inputRowNumber))
+			probeChunk := testutil.GenRandomChunks(probeTypes, inputRowNumber*2/3)
+			// copy some build data to probe side, to make sure there is some matched rows
+			_, err := copySelectedRows(buildChunks[i], probeChunk, selected)
+			require.NoError(t, err)
+			probeChunks = append(probeChunks, probeChunk)
+		} else {
+			probeChunks = append(probeChunks, testutil.GenRandomChunks(probeTypes, inputRowNumber))
+			buildChunk := testutil.GenRandomChunks(buildTypes, inputRowNumber*2/3)
+			// copy some build data to probe side, to make sure there is some matched rows
+			_, err := copySelectedRows(probeChunks[i], buildChunk, selected)
+			require.NoError(t, err)
+			buildChunks = append(buildChunks, buildChunk)
+		}
 	}
 
 	if withSel {
 		sel := make([]int, 0, inputRowNumber)
-		for i := 0; i < inputRowNumber; i++ {
+		for i := range inputRowNumber {
 			if i%9 == 0 {
 				continue
 			}
@@ -338,15 +393,15 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	if !rightAsBuildSide {
 		leftChunks, rightChunks = buildChunks, probeChunks
 	}
-	for i := 0; i < chunkNumber; i++ {
+	for i := range chunkNumber {
 		err := builder.processOneChunk(buildChunks[i], hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 		require.NoError(t, err)
 	}
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	checkRowLocationAlignment(t, hashJoinCtx.hashTableContext.rowTables[0])
-	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.hashTableMeta, hashJoinCtx.partitionNumber)
+	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.partitionNumber, nil)
 	// build hash table
-	for i := 0; i < partitionNumber; i++ {
+	for i := range partitionNumber {
 		hashJoinCtx.hashTableContext.build(&buildTask{partitionIdx: i, segStartIdx: 0, segEndIdx: len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments)})
 	}
 	// probe
@@ -402,6 +457,22 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		expectedChunks := genRightOuterJoinResult(t, hashJoinCtx.SessCtx, rightFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
 			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.LeftOuterSemiJoin:
+		expectedChunks := genLeftOuterSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.SemiJoin:
+		expectedChunks := genSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.AntiSemiJoin:
+		expectedChunks := genAntiSemiJoinResult(t, hashJoinCtx.SessCtx, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.AntiLeftOuterSemiJoin:
+		expectedChunks := genLeftOuterAntiSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	default:
 		require.NoError(t, errors.New("not supported join type"))
 	}
@@ -435,14 +506,16 @@ func TestInnerJoinProbeBasic(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
 	rTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
+	rTypes = append(rTypes, retTypes...)
 	rTypes1 := []*types.FieldType{uintTp, stringTp, intTp, stringTp, tinyTp}
+	rTypes1 = append(rTypes1, rTypes1...)
 
 	rightAsBuildSide := []bool{true, false}
 	partitionNumber := 4
 
 	testCases := []testCase{
 		// normal case
-		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{0, 1, 2, 3}, nil, nil, nil},
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, nil, nil, nil, nil, nil},
 		// rightUsed is empty
 		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{}, nil, nil, nil},
 		// leftUsed is empty
@@ -518,7 +591,7 @@ func TestInnerJoinProbeAllJoinKeys(t *testing.T) {
 	partitionNumber := 4
 
 	// single key
-	for i := 0; i < len(lTypes); i++ {
+	for i := range lTypes {
 		for _, rightAsBuild := range rightAsBuildSide {
 			lKeyTypes := []*types.FieldType{lTypes[i]}
 			rKeyTypes := []*types.FieldType{rTypes[i]}
@@ -569,6 +642,7 @@ func TestInnerJoinProbeOtherCondition(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes = append(rTypes, rTypes...)
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	a := &expression.Column{Index: 1, RetType: nullableIntTp}
@@ -584,6 +658,7 @@ func TestInnerJoinProbeOtherCondition(t *testing.T) {
 		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, partitionNumber, logicalop.InnerJoin, 200)
 		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{}, []int{}, []int{1}, []int{3}, nil, nil, otherCondition, partitionNumber, logicalop.InnerJoin, 200)
 		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, partitionNumber, logicalop.InnerJoin, 200)
+		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, nil, nil, []int{1}, []int{3}, nil, nil, otherCondition, partitionNumber, logicalop.InnerJoin, 200)
 	}
 }
 
@@ -601,6 +676,7 @@ func TestInnerJoinProbeWithSel(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes = append(rTypes, rTypes...)
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	a := &expression.Column{Index: 1, RetType: nullableIntTp}
@@ -619,6 +695,7 @@ func TestInnerJoinProbeWithSel(t *testing.T) {
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, oc, partitionNumber, logicalop.InnerJoin, 500)
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{}, []int{}, []int{1}, []int{3}, nil, nil, oc, partitionNumber, logicalop.InnerJoin, 500)
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, oc, partitionNumber, logicalop.InnerJoin, 500)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, nil, nil, []int{1}, []int{3}, nil, nil, oc, partitionNumber, logicalop.InnerJoin, 500)
 		}
 	}
 }

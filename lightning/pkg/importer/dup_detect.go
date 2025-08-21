@@ -181,7 +181,6 @@ func (d *dupDetector) addKeys(ctx context.Context, detector *duplicate.Detector)
 			continue
 		}
 		for _, chunk := range ecp.Chunks {
-			chunk := chunk
 			g.Go(func() error {
 				adder, err := detector.KeyAdder(ctx)
 				if err != nil {

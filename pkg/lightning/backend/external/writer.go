@@ -19,6 +19,9 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
+	"math"
+	"math/rand"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -27,16 +30,19 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -49,12 +55,18 @@ var (
 	// this value might not be optimal.
 	// TODO need data on AWS and other machine types
 	maxUploadWorkersPerThread = 8
+	// we use hex of 0-256 as partition prefix, it might duplicate with task ID,
+	// so we add a header to it.
+	partitionHeader     = "p"
+	partitionHeaderChar = partitionHeader[0]
 
-	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
-	// if the overlap ratio is greater than this threshold, we will merge the files.
-	MergeSortOverlapThreshold int64 = 4000
-	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
-	MergeSortFileCountStep = 4000
+	// maxMergeSortOverlapThreshold is the maximum threshold of overlap between sorted kv files.
+	// if the overlap ratio is greater than this threshold, we will merge the files. Note: Use GetAdjustedMergeSortOverlapThreshold() instead.
+	maxMergeSortOverlapThreshold int64 = 4000
+	// MaxMergeSortFileCountStep is the maximum step of file count when we split the sorted kv files. Note: Use GetAdjustedMergeSortFileCountStep() instead.
+	MaxMergeSortFileCountStep = 4000
+	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
+	MergeSortMaxSubtaskTargetFiles = 16
 )
 
 const (
@@ -64,6 +76,49 @@ const (
 	DefaultBlockSize = 16 * units.MiB
 )
 
+func commonGetAdjustCount(isOverlapThreshold bool, concurrency int) int64 {
+	intest.Assert(concurrency > 0, "concurrency must be greater than 0, got %d", concurrency)
+	if concurrency <= 0 {
+		// Even though we check it use intest.Assert, it may still goto here in the prod environment with bug.
+		logutil.BgLogger().Error("concurrency is less than 0 or equal to 0, set to 1", zap.Int("concurrency", concurrency))
+		concurrency = 1
+	}
+	cnt := 250 * int64(concurrency)
+	if isOverlapThreshold {
+		cnt = min(cnt, maxMergeSortOverlapThreshold)
+	} else {
+		cnt = min(cnt, int64(MaxMergeSortFileCountStep))
+	}
+	return cnt
+}
+
+// GetAdjustedMergeSortOverlapThreshold adjusts the merge sort overlap threshold based on concurrency.
+// The bigger the threshold, the bigger the statistical bias. In CPU:Memory = 1:2 machine, if the concurrency
+// is less than 8, the memory can be used to load data is small, and may get blocked by the memory limiter.
+// So we lower the threshold here if concurrency too low.
+func GetAdjustedMergeSortOverlapThreshold(concurrency int) int64 {
+	return commonGetAdjustCount(true, concurrency)
+}
+
+// GetAdjustedMergeSortFileCountStep adjusts the merge sort file count step based on concurrency.
+func GetAdjustedMergeSortFileCountStep(concurrency int) int {
+	return int(commonGetAdjustCount(false, concurrency))
+}
+
+// GetAdjustedBlockSize gets the block size after alignment.
+func GetAdjustedBlockSize(totalBufSize uint64, defBlockSize int) int {
+	// In the case of table with many indexes, the buffer size may be much
+	// smaller than the block size, so aligning size to block size will make
+	// the memory size of each writer too large and cause OOM.
+	// So we adjust the block size when the aligned size is 1.1 times larger
+	// than memSizePerWriter to prevent OOM.
+	alignedSize := membuf.GetAlignedSize(totalBufSize, uint64(defBlockSize))
+	if float64(alignedSize)/float64(totalBufSize) > 1.1 {
+		return int(totalBufSize)
+	}
+	return defBlockSize
+}
+
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -72,6 +127,38 @@ type rangePropertiesCollector struct {
 	currProp     *rangeProperty
 	propSizeDist uint64
 	propKeysDist uint64
+}
+
+// size: the file size after adding 'data'
+func (rc *rangePropertiesCollector) onNextEncodedData(data []byte, size uint64) {
+	keyLen := binary.BigEndian.Uint64(data)
+	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
+
+	if len(rc.currProp.firstKey) == 0 {
+		rc.currProp.firstKey = key
+	}
+	rc.currProp.lastKey = key
+
+	rc.currProp.size += uint64(len(data) - 2*lengthBytes)
+	rc.currProp.keys++
+
+	if rc.currProp.size >= rc.propSizeDist ||
+		rc.currProp.keys >= rc.propKeysDist {
+		newProp := *rc.currProp
+		rc.props = append(rc.props, &newProp)
+		// reset currProp, and start to update this prop.
+		rc.currProp.firstKey = nil
+		rc.currProp.offset = size
+		rc.currProp.keys = 0
+		rc.currProp.size = 0
+	}
+}
+
+func (rc *rangePropertiesCollector) onFileEnd() {
+	if rc.currProp.keys > 0 {
+		newProp := *rc.currProp
+		rc.props = append(rc.props, &newProp)
+	}
 }
 
 func (rc *rangePropertiesCollector) reset() {
@@ -93,11 +180,16 @@ type WriterSummary struct {
 	// Min and Max are the min and max key written by this writer, both are
 	// inclusive, i.e. [Min, Max].
 	// will be empty if no key is written.
-	Min                tidbkv.Key
-	Max                tidbkv.Key
-	TotalSize          uint64
+	Min tidbkv.Key
+	Max tidbkv.Key
+	// TotalSize is the total size of the data written by this writer.
+	// depends on onDup setting, duplicates might not be included.
+	TotalSize uint64
+	// TotalCnt is the total count of the KV written by this writer.
+	// depends on onDup setting, duplicates might not be included.
 	TotalCnt           uint64
 	MultipleFilesStats []MultipleFilesStat
+	ConflictInfo       engineapi.ConflictInfo
 }
 
 // OnCloseFunc is the callback function when a writer is closed.
@@ -108,13 +200,14 @@ func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	groupOffset     int
-	memSizeLimit    uint64
-	blockSize       int
-	propSizeDist    uint64
-	propKeysDist    uint64
-	onClose         OnCloseFunc
-	keyDupeEncoding bool
+	groupOffset  int
+	memSizeLimit uint64
+	blockSize    int
+	propSizeDist uint64
+	propKeysDist uint64
+	onClose      OnCloseFunc
+	tikvCodec    tikv.Codec
+	onDup        engineapi.OnDuplicateKey
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -158,12 +251,6 @@ func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 	return b
 }
 
-// SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
-func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
-	b.keyDupeEncoding = val
-	return b
-}
-
 // SetBlockSize sets the block size of pre-allocated buf in the writer.
 func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	b.blockSize = blockSize
@@ -179,6 +266,18 @@ func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
 	return b
 }
 
+// SetTiKVCodec sets the tikv codec of the writer.
+func (b *WriterBuilder) SetTiKVCodec(codec tikv.Codec) *WriterBuilder {
+	b.tikvCodec = codec
+	return b
+}
+
+// SetOnDup sets the action when checkDup enabled and a duplicate key is found.
+func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder {
+	b.onDup = onDup
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -187,14 +286,11 @@ func (b *WriterBuilder) Build(
 	writerID string,
 ) *Writer {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{}
-	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
 	)
+	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -207,16 +303,17 @@ func (b *WriterBuilder) Build(
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
-		keyAdapter:     keyAdapter,
+		rnd:            rnd,
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
+		onDup:          b.onDup,
 		closed:         false,
-		multiFileStats: make([]MultipleFilesStat, 1),
+		multiFileStats: make([]MultipleFilesStat, 0),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		tikvCodec:      b.tikvCodec,
 	}
-	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 
 	return ret
 }
@@ -231,6 +328,8 @@ func (b *WriterBuilder) BuildOneFile(
 	filenamePrefix := filepath.Join(prefix, writerID)
 	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
 
+	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
+
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -242,9 +341,11 @@ func (b *WriterBuilder) BuildOneFile(
 		store:          store,
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
+		rnd:            rnd,
 		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
+		onDup:          b.onDup,
 	}
 	return ret
 }
@@ -328,7 +429,7 @@ type Writer struct {
 	groupOffset    int
 	currentSeq     int
 	filenamePrefix string
-	keyAdapter     common.KeyAdapter
+	rnd            *rand.Rand
 
 	rc *rangePropertiesCollector
 
@@ -339,6 +440,7 @@ type Writer struct {
 	kvSize      int64
 
 	onClose OnCloseFunc
+	onDup   engineapi.OnDuplicateKey
 	closed  bool
 
 	// Statistic information per batch.
@@ -354,18 +456,20 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+
+	tikvCodec tikv.Codec
+	// duplicate key's statistics.
+	conflictInfo engineapi.ConflictInfo
 }
 
 // WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Handle) error {
-	keyAdapter := w.keyAdapter
-
-	var rowID []byte
-	if handle != nil {
-		rowID = handle.Encoded()
+	if w.tikvCodec != nil {
+		key = w.tikvCodec.EncodeKey(key)
 	}
-	encodedKeyLen := keyAdapter.EncodedLen(key, rowID)
-	length := encodedKeyLen + len(val) + lengthBytes*2
+
+	keyLen := len(key)
+	length := keyLen + len(val) + lengthBytes*2
 	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
@@ -377,15 +481,15 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 	}
-	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
+	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(keyLen))
 	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
-	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], key, rowID)
-	copy(dataBuf[2*lengthBytes+encodedKeyLen:], val)
+	copy(dataBuf[2*lengthBytes:], key)
+	copy(dataBuf[2*lengthBytes+keyLen:], val)
 
 	w.kvLocations = append(w.kvLocations, loc)
-	w.kvSize += int64(encodedKeyLen + len(val))
+	// TODO: maybe we can unify the size calculation during write to store.
+	w.kvSize += int64(keyLen + len(val))
 	w.batchSize += uint64(length)
-	w.totalCnt += 1
 	return nil
 }
 
@@ -407,8 +511,6 @@ func (w *Writer) Close(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// remove the trailing empty MultipleFilesStat
-	w.multiFileStats = w.multiFileStats[:len(w.multiFileStats)-1]
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
@@ -426,6 +528,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: w.multiFileStats,
+		ConflictInfo:       w.conflictInfo,
 	})
 	return nil
 }
@@ -452,59 +555,99 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
+	var (
+		dupFound bool
+		dupLoc   *membuf.SliceLocation
+	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
+		if res == 0 && !dupFound {
+			dupFound = true
+			dupLoc = &i
+		}
+		return res
 	})
 	sortDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
 
-	writeStartTime := time.Now()
-	var dataFile, statFile string
-	for i := 0; i < flushKVsRetryTimes; i++ {
-		dataFile, statFile, err = w.flushSortedKVs(ctx)
-		if err == nil {
-			break
+	batchKVCnt := len(w.kvLocations)
+	var (
+		dupLocs []membuf.SliceLocation
+		dupCnt  int
+	)
+	if dupFound {
+		switch w.onDup {
+		case engineapi.OnDuplicateKeyIgnore:
+		case engineapi.OnDuplicateKeyRecord:
+			// we don't have a global view, so need to keep duplicates with duplicate
+			// count <= 2, so later we can find them.
+			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
+			w.kvSize = w.reCalculateKVSize()
+		case engineapi.OnDuplicateKeyRemove:
+			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
+			w.kvSize = w.reCalculateKVSize()
+		case engineapi.OnDuplicateKeyError:
+			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
+			dupValue := slices.Clone(w.getValueByLoc(dupLoc))
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
-		logger.Warn("flush sorted kv failed",
-			zap.Error(err),
-			zap.Int("retry-count", i),
-		)
 	}
-	if err != nil {
-		return err
+
+	writeStartTime := time.Now()
+	var dataFile, statFile, dupFile string
+	// due to current semantic of OnDuplicateKeyRecord, if len(w.kvLocations) = 0,
+	// len(dupLocs) is also 0
+	if len(w.kvLocations) > 0 {
+		for i := range flushKVsRetryTimes {
+			dataFile, statFile, dupFile, err = w.flushSortedKVs(ctx, dupLocs)
+			if err == nil || ctx.Err() != nil {
+				break
+			}
+			logger.Warn("flush sorted kv failed",
+				zap.Error(err),
+				zap.Int("retry-count", i),
+			)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	writeDuration := time.Since(writeStartTime)
-	kvCnt := len(w.kvLocations)
 	logger.Info("flush kv",
 		zap.Uint64("bytes", w.batchSize),
-		zap.Int("kv-cnt", kvCnt),
+		zap.Int("kv-cnt", batchKVCnt),
 		zap.Duration("sort-time", sortDuration),
 		zap.Duration("write-time", writeDuration),
-		zap.String("sort-speed(kv/s)", getSpeed(uint64(kvCnt), sortDuration.Seconds(), false)),
+		zap.String("sort-speed(kv/s)", getSpeed(uint64(batchKVCnt), sortDuration.Seconds(), false)),
 		zap.String("writer-id", w.writerID),
+		zap.Stringer("on-dup", w.onDup),
+		zap.Int("dup-cnt", dupCnt),
+		zap.Int("recorded-dup-cnt", len(dupLocs)),
 	)
 	totalDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(totalDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / totalDuration.Seconds())
 
-	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
-	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
-
 	// maintain 500-batch statistics
-	l := len(w.multiFileStats)
-	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
-		[2]string{dataFile, statFile},
-	)
-	w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(minKey).Clone())
-	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(maxKey).Clone())
-	if fromClose || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
-		w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
-		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
-			Filenames: make([][2]string, 0, multiFileStatNum),
+	if len(w.kvLocations) > 0 {
+		w.totalCnt += uint64(len(w.kvLocations))
+
+		minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
+		w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
+
+		w.addNewKVFile2MultiFileStats(dataFile, statFile, minKey, maxKey)
+	}
+	if fromClose && len(w.multiFileStats) > 0 {
+		w.multiFileStats[len(w.multiFileStats)-1].build(w.fileMinKeys, w.fileMaxKeys)
+	}
+
+	// maintain dup statistics
+	if len(dupLocs) > 0 {
+		w.conflictInfo.Merge(&engineapi.ConflictInfo{
+			Count: uint64(len(dupLocs)),
+			Files: []string{dupFile},
 		})
-		w.fileMinKeys = w.fileMinKeys[:0]
-		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
 
 	w.kvLocations = w.kvLocations[:0]
@@ -515,7 +658,29 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	return nil
 }
 
-func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
+func (w *Writer) addNewKVFile2MultiFileStats(dataFile, statFile string, minKey, maxKey []byte) {
+	l := len(w.multiFileStats)
+	if l == 0 || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
+		if l > 0 {
+			w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
+		}
+		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
+			Filenames: make([][2]string, 0, multiFileStatNum),
+		})
+		w.fileMinKeys = w.fileMinKeys[:0]
+		w.fileMaxKeys = w.fileMaxKeys[:0]
+
+		l = len(w.multiFileStats)
+	}
+
+	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
+		[2]string{dataFile, statFile},
+	)
+	w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(minKey).Clone())
+	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(maxKey).Clone())
+}
+
+func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocation) (string, string, string, error) {
 	logger := logutil.Logger(ctx).With(
 		zap.String("writer-id", w.writerID),
 		zap.Int("sequence-number", w.currentSeq),
@@ -523,7 +688,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 	writeStartTime := time.Now()
 	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer func() {
 		// close the writers when meet error. If no error happens, writers will
@@ -536,34 +701,39 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 		}
 	}()
 	w.rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, dataWriter, w.rc)
-	if err != nil {
-		return "", "", err
-	}
+	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
 	for _, pair := range w.kvLocations {
-		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
+		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 	}
 
-	kvStore.Close()
+	kvStore.finish()
 	encodedStat := w.rc.encode()
 	statSize := len(encodedStat)
 	_, err = statWriter.Write(ctx, encodedStat)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	err = dataWriter.Close(ctx)
 	dataWriter = nil
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	err = statWriter.Close(ctx)
 	statWriter = nil
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
+	}
+
+	var dupPath string
+	if len(dupLocs) > 0 {
+		dupPath, err = w.writeDupKVs(ctx, dupLocs)
+		if err != nil {
+			return "", "", "", err
+		}
 	}
 
 	writeDuration := time.Since(writeStartTime)
@@ -576,13 +746,55 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("write").Observe(writeDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / writeDuration.Seconds())
 
-	return dataFile, statFile, nil
+	return dataFile, statFile, dupPath, nil
 }
 
-func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
+func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation) (string, error) {
+	dupPath, dupWriter, err := w.createDupWriter(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		// close the writers when meet error. If no error happens, writers will
+		// be closed outside and assigned to nil.
+		if dupWriter != nil {
+			_ = dupWriter.Close(ctx)
+		}
+	}()
+	dupStore := NewKeyValueStore(ctx, dupWriter, nil)
+	for _, pair := range kvLocs {
+		err = dupStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
+		if err != nil {
+			return "", err
+		}
+	}
+	dupStore.finish()
+	err = dupWriter.Close(ctx)
+	dupWriter = nil
+	if err != nil {
+		return "", err
+	}
+	return dupPath, nil
+}
+
+func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+}
+
+func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes+keyLen:]
+}
+
+func (w *Writer) reCalculateKVSize() int64 {
+	s := int64(0)
+	for _, loc := range w.kvLocations {
+		s += int64(loc.Length) - 2*lengthBytes
+	}
+	return s
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
@@ -590,7 +802,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	data, stats storage.ExternalFileWriter,
 	err error,
 ) {
-	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
+	dataPath := filepath.Join(w.getPartitionedPrefix(), strconv.Itoa(w.currentSeq))
 	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
@@ -598,7 +810,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	if err != nil {
 		return "", "", nil, nil, err
 	}
-	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
+	statPath := filepath.Join(w.getPartitionedPrefix()+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
@@ -608,6 +820,48 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 		return "", "", nil, nil, err
 	}
 	return dataPath, statPath, dataWriter, statsWriter, nil
+}
+
+func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalFileWriter, error) {
+	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
+	writer, err := w.store.Create(ctx, path, &storage.WriterOption{
+		Concurrency: 20,
+		PartSize:    MinUploadPartSize,
+	})
+	return path, writer, err
+}
+
+func (w *Writer) getPartitionedPrefix() string {
+	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
+}
+
+// when importing large mount of data, during merge-sort and ingest, it's possible
+// we need to read many files in parallel, but for Object Storage like S3, it will
+// partition all object keys by prefix and each partition have its own request
+// quota. Initially, each bucket only have one partition, and the auto-partition
+// of object storage is mostly slow, so we might be throttled for some time to wait
+// S3 server do auto-partition.
+// to mitigate this issue, we design the file prefix in a way which is easy to
+// be partitioned, and let the user file a ticket to let cloud provider partition
+// by prefix manually before import large dataset.
+//
+// the rule is: generate a random byte in range [0, 256) and encode to binary
+// string, and use it as the partitioned prefix.
+func randPartitionedPrefix(prefix string, rnd *rand.Rand) string {
+	partitionPrefix := fmt.Sprintf("%s%08b", partitionHeader, rnd.Intn(math.MaxUint8+1))
+	return filepath.Join(partitionPrefix, prefix)
+}
+
+func isValidPartition(in []byte) bool {
+	if len(in) != 9 || in[0] != partitionHeaderChar {
+		return false
+	}
+	for _, c := range in[1:] {
+		if c != '0' && c != '1' {
+			return false
+		}
+	}
+	return true
 }
 
 // EngineWriter implements backend.EngineWriter interface.

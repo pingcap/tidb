@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -218,7 +219,7 @@ func notNeedGetLatestTSFromPD(plan base.Plan, inLockOrWriteStmt bool) bool {
 		if len(v.Children()) == 0 {
 			return false
 		}
-		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
+		_, isPhysicalLock := v.(*physicalop.PhysicalLock)
 		for _, p := range v.Children() {
 			if !notNeedGetLatestTSFromPD(p, isPhysicalLock || inLockOrWriteStmt) {
 				return false
@@ -258,6 +259,11 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(ctx co
 			return sessiontxn.ErrorAction(err)
 		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+		waitTime := time.Since(sessVars.StmtCtx.GetLockWaitStartTime())
+		if waitTime.Milliseconds() >= sessVars.LockWaitTimeout {
+			return sessiontxn.ErrorAction(tikverr.ErrLockWaitTimeout)
+		}
+
 		// Always update forUpdateTS by getting a new timestamp from PD.
 		// If we use the conflict commitTS as the new forUpdateTS and async commit
 		// is used, the commitTS of this transaction may exceed the max timestamp

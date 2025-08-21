@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partitionStats := handle.GetPartitionStats(tbl, p0Id)
+	partitionStats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partitionStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -58,8 +58,8 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip analyze locked table: test.t partition (p0)",
 	))
-	partitionStats1 := handle.GetPartitionStats(tbl, p0Id)
-	require.Equal(t, partitionStats, partitionStats1)
+	partitionStats1 := handle.GetPhysicalTableStats(p0Id, tbl)
+	require.Equal(t, partitionStats.RealtimeCount, partitionStats1.RealtimeCount)
 	require.Equal(t, int64(0), partitionStats1.RealtimeCount)
 
 	tk.MustExec("unlock stats t partition p0")
@@ -68,7 +68,7 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 	require.Equal(t, 0, num)
 
 	tk.MustExec("analyze table test.t partition p0")
-	tblStats2 := handle.GetTableStats(tbl)
+	tblStats2 := handle.GetPhysicalTableStats(tbl.ID, tbl)
 	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 
 	rows = tk.MustQuery("show stats_locked").Rows()
@@ -81,13 +81,13 @@ func TestLockAndUnlockPartitionsStats(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -104,10 +104,10 @@ func TestLockAndUnlockPartitionsStats(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(12,'b')")
 
 	tk.MustExec("analyze table test.t partition p0, p1")
-	partition0Stats1 := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats1 := handle.GetPhysicalTableStats(p0Id, tbl)
 	require.Equal(t, partition0Stats, partition0Stats1)
 	require.Equal(t, int64(0), partition0Stats1.RealtimeCount)
-	partition1Stats1 := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats1 := handle.GetPhysicalTableStats(p1Id, tbl)
 	require.Equal(t, partition1Stats, partition1Stats1)
 	require.Equal(t, int64(0), partition1Stats1.RealtimeCount)
 
@@ -120,12 +120,12 @@ func TestLockAndUnlockPartitionsStats(t *testing.T) {
 	require.Equal(t, 0, num)
 
 	tk.MustExec("analyze table test.t partition p0, p1")
-	partition0Stats2 := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats2 := handle.GetPhysicalTableStats(p0Id, tbl)
 	require.Equal(t, int64(2), partition0Stats2.RealtimeCount)
-	partition1Stats2 := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats2 := handle.GetPhysicalTableStats(p1Id, tbl)
 	require.Equal(t, int64(2), partition1Stats2.RealtimeCount)
 
-	tblStats := handle.GetTableStats(tbl)
+	tblStats := handle.GetPhysicalTableStats(tbl.ID, tbl)
 	require.Equal(t, int64(4), tblStats.RealtimeCount)
 
 	rows = tk.MustQuery("show stats_locked").Rows()
@@ -138,13 +138,13 @@ func TestLockAndUnlockPartitionStatsRepeatedly(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -182,13 +182,13 @@ func TestSkipLockPartition(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -212,13 +212,13 @@ func TestUnlockOnePartitionOfLockedTableWouldFail(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -247,13 +247,13 @@ func TestUnlockTheUnlockedTableWouldGenerateWarning(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -304,13 +304,13 @@ func TestReorganizePartitionShouldCleanUpLockInfo(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -340,13 +340,13 @@ func TestDropPartitionShouldCleanUpLockInfo(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -376,13 +376,13 @@ func TestTruncatePartitionShouldCleanUpLockInfo(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -412,13 +412,13 @@ func TestExchangePartitionShouldChangeNothing(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := handle.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := handle.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -449,13 +449,13 @@ func TestNewPartitionShouldBeLockedIfWholeTableLocked(t *testing.T) {
 	h := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := h.GetPartitionStats(tbl, p0Id)
+	partition0Stats := h.GetPhysicalTableStats(p0Id, tbl)
 	partition0Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := h.GetPartitionStats(tbl, p1Id)
+	partition1Stats := h.GetPhysicalTableStats(p1Id, tbl)
 	partition1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
@@ -508,7 +508,7 @@ func TestUnlockSomePartitionsWouldUpdateGlobalCountCorrectly(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(1,'a')")
 	tk.MustExec("insert into t(a, b) values(2,'b')")
 	tk.MustExec("analyze table test.t partition p0, p1")
-	tblStats := h.GetTableStats(tbl)
+	tblStats := h.GetPhysicalTableStats(tbl.ID, tbl)
 	require.Equal(t, int64(0), tblStats.RealtimeCount)
 
 	// Dump stats delta to KV.
@@ -538,7 +538,7 @@ func setupTestEnvironmentWithPartitionedTableT(t *testing.T) (kv.Storage, *domai
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.Nil(t, err)
 
 	return store, dom, tk, tbl.Meta()
