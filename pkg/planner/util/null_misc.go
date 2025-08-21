@@ -128,6 +128,9 @@ func isSimpleExpr(expr expression.Expression) bool {
 func scalarFunctionCount(expr expression.Expression) int {
 	switch e := expr.(type) {
 	case *expression.ScalarFunction:
+		if e.FuncName.L == ast.Cast {
+			return 0
+		}
 		count := 1
 		for _, arg := range e.GetArgs() {
 			count += scalarFunctionCount(arg)
