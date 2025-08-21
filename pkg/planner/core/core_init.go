@@ -69,6 +69,9 @@ func init() {
 	utilfuncp.Attach2Task4PhysicalUnionAll = attach2Task4PhysicalUnionAll
 	utilfuncp.GetPlanCostVer14PhysicalUnionAll = getPlanCostVer14PhysicalUnionAll
 	utilfuncp.GetPlanCostVer24PhysicalUnionAll = getPlanCostVer24PhysicalUnionAll
+	// for physical exchange receiver.
+	utilfuncp.GetPlanCostVer1PhysicalExchangeReceiver = getPlanCostVer1PhysicalExchangeReceiver
+	utilfuncp.GetPlanCostVer2PhysicalExchangeReceiver = getPlanCostVer2PhysicalExchangeReceiver
 	// for physical limit.
 	utilfuncp.ResolveIndices4PhysicalLimit = resolveIndices4PhysicalLimit
 	utilfuncp.Attach2Task4PhysicalLimit = attach2Task4PhysicalLimit
@@ -128,25 +131,44 @@ func init() {
 	utilfuncp.GetPlanCostVer14PhysicalApply = getPlanCostVer14PhysicalApply
 	utilfuncp.GetPlanCostVer24PhysicalApply = getPlanCostVer24PhysicalApply
 
+	// for physical index look up reader
+	utilfuncp.GetCost4PhysicalIndexLookUpReader = getCost4PhysicalIndexLookUpReader
+	utilfuncp.GetPlanCostVer14PhysicalIndexLookUpReader = getPlanCostVer14PhysicalIndexLookUpReader
+	utilfuncp.GetPlanCostVer24PhysicalIndexLookUpReader = getPlanCostVer24PhysicalIndexLookUpReader
+	utilfuncp.ResolveIndices4PhysicalIndexLookUpReader = resolveIndices4PhysicalIndexLookUpReader
+
 	// for physical window
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
 	// for physical sequence
 	utilfuncp.Attach2Task4PhysicalSequence = attach2Task4PhysicalSequence
+	// for physicalIndexScan.
+	utilfuncp.GetPlanCostVer14PhysicalIndexScan = getPlanCostVer14PhysicalIndexScan
+	utilfuncp.GetPlanCostVer24PhysicalIndexScan = getPlanCostVer24PhysicalIndexScan
 	// for physical PhysicalTableScan
 	utilfuncp.GetPlanCostVer14PhysicalTableScan = getPlanCostVer14PhysicalTableScan
 	utilfuncp.GetPlanCostVer24PhysicalTableScan = getPlanCostVer24PhysicalTableScan
+	// for physical cte
+	utilfuncp.GetPlanCostVer24PhysicalCTE = getPlanCostVer24PhysicalCTE
+	utilfuncp.Attach2Task4PhysicalCTEStorage = attach2Task4PhysicalCTEStorage
+	// for physical index reader
+	utilfuncp.GetPlanCostVer14PhysicalIndexReader = getPlanCostVer14PhysicalIndexReader
+	utilfuncp.GetPlanCostVer24PhysicalIndexReader = getPlanCostVer24PhysicalIndexReader
+	// for table reader
+	utilfuncp.GetPlanCostVer14PhysicalTableReader = getPlanCostVer14PhysicalTableReader
+	utilfuncp.GetPlanCostVer24PhysicalTableReader = getPlanCostVer24PhysicalTableReader
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
 	utilfuncp.IsSingleScan = isSingleScan
 	utilfuncp.WindowIsTopN = windowIsTopN
+	utilfuncp.LoadTableStats = loadTableStats
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost
+	utilfuncp.GetPossibleAccessPaths = getPossibleAccessPaths
 
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
-	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
@@ -172,4 +194,8 @@ func init() {
 	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
+
+	// for physical index merge reader.
+	utilfuncp.GetPlanCostVer14PhysicalIndexMergeReader = GetPlanCostVer14PhysicalIndexMergeReader
+	utilfuncp.GetPlanCostVer24PhysicalIndexMergeReader = GetPlanCostVer24PhysicalIndexMergeReader
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package rule_test
 
 import (
 	"context"
@@ -24,9 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	_ "github.com/pingcap/tidb/pkg/session" // for init of GetTxnManager in session pkg
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +83,7 @@ func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLo
 }
 
 func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
-	tblColIDs, _, _, _ := CollectColumnStatsUsage(lp)
+	tblColIDs, _, _, _ := rule.CollectColumnStatsUsage(lp)
 	cols := make([]string, 0, len(tblColIDs))
 	for tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
@@ -91,7 +94,7 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 }
 
 func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expectedCols []string, expectedParts map[string][]string, comment string) {
-	predicateCols, _, expandedPartitions, _ := CollectColumnStatsUsage(lp)
+	predicateCols, _, expandedPartitions, _ := rule.CollectColumnStatsUsage(lp)
 	loadItems := make([]model.StatsLoadItem, 0, len(predicateCols))
 	for tblColID, fullLoad := range predicateCols {
 		loadItems = append(loadItems, model.StatsLoadItem{TableItemID: tblColID, FullLoad: fullLoad})
@@ -124,25 +127,25 @@ func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, l
 func TestSkipSystemTables(t *testing.T) {
 	sql := "select * from mysql.stats_meta where a > 1"
 	res := []string{}
-	s := createPlannerSuite()
+	s := coretestsdk.CreatePlannerSuiteElems()
 	defer s.Close()
 	ctx := context.Background()
-	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	nodeW := resolve.NewNodeW(stmt)
-	err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	err = core.Preprocess(context.Background(), s.GetSCtx(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.GetIS()}))
 	require.NoError(t, err)
-	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+	builder, _ := core.NewPlanBuilder().Init(s.GetCtx(), s.GetIS(), hint.NewQBHintHandler(nil))
 	p, err := builder.Build(ctx, nodeW)
 	require.NoError(t, err)
 	lp, ok := p.(base.LogicalPlan)
 	require.True(t, ok)
 	// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 	// logical optimization while others may occur after logical optimization.
-	checkColumnStatsUsageForPredicates(t, s.is, lp, res, sql)
-	lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
+	checkColumnStatsUsageForPredicates(t, s.GetIS(), lp, res, sql)
+	lp, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag(), lp)
 	require.NoError(t, err)
-	checkColumnStatsUsageForPredicates(t, s.is, lp, res, sql)
+	checkColumnStatsUsageForPredicates(t, s.GetIS(), lp, res, sql)
 }
 
 func TestCollectPredicateColumns(t *testing.T) {
@@ -310,30 +313,30 @@ func TestCollectPredicateColumns(t *testing.T) {
 		},
 	}
 
-	s := createPlannerSuite()
+	s := coretestsdk.CreatePlannerSuiteElems()
 	defer s.Close()
 	ctx := context.Background()
 	for _, tt := range tests {
 		comment := fmt.Sprintf("sql: %s", tt.sql)
 		if len(tt.pruneMode) > 0 {
-			s.ctx.GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
+			s.GetCtx().GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
 		}
-		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		stmt, err := s.GetParser().ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		nodeW := resolve.NewNodeW(stmt)
-		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = core.Preprocess(context.Background(), s.GetSCtx(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.GetIS()}))
 		require.NoError(t, err, comment)
-		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+		builder, _ := core.NewPlanBuilder().Init(s.GetCtx(), s.GetIS(), hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
 		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
-		checkColumnStatsUsageForPredicates(t, s.is, lp, tt.res, comment)
-		lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
+		checkColumnStatsUsageForPredicates(t, s.GetIS(), lp, tt.res, comment)
+		lp, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag(), lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsageForPredicates(t, s.is, lp, tt.res, comment)
+		checkColumnStatsUsageForPredicates(t, s.GetIS(), lp, tt.res, comment)
 	}
 }
 
@@ -393,25 +396,25 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		},
 	}
 
-	s := createPlannerSuite()
+	s := coretestsdk.CreatePlannerSuiteElems()
 	defer s.Close()
 	ctx := context.Background()
 	for _, tt := range tests {
 		comment := fmt.Sprintf("sql: %s", tt.sql)
 		if len(tt.pruneMode) > 0 {
-			s.ctx.GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
+			s.GetCtx().GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
 		}
-		if s.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
-			s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = true
+		if s.GetCtx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			s.GetCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode = true
 		} else {
-			s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
+			s.GetCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 		}
-		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		stmt, err := s.GetParser().ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		nodeW := resolve.NewNodeW(stmt)
-		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = core.Preprocess(context.Background(), s.GetSCtx(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.GetIS()}))
 		require.NoError(t, err, comment)
-		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+		builder, _ := core.NewPlanBuilder().Init(s.GetCtx(), s.GetIS(), hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
 		lp, ok := p.(base.LogicalPlan)
@@ -420,8 +423,8 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.
 		// Hence, we disable JoinReOrder and PruneColumnsAgain here.
 		flags &= ^(rule.FlagJoinReOrder | rule.FlagPruneColumnsAgain)
-		lp, err = logicalOptimize(ctx, flags, lp)
+		lp, err = core.LogicalOptimizeTest(ctx, flags, lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, tt.expandedParts, comment)
+		checkColumnStatsUsageForStatsLoad(t, s.GetIS(), lp, tt.res, tt.expandedParts, comment)
 	}
 }

@@ -14,7 +14,7 @@
 
 //go:build !codes
 
-package core
+package coretestsdk
 
 import (
 	"context"

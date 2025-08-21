@@ -65,6 +65,7 @@ import (
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
@@ -264,6 +265,16 @@ func (s *Server) startHTTPServer() {
 
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
+
+	// HTTP path for ingest configurations
+	router.Handle("/ingest/max-batch-split-ranges", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxBatchSplitRanges)).Name("IngestMaxBatchSplitRanges")
+	router.Handle("/ingest/max-split-ranges-per-sec", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxSplitRangesPerSec)).Name("IngestMaxSplitRangesPerSec")
+	router.Handle("/ingest/max-ingest-inflight", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxInflight)).Name("IngestMaxInflight")
+	router.Handle("/ingest/max-ingest-per-sec", tikvhandler.NewIngestConcurrencyHandler(
+		tikvHandlerTool, tikvhandler.IngestParamMaxPerSecond)).Name("IngestMaxPerSec")
 
 	if s.cfg.Store == config.StoreTypeTiKV {
 		// HTTP path for tikv.
@@ -544,6 +555,41 @@ func (s *Server) startHTTPServer() {
 	s.startStatusServerAndRPCServer(serverMux)
 }
 
+// setupAutoIDService initializes and registers the AutoID service for TiKV stores
+func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
+	keyspaceName := config.GetGlobalKeyspaceName()
+
+	var fullPath string
+	if keyspaceName == "" {
+		fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
+	} else {
+		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+	}
+
+	store, err := store.New(fullPath)
+	if err != nil {
+		logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
+		return
+	}
+
+	ebd, ok := store.(kv.EtcdBackend)
+	if !ok {
+		return
+	}
+
+	etcdAddr, err := ebd.EtcdAddrs()
+	if err != nil {
+		logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
+		return
+	}
+
+	selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
+	service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+	logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
+	pb.RegisterAutoIDAllocServer(grpcServer, service)
+	s.autoIDService = service
+}
+
 func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	m := cmux.New(s.statusListener)
 	// Match connections in order:
@@ -555,35 +601,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == config.StoreTypeTiKV {
-		keyspaceName := config.GetGlobalKeyspaceName()
-		for {
-			var fullPath string
-			if keyspaceName == "" {
-				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
-			} else {
-				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
-			}
-			store, err := store.New(fullPath)
-			if err != nil {
-				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
-				break
-			}
-			ebd, ok := store.(kv.EtcdBackend)
-			if !ok {
-				break
-			}
-			etcdAddr, err := ebd.EtcdAddrs()
-			if err != nil {
-				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
-				break
-			}
-			selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
-			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
-			pb.RegisterAutoIDAllocServer(grpcServer, service)
-			s.autoIDService = service
-			break
-		}
+		s.setupAutoIDService(grpcServer)
 	}
 
 	s.statusServer.Store(statusServer)

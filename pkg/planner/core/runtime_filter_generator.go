@@ -65,12 +65,12 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.Physica
 		generator.generateRuntimeFilterInterval(physicalPlan)
 	case *physicalop.PhysicalTableScan:
 		generator.assignRuntimeFilter(physicalPlan)
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		generator.parentPhysicalPlan = plan
 		generator.childIdxForParentPhysicalPlan = 0
-		generator.GenerateRuntimeFilter(physicalPlan.tablePlan)
+		generator.GenerateRuntimeFilter(physicalPlan.TablePlan)
 		if physicalPlan.StoreType == kv.TiFlash {
-			physicalPlan.TablePlans = flattenPushDownPlan(physicalPlan.tablePlan)
+			physicalPlan.TablePlans = physicalop.FlattenPushDownPlan(physicalPlan.TablePlan)
 		}
 	}
 
@@ -231,7 +231,7 @@ func (generator *RuntimeFilterGenerator) calculateRFMode(buildNode *physicalop.P
 
 func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode base.PhysicalPlan, targetNode *physicalop.PhysicalTableScan) bool {
 	switch currentNode.(type) {
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		// terminal traversal
 		return false
 	case *physicalop.PhysicalTableScan:

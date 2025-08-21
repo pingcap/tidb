@@ -20,14 +20,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	disttaskStorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -153,14 +150,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	store := ddlObj.store
 	sessPool := ddlObj.sessPool
 	taskKS := s.task.Keyspace
-	// Although taskKS != config.GetGlobalKeyspaceName() implies running on the system keyspace,
-	// we still check kernel type explicitly to avoid unexpected executions.
-	if keyspace.IsRunningOnSystem() && taskKS != config.GetGlobalKeyspaceName() {
-		taskMgr, err := disttaskStorage.GetTaskManager()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+	if ddlObj.store.GetKeyspace() != taskKS {
+		var err error
+		err = s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
 			svr := se.GetSQLServer()
 			store, err = svr.GetKSStore(taskKS)
 			if err != nil {

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -174,7 +173,7 @@ func getUserStoreAndTable(
 	job *model.Job,
 ) (kv.Storage, table.Table, error) {
 	store := schrStore
-	if taskKeyspace != tidbconfig.GetGlobalKeyspaceName() {
+	if taskKeyspace != d.store.GetKeyspace() {
 		taskMgr, err := diststorage.GetTaskManager()
 		if err != nil {
 			return nil, nil, errors.Trace(err)

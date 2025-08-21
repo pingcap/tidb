@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -243,7 +244,7 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 			"*collate", ".IdxCols", ".OutputColumns", ".EqualConditions", ".OuterHashKeys", ".InnerHashKeys",
 			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".PhysicalSchemaProducer.schema",
 			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".SimpleSchemaProducer.schema",
-			".pkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
+			".PkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
 	})
 	if isDML {
 		tk2.MustExecWithContext(ctx, exec2)
@@ -288,7 +289,7 @@ func TestCheckPlanClone(t *testing.T) {
 	// same sctx
 	l1.TblID2Handle[1] = nil
 	l2.TblID2Handle[1] = nil
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)
