@@ -1034,7 +1034,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
 
-	client, err := importer.GetEtcdClient()
+	client, err := importer.GetEtcdClient(s.store)
 	s.NoError(err)
 	s.T().Cleanup(func() {
 		_ = client.Close()
@@ -1052,7 +1052,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 			s.ErrorContains(err, "there is active job on the target table already")
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
-				resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+				resp, err2 := client.Get(context.Background(), etcdKey)
 				s.NoError(err2)
 				return len(resp.Kvs) == 1
 			}, maxWaitTime, 300*time.Millisecond)
@@ -1069,7 +1069,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 
 	// the task should be unregistered
-	resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+	resp, err2 := client.Get(context.Background(), etcdKey)
 	s.NoError(err2)
 	s.Len(resp.Kvs, 0)
 }

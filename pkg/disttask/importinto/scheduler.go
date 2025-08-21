@@ -38,11 +38,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -58,13 +59,14 @@ const (
 var NewTaskRegisterWithTTL = utils.NewTaskRegisterWithTTL
 
 type taskInfo struct {
+	store  kv.Storage
 	taskID int64
 
 	// operation on taskInfo is run inside detect-task goroutine, so no need to synchronize.
 	lastRegisterTime time.Time
 
 	// initialized lazily in register()
-	etcdClient   *etcd.Client
+	etcdClient   *clientv3.Client
 	taskRegister utils.TaskRegister
 }
 
@@ -78,13 +80,13 @@ func (t *taskInfo) register(ctx context.Context) {
 	}
 	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister == nil {
-		client, err := importer.GetEtcdClient()
+		client, err := store.NewEtcdCli(t.store)
 		if err != nil {
 			logger.Warn("get etcd client failed", zap.Error(err))
 			return
 		}
 		t.etcdClient = client
-		t.taskRegister = NewTaskRegisterWithTTL(client.GetClient(), registerTaskTTL,
+		t.taskRegister = NewTaskRegisterWithTTL(client, registerTaskTTL,
 			utils.RegisterImportInto, strconv.FormatInt(t.taskID, 10))
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
@@ -256,7 +258,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
