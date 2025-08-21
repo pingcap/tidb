@@ -1106,7 +1106,7 @@ func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bo
 	return false
 }
 
-// getAllDataSourceSchema is to get all datasource's
+// getAllDataSourceSchema is to get all datasource's schema
 func getAllDataSourceSchema(plan base.LogicalPlan) []*expression.Schema {
 	switch p := plan.(type) {
 	case *LogicalAggregation:
