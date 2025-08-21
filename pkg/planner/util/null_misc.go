@@ -74,6 +74,9 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	if expression.ContainOuterNot(predicate) {
 		return false
 	}
+	if notIsNull(predicate) {
+		return true
+	}
 	if !isSimpleExpr(predicate) {
 		return false
 	}
@@ -100,6 +103,21 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	default:
 		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
 	}
+}
+
+func notIsNull(expr expression.Expression) bool {
+	switch e := expr.(type) {
+	case *expression.ScalarFunction:
+		if e.FuncName.L == ast.UnaryNot {
+			if ee, ok := e.GetArgs()[0].(*expression.ScalarFunction); ok {
+				if ee.FuncName.L == ast.IsNull {
+					return true
+				}
+			}
+		}
+	default:
+	}
+	return false
 }
 
 // isSimpleExpr is to determine whether an expression is simple (`isSimpleExpr`),
@@ -129,6 +147,9 @@ func scalarFunctionCount(expr expression.Expression) int {
 	switch e := expr.(type) {
 	case *expression.ScalarFunction:
 		if e.FuncName.L == ast.Cast {
+			// Casts generally return specific values,
+			// which have no impact on is-null-rejected,
+			// so it returns 0.
 			return 0
 		}
 		count := 1
