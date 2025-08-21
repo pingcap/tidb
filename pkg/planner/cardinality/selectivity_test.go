@@ -329,7 +329,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	// Test a specific range first - range [300, 500) should be affected by deletion
 	count, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(300, 500), statsTblAfterDelete.RealtimeCount, 1000, false)
 	require.NoError(t, err)
-	// After deletion, this range should estimate 0 rows since all data in [300, 500) was deleted
+	// After deletion, this range should estimate approximately 1 value since all data in [300, 500) was deleted
 	require.Truef(t, count < 20, "expected: less than 20, got: %v", count)
 
 	// Use the table row count after deletion (2000)
