@@ -99,15 +99,14 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	}
 }
 
-func notIsNullCanNullRejected(ctx expression.BuildContext, expr expression.Expression, innerSchema *expression.Schema) bool {
+func notIsNullCanNullRejected(ctx expression.BuildContext,
+	expr expression.Expression, innerSchema *expression.Schema) bool {
 	switch e := expr.(type) {
 	case *expression.ScalarFunction:
 		if e.FuncName.L == ast.UnaryNot {
 			if ee, ok := e.GetArgs()[0].(*expression.ScalarFunction); ok {
 				if ee.FuncName.L == ast.IsNull {
-					if !expression.ExprReferenceSchema(ee, innerSchema) && !allConstants(ctx, ee) {
-						return false
-					}
+					return expression.ExprReferenceSchema(ee, innerSchema) || allConstants(ctx, ee)
 				}
 			}
 		}
