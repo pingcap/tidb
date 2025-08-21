@@ -4120,12 +4120,7 @@ func (s *session) decideTxnMode(stmt ast.StmtNode) string {
 		return s.sessionVars.TxnMode
 	}
 
-	// When no statement is provided, use session's default transaction mode
-	if stmt == nil {
-		return s.sessionVars.TxnMode
-	}
-
-	if s.shouldUsePessimisticAutoCommit(stmt) {
+	if stmt != nil && s.shouldUsePessimisticAutoCommit(stmt) {
 		return ast.Pessimistic
 	}
 
