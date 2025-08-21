@@ -291,7 +291,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 			}
 			assert = inactiveOptimisticTxnAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "")
-			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()

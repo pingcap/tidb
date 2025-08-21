@@ -2564,7 +2564,7 @@ func TestPessimisticAutoCommitStatementTypes(t *testing.T) {
 	checkTxnMode("DELETE FROM t WHERE id = 2", true, "DELETE with pessimistic-auto-commit enabled")
 
 	// Non-DML statements should still use optimistic mode
-	checkTxnMode("SELECT * FROM t", false, "SELECT with pessimistic-auto-commit enabled")
+	checkTxnMode("SELECT * FROM t FOR UPDATE", false, "SELECT with pessimistic-auto-commit enabled")
 
 	// EXPLAIN statements use the mode that the underlying statement would use
 	// This ensures EXPLAIN shows the correct plan that would be generated for execution
@@ -2591,17 +2591,6 @@ func TestPessimisticAutoCommitStatementTypes(t *testing.T) {
 	// EXECUTE with SELECT should use optimistic mode
 	tk.MustExec("SET @id4 = 1")
 	checkTxnMode("EXECUTE select_stmt USING @id4", false, "EXECUTE SELECT with pessimistic-auto-commit enabled")
-
-	// Test statements that should be excluded from pessimistic-auto-commit
-	// LOAD DATA should not use pessimistic mode (even though it's DML)
-	tk.MustExec("CREATE TABLE load_test (id int, val int)")
-	// Note: We can't easily test LOAD DATA in this context, but the logic should exclude it
-
-	// Clean up prepared statements
-	tk.MustExec("DEALLOCATE PREPARE insert_stmt")
-	tk.MustExec("DEALLOCATE PREPARE update_stmt")
-	tk.MustExec("DEALLOCATE PREPARE delete_stmt")
-	tk.MustExec("DEALLOCATE PREPARE select_stmt")
 }
 
 func TestPessimisticLockOnPartition(t *testing.T) {

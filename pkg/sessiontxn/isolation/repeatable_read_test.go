@@ -231,7 +231,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 		tk.MustExec("set @@autocommit=0")
 		assert = inactivePessimisticRRAssert(se)
 		assertAfterActive := activePessimisticRRAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 		provider := assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err := provider.GetStmtReadTS()
@@ -244,7 +244,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
 		assert = inactivePessimisticRRAssert(se)
 		assertAfterActive = activePessimisticRRAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 		provider = assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err = provider.GetStmtReadTS()
@@ -333,9 +333,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 			}
 			assert = inactivePessimisticRRAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "REPEATABLE-READ")
-			// simulate that the session is in an insert statement, so pessimistic-auto-commit can take effect
-			se.GetSessionVars().StmtCtx.InInsertStmt = true
-			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
@@ -677,7 +675,7 @@ func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit, active 
 
 	tk.MustExec("set @@autocommit=0")
 	assert := inactivePessimisticRRAssert(tk.Session())
-	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 	return assert.CheckAndGetProvider(t)
 }
 

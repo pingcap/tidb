@@ -336,7 +336,7 @@ func TestRCProviderInitialize(t *testing.T) {
 		tk.MustExec("set @@autocommit=0")
 		assert = inactiveRCTxnAssert(se)
 		assertAfterActive := activeRCTxnAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 		provider := assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err := provider.GetStmtReadTS()
@@ -349,7 +349,7 @@ func TestRCProviderInitialize(t *testing.T) {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
 		assert = inactiveRCTxnAssert(se)
 		assertAfterActive = activeRCTxnAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 		provider = assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err = provider.GetStmtReadTS()
@@ -443,9 +443,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 			}
 			assert = inactiveRCTxnAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "READ-COMMITTED")
-			// simulate that the session is in an insert statement, so pessimistic-auto-commit can take effect
-			se.GetSessionVars().StmtCtx.InInsertStmt = true
-			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
