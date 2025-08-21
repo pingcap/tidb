@@ -1081,7 +1081,7 @@ func (p *LogicalJoin) AppendJoinConds(eq []*expression.ScalarFunction, left, rig
 	p.OtherConditions = append(other, p.OtherConditions...)
 }
 
-func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cols []int64) bool {
+func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cols map[int64]*expression.Column) bool {
 	return isAllUniqueIDInTheSameTable(p, cols)
 }
 
@@ -1292,7 +1292,7 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 	}
 	// When the expression is a left/right condition, we want it to filter more of the underlying data.
 	if len(leftCond) > 0 || len(rightCond) > 0 {
-		colset := expression.ExtractColumnsUniqueIDFromExpressions(cond)
+		colset := expression.ExtractColumnsMapFromExpressions(nil, cond)
 		if len(colset) <= 1 {
 			// If it's a single-column function, there is also a point in pushing it down.
 			// like cast(col1)
