@@ -2467,7 +2467,7 @@ func TestForeignKeyLargeTxnErr(t *testing.T) {
 
 func TestForeignKeyAndLockView(t *testing.T) {
 	if kerneltype.TestIsNextGen() {
-		t.Skip("The retry of foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
 	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

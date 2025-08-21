@@ -2368,7 +2368,7 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 
 func TestAsyncCommitAndForeignKey(t *testing.T) {
 	if kerneltype.TestIsNextGen() {
-		t.Skip("The retry of foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
 	}
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
