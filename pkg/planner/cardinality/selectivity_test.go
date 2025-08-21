@@ -341,7 +341,7 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, key idx(a))")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@session.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	for i := 1; i <= 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
@@ -394,7 +394,7 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, index idxa(a), index idxca(c,a))")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@session.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
 	testKit.MustExec("analyze table t")
@@ -423,7 +423,7 @@ func TestIssue57948(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@session.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
 	testKit.MustExec("analyze table t")
@@ -442,7 +442,7 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 	testKit.MustExec("drop table if exists t2")
 	testKit.MustExec("create table t(a int)")
 	testKit.MustExec("create table t2(a int, index idxa(a))")
-	testKit.MustExec("set @@session.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("insert into t select mod(a,250) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
 	testKit.MustExec("insert into t2 select mod(a,250) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
 	testKit.MustExec("analyze table t all columns")
@@ -1751,7 +1751,7 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, key idx(a))")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@session.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	for i := 1; i <= 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
@@ -1800,7 +1800,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, index idx(a))")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("set @@session.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 
 	// Insert initial data with a clear distribution
 	// Values 1-10 each appear 100 times (1000 rows)
