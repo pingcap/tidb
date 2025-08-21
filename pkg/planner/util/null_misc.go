@@ -70,6 +70,9 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 // IsNullRejected(A AND B) = IsNullRejected(A) OR IsNullRejected(B)
 func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
 	skipPlanCacheCheck bool) bool {
+	if notIsNull(predicate) {
+		return true
+	}
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	if expression.ContainOuterNot(predicate) {
 		return false
@@ -94,6 +97,21 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	default:
 		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
 	}
+}
+
+func notIsNull(expr expression.Expression) bool {
+	switch e := expr.(type) {
+	case *expression.ScalarFunction:
+		if e.FuncName.L == ast.UnaryNot {
+			if ee, ok := e.GetArgs()[0].(*expression.ScalarFunction); ok {
+				if ee.FuncName.L == ast.IsNull {
+					return true
+				}
+			}
+		}
+	default:
+	}
+	return false
 }
 
 // isNullRejectedSimpleExpr check whether a condition is null-rejected
