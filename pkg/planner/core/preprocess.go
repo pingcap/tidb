@@ -252,6 +252,70 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
+// extractTableName extracts the db name from the ast.Node for checking database read only.
+func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0, 1)
+	switch node := in.(type) {
+	case *ast.CreateTableStmt:
+		if node.TemporaryKeyword == ast.TemporaryNone {
+			dbNames = append(dbNames, node.Table.Schema)
+		}
+	case *ast.CreateViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.DropTableStmt:
+		for _, tbl := range node.Tables {
+			table, err := p.tableByName(tbl)
+			if err == nil && table.Meta().TempTableType == model.TempTableNone {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.RenameTableStmt:
+		for _, tbl := range node.TableToTables {
+			dbNames = append(dbNames, tbl.OldTable.Schema)
+			dbNames = append(dbNames, tbl.NewTable.Schema)
+		}
+	case *ast.AlterDatabaseStmt:
+		for _, opt := range node.Options {
+			if opt.Tp != ast.DatabaseOptionReadOnly {
+				dbNames = append(dbNames, node.Name)
+			}
+		}
+	case *ast.DropDatabaseStmt:
+		dbNames = append(dbNames, node.Name)
+	case *ast.CreateIndexStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AlterTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.ImportIntoStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.TruncateTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.DropIndexStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.LoadDataStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	}
+	return dbNames
+}
+
+func (p *preprocessor) checkSchemaReadOnlyInStmt(in ast.Node) {
+	dbNames := p.extractSchema(in)
+	for _, dbName := range dbNames {
+		p.checkSchemaReadOnly(dbName)
+	}
+}
+
+func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
+	if p.err != nil {
+		return
+	}
+
+	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
+	if exists && dbInfo.ReadOnly {
+		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
+	}
+}
+
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
@@ -701,6 +765,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
 	}
+
+	p.checkSchemaReadOnlyInStmt(in)
 
 	return in, p.err == nil
 }
