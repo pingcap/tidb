@@ -140,6 +140,10 @@ var (
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone prometheus.Counter
 )
 
+func init() {
+	InitMetricsVars()
+}
+
 // InitMetricsVars init executor metrics vars.
 func InitMetricsVars() {
 	TotalQueryProcHistogramGeneral = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)

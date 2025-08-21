@@ -19,15 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/stretchr/testify/require"
 )
-
-func init() {
-	metrics.InitMetricsVars()
-}
 
 type IdleCoordinator struct {
 }
