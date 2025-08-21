@@ -64,7 +64,10 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":br_lib"],
     flaky = True,
+    shard_count = 5,
     deps = [
+        "//br/pkg/storage",
+        "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

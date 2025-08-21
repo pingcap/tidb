@@ -973,7 +973,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer printRestoreMetrics()
 
 	// build restore registry
-	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	restoreRegistry, err := registry.NewRestoreRegistry(c, g, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}

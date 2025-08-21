@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -195,10 +197,12 @@ type Registry struct {
 	heartbeatManager *HeartbeatManager
 
 	waitIDs []uint64
+
+	tableExists bool
 }
 
 // NewRestoreRegistry creates a new registry using TiDB's session
-func NewRestoreRegistry(g glue.Glue, dom *domain.Domain) (*Registry, error) {
+func NewRestoreRegistry(ctx context.Context, g glue.Glue, dom *domain.Domain) (*Registry, error) {
 	se, err := g.CreateSession(dom.Store())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -207,10 +211,18 @@ func NewRestoreRegistry(g glue.Glue, dom *domain.Domain) (*Registry, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	tableExists := true
+	_, err = dom.InfoSchema().TableByName(ctx, ast.NewCIStr(RestoreRegistryDBName), ast.NewCIStr(RestoreRegistryTableName))
+	if err != nil {
+		if !infoschema.ErrTableNotExists.Equal(err) {
+			return nil, errors.Trace(err)
+		}
+		tableExists = false
+	}
 	return &Registry{
 		se:               se,
 		heartbeatSession: heartbeatSession,
+		tableExists:      tableExists,
 	}, nil
 }
 
@@ -843,6 +855,9 @@ func (r *Registry) transitionStaleTaskToPaused(ctx context.Context, taskID uint6
 
 // OperationAfterWaitIDs do the specified operations until the resetting tasks is removed
 func (r *Registry) OperationAfterWaitIDs(ctx context.Context, fn func() error) error {
+	if !r.tableExists {
+		return fn()
+	}
 	retryCount := 0
 	for ids := range slices.Chunk(r.waitIDs, 10) {
 		idStrs := make([]string, 0, len(ids))
@@ -881,6 +896,9 @@ func (r *Registry) OperationAfterWaitIDs(ctx context.Context, fn func() error) e
 // status for the task
 func (r *Registry) GlobalOperationAfterSetResettingStatus(ctx context.Context,
 	restoreID uint64, fn func() error) error {
+	if !r.tableExists {
+		return fn()
+	}
 	updateSQL := fmt.Sprintf(updateStatusSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	if err := r.se.ExecuteInternal(ctx, updateSQL, TaskStatusResetting, restoreID, TaskStatusRunning); err != nil {
 		return errors.Annotatef(err, "failed to conditionally update task status from %s to %s",
