@@ -8,6 +8,11 @@ import (
 	"syscall"
 
 	"github.com/pingcap/log"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config"
+>>>>>>> ec36da2bfc2 (br: prevent br from becoming ddl owner (#63090))
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -44,6 +49,9 @@ func main() {
 	}
 	AddFlags(rootCmd)
 	SetDefaultContext(ctx)
+
+	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
+
 	rootCmd.AddCommand(
 		NewDebugCommand(),
 		NewBackupCommand(),
