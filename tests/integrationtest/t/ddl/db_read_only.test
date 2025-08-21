@@ -142,3 +142,79 @@ alter table t compact tiflash replica;
 # finish test
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 0;
+
+
+### DML can't be executed in read-only mode
+drop database if exists db1;
+create database db1;
+use db1;
+create table t1(id int primary key, a int);
+create table t2(id int, a int);
+create table t3(a int);
+drop database if exists db2;
+create database db2;
+use db2;
+create table t1(id int primary key, a int);
+create table t2(id int, a int);
+create table t3(a int);
+
+alter schema db1 read only 1;
+use db1;
+
+# insert
+insert into t1 values(1);
+insert into t1 select * from t2;
+insert into t1 table t2;
+insert into t1 set a=1;
+insert into t1 (a) set a=1;
+
+# replace
+replace into t1 values (1 || 2)
+replace into t1 table t2
+replace t1 set a = default;
+
+# delete
+delete from t1;
+delete t1, t2 from t1, t2;
+delete db1.t1, db2.t2 from db1.t1, db2.t2;
+delete t1,t2,t3 from t1, t2, t3 where t3.a < 5 and t1.a = 3;
+delete t2 from t1, t2;
+delete db2.t2 from db1.t1, db2.t2;
+delete db1.t1 from db1.t1, db2.t2;
+delete t1 from t1, t1 as t2 where t1.b = t2.b and t1.a > t2.a;
+delete from t1,t2,t3 using t1,t2,t3 where t3.a = 1;
+delete from t2,t3 using t1,t2,t3 where t1.a = 1;
+with cte as (select * from t1) delete from t2 where t2.a in (select a from cte);
+
+# update
+update t1 set a = a + 1;
+update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
+update t1 join t2 set t1.a=1 where t1.b=t2.b;
+analyze table t1 update histogram on t1.a; -- success
+with cte as (select * from t1) update t2 set a = 1 where t2.a in (select a from cte);
+
+# modify columns with foreign key
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete restrict;
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update restrict;
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete cascade;
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update cascade;
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete set null;
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update set null;
+
+# for update / for share + tidb_enable_shared_lock_promotion
+select * from t for update;
+select * from t for update OF t WAIT 5;
+select * from t1 join t2 on t1.a= t2.a for update;
+select t1.a from t1 join t2 on t1.a= t2.a for update;
+table t for update;
+set @@session.tidb_enable_shared_lock_promotion = 1;
+select * from t for share;
+select * from t for share OF t WAIT 5;
+select * from t1 join t2 on t1.a= t2.a for share;
+select t1.a from t1 join t2 on t1.a= t2.a for share;
+table t1 for share;
+
+# select should be ok
+select * from t;
+select * from t1 join t2 on t1.a= t2.a;
+table t;
