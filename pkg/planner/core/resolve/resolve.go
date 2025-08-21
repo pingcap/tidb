@@ -88,3 +88,8 @@ func (c *Context) AddTableName(tableNameW *TableNameW) {
 func (c *Context) GetTableName(tableName *ast.TableName) *TableNameW {
 	return c.tableNames[tableName]
 }
+
+// GetTableNames returns the inner map contain all TableNameW in the Context in pre-process phase.
+func (c *Context) GetTableNames() map[*ast.TableName]*TableNameW {
+	return c.tableNames
+}
