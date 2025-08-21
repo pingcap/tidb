@@ -90,7 +90,7 @@ type CheckTable struct {
 	DBName             string
 	Table              table.Table
 	IndexInfos         []*model.IndexInfo
-	IndexLookUpReaders []*PhysicalIndexLookUpReader
+	IndexLookUpReaders []*physicalop.PhysicalIndexLookUpReader
 	CheckIndex         bool
 }
 
@@ -1350,7 +1350,7 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 		for i, op := range ops {
 			operators[i].BriefName = op.ExplainID().String()
 			switch op.Origin.(type) {
-			case *physicalop.PhysicalTableReader, *PhysicalIndexReader, *physicalop.PhysicalHashJoin,
+			case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader, *physicalop.PhysicalHashJoin,
 				*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalMergeJoin:
 				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
 			}
@@ -1496,22 +1496,22 @@ func (e *Explain) prepareTaskDot(pa *pair, taskTp string, buffer *bytes.Buffer) 
 		case *physicalop.PhysicalTableReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
 			copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan})
-		case *PhysicalIndexReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
-		case *PhysicalIndexLookUpReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
-		case *PhysicalIndexMergeReader:
-			for i := range copPlan.partialPlans {
-				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
-				copTasks = append(copTasks, &pair{physicalPlan: copPlan.partialPlans[i]})
+		case *physicalop.PhysicalIndexReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.IndexPlan.ExplainID()))
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.IndexPlan})
+		case *physicalop.PhysicalIndexLookUpReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.IndexPlan.ExplainID()))
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan, isChildOfINL: true})
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.IndexPlan})
+		case *physicalop.PhysicalIndexMergeReader:
+			for i := range copPlan.PartialPlansRaw {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.PartialPlansRaw[i].ExplainID()))
+				copTasks = append(copTasks, &pair{physicalPlan: copPlan.PartialPlansRaw[i]})
 			}
-			if copPlan.tablePlan != nil {
-				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-				copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
+			if copPlan.TablePlan != nil {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+				copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan, isChildOfINL: true})
 			}
 		}
 		for _, child := range curPair.physicalPlan.Children() {
@@ -1546,7 +1546,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 
 	switch v := p.(type) {
-	case *PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(vars.StmtCtx.TypeCtx())
 	case *physicalop.PhysicalTableReader:
