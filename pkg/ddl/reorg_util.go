@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -39,7 +40,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx sessionctx.Context) error {
+func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl table.Table, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
 
 	//nolint:forbidigo
@@ -77,7 +78,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 	var tableSizeInBytes int64
 	var cpuNum int
 	if setReorgParam || setDistTaskParam {
-		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), job.TableID)
+		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), tbl)
 		var err error
 		cpuNum, err = scheduler.GetExecCPUNode(ctx)
 		if err != nil {
@@ -145,7 +146,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 	return nil
 }
 
-func getTableSizeByID(ctx context.Context, store kv.Storage, tblID int64) int64 {
+func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) int64 {
 	helperStore, ok := store.(helper.Storage)
 	if !ok {
 		logutil.DDLLogger().Warn("store does not implement helper.Storage interface",
@@ -156,25 +157,37 @@ func getTableSizeByID(ctx context.Context, store kv.Storage, tblID int64) int64 
 	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
 		logutil.DDLLogger().Warn("failed to get PD HTTP client for calculating table size",
-			zap.Int64("tableID", tblID),
+			zap.Int64("tableID", tbl.Meta().ID),
 			zap.Error(err))
 		return 0
 	}
-	totalSize, err := estimateTableSizeByID(ctx, pdCli, tblID)
-	if err != nil {
-		logutil.DDLLogger().Warn("failed to estimate table size for calculating concurrency",
-			zap.Int64("tableID", tblID),
-			zap.Error(err))
-	}
-	if totalSize == 0 {
-		regionStats, err := h.GetPDRegionStats(ctx, tblID, false)
-		if err != nil {
-			logutil.DDLLogger().Warn("failed to get region stats for calculating concurrency",
-				zap.Int64("tableID", tblID),
-				zap.Error(err))
-			return 0
+	var pids []int64
+	if tbl.Meta().Partition != nil {
+		for _, def := range tbl.Meta().Partition.Definitions {
+			pids = append(pids, def.ID)
 		}
-		return regionStats.StorageSize * units.MiB
+	} else {
+		pids = []int64{tbl.Meta().ID}
+	}
+	var totalSize int64
+	for _, pid := range pids {
+		size, err := estimateTableSizeByID(ctx, pdCli, pid)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to estimate table size for calculating concurrency",
+				zap.Int64("physicalID", pid),
+				zap.Error(err))
+		}
+		if size == 0 {
+			regionStats, err := h.GetPDRegionStats(ctx, pid, false)
+			if err != nil {
+				logutil.DDLLogger().Warn("failed to get region stats for calculating concurrency",
+					zap.Int64("physicalID", pid),
+					zap.Error(err))
+				return 0
+			}
+			totalSize += regionStats.StorageSize * units.MiB
+		}
+		totalSize += size
 	}
 	return totalSize
 }
