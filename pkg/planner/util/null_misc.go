@@ -74,25 +74,67 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	if expression.ContainOuterNot(predicate) {
 		return false
 	}
-
+	if !isSimpleExpr(predicate) {
+		return false
+	}
 	switch expr := predicate.(type) {
 	case *expression.ScalarFunction:
-		if expr.FuncName.L == ast.LogicAnd {
+		switch expr.FuncName.L {
+		case ast.Case:
+			panic("we find it")
+		case ast.LogicAnd:
 			if IsNullRejected(ctx, innerSchema, expr.GetArgs()[0], skipPlanCacheCheck) {
 				return true
 			}
 			return IsNullRejected(ctx, innerSchema, expr.GetArgs()[1], skipPlanCacheCheck)
-		} else if expr.FuncName.L == ast.LogicOr {
+		case ast.LogicOr:
 			if !(IsNullRejected(ctx, innerSchema, expr.GetArgs()[0], skipPlanCacheCheck)) {
 				return false
 			}
 			return IsNullRejected(ctx, innerSchema, expr.GetArgs()[1], skipPlanCacheCheck)
-		} else if expr.FuncName.L == ast.In {
+		case ast.In:
 			return isNullRejectedInList(ctx, expr, innerSchema, skipPlanCacheCheck)
+		default:
+			return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
 		}
-		return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
 	default:
 		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
+	}
+}
+
+// isSimpleExpr is to determine whether an expression is simple (`isSimpleExpr`),
+// and only if it is simple, then you can use `isNullRejectedSimpleExpr`.
+func isSimpleExpr(expr expression.Expression) bool {
+	switch e := expr.(type) {
+	case *expression.ScalarFunction:
+		switch e.FuncName.L {
+		case ast.LogicAnd, ast.LogicOr, ast.In:
+			for _, arg := range e.GetArgs() {
+				if !isSimpleExpr(arg) {
+					return false
+				}
+			}
+		default:
+			if scalarFunctionCount(e) > 1 {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+func scalarFunctionCount(expr expression.Expression) int {
+	switch e := expr.(type) {
+	case *expression.ScalarFunction:
+		count := 1
+		for _, arg := range e.GetArgs() {
+			count += scalarFunctionCount(arg)
+		}
+		return count
+	default:
+		return 0
 	}
 }
 
