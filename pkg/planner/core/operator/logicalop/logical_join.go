@@ -1302,10 +1302,6 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 		if p.isAllUniqueIDInTheSameTable(colset) {
 			return true
 		}
-		// This expression only use bool function. there is also a point in pushing it down.
-		if expression.IsAllBooleanFunctionExpr(cond) {
-			return true
-		}
 		return false
 	}
 	return true

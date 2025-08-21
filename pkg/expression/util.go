@@ -1435,25 +1435,6 @@ func IsRuntimeConstExpr(expr Expression) bool {
 	return false
 }
 
-// IsAllBooleanFunctionExpr is to judge whether the expression only uses the boolean functions.
-func IsAllBooleanFunctionExpr(expr Expression) bool {
-	switch x := expr.(type) {
-	case *ScalarFunction:
-		if _, ok := booleanFunctions[x.FuncName.L]; !ok {
-			return false
-		}
-		for _, arg := range x.GetArgs() {
-			if !IsAllBooleanFunctionExpr(arg) {
-				return false
-			}
-		}
-		return true
-	case *Column, *Constant, *CorrelatedColumn:
-		return true
-	}
-	return false
-}
-
 // CheckNonDeterministic checks whether the current expression contains a non-deterministic func.
 func CheckNonDeterministic(e Expression) bool {
 	switch x := e.(type) {
