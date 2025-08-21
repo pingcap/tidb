@@ -81,13 +81,13 @@ func TestContextCancelWhenReadFromCopIterator(t *testing.T) {
 }
 
 func TestSlowLogRuleFieldsConsistency(t *testing.T) {
-	require.Equal(t, len(variable.SlowLogRuleFields), len(executor.SlowLogRuleFieldAccessors),
-		"SlowLogRuleFields and SlowLogRuleFieldAccessors should have the same number of keys")
+	require.Equal(t, len(variable.SlowLogFieldValParsers), len(executor.SlowLogRuleFieldAccessors),
+		"SlowLogFieldValParsers and SlowLogRuleFieldAccessors should have the same number of keys")
 
 	// check every field exists in accessors
-	for field := range variable.SlowLogRuleFields {
+	for field := range variable.SlowLogFieldValParsers {
 		_, ok := executor.SlowLogRuleFieldAccessors[field]
-		require.Truef(t, ok, "field %s exists in SlowLogRuleFields but missing in SlowLogRuleFieldAccessors", field)
+		require.Truef(t, ok, "field %s exists in SlowLogFieldValParsers but missing in SlowLogRuleFieldAccessors", field)
 	}
 }
 
@@ -118,43 +118,48 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 		},
 	}
 	ctx.GetSessionVars().StmtCtx.MergeCopExecDetails(&copExec, 0)
-	stmtExec := ctx.Value(*util.ExecDetailsKey)
-	stmtExec = &util.ExecDetails{
+	tikvExecDetail := &util.ExecDetails{
 		WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
 		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
 		BackoffDuration:    (12 * time.Second).Nanoseconds(),
 	}
+	goCtx := context.WithValue(ctx.GoCtx(), util.ExecDetailsKey, tikvExecDetail)
 
 	// only require a subset of fields
 	sessVars.SlowLogRules = &variable.SlowLogRules{
 		AllConditionFields: map[string]struct{}{
 			variable.SlowLogConnIDStr:  {},
 			variable.SlowLogDBStr:      {},
+			variable.SlowLogSucc:       {},
 			execdetails.ProcessTimeStr: {},
 		},
 	}
 
-	items := executor.PrepareSlowLogItemsForRules(context.Background(), ctx)
-	require.Equal(t, uint64(123), executor.SlowLogRuleFieldAccessors[variable.SlowLogConnIDStr].Getter(ctx, items))
-	require.Equal(t, "testdb", executor.SlowLogRuleFieldAccessors[variable.SlowLogDBStr].Getter(ctx, items))
-	require.Equal(t, float64(copExec.TimeDetail.ProcessTime.Seconds()), executor.SlowLogRuleFieldAccessors[execdetails.ProcessTimeStr].Getter(ctx, items))
-	require.Equal(t, float64(copExec.BackoffTime.Seconds()), executor.SlowLogRuleFieldAccessors[execdetails.BackoffTimeStr].Getter(ctx, items))
-	require.Equal(t, copExec.ScanDetail.ProcessedKeys, executor.SlowLogRuleFieldAccessors[execdetails.ProcessKeysStr].Getter(ctx, items))
-	require.Equal(t, copExec.ScanDetail.TotalKeys, executor.SlowLogRuleFieldAccessors[execdetails.TotalKeysStr].Getter(ctx, items))
+	items := executor.PrepareSlowLogItemsForRules(goCtx, ctx)
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogConnIDStr].Match(ctx, items, uint64(123)))
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogDBStr].Match(ctx, items, "testdb"))
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogSucc].Match(ctx, items, true))
+	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.ProcessTimeStr].Match(ctx, items, float64(copExec.TimeDetail.ProcessTime.Seconds())))
+	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.BackoffTimeStr].Match(ctx, items, float64(copExec.BackoffTime.Seconds())))
+	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.ProcessKeysStr].Match(ctx, items, copExec.ScanDetail.ProcessedKeys))
+	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.TotalKeysStr].Match(ctx, items, copExec.ScanDetail.TotalKeys))
 
 	// fields not in AllConditionFields should be zero at this point
-	require.Equal(t, uint(0), items.ExecRetryCount)
+	require.Equal(t, uint64(0), items.ExecRetryCount)
 	// fields not in SlowLogRuleFieldAccessors should be zero at this point
 	waitTimeAccessor, ok := executor.SlowLogRuleFieldAccessors[execdetails.WaitTimeStr]
 	require.False(t, ok)
 	require.Equal(t, executor.SlowLogFieldAccessor{}, waitTimeAccessor)
 
 	// fill the rest
-	executor.CompleteSlowLogItemsForRules(context.Background(), ctx, items)
-	require.Equal(t, uint(2), items.ExecRetryCount)
+	executor.CompleteSlowLogItemsForRules(goCtx, ctx, items)
+	require.Equal(t, uint64(2), items.ExecRetryCount)
 	require.Equal(t, int64(1000), items.MemMax)
 	require.Equal(t, int64(2000), items.DiskMax)
 	require.Equal(t, sessVars.StmtCtx.ExecSuccess, items.Succ)
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogKVTotal].Match(ctx, items, float64(time.Duration(tikvExecDetail.WaitKVRespDuration).Seconds())))
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogPDTotal].Match(ctx, items, float64(time.Duration(tikvExecDetail.WaitPDRespDuration).Seconds())))
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogBackoffTotal].Match(ctx, items, float64(time.Duration(tikvExecDetail.BackoffDuration).Seconds())))
 }
 
 func newMockCtx() sessionctx.Context {
@@ -219,7 +224,7 @@ func TestMatchMultipleRulesOR(t *testing.T) {
 	// rule 1: requires ExecRetryCount >= 3 AND Succ == true
 	rule1 := variable.SlowLogRule{
 		Conditions: []variable.SlowLogCondition{
-			{Field: variable.SlowLogExecRetryCount, Threshold: uint(3)},
+			{Field: variable.SlowLogExecRetryCount, Threshold: uint64(3)},
 			{Field: variable.SlowLogSucc, Threshold: true},
 		},
 	}
@@ -255,12 +260,13 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 	items := &variable.SlowQueryLogItems{
 		MemMax:            123,                     // int64
 		DiskMax:           456,                     // int64
+		ExecRetryCount:    uint64(789),             // uint64
 		ResourceGroupName: "rg1",                   // string
 		Succ:              true,                    // bool
 		TimeTotal:         3140 * time.Millisecond, // time.Duration
 	}
 
-	slowLogRules, err := variable.ParseSlowLogRules(`Mem_max: 100, Succ: true, Query_time: 2.52, Resource_group: rg1`)
+	slowLogRules, err := variable.ParseSlowLogRules(`Mem_max: 100, Exec_retry_count: 300, Succ: true, Query_time: 2.52, Resource_group: rg1`)
 	require.NoError(t, err)
 	ctx.GetSessionVars().SlowLogRules = slowLogRules
 	require.True(t, executor.Match(ctx, items))

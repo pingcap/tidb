@@ -269,7 +269,7 @@ type SlowQueryLogItems struct {
 	WriteSQLRespTotal time.Duration
 	KVExecDetail      *util.ExecDetails
 	ExecDetail        *execdetails.ExecDetails
-	ExecRetryCount    uint
+	ExecRetryCount    uint64
 	ExecRetryTime     time.Duration
 	ResultRows        int64
 	Warnings          []JSONSQLWarnForSlowLog
@@ -522,8 +522,8 @@ func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 
 // SlowLogCondition defines a single condition within a slow log rule.
 type SlowLogCondition struct {
-	Field     string      // Name of the slow log field to check (e.g., "Conn_ID", "Query_time").
-	Threshold interface{} // Threshold value for triggering the condition.
+	Field     string // Name of the slow log field to check (e.g., "Conn_ID", "Query_time").
+	Threshold any    // Threshold value for triggering the condition.
 }
 
 // SlowLogRule represents a single slow log rule.
@@ -535,61 +535,71 @@ type SlowLogRule struct {
 // SlowLogRules represents all slow log rules defined for the current scope (e.g., session/global).
 // The rules are evaluated using logical OR between them: if any rule matches, it triggers the slow log.
 type SlowLogRules struct {
-	RawRules           string
 	AllConditionFields map[string]struct{} // Set of all unique field names used in all conditions.
 	Rules              []SlowLogRule       // List of rules combined with logical OR.
 }
 
-// SlowLogRuleFields defines the set of field names in SlowQueryLogItems
-// that can be used in evaluating and triggering SlowLogRules.
-var SlowLogRuleFields = map[string]struct{}{
-	SlowLogConnIDStr:         {},
-	SlowLogSessAliasStr:      {},
-	SlowLogDBStr:             {},
-	SlowLogExecRetryCount:    {},
-	SlowLogQueryTimeStr:      {},
-	SlowLogParseTimeStr:      {},
-	SlowLogCompileTimeStr:    {},
-	SlowLogOptimizeTimeStr:   {},
-	SlowLogWaitTSTimeStr:     {},
-	SlowLogIsInternalStr:     {},
-	SlowLogDigestStr:         {},
-	SlowLogNumCopTasksStr:    {},
-	SlowLogMemMax:            {},
-	SlowLogDiskMax:           {},
-	SlowLogSucc:              {},
-	SlowLogWriteSQLRespTotal: {},
-	SlowLogPlanDigest:        {},
-	SlowLogResourceGroup:     {},
+// SlowLogFieldValParser defines how to parse a string threshold value
+// into the native type of a SlowQueryLogItems field for rule evaluation.
+type SlowLogFieldValParser struct {
+	Parse func(string) (any, error)
+}
+
+func parseString(v string) (any, error)  { return v, nil }
+func parseInt64(v string) (any, error)   { return strconv.ParseInt(v, 10, 64) }
+func parseUint64(v string) (any, error)  { return strconv.ParseUint(v, 10, 64) }
+func parseFloat64(v string) (any, error) { return strconv.ParseFloat(v, 64) }
+func parseBool(v string) (any, error)    { return strconv.ParseBool(v) }
+
+// SlowLogFieldValParsers defines the set of field names in SlowQueryLogItems that can be used in triggering SlowLogRules.
+// Each field is associated with a parser function that converts a string value (from user input) into the proper type.
+var SlowLogFieldValParsers = map[string]SlowLogFieldValParser{
+	SlowLogConnIDStr:         {Parse: parseUint64},
+	SlowLogSessAliasStr:      {Parse: parseString},
+	SlowLogDBStr:             {Parse: parseString},
+	SlowLogExecRetryCount:    {Parse: parseUint64},
+	SlowLogQueryTimeStr:      {Parse: parseFloat64},
+	SlowLogParseTimeStr:      {Parse: parseFloat64},
+	SlowLogCompileTimeStr:    {Parse: parseFloat64},
+	SlowLogOptimizeTimeStr:   {Parse: parseFloat64},
+	SlowLogWaitTSTimeStr:     {Parse: parseFloat64},
+	SlowLogIsInternalStr:     {Parse: parseBool},
+	SlowLogDigestStr:         {Parse: parseString},
+	SlowLogNumCopTasksStr:    {Parse: parseInt64},
+	SlowLogMemMax:            {Parse: parseInt64},
+	SlowLogDiskMax:           {Parse: parseInt64},
+	SlowLogSucc:              {Parse: parseBool},
+	SlowLogWriteSQLRespTotal: {Parse: parseFloat64},
+	SlowLogPlanDigest:        {Parse: parseString},
+	SlowLogResourceGroup:     {Parse: parseString},
 	// The following fields are related to util.ExecDetails.
-	SlowLogKVTotal:                               {},
-	SlowLogPDTotal:                               {},
-	SlowLogBackoffTotal:                          {},
-	SlowLogUnpackedBytesSentTiKVTotal:            {},
-	SlowLogUnpackedBytesReceivedTiKVTotal:        {},
-	SlowLogUnpackedBytesSentTiKVCrossZone:        {},
-	SlowLogUnpackedBytesReceivedTiKVCrossZone:    {},
-	SlowLogUnpackedBytesSentTiFlashTotal:         {},
-	SlowLogUnpackedBytesReceivedTiFlashTotal:     {},
-	SlowLogUnpackedBytesSentTiFlashCrossZone:     {},
-	SlowLogUnpackedBytesReceivedTiFlashCrossZone: {},
+	SlowLogKVTotal:                               {Parse: parseFloat64},
+	SlowLogPDTotal:                               {Parse: parseFloat64},
+	SlowLogBackoffTotal:                          {Parse: parseFloat64},
+	SlowLogUnpackedBytesSentTiKVTotal:            {Parse: parseInt64},
+	SlowLogUnpackedBytesReceivedTiKVTotal:        {Parse: parseInt64},
+	SlowLogUnpackedBytesSentTiKVCrossZone:        {Parse: parseInt64},
+	SlowLogUnpackedBytesReceivedTiKVCrossZone:    {Parse: parseInt64},
+	SlowLogUnpackedBytesSentTiFlashTotal:         {Parse: parseInt64},
+	SlowLogUnpackedBytesReceivedTiFlashTotal:     {Parse: parseInt64},
+	SlowLogUnpackedBytesSentTiFlashCrossZone:     {Parse: parseInt64},
+	SlowLogUnpackedBytesReceivedTiFlashCrossZone: {Parse: parseInt64},
 	// The following fields are related to execdetails.ExecDetails.
-	execdetails.ProcessTimeStr:    {},
-	execdetails.BackoffTimeStr:    {},
-	execdetails.TotalKeysStr:      {},
-	execdetails.ProcessKeysStr:    {},
-	execdetails.PreWriteTimeStr:   {},
-	execdetails.CommitTimeStr:     {},
-	execdetails.WriteKeysStr:      {},
-	execdetails.WriteSizeStr:      {},
-	execdetails.PrewriteRegionStr: {},
+	execdetails.ProcessTimeStr:    {Parse: parseFloat64},
+	execdetails.BackoffTimeStr:    {Parse: parseFloat64},
+	execdetails.TotalKeysStr:      {Parse: parseUint64},
+	execdetails.ProcessKeysStr:    {Parse: parseUint64},
+	execdetails.PreWriteTimeStr:   {Parse: parseFloat64},
+	execdetails.CommitTimeStr:     {Parse: parseFloat64},
+	execdetails.WriteKeysStr:      {Parse: parseUint64},
+	execdetails.WriteSizeStr:      {Parse: parseUint64},
+	execdetails.PrewriteRegionStr: {Parse: parseUint64},
 }
 
 // ParseSlowLogRules parses a raw slow log rules string into a structured SlowLogRules object.
 func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 	rawRules = strings.TrimSpace(rawRules)
 	if rawRules == "" {
-
 		return nil, nil
 	}
 
@@ -602,7 +612,6 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 	}
 
 	slowLogRules := &SlowLogRules{
-		RawRules:           rawRules,
 		AllConditionFields: make(map[string]struct{}),
 		Rules:              make([]SlowLogRule, 0, len(rules))}
 	for _, rule := range rules {
@@ -623,17 +632,12 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 				return nil, errors.Errorf("invalid slow log field format:%s", field)
 			}
 
-			// check
 			fieldName := strings.TrimSpace(kv[0])
-			if _, ok := SlowLogRuleFields[fieldName]; !ok {
-				return nil, errors.Errorf("unknown slow log field name:%s", fieldName)
-			}
 			value := strings.TrimSpace(kv[1])
-			fieldValue, err := GetValidValueByName(fieldName, strings.Trim(value, "\"'"))
+			fieldValue, err := ParseSlowLogFieldValue(fieldName, strings.Trim(value, "\"'"))
 			if err != nil {
 				return nil, errors.Errorf("invalid slow log value format:%s, err:%s", fieldValue, err)
 			}
-
 			slowLogRule.Conditions = append(slowLogRule.Conditions, SlowLogCondition{
 				Field:     fieldName,
 				Threshold: fieldValue,
@@ -645,44 +649,12 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 	return slowLogRules, nil
 }
 
-// GetValidValueByName is exporting for testing.
-func GetValidValueByName(fieldName string, value string) (interface{}, error) {
-	switch fieldName {
-	case SlowLogMemMax, SlowLogDiskMax, SlowLogUnpackedBytesSentTiKVTotal,
-		SlowLogUnpackedBytesReceivedTiKVTotal, SlowLogUnpackedBytesSentTiKVCrossZone, SlowLogUnpackedBytesReceivedTiKVCrossZone,
-		SlowLogUnpackedBytesSentTiFlashTotal, SlowLogUnpackedBytesReceivedTiFlashTotal, SlowLogUnpackedBytesSentTiFlashCrossZone,
-		SlowLogUnpackedBytesReceivedTiFlashCrossZone:
-		v, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		return v, nil
-	case SlowLogConnIDStr, SlowLogExecRetryCount, execdetails.WriteKeysStr, execdetails.WriteSizeStr, execdetails.PrewriteRegionStr,
-		execdetails.TotalKeysStr, execdetails.ProcessKeysStr:
-		v, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		return v, nil
-	case SlowLogQueryTimeStr, SlowLogParseTimeStr, SlowLogCompileTimeStr, SlowLogRewriteTimeStr, SlowLogOptimizeTimeStr,
-		SlowLogWaitTSTimeStr, execdetails.PreWriteTimeStr,
-		execdetails.CommitTimeStr, execdetails.ProcessTimeStr, execdetails.BackoffTimeStr,
-		SlowLogCopProcAvg, SlowLogCopProcMax, SlowLogCopWaitAvg, SlowLogCopWaitMax, SlowLogWriteSQLRespTotal:
-		v, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return nil, err
-		}
-		return v, nil
-	case SlowLogDBStr, SlowLogDigestStr, SlowLogCopProcAddr, SlowLogCopWaitAddr, SlowLogPlanDigest,
-		SlowLogResourceGroup:
-		return value, nil
-	case SlowLogSucc, SlowLogIsInternalStr:
-		v, err := strconv.ParseBool(value)
-		if err != nil {
-			return nil, err
-		}
-		return v, nil
+// ParseSlowLogFieldValue is exporting for testing.
+func ParseSlowLogFieldValue(fieldName string, value string) (any, error) {
+	parser, ok := SlowLogFieldValParsers[fieldName]
+	if !ok {
+		return nil, errors.Errorf("unknown slow log field name:%s", fieldName)
 	}
 
-	return nil, nil
+	return parser.Parse(value)
 }

@@ -1654,7 +1654,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
 
 	a.Ctx.GetSessionVars().StmtCtx.ExecSuccess = succ
-	a.Ctx.GetSessionVars().StmtCtx.ExecRetryCount = a.retryCount
+	a.Ctx.GetSessionVars().StmtCtx.ExecRetryCount = uint64(a.retryCount)
 
 	slowItems := PrepareSlowLogItemsForRules(a.GoCtx, a.Ctx)
 	matchRules := Match(a.Ctx, slowItems)
