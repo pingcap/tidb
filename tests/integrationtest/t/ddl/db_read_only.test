@@ -1,3 +1,4 @@
+create database if not exists test;
 drop database if exists db_read_only;
 create database db_read_only;
 drop database if exists db_read_only_1;
@@ -23,6 +24,13 @@ partition by range (year(dob)) (
  partition p1980 values less than (1990),
  partition p1990 values less than (2000));
 
+# test information_schema.schemata_extensions
+desc information_schema.schemata_extensions;
+select * from information_schema.schemata_extensions;
+alter schema test read only 1;
+select * from information_schema.schemata_extensions;
+alter schema test read only 0;
+select * from information_schema.schemata_extensions;
 
 # DDL can NOT be executed in read-only mode
 alter schema db_read_only read only 1;
