@@ -1112,7 +1112,7 @@ func getAllDataSourceSchema(plan base.LogicalPlan) []*expression.Schema {
 	case *LogicalAggregation:
 		// Because sometimes we put the output of the aggregation into the schema,
 		// we can consider it as a new table.
-		result := make([]*expression.Schema, 0, len(p.Children()))
+		result := make([]*expression.Schema, 0, len(p.Children())+1)
 		for _, child := range p.Children() {
 			result = append(result, getAllDataSourceSchema(child)...)
 		}
