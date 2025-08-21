@@ -485,13 +485,13 @@ func (p *BaseLogicalPlan) ReAlloc4Cascades(tp string, self base.LogicalPlan) {
 }
 
 // isAllUniqueIDInTheSameTable is to judge whether the given columns are in the same table.
-func isAllUniqueIDInTheSameTable(plan base.LogicalPlan, cols []int64) bool {
+func isAllUniqueIDInTheSameTable(plan base.LogicalPlan, cols map[int64]*expression.Column) bool {
 	switch p := plan.(type) {
 	case *DataSource:
 		tableColumns := p.Schema().Columns
-		for _, col := range cols {
+		for uniqueID, _ := range cols {
 			if !slices.ContainsFunc(tableColumns, func(c *expression.Column) bool {
-				return c.UniqueID == col
+				return c.UniqueID == uniqueID
 			}) {
 				return false
 			}
