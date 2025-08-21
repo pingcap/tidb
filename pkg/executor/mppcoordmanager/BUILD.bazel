@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/executor/metrics",
         "//pkg/kv",
+        "//pkg/metrics",
         "//pkg/store/copr",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
