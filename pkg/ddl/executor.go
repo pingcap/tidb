@@ -1976,7 +1976,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(e.ctx, job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2407,7 +2407,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(e.ctx, job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return err
 	}
@@ -2476,7 +2476,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(e.ctx, job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2545,7 +2545,7 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(e.ctx, job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3354,7 +3354,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(e.ctx, job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, tbl, ctx)
 	if err != nil {
 		return err
 	}
@@ -4633,7 +4633,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		OpType: model.OpAddIndex,
 	}
 
-	err = initJobReorgMetaFromVariables(e.ctx, job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return err
 	}
@@ -4922,7 +4922,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 
-	err = initJobReorgMetaFromVariables(e.ctx, job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
