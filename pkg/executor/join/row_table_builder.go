@@ -292,16 +292,8 @@ func fillNullMap(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegme
 	return 0
 }
 
-func estimateFillNullMap(rowTableMeta *joinTableMeta) int {
-	return rowTableMeta.nullMapLength
-}
-
 func fillNextRowPtr(seg *rowTableSegment) int {
 	seg.rawData = append(seg.rawData, fakeAddrPlaceHolder...)
-	return sizeOfNextPtr
-}
-
-func estimateFillNextRowPtr() int {
 	return sizeOfNextPtr
 }
 
@@ -341,7 +333,7 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *jo
 	return appendRowLength
 }
 
-func (b *rowTableBuilder) estimateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *joinTableMeta, hasValidKey bool, logicalRowIndex int, seg *rowTableSegment) int64 {
+func (b *rowTableBuilder) estimateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *joinTableMeta, hasValidKey bool, logicalRowIndex int) int64 {
 	appendRowLength := int64(0)
 	if !rowTableMeta.isJoinKeysFixedLength {
 		appendRowLength += int64(sizeOfElementSize)
@@ -379,7 +371,7 @@ func fillRowData(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegme
 	return appendRowLength
 }
 
-func estimateFillRowData(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment) int64 {
+func estimateFillRowData(rowTableMeta *joinTableMeta, row *chunk.Row) int64 {
 	appendRowLength := int64(0)
 	for index, colIdx := range rowTableMeta.rowColumnsOrder {
 		if rowTableMeta.columnsSize[index] > 0 {
@@ -420,7 +412,6 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		var (
 			row     = chk.GetRow(logicalRowIndex)
 			partIdx = b.partIdxVector[logicalRowIndex]
-			seg     = segs[partIdx]
 		)
 
 		helpers[partIdx].totalRowNum++
@@ -430,10 +421,10 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		}
 
 		rowLength := int64(0)
-		rowLength += int64(estimateFillNextRowPtr())
-		rowLength += int64(estimateFillNullMap(rowTableMeta))
-		rowLength += b.estimateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
-		rowLength += estimateFillRowData(rowTableMeta, &row, seg)
+		rowLength += int64(sizeOfNextPtr)
+		rowLength += int64(rowTableMeta.nullMapLength)
+		rowLength += b.estimateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex)
+		rowLength += estimateFillRowData(rowTableMeta, &row)
 		rowLength += estimateFillFake(rowLength)
 		helpers[partIdx].rawDataLen += rowLength
 	}
