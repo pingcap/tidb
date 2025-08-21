@@ -108,7 +108,7 @@ func isSimpleExpr(expr expression.Expression) bool {
 	switch e := expr.(type) {
 	case *expression.ScalarFunction:
 		switch e.FuncName.L {
-		case ast.LogicAnd, ast.LogicOr, ast.In, ast.UnaryNot:
+		case ast.LogicAnd, ast.LogicOr, ast.In, ast.UnaryNot, ast.Case:
 			for _, arg := range e.GetArgs() {
 				if scalarFunctionCount(arg) > 1 {
 					return false
