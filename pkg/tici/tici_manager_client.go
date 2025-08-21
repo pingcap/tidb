@@ -229,7 +229,10 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 	return nil
 }
 
-// GetCloudStoragePrefix Get a cloud storage prefix for save importing input data for TiCI
+// GetCloudStoragePrefix returns a cloud storage prefix from TiCI with a unique identifier
+// (naming tidbTaskID) for each standalone job. TiCI ensures different "standalone job"
+// will return different cloud storage prefixes. For example,
+// "s3://my-bucket/t_{table_id}/i_{index_id}/import/{import_job_id}".
 func (t *ManagerCtx) GetCloudStoragePrefix(
 	ctx context.Context,
 	tidbTaskID string,
@@ -257,14 +260,14 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 		return "", 0, err
 	}
 	if resp.Status != ErrorCode_SUCCESS {
-		logutil.BgLogger().Error("start import index failed",
+		logutil.BgLogger().Error("GetCloudStoragePrefix failed",
 			zap.String("tidbTaskID", tidbTaskID),
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return "", 0, fmt.Errorf("tici start import index error: %s", resp.ErrorMessage)
+		return "", 0, fmt.Errorf("tici GetCloudStoragePrefix error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("start import index success",
+	logutil.BgLogger().Info("GetCloudStoragePrefix success",
 		zap.String("tidbTaskID", tidbTaskID),
 		zap.Int64("tableID", tableID),
 		zap.Int64("indexID", indexID),
@@ -275,7 +278,18 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	return resp.StorageUri, resp.JobId, nil
 }
 
-// FinishPartitionUpload notifies TiCI Meta Service that all partitions for the given table are uploaded.
+// FinishPartitionUpload notifies TiCI that one partition for the given key-range of
+// data has been uploaded.
+//
+// There may be some retries when TiDB handling the partition data, and TiDB may upload
+// multiple files for a key-range. It is acceptable to call this RPC multiple times for
+// a key-range that may have uploaded data before. TiCI will use the latest upload data
+// to generate the index.
+// The `storage_uri` should be a file with the prefix generate by `GetImportStoragePrefix`
+// using the same `tidbTaskID`. The file stored in `storage_uri` should contain the table
+// info, indexes info and the key-value pairs within the specified key-range.
+// The file stored in `storage_uri` will be deleted after the index is built successfully
+// or the job is aborted.
 func (t *ManagerCtx) FinishPartitionUpload(
 	ctx context.Context,
 	tidbTaskID string,
@@ -310,13 +324,17 @@ func (t *ManagerCtx) FinishPartitionUpload(
 	return nil
 }
 
-// FinishIndexUpload notifies TiCI Meta Service that the whole table/index upload is finished.
+// FinishIndexUpload notifies TiCI that all partitions for the given job in all TiDB instances
+// have been uploaded ** successfully **.
+// TiCI will mark the job as finished and make the files available to GC data after consumed
+// by downstream consumers.
 func (t *ManagerCtx) FinishIndexUpload(
 	ctx context.Context,
 	tidbTaskID string,
 ) error {
 	req := &FinishImportIndexUploadRequest{
 		TidbTaskId: tidbTaskID,
+		Status:     ErrorCode_SUCCESS,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -332,6 +350,37 @@ func (t *ManagerCtx) FinishIndexUpload(
 			zap.String("tidbTaskID", tidbTaskID),
 			zap.String("errorMessage", resp.ErrorMessage))
 		return fmt.Errorf("tici FinishIndexUpload error: %s", resp.ErrorMessage)
+	}
+	return nil
+}
+
+// FinishIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
+// TiCI will clean up all the related data belonging to the tidbTaskID.
+func (t *ManagerCtx) AbortIndexUpload(
+	ctx context.Context,
+	tidbTaskID string,
+	errMsg string,
+) error {
+	req := &FinishImportIndexUploadRequest{
+		TidbTaskId:   tidbTaskID,
+		Status:       ErrorCode_UNKNOWN_ERROR,
+		ErrorMessage: errMsg,
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if err := t.checkMetaClient(); err != nil {
+		return err
+	}
+	resp, err := t.metaClient.client.FinishImportIndexUpload(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("AbortIndexUpload failed",
+			zap.String("tidbTaskID", tidbTaskID),
+			zap.String("reason", errMsg),
+			zap.String("errorMessage", resp.ErrorMessage))
+		return fmt.Errorf("tici AbortIndexUpload error: %s", resp.ErrorMessage)
 	}
 	return nil
 }
@@ -369,7 +418,7 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	for _, info := range resp.ShardLocalCacheInfos {
 		if info != nil {
 			s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
-				info.Shard.ShardId, info.Shard.StartKey, info.Shard.EndKey, info.Shard.Epoch, info.LocalCacheAddrs)
+				info.Shard.ShardId, hex.EncodeToString(info.Shard.StartKey), hex.EncodeToString(info.Shard.EndKey), info.Shard.Epoch, info.LocalCacheAddrs)
 		}
 	}
 	s += "]"

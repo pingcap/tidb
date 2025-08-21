@@ -256,11 +256,11 @@ func TestSetTiCIDataWriterGroupWritable(t *testing.T) {
 	SetTiCIDataWriterGroupWritable(ctx, nil, engineUUID, 0) // should not panic
 }
 
-func TestTiCIDataWriterGroup_InitTICIFileWriters_NotWritable(t *testing.T) {
+func TestTiCIDataWriterGroup_CreateFileWriters_NotWritable(t *testing.T) {
 	ctx := context.Background()
 	group := &DataWriterGroup{}
 	group.writable.Store(false)
-	err := group.InitTICIFileWriters(ctx)
+	_, err := group.CreateFileWriters(ctx)
 	assert.NoError(t, err)
 }
 
