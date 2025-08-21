@@ -216,10 +216,15 @@ status=${ports[1]}
 
 function start_tidb_server()
 {
-    config_file="config.toml"
+    config_file="config"
     if [[ $enabled_new_collation = 0 ]]; then
-        config_file="disable_new_collation.toml"
+        config_file="disable_new_collation"
     fi
+    if [[ $NEXT_GEN = 1 ]]; then
+        config_file="$config_file-next-gen"
+    fi
+    config_file="$config_file.toml"
+
     start_options="-P $port -status $status -config $config_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         start_options="$start_options -store tikv -path ${TIKV_PATH}"
