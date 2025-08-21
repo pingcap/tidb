@@ -1762,8 +1762,9 @@ var (
 	EnableRowLevelChecksum         = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
 	LowResolutionTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)
 
-	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit: 80% (NO global mem-arbitrator)
-	DefTiDBServerMemoryLimit           = "auto"
+	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
+	// It should be a const and shouldn't be modified after tidb is started.
+	DefTiDBServerMemoryLimit           = serverMemoryLimitDefaultValue()
 	GOGCTunerThreshold                 = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 	PasswordValidationLength           = atomic.NewInt32(8)
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
@@ -1816,6 +1817,14 @@ var (
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 )
+
+func serverMemoryLimitDefaultValue() string {
+	total, err := memory.MemTotal()
+	if err == nil && total != 0 {
+		return "80%"
+	}
+	return "0"
+}
 
 func mustParseDuration(str string) time.Duration {
 	duration, err := time.ParseDuration(str)

@@ -90,6 +90,7 @@ const (
 	defDigestProfileSmallMemTimeoutSec        = 60 * 60 * 24     // 1 day
 	defDigestProfileMemTimeoutSec             = 60 * 60 * 24 * 7 // 1 week
 	baseQuotaUnit                             = 4 * byteSizeKB   // 4KB
+	defMaxMagnif                              = kilo * 10
 )
 
 // ArbitratorWorkMode represents the work mode of the arbitrator: Standard, Priority, Disable
@@ -3266,13 +3267,12 @@ func (m *MemArbitrator) intoMemRisk() {
 	}
 
 	if memState := m.calcMemRisk(); memState != nil {
-		const maxMagnif = kilo * 10
-		if memState.Magnif > maxMagnif {
+		if memState.Magnif > defMaxMagnif {
 			// There may be extreme memory leak issues. It's recommended to set soft limit manually.
 			m.actions.Warn("Memory pressure is abnormally high",
 				zap.Int64("mem-magnification-ratio(‰)", memState.Magnif),
-				zap.Int64("upper-limit-ratio(‰)", maxMagnif))
-			memState.Magnif = maxMagnif
+				zap.Int64("upper-limit-ratio(‰)", defMaxMagnif))
+			memState.Magnif = defMaxMagnif
 		}
 		{
 			m.avoidance.memMagnif.Lock()

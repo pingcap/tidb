@@ -129,7 +129,7 @@ func reportGlobalMemArbitratorMetrics() {
 		memMagnif := int64(0)
 		if quota := m.allocated(); quota > 0 {
 			memMagnif = calcRatio(m.heapController.lastGC.heapAlloc.Load(), quota)
-			memMagnif = min(memMagnif, kilo*10)
+			memMagnif = min(memMagnif, defMaxMagnif)
 		}
 		metrics.GlobalMemArbitratorRuntimeMemMagnifi.Set(float64(memMagnif))
 	}
