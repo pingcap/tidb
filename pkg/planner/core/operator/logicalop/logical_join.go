@@ -149,6 +149,9 @@ type LogicalJoin struct {
 
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
+
+	// allDataSouceSchema is used to identify the table where the column is located during constant propagation.
+	allDataSouceSchema []*expression.Schema
 }
 
 // Init initializes LogicalJoin.
@@ -207,6 +210,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
+	p.allDataSouceSchema = getAllDataSourceSchema(p)
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.joinPropConst(predicates)
@@ -1085,10 +1089,44 @@ func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bo
 	colset := slices.Collect(
 		maps.Keys(expression.ExtractColumnsMapFromExpressions(nil, cond)),
 	)
-	if len(colset) <= 1 {
-		return true
+	for _, schema := range p.allDataSouceSchema {
+		inTheSameSchema := true
+		for _, unique := range colset {
+			if !slices.ContainsFunc(schema.Columns, func(c *expression.Column) bool {
+				return c.UniqueID == unique
+			}) {
+				inTheSameSchema = false
+				break
+			}
+		}
+		if inTheSameSchema {
+			return true
+		}
 	}
-	return isAllUniqueIDInTheSameTable(p, colset)
+	return false
+}
+
+// getAllDataSourceSchema is to get all datasource's
+func getAllDataSourceSchema(plan base.LogicalPlan) []*expression.Schema {
+	switch p := plan.(type) {
+	case *LogicalAggregation:
+		// Because sometimes we put the output of the aggregation into the schema,
+		// we can consider it as a new table.
+		result := make([]*expression.Schema, len(p.Children()))
+		for _, child := range p.Children() {
+			result = append(result, getAllDataSourceSchema(child)...)
+		}
+		result = append(result, p.Schema())
+		return result
+	case *DataSource:
+		return []*expression.Schema{p.Schema()}
+	default:
+		result := make([]*expression.Schema, len(p.Children()))
+		for _, child := range p.Children() {
+			result = append(result, getAllDataSourceSchema(child)...)
+		}
+		return result
+	}
 }
 
 // ExtractJoinKeys extract join keys as a schema for child with childIdx.
