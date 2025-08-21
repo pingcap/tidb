@@ -46,33 +46,29 @@ var (
 // InitializeRateLimiterParam initializes the rate limiter params.
 func InitializeRateLimiterParam(m *meta.Meta, logger *zap.Logger) error {
 	err := initializeVariables(
-		m.GetIngestMaxBatchSplitRanges,
-		defaultMaxBatchSplitRanges,
-		&CurrentMaxBatchSplitRanges,
+		m.GetIngestMaxBatchSplitRanges, m.SetIngestMaxBatchSplitRanges,
+		defaultMaxBatchSplitRanges, &CurrentMaxBatchSplitRanges,
 		logger, "maxBatchSplitRanges")
 	if err != nil {
 		return err
 	}
 	err = initializeVariables(
-		m.GetIngestMaxSplitRangesPerSec,
-		defaultSplitRangesPerSec,
-		&CurrentMaxSplitRangesPerSec,
+		m.GetIngestMaxSplitRangesPerSec, m.SetIngestMaxSplitRangesPerSec,
+		defaultSplitRangesPerSec, &CurrentMaxSplitRangesPerSec,
 		logger, "maxSplitRangesPerSec")
 	if err != nil {
 		return err
 	}
 	err = initializeVariables(
-		m.GetIngestMaxInflight,
-		defaultMaxIngestInflight,
-		&CurrentMaxIngestInflight,
+		m.GetIngestMaxInflight, m.SetIngestMaxInflight,
+		defaultMaxIngestInflight, &CurrentMaxIngestInflight,
 		logger, "maxIngestInflight")
 	if err != nil {
 		return err
 	}
 	err = initializeVariables(
-		m.GetIngestMaxPerSec,
-		defaultMaxIngestPerSec,
-		&CurrentMaxIngestPerSec,
+		m.GetIngestMaxPerSec, m.SetIngestMaxPerSec,
+		defaultMaxIngestPerSec, &CurrentMaxIngestPerSec,
 		logger, "maxIngestPerSec")
 	if err != nil {
 		return err
@@ -82,6 +78,7 @@ func InitializeRateLimiterParam(m *meta.Meta, logger *zap.Logger) error {
 
 func initializeVariables[T comparable](
 	metaGetter func() (v T, isNull bool, err error),
+	metaSetter func(v T) error,
 	defaultVal T,
 	globalVar *atomic.Pointer[T],
 	logger *zap.Logger,
@@ -92,11 +89,17 @@ func initializeVariables[T comparable](
 		return errors.Annotatef(err, "failed to read %s value from meta store", varName)
 	}
 	var zero T
-	if isNull || val == zero {
+	if isNull {
+		err = metaSetter(defaultVal)
+		if err != nil {
+			return errors.Annotatef(err, "failed to set %s value to meta store", varName)
+		}
 		val = defaultVal
 		logger.Info("meta kv not found in meta store, initialized to default and persisted",
 			zap.String("key", varName),
 			zap.Any("value", defaultVal))
+	} else if val == zero {
+		val = defaultVal
 	} else {
 		logger.Info("loaded value from meta store",
 			zap.String("key", varName),
