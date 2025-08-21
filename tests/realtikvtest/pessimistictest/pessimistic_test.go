@@ -2500,6 +2500,110 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	require.Regexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
 }
 
+func TestPessimisticAutoCommitStatementTypes(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("set autocommit = on")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, val int)")
+
+	// Save original config
+	originCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(originCfg)
+
+	// Test with pessimistic-auto-commit disabled (default)
+	newCfg := *originCfg
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	config.StoreGlobalConfig(&newCfg)
+
+	// Helper function to check transaction mode
+	checkTxnMode := func(sql string, expectedPessimistic bool, description string) {
+		// Clear any existing transaction state
+		tk.MustExec("rollback")
+
+		// Execute the statement
+		if strings.Contains(sql, "SELECT") || strings.Contains(sql, "EXPLAIN") {
+			tk.MustQuery(sql)
+		} else {
+			tk.MustExec(sql)
+		}
+
+		// For autocommit statements, the transaction is typically committed immediately
+		// So we need to check the session variables or use a different approach
+		sessionVars := tk.Session().GetSessionVars()
+
+		// Check the TxnCtx mode (this persists information about the last transaction)
+		isPessimistic := sessionVars.TxnCtx.IsPessimistic
+
+		if expectedPessimistic {
+			require.True(t, isPessimistic, "%s should use pessimistic transaction", description)
+		} else {
+			require.False(t, isPessimistic, "%s should use optimistic transaction", description)
+		}
+
+		// Clean up
+		tk.MustExec("rollback")
+	}
+
+	// With pessimistic-auto-commit disabled, all autocommit DML should be optimistic
+	checkTxnMode("INSERT INTO t VALUES (1, 10)", false, "INSERT with pessimistic-auto-commit disabled")
+	checkTxnMode("UPDATE t SET val = 20 WHERE id = 1", false, "UPDATE with pessimistic-auto-commit disabled")
+	checkTxnMode("DELETE FROM t WHERE id = 1", false, "DELETE with pessimistic-auto-commit disabled")
+	checkTxnMode("SELECT * FROM t", false, "SELECT with pessimistic-auto-commit disabled")
+
+	// Now enable pessimistic-auto-commit
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	config.StoreGlobalConfig(&newCfg)
+
+	// DML statements should now use pessimistic mode
+	checkTxnMode("INSERT INTO t VALUES (2, 20)", true, "INSERT with pessimistic-auto-commit enabled")
+	checkTxnMode("UPDATE t SET val = 30 WHERE id = 2", true, "UPDATE with pessimistic-auto-commit enabled")
+	checkTxnMode("DELETE FROM t WHERE id = 2", true, "DELETE with pessimistic-auto-commit enabled")
+
+	// Non-DML statements should still use optimistic mode
+	checkTxnMode("SELECT * FROM t", false, "SELECT with pessimistic-auto-commit enabled")
+
+	// EXPLAIN statements use the mode that the underlying statement would use
+	// This ensures EXPLAIN shows the correct plan that would be generated for execution
+	checkTxnMode("EXPLAIN INSERT INTO t VALUES (3, 30)", true, "EXPLAIN INSERT with pessimistic-auto-commit enabled")
+	checkTxnMode("EXPLAIN UPDATE t SET val = 40 WHERE id = 3", true, "EXPLAIN UPDATE with pessimistic-auto-commit enabled")
+	checkTxnMode("EXPLAIN DELETE FROM t WHERE id = 3", true, "EXPLAIN DELETE with pessimistic-auto-commit enabled")
+
+	// Test PREPARE/EXECUTE statements
+	tk.MustExec("PREPARE insert_stmt FROM 'INSERT INTO t VALUES (?, ?)'")
+	tk.MustExec("PREPARE update_stmt FROM 'UPDATE t SET val = ? WHERE id = ?'")
+	tk.MustExec("PREPARE delete_stmt FROM 'DELETE FROM t WHERE id = ?'")
+	tk.MustExec("PREPARE select_stmt FROM 'SELECT * FROM t WHERE id = ?'")
+
+	// EXECUTE with DML should use pessimistic mode
+	tk.MustExec("SET @id1 = 4, @val1 = 40")
+	checkTxnMode("EXECUTE insert_stmt USING @id1, @val1", true, "EXECUTE INSERT with pessimistic-auto-commit enabled")
+
+	tk.MustExec("SET @id2 = 4, @val2 = 50")
+	checkTxnMode("EXECUTE update_stmt USING @val2, @id2", true, "EXECUTE UPDATE with pessimistic-auto-commit enabled")
+
+	tk.MustExec("SET @id3 = 4")
+	checkTxnMode("EXECUTE delete_stmt USING @id3", true, "EXECUTE DELETE with pessimistic-auto-commit enabled")
+
+	// EXECUTE with SELECT should use optimistic mode
+	tk.MustExec("SET @id4 = 1")
+	checkTxnMode("EXECUTE select_stmt USING @id4", false, "EXECUTE SELECT with pessimistic-auto-commit enabled")
+
+	// Test statements that should be excluded from pessimistic-auto-commit
+	// LOAD DATA should not use pessimistic mode (even though it's DML)
+	tk.MustExec("CREATE TABLE load_test (id int, val int)")
+	// Note: We can't easily test LOAD DATA in this context, but the logic should exclude it
+
+	// Clean up prepared statements
+	tk.MustExec("DEALLOCATE PREPARE insert_stmt")
+	tk.MustExec("DEALLOCATE PREPARE update_stmt")
+	tk.MustExec("DEALLOCATE PREPARE delete_stmt")
+	tk.MustExec("DEALLOCATE PREPARE select_stmt")
+}
+
 func TestPessimisticLockOnPartition(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
