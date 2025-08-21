@@ -483,26 +483,3 @@ func (p *BaseLogicalPlan) ReAlloc4Cascades(tp string, self base.LogicalPlan) {
 	// fdSet should be re-derived from the children, cuz apply -> join have different derive logic.
 	p.fdSet = nil
 }
-
-// isAllUniqueIDInTheSameTable is to judge whether the given columns are in the same table.
-func isAllUniqueIDInTheSameTable(plan base.LogicalPlan, cols []int64) bool {
-	switch p := plan.(type) {
-	case *DataSource:
-		tableColumns := p.Schema().Columns
-		for _, uniqueID := range cols {
-			if !slices.ContainsFunc(tableColumns, func(c *expression.Column) bool {
-				return c.UniqueID == uniqueID
-			}) {
-				return false
-			}
-		}
-		return true
-	default:
-		for _, child := range p.Children() {
-			if isAllUniqueIDInTheSameTable(child, cols) {
-				return true
-			}
-		}
-	}
-	return false
-}
