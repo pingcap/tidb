@@ -71,6 +71,7 @@ type DDLReorgMeta struct {
 	IsDistReorg       bool                             `json:"is_dist_reorg"`
 	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	ResourceGroupName string                           `json:"resource_group_name"`
+	AnalyzeState      int8                             `json:"analyze_state"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`
 	MaxNodeCount      int                              `json:"max_node_count"`
@@ -130,6 +131,15 @@ const (
 	// CurrentReorgMetaVersion is the current version of DDLReorgMeta.
 	// For fix #46306(whether end key is included or not in the table range) to add the version to 1.
 	CurrentReorgMetaVersion = int64(1)
+)
+
+const (
+	// AnalyzeStateNone means the analyze process is not started yet.
+	AnalyzeStateNone = 0
+	// AnalyzeStateRunning means the analyze process is running.
+	AnalyzeStateRunning = 1
+	// AnalyzeStateDone means the analyze process is done.
+	AnalyzeStateDone = 2
 )
 
 // ReorgType indicates which process is used for the data reorganization.

@@ -581,10 +581,12 @@ func (w *worker) doModifyColumnTypeWithData(
 		switch oldCol.State {
 		case model.StateWriteOnly:
 			if len(oldIdxInfos) > 0 {
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 				done := w.analyzeTableAfterCreateIndex(job, dbInfo.Name.L, tblInfo.Name.L)
 				if !done {
 					return ver, nil
 				}
+				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 			}
 			updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
