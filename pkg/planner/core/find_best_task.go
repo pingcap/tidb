@@ -1181,14 +1181,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-<<<<<<< HEAD
-				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
-=======
 				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				isDNFOnlyEquals := c.hasOnlyEqualPredicatesInDNF()
 				if preferMerge || isDNFOnlyEquals || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
->>>>>>> 3fc94685bf3 (planner: Skyline pruning to include equals within DNF (#62956))
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
