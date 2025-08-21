@@ -15,6 +15,8 @@
 package metrics
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -138,6 +140,8 @@ var (
 	ExecutorNetworkTransmissionSentTiFlashCrossZone     prometheus.Counter
 	ExecutorNetworkTransmissionReceivedTiFlashTotal     prometheus.Counter
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone prometheus.Counter
+
+	initOnce sync.Once
 )
 
 func init() {
@@ -146,6 +150,13 @@ func init() {
 
 // InitMetricsVars init executor metrics vars.
 func InitMetricsVars() {
+	initOnce.Do(func() {
+		initMetricsVars()
+		initPhaseDurationObserverMap()
+	})
+}
+
+func initMetricsVars() {
 	TotalQueryProcHistogramGeneral = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopProcHistogramGeneral = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopWaitHistogramGeneral = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
@@ -233,8 +244,6 @@ func InitMetricsVars() {
 	ExecutorNetworkTransmissionSentTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("sent_tiflash_cross_zone")
 	ExecutorNetworkTransmissionReceivedTiFlashTotal = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_total")
 	ExecutorNetworkTransmissionReceivedTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_cross_zone")
-
-	initPhaseDurationObserverMap()
 }
 
 // initPhaseDurationObserverMap init observer map
