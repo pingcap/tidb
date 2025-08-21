@@ -333,7 +333,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 			}
 			assert = inactivePessimisticRRAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "REPEATABLE-READ")
-			require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
+			require.NoError(t, se.PrepareTxnCtx(context.TODO(), &ast.InsertStmt{}))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()

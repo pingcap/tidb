@@ -443,7 +443,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 			}
 			assert = inactiveRCTxnAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "READ-COMMITTED")
-			require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
+			require.NoError(t, se.PrepareTxnCtx(context.TODO(), &ast.InsertStmt{}))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
