@@ -544,20 +544,9 @@ func TestExplainFormatPlanTree(t *testing.T) {
 	for i, row := range rows {
 		require.Equal(t, 4, len(row), "Row %d should have 4 columns", i)
 	}
-}
 
-func TestExplainFormatPlanTreeConstant(t *testing.T) {
-	// Test that the new format constant is properly defined
-	require.Equal(t, "plan_tree", types.ExplainFormatPlanTree)
-
-	// Test that it's included in the valid formats list
-	formats := types.ExplainFormats
-	found := false
-	for _, format := range formats {
-		if format == types.ExplainFormatPlanTree {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "ExplainFormatPlanTree should be included in ExplainFormats")
+	// Test that explain analyze format='plan_tree' fails with an error message
+	err := testKit.ExecToErr("explain analyze format='plan_tree' select * from t")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "plan_tree")
 }

@@ -907,8 +907,6 @@ func (e *Explain) prepareSchema() error {
 		}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
-	case format == types.ExplainFormatPlanTree && (e.Analyze || e.RuntimeStatsColl != nil):
-		fieldNames = []string{"id", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == types.ExplainFormatHint:
@@ -922,6 +920,9 @@ func (e *Explain) prepareSchema() error {
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
 			"explain_analyze", "binding"}
 	default:
+		if e.Analyze {
+			return errors.Errorf("explain format '%s' with analyze is not supported now", e.Format)
+		}
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 
