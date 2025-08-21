@@ -209,7 +209,7 @@ func TestMatchSingleRuleMultipleConditions(t *testing.T) {
 	require.True(t, executor.Match(ctx, items))
 
 	items.Succ = false
-	require.False(t, executor.Match(ctx, items)) // 其中一个不满足 → false
+	require.False(t, executor.Match(ctx, items))
 }
 
 func TestMatchMultipleRulesOR(t *testing.T) {

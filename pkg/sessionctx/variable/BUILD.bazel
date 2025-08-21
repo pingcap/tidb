@@ -100,6 +100,7 @@ go_test(
         "mock_globalaccessor_test.go",
         "removed_test.go",
         "session_test.go",
+        "slow_log_test.go",
         "statusvar_test.go",
         "sysvar_test.go",
         "variable_test.go",
@@ -110,6 +111,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/executor",
         "//pkg/executor/join/joinversion",
         "//pkg/kv",
         "//pkg/parser",
@@ -132,6 +134,7 @@ go_test(
         "//pkg/util/timeutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//util",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",

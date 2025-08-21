@@ -17,12 +17,9 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"reflect"
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -40,7 +37,7 @@ type SlowLogFieldAccessor struct {
 	Match  func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool
 }
 
-func makeExecDetailAccessor(match func(*execdetails.ExecDetails, interface{}) bool) SlowLogFieldAccessor {
+func makeExecDetailAccessor(match func(*execdetails.ExecDetails, any) bool) SlowLogFieldAccessor {
 	return SlowLogFieldAccessor{
 		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			if items.ExecDetail == nil {
@@ -57,7 +54,7 @@ func makeExecDetailAccessor(match func(*execdetails.ExecDetails, interface{}) bo
 	}
 }
 
-func makeKVExecDetailAccessor(match func(*util.ExecDetails, interface{}) bool) SlowLogFieldAccessor {
+func makeKVExecDetailAccessor(match func(*util.ExecDetails, any) bool) SlowLogFieldAccessor {
 	return SlowLogFieldAccessor{
 		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			if items.KVExecDetail == nil {
@@ -78,9 +75,7 @@ func makeKVExecDetailAccessor(match func(*util.ExecDetails, interface{}) bool) S
 
 func matchStringVal(threshold any, v string) bool {
 	tv, ok := threshold.(string)
-	log.Warn(fmt.Sprintf("xxx--------------------threshold:%v, tv:%q, v:%q, type:%v, type:%v", threshold, tv, v, reflect.TypeOf(tv), reflect.TypeOf(threshold)))
 	if !ok || v != tv {
-		log.Warn(fmt.Sprintf("xxx--------------------v != tv:%v", v != tv))
 		return false
 	}
 	return true
@@ -89,7 +84,6 @@ func matchStringVal(threshold any, v string) bool {
 func matchBoolVal(threshold any, v bool) bool {
 	tv, ok := threshold.(bool)
 	if !ok || v != tv {
-		log.Warn(fmt.Sprintf("xxx--------------------v != tv:%v", v != tv))
 		return false
 	}
 	return true
@@ -98,7 +92,6 @@ func matchBoolVal(threshold any, v bool) bool {
 func matchInt64Val(threshold any, v int64) bool {
 	tv, ok := threshold.(int64)
 	if !ok || v < tv {
-		log.Warn(fmt.Sprintf("xxx--------------------v != tv:%v", v < tv))
 		return false
 	}
 	return true
@@ -106,9 +99,7 @@ func matchInt64Val(threshold any, v int64) bool {
 
 func matchUint64Val(threshold any, v uint64) bool {
 	tv, ok := threshold.(uint64)
-	log.Warn(fmt.Sprintf("xxx--------------------threshold:%v, tv:%q, v:%q, threshold type:%v, type:%v", threshold, tv, v, reflect.TypeOf(threshold), reflect.TypeOf(tv)))
 	if !ok || v < tv {
-		log.Warn(fmt.Sprintf("xxx--------------------v != tv:%v", v < tv))
 		return false
 	}
 	return true
@@ -116,7 +107,6 @@ func matchUint64Val(threshold any, v uint64) bool {
 
 func matchDurationVal(threshold any, v time.Duration) bool {
 	tv, ok := threshold.(float64)
-	log.Warn(fmt.Sprintf("xxx--------------------v:%v, v:%v, v:%v, tv:%v", v, reflect.TypeOf(v), v.Seconds(), tv))
 	if !ok || v.Seconds() < tv {
 		return false
 	}
@@ -332,10 +322,44 @@ func PrepareSlowLogItemsForRules(ctx context.Context, seCtx sessionctx.Context) 
 	return items
 }
 
+// Match checks whether the given SlowQueryLogItems satisfies any of the
+// current session's slow log trigger rules.
+//
+// Matching is evaluated in two levels of logical relationship:
+//   - Rules are combined with OR: if any rule is satisfied, the function returns true.
+//   - Conditions inside a rule are combined with AND: all conditions must be met for that rule.
+//
+// Returns true if any rule matches, false otherwise.
+func Match(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) bool {
+	rules := seCtx.GetSessionVars().SlowLogRules
+	// Or logical relationship
+	for _, rule := range rules.Rules {
+		matched := true
+
+		// And logical relationship
+		for _, condition := range rule.Conditions {
+			accessor := SlowLogRuleFieldAccessors[condition.Field]
+			if ok := accessor.Match(seCtx, items, condition.Threshold); !ok {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return matched
+		}
+	}
+
+	return false
+}
+
 // CompleteSlowLogItemsForRules fills in the remaining SlowQueryLogItems fields
 // that are relevant to triggering the current session's SlowLogRules.
 // It's exporting for testing.
 func CompleteSlowLogItemsForRules(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+	if items == nil {
+		return
+	}
+
 	for field, sg := range SlowLogRuleFieldAccessors {
 		if _, ok := seCtx.GetSessionVars().SlowLogRules.AllConditionFields[field]; ok {
 			continue
@@ -425,90 +449,4 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
 		items.PrevStmt = sessVars.PrevStmt.String()
 	}
-}
-
-// Match checks whether the given SlowQueryLogItems satisfies any of the
-// current session's slow log trigger rules.
-//
-// Matching is evaluated in two levels of logical relationship:
-//   - Rules are combined with OR: if any rule is satisfied, the function returns true.
-//   - Conditions inside a rule are combined with AND: all conditions must be met for that rule.
-//
-// Returns true if any rule matches, false otherwise.
-func Match(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) bool {
-	rules := seCtx.GetSessionVars().SlowLogRules
-	// Or logical relationship
-	for _, rule := range rules.Rules {
-		matched := true
-
-		log.Warn(fmt.Sprintf("xxx--------------------------- %#v", rule.Conditions))
-		// And logical relationship
-		for _, condition := range rule.Conditions {
-			accessor := SlowLogRuleFieldAccessors[condition.Field]
-			if ok := accessor.Match(seCtx, items, condition.Threshold); !ok {
-				matched = false
-				break
-			}
-			/*
-				value := gs.Getter(seCtx, items)
-				log.Warn(fmt.Sprintf("xxx--------------------------- field:%s, val:%v", condition.Field, value))
-
-				switch v := value.(type) {
-				case bool:
-					tv, ok := condition.Threshold.(bool)
-					log.Warn(fmt.Sprintf("xxx-------------------val:%v", tv))
-					if !ok || v != tv {
-						matched = false
-						break
-					}
-				case string:
-					tv, ok := condition.Threshold.(string)
-					log.Warn(fmt.Sprintf("xxx--------------------threshold:%v, tv:%q, v:%q, type:%v, type:%v", condition.Threshold, tv, v, reflect.TypeOf(tv), reflect.TypeOf(condition.Threshold)))
-					if !ok || v != tv {
-						log.Warn(fmt.Sprintf("xxx--------------------v != tv:%v", v != tv))
-						matched = false
-						break
-					}
-				case int64:
-					tv, ok := condition.Threshold.(int64)
-					log.Warn(fmt.Sprintf("xxx--------------------val:%v", tv))
-					if !ok || v < tv {
-						matched = false
-						break
-					}
-				case uint:
-					tv, ok := condition.Threshold.(uint)
-					log.Warn(fmt.Sprintf("xxx--------------------threshold:%v, tv:%v, type:%v, type:%v", condition.Threshold, tv, reflect.TypeOf(tv), reflect.TypeOf(condition.Threshold)))
-					if !ok || v < tv {
-						matched = false
-						break
-					}
-				case uint64:
-					tv, ok := condition.Threshold.(uint64)
-					log.Warn(fmt.Sprintf("xxx--------------------threshold:%v, tv:%v, type:%v, type:%v", condition.Threshold, tv, reflect.TypeOf(tv), reflect.TypeOf(condition.Threshold)))
-					if !ok || v < tv {
-						matched = false
-						break
-					}
-				case time.Duration:
-					tv, ok := condition.Threshold.(float64)
-					log.Warn(fmt.Sprintf("xxx--------------------v:%v, v:%v, v:%v, tv:%v", v, reflect.TypeOf(v), v.Seconds(), tv))
-					if !ok || v.Seconds() < tv {
-						matched = false
-						break
-					}
-				default:
-					log.Warn(fmt.Sprintf("xxx--------------------val:%T, type:%v", v, reflect.TypeOf(v)))
-					matched = false
-					break
-				}
-			*/
-		}
-		log.Warn(fmt.Sprintf("xxx--------------------------- matched:%#v", matched))
-		if matched {
-			return matched
-		}
-	}
-
-	return false
 }
