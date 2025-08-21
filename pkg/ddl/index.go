@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -988,6 +989,27 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
 	}
+
+	var wg sync.WaitGroup
+	if _, ok := bc.(*ingest.MockBackendCtx); !ok {
+		wg.Add(1)
+		// Adjust dynamically max_write_speed during writing to tikv
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				if bc.Done() {
+					break
+				}
+				maxWriteSpeed := int(variable.DDLReorgMaxWriteSpeed.Load())
+				if maxWriteSpeed != bc.GetLocalBackend().GetWriteSpeedLimit() {
+					bc.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
+				}
+			}
+		}()
+	}
+
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	if err != nil {
 		if !errorIsRetryable(err, job) {
@@ -1019,6 +1041,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 	}
 	bc.SetDone()
+	wg.Wait()
 	return true, ver, nil
 }
 
