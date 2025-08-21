@@ -138,7 +138,7 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	require.NoError(t, h.InitStats(context.Background(), is))
 }
 
-func TestSkipInitStatsBySettingSkipGrantTable(t *testing.T) {
+func TestSkipStatsInitWithSkipGrantTable(t *testing.T) {
 	config.GetGlobalConfig().Security.SkipGrantTable = true
 	defer func() {
 		config.GetGlobalConfig().Security.SkipGrantTable = false
