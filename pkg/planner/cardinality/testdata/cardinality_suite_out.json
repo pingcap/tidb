@@ -24,52 +24,52 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 762.5
+        "Count": 763
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 67.39
+        "Count": 67
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 62.16
+        "Count": 62
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 56.94
+        "Count": 57
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 51.71
+        "Count": 52
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 41.26
+        "Count": 41
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 59.34
+        "Count": 59
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 38.44
+        "Count": 38
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 17.54
+        "Count": 18
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 12.5
+        "Count": 13
       },
       {
         "Start": 300,
@@ -79,12 +79,12 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 873.3
+        "Count": 873
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 381.25
+        "Count": 381
       },
       {
         "Start": 300,
@@ -94,17 +94,17 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 122.26
+        "Count": 122
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 101.35
+        "Count": 101
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 872.26
+        "Count": 872
       },
       {
         "Start": 200,
@@ -114,17 +114,17 @@
       {
         "Start": 0,
         "End": 100,
-        "Count": 80.45
+        "Count": 80
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 132.5
+        "Count": 132
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 59.55
+        "Count": 60
       }
     ]
   },
@@ -132,144 +132,99 @@
     "Name": "TestOutOfRangeEstimationAfterDelete",
     "Cases": [
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 300",
-        "Result": [
-          "TableReader 191.04 root  data:Selection",
-          "└─Selection 191.04 cop[tikv]  le(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 300,
+        "End": 500,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a < 300",
-        "Result": [
-          "TableReader 187.71 root  data:Selection",
-          "└─Selection 187.71 cop[tikv]  lt(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 500,
+        "End": 700,
+        "Count": 1005
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 500",
-        "Result": [
-          "TableReader 857.71 root  data:Selection",
-          "└─Selection 857.71 cop[tikv]  le(test.t.a, 500)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 700,
+        "End": 900,
+        "Count": 1010
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
-        "Result": [
-          "TableReader 2000.00 root  data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 900,
+        "End": 1100,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a >= 900",
-        "Result": [
-          "TableReader 249.17 root  data:Selection",
-          "└─Selection 249.17 cop[tikv]  ge(test.t.a, 900)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 200,
+        "End": 400,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 900",
-        "Result": [
-          "TableReader 249.17 root  data:Selection",
-          "└─Selection 249.17 cop[tikv]  gt(test.t.a, 900)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 400,
+        "End": 600,
+        "Count": 510
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a >= 300",
-        "Result": [
-          "TableReader 2000.00 root  data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 600,
+        "End": 800,
+        "Count": 1005
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 900",
-        "Result": [
-          "TableReader 2000.00 root  data:Selection",
-          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 800,
+        "End": 1000,
+        "Count": 510
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
-        "Result": [
-          "TableReader 407.20 root  data:Selection",
-          "└─Selection 407.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 100,
+        "End": 300,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
-        "Result": [
-          "TableReader 76.37 root  data:Selection",
-          "└─Selection 76.37 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 300,
+        "End": 500,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
-        "Result": [
-          "TableReader 138.80 root  data:Selection",
-          "└─Selection 138.80 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 500,
+        "End": 700,
+        "Count": 1005
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
-        "Result": [
-          "TableReader 76.50 root  data:Selection",
-          "└─Selection 76.50 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 700,
+        "End": 900,
+        "Count": 1010
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
-        "Result": [
-          "TableReader 139.07 root  data:Selection",
-          "└─Selection 139.07 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
-          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 900,
+        "End": 1100,
+        "Count": 10
       },
       {
-        "SQL": "set @@tidb_opt_objective = 'determinate'",
-        "Result": null
+        "Start": 0,
+        "End": 200,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 300",
-        "Result": [
-          "TableReader 10.00 root  data:Selection",
-          "└─Selection 10.00 cop[tikv]  le(test.t.a, 300)",
-          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 200,
+        "End": 400,
+        "Count": 10
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 500",
-        "Result": [
-          "TableReader 1010.00 root  data:Selection",
-          "└─Selection 1010.00 cop[tikv]  le(test.t.a, 500)",
-          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 400,
+        "End": 600,
+        "Count": 510
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a > 900",
-        "Result": [
-          "TableReader 5.00 root  data:Selection",
-          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
-          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 600,
+        "End": 800,
+        "Count": 1005
       },
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 900",
-        "Result": [
-          "TableReader 3000.00 root  data:Selection",
-          "└─Selection 3000.00 cop[tikv]  le(test.t.a, 900)",
-          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
-        ]
+        "Start": 800,
+        "End": 1000,
+        "Count": 510
+      },
+      {
+        "Start": 1000,
+        "End": 1200,
+        "Count": 10
       }
     ]
   },

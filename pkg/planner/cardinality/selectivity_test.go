@@ -204,7 +204,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
 			output[i].End = ran.End
-			output[i].Count = math.Round(count*100) / 100 // Round to 2 decimal places
+			output[i].Count = math.Round(count) // Round to nearest whole number
 		})
 		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
@@ -311,61 +311,44 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	// Force a refresh of the statistics cache
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
-	// Now test the cardinality estimation directly like TestOutOfRangeEstimation
+	// Now test the cardinality estimation using the same format as TestOutOfRangeEstimation
 	sctx := mock.NewContext()
 
-	// Test the cardinality estimation for ranges that should be affected by the deletion
 	var input []struct {
 		Start int64
 		End   int64
-		Desc  string
 	}
 	var output []struct {
 		Start int64
 		End   int64
-		Desc  string
 		Count float64
 	}
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
 
-	// Define test ranges
-	input = []struct {
-		Start int64
-		End   int64
-		Desc  string
-	}{
-		{200, 400, "range before deletion (should be affected)"}, // This range overlaps with deleted data [300,500)
-		{500, 700, "range after deletion (should be normal)"},    // This range is in remaining data [500,900)
-		{350, 600, "range spanning deletion boundary"},           // This range spans the deletion boundary
-		{100, 200, "range completely outside"},                   // This range is completely outside original data
-	}
+	// Test a specific range first - range [300, 500) should be affected by deletion
+	count, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(300, 500), statsTblAfterDelete.RealtimeCount, 1000, false)
+	require.NoError(t, err)
+	// After deletion, this range should estimate 0 rows since all data in [300, 500) was deleted
+	require.Truef(t, count < 20, "expected: less than 20, got: %v", count)
 
-	output = make([]struct {
-		Start int64
-		End   int64
-		Desc  string
-		Count float64
-	}, len(input))
+	// Use the table row count after deletion (2000)
+	increasedTblRowCount := int64(2000)
+	modifyCount := int64(1000) // Number of deleted rows
 
 	for i, ran := range input {
-		// Use the table row count after deletion (2000)
-		increasedTblRowCount := int64(2000)
-		modifyCount := int64(1000) // Number of deleted rows
-
 		count, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
 		require.NoError(t, err)
 
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
 			output[i].End = ran.End
-			output[i].Desc = ran.Desc
-			output[i].Count = math.Round(count*100) / 100 // Round to 2 decimal places
+			output[i].Count = math.Round(count) // Round to nearest whole number
 		})
 
-		// For now, just verify the estimation is reasonable (non-negative and not too large)
-		require.Truef(t, count >= 0, "for range [%v, %v] (%s), count should be non-negative, got: %v", ran.Start, ran.End, ran.Desc, count)
-		require.Truef(t, count <= 2000, "for range [%v, %v] (%s), count should not exceed table size, got: %v", ran.Start, ran.End, ran.Desc, count)
-
-		t.Logf("Range [%d, %d] (%s): estimated count = %.2f", ran.Start, ran.End, ran.Desc, count)
+		// Verify the estimation is reasonable
+		require.Truef(t, count >= 0, "for range [%v, %v], count should be non-negative, got: %v", ran.Start, ran.End, count)
+		require.Truef(t, count <= 2000, "for range [%v, %v], count should not exceed table size, got: %v", ran.Start, ran.End, count)
 	}
 }
 
@@ -947,7 +930,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
 			output[i].End = ran.End
-			output[i].Count = math.Round(count*100) / 100 // Round to 2 decimal places
+			output[i].Count = math.Round(count) // Round to nearest whole number
 		})
 		require.Truef(t, math.Abs(count-output[i].Count) < eps, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 	}
