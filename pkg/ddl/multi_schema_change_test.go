@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -780,6 +781,24 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"alter index idx_visible invisible, " +
 		"modify column c_3 decimal(10, 2);")
 	require.NoError(t, checkErr)
+}
+
+func TestMultiSchemaChangeModifyAndAddColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column b smallint, add column d int;")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	publicCols := tbl.Cols()
+	for _, c := range publicCols {
+		require.NotNil(t, c)
+	}
 }
 
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {

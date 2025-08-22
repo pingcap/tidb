@@ -167,12 +167,6 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
-	publicCols := tblInfo.Cols()
-	for _, c := range publicCols {
-		if c == nil {
-			return nil, errors.New("table has nil column")
-		}
-	}
 
 	colsLen := len(tblInfo.Columns)
 	columns := make([]*table.Column, 0, colsLen)

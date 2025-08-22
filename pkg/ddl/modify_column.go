@@ -429,22 +429,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
-func printTableInfo(tblInfo *model.TableInfo) {
-	for _, col := range tblInfo.Columns {
-		logutil.DDLLogger().Info("column", zap.Int64("id", col.ID), zap.String("name", col.Name.O))
-	}
-
-	for _, idx := range tblInfo.Indices {
-		idxCols := make([]string, 0, len(idx.Columns))
-		for _, idxCol := range idx.Columns {
-			idxCols = append(idxCols, idxCol.Name.O)
-		}
-
-		logutil.DDLLogger().Info("index", zap.Int64("id", idx.ID),
-			zap.String("name", idx.Name.O), zap.Strings("idxCols", idxCols))
-	}
-}
-
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -460,7 +444,6 @@ func (w *worker) doModifyColumnTypeWithData(
 	targetCol := changingCol.Clone()
 	targetCol.Name = colName
 	changingIdxs := buildRelatedIndexInfos(tblInfo, changingCol.ID)
-	printTableInfo(tblInfo)
 	switch changingCol.State {
 	case model.StateNone:
 		err = validatePosition(tblInfo, oldCol, pos)
@@ -580,11 +563,13 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
+
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
 		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
 		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
 		moveColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
 		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
+		tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
 		updateModifyingCols(oldCol, changingCol)
 
 		job.SchemaState = model.StatePublic
@@ -629,6 +614,9 @@ func (w *worker) doModifyColumnTypeWithData(
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 
+	intest.AssertFunc(func() bool {
+		return integrityCheck(tblInfo)
+	}, "all non-public cols should come after the public cols")
 	return ver, errors.Trace(err)
 }
 
@@ -720,6 +708,16 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 		}
 	}
 	return nil
+}
+
+func integrityCheck(tblInfo *model.TableInfo) bool {
+	publicCols := tblInfo.Cols()
+	for _, c := range publicCols {
+		if c == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
