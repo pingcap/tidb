@@ -508,9 +508,6 @@ func initStats(ds *logicalop.DataSource) {
 		HistColl:     ds.StatisticTable.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.TblCols),
 		StatsVersion: ds.StatisticTable.Version,
 	}
-	if ds.StatisticTable.Pseudo {
-		tableStats.StatsVersion = statistics.PseudoVersion
-	}
 
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.PhysicalTableID)
@@ -735,9 +732,6 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 		RealtimeCount: tableStats.HistColl.RealtimeCount,
 		ModifyCount:   tableStats.HistColl.ModifyCount,
 		Version:       tableStats.Version,
-	}
-	if tableStats.Pseudo {
-		usedStats.Version = statistics.PseudoVersion
 	}
 	statsRecord.RecordUsedInfo(pid, usedStats)
 }

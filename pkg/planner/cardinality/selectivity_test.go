@@ -1539,9 +1539,9 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl, found := h.Get(tbl.Meta().ID)
 	require.True(t, found)
-	require.False(t, statsTbl.ColAndIdxExistenceMap.IsEmpty())
+	require.False(t, statsTbl.IsExistenceMapEmpty())
 	for _, col := range tbl.Cols() {
-		require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
+		require.False(t, statsTbl.HasAnalyzedCol(col.ID))
 	}
 }
 

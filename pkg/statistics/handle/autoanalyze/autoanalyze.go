@@ -579,7 +579,7 @@ func tryAutoAnalyzeTable(
 
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
-		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.HasAnalyzedIdx(idx.ID) && idx.State == model.StatePublic {
 			// Columnar index doesn't need stats yet.
 			if idx.IsColumnarIndex() {
 				continue
@@ -731,7 +731,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				continue
 			}
 			// 2. If the index is not analyzed, we need to analyze it.
-			if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
+			if !partitionStats.HasAnalyzedIdx(idx.ID) {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
 				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 			}

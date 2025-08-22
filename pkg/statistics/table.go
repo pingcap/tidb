@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
 )
@@ -91,6 +90,15 @@ type Table struct {
 	TblInfoUpdateTS uint64
 
 	IsPkIsHandle bool
+
+	// tableInfo is stored for pseudo tables to enable on-demand metadata derivation
+	// For real tables, this should be nil as metadata comes from actual column/index stats
+	tableInfo *model.TableInfo
+
+	// pseudoColCache and pseudoIdxCache provide O(1) lookup for pseudo tables
+	// These are lazily populated from tableInfo when needed
+	pseudoColCache map[int64]*Column
+	pseudoIdxCache map[int64]*Index
 }
 
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
@@ -102,24 +110,14 @@ type ColAndIdxExistenceMap struct {
 	idxAnalyzed map[int64]bool
 }
 
-// DeleteColNotFound deletes the column with the given id.
-func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
+// deleteCol deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) deleteCol(id int64) {
 	delete(m.colAnalyzed, id)
 }
 
-// DeleteIdxNotFound deletes the index with the given id.
-func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
+// deleteIdx deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) deleteIdx(id int64) {
 	delete(m.idxAnalyzed, id)
-}
-
-// Checked returns whether the map has been checked.
-func (m *ColAndIdxExistenceMap) Checked() bool {
-	return m.checked
-}
-
-// SetChecked set the map as checked.
-func (m *ColAndIdxExistenceMap) SetChecked() {
-	m.checked = true
 }
 
 // HasAnalyzed checks whether a column/index stats exists and it has stats.
@@ -129,10 +127,13 @@ func (m *ColAndIdxExistenceMap) SetChecked() {
 //  2. We have it, but it hasn't been analyzed yet.
 //  3. We have it and its statistics.
 //
-// To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
+// To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The has's FALSE to represents the status 1.
 // Begin from v8.5.2, the 1. case becomes a nearly invalid case. It's just a middle state between happening of the DDL and the completion of the stats' ddl handler.
 // But we may need to deal with the 1. for the upgrade compatibility.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
+	if m == nil {
+		return false // Pseudo tables never have analyzed stats
+	}
 	if isIndex {
 		analyzed, ok := m.idxAnalyzed[id]
 		return ok && analyzed
@@ -141,8 +142,8 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	return ok && analyzed
 }
 
-// Has checks whether a column/index stats exists.
-func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
+// has checks whether a column/index stats exists.
+func (m *ColAndIdxExistenceMap) has(id int64, isIndex bool) bool {
 	if isIndex {
 		_, ok := m.idxAnalyzed[id]
 		return ok
@@ -161,18 +162,18 @@ func (m *ColAndIdxExistenceMap) InsertIndex(id int64, analyzed bool) {
 	m.idxAnalyzed[id] = analyzed
 }
 
-// IsEmpty checks whether the map is empty.
-func (m *ColAndIdxExistenceMap) IsEmpty() bool {
+// isEmpty checks whether the map is empty.
+func (m *ColAndIdxExistenceMap) isEmpty() bool {
 	return len(m.colAnalyzed)+len(m.idxAnalyzed) == 0
 }
 
-// ColNum returns the number of columns in the map.
-func (m *ColAndIdxExistenceMap) ColNum() int {
+// colNum returns the number of columns in the map.
+func (m *ColAndIdxExistenceMap) colNum() int {
 	return len(m.colAnalyzed)
 }
 
-// Clone deeply copies the map.
-func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
+// clone deeply copies the map.
+func (m *ColAndIdxExistenceMap) clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colAnalyzed), len(m.idxAnalyzed))
 	mm.checked = m.checked
 	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
@@ -350,16 +351,116 @@ func (coll *HistColl) IdxNum() int {
 	return len(coll.indices)
 }
 
+// HasAnalyzedCol checks whether a column has analyzed statistics.
+// For pseudo tables, this always returns false since they have no real stats.
+func (t *Table) HasAnalyzedCol(colID int64) bool {
+	if t.ColAndIdxExistenceMap == nil {
+		return false
+	}
+	return t.ColAndIdxExistenceMap.HasAnalyzed(colID, false)
+}
+
+// HasAnalyzedIdx checks whether an index has analyzed statistics.
+// For pseudo tables, this always returns false since they have no real stats.
+func (t *Table) HasAnalyzedIdx(idxID int64) bool {
+	if t.ColAndIdxExistenceMap == nil {
+		return false // Pseudo tables never have analyzed stats
+	}
+	return t.ColAndIdxExistenceMap.HasAnalyzed(idxID, true)
+}
+
+// HasCol checks whether a column stats entry exists.
+// For pseudo tables, this always returns false.
+func (t *Table) HasCol(colID int64) bool {
+	if t.ColAndIdxExistenceMap == nil {
+		return false // Pseudo tables have no existence tracking
+	}
+	return t.ColAndIdxExistenceMap.has(colID, false)
+}
+
+// HasIdx checks whether an index stats entry exists.
+// For pseudo tables, this always returns false.
+func (t *Table) HasIdx(idxID int64) bool {
+	if t.ColAndIdxExistenceMap == nil {
+		return false // Pseudo tables have no existence tracking
+	}
+	return t.ColAndIdxExistenceMap.has(idxID, true)
+}
+
+// IsStatsMetaInitialized returns whether the statistics metadata has been fully initialized.
+// For pseudo tables, this always returns true since they don't need metadata initialization.
+func (t *Table) IsStatsMetaInitialized() bool {
+	if t.ColAndIdxExistenceMap == nil {
+		return true // Pseudo tables don't need metadata initialization
+	}
+	return t.ColAndIdxExistenceMap.checked
+}
+
+// SetStatsMetaInitialized marks the statistics metadata as fully initialized.
+// This is a no-op for pseudo tables.
+func (t *Table) SetStatsMetaInitialized() {
+	if t.ColAndIdxExistenceMap != nil {
+		t.ColAndIdxExistenceMap.checked = true
+	}
+}
+
+// InsertColExistence inserts a column existence entry.
+// This is a no-op for pseudo tables.
+func (t *Table) InsertColExistence(colID int64, analyzed bool) {
+	if t.ColAndIdxExistenceMap != nil {
+		t.ColAndIdxExistenceMap.colAnalyzed[colID] = analyzed
+	}
+}
+
+// InsertIdxExistence inserts an index existence entry.
+// This is a no-op for pseudo tables.
+func (t *Table) InsertIdxExistence(idxID int64, analyzed bool) {
+	if t.ColAndIdxExistenceMap != nil {
+		t.ColAndIdxExistenceMap.idxAnalyzed[idxID] = analyzed
+	}
+}
+
+// HasAnalyzed checks whether a column or index has analyzed statistics.
+// For pseudo tables, this always returns false since they have no real stats.
+func (t *Table) HasAnalyzed(id int64, isIndex bool) bool {
+	if t.ColAndIdxExistenceMap == nil {
+		return false // Pseudo tables never have analyzed stats
+	}
+	return t.ColAndIdxExistenceMap.HasAnalyzed(id, isIndex)
+}
+
+// ColNum returns the number of columns in the existence map.
+// For pseudo tables, this returns 0.
+func (t *Table) ColNum() int {
+	if t.ColAndIdxExistenceMap == nil {
+		return 0 // Pseudo tables have no existence tracking
+	}
+	return t.ColAndIdxExistenceMap.colNum()
+}
+
+// IsExistenceMapEmpty checks whether the existence map is empty.
+// For pseudo tables, this always returns true.
+func (t *Table) IsExistenceMapEmpty() bool {
+	if t.ColAndIdxExistenceMap == nil {
+		return true // Pseudo tables have no existence tracking
+	}
+	return t.ColAndIdxExistenceMap.isEmpty()
+}
+
 // DelCol deletes the column with the given id.
 func (t *Table) DelCol(id int64) {
 	delete(t.columns, id)
-	t.ColAndIdxExistenceMap.DeleteColNotFound(id)
+	if t.ColAndIdxExistenceMap != nil {
+		t.ColAndIdxExistenceMap.deleteCol(id)
+	}
 }
 
 // DelIdx deletes the index with the given id.
 func (t *Table) DelIdx(id int64) {
 	delete(t.indices, id)
-	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
+	if t.ColAndIdxExistenceMap != nil {
+		t.ColAndIdxExistenceMap.deleteIdx(id)
+	}
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
@@ -622,6 +723,9 @@ func (t *Table) Copy() *Table {
 		TblInfoUpdateTS:      t.TblInfoUpdateTS,
 		LastAnalyzeVersion:   t.LastAnalyzeVersion,
 		LastStatsHistVersion: t.LastStatsHistVersion,
+		tableInfo:            t.tableInfo,
+		pseudoColCache:       nil, // Don't copy cache, let it be lazily rebuilt
+		pseudoIdxCache:       nil, // Don't copy cache, let it be lazily rebuilt
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -632,7 +736,7 @@ func (t *Table) Copy() *Table {
 		nt.ExtendedStats = newExtStatsColl
 	}
 	if t.ColAndIdxExistenceMap != nil {
-		nt.ColAndIdxExistenceMap = t.ColAndIdxExistenceMap.Clone()
+		nt.ColAndIdxExistenceMap = t.ColAndIdxExistenceMap.clone()
 	}
 	return nt
 }
@@ -658,6 +762,9 @@ func (t *Table) ShallowCopy() *Table {
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
 		LastStatsHistVersion:  t.LastStatsHistVersion,
+		tableInfo:             t.tableInfo,
+		pseudoColCache:        nil, // Don't copy cache, let it be lazily rebuilt
+		pseudoIdxCache:        nil, // Don't copy cache, let it be lazily rebuilt
 	}
 	return nt
 }
@@ -706,12 +813,117 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
+// GetCol gets the column with the given id, creating a pseudo column if this is a pseudo table.
+func (t *Table) GetCol(id int64) *Column {
+	if col := t.HistColl.GetCol(id); col != nil {
+		return col
+	}
+
+	// For pseudo tables, use lazy cache for O(1) lookup
+	if t.Pseudo && t.tableInfo != nil {
+		t.ensurePseudoColCache()
+		return t.pseudoColCache[id]
+	}
+
+	return nil
+}
+
+// GetIdx gets the index with the given id, creating a pseudo index if this is a pseudo table.
+func (t *Table) GetIdx(id int64) *Index {
+	if idx := t.HistColl.GetIdx(id); idx != nil {
+		return idx
+	}
+
+	// For pseudo tables, use lazy cache for O(1) lookup
+	if t.Pseudo && t.tableInfo != nil {
+		t.ensurePseudoIdxCache()
+		return t.pseudoIdxCache[id]
+	}
+
+	return nil
+}
+
+// ensurePseudoColCache initializes the pseudo column cache if needed
+func (t *Table) ensurePseudoColCache() {
+	if t.pseudoColCache != nil {
+		return // already initialized
+	}
+
+	t.pseudoColCache = make(map[int64]*Column)
+	for _, colInfo := range t.tableInfo.Columns {
+		if colInfo.State == model.StatePublic && !colInfo.Hidden {
+			t.pseudoColCache[colInfo.ID] = &Column{
+				PhysicalID: t.PhysicalID,
+				Info:       colInfo,
+				IsHandle:   t.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+			}
+		}
+	}
+}
+
+// ensurePseudoIdxCache initializes the pseudo index cache if needed
+func (t *Table) ensurePseudoIdxCache() {
+	if t.pseudoIdxCache != nil {
+		return // already initialized
+	}
+
+	t.pseudoIdxCache = make(map[int64]*Index)
+	for _, idxInfo := range t.tableInfo.Indices {
+		if idxInfo.State == model.StatePublic {
+			t.pseudoIdxCache[idxInfo.ID] = &Index{
+				PhysicalID: t.PhysicalID,
+				Info:       idxInfo,
+			}
+		}
+	}
+}
+
+// ForEachColumnImmutable iterates all columns in the Table, including pseudo columns for pseudo tables.
+func (t *Table) ForEachColumnImmutable(f func(int64, *Column) bool) {
+	// First iterate existing columns
+	t.HistColl.ForEachColumnImmutable(f)
+
+	// For pseudo tables, also iterate pseudo columns using cache
+	if t.Pseudo && t.tableInfo != nil {
+		t.ensurePseudoColCache()
+		for id, col := range t.pseudoColCache {
+			// Skip if we already have this column in real data
+			if t.HistColl.GetCol(id) != nil {
+				continue
+			}
+			if f(id, col) {
+				return
+			}
+		}
+	}
+}
+
+// ForEachIndexImmutable iterates all indices in the Table, including pseudo indices for pseudo tables.
+func (t *Table) ForEachIndexImmutable(f func(int64, *Index) bool) {
+	// First iterate existing indices
+	t.HistColl.ForEachIndexImmutable(f)
+
+	// For pseudo tables, also iterate pseudo indices using cache
+	if t.Pseudo && t.tableInfo != nil {
+		t.ensurePseudoIdxCache()
+		for id, idx := range t.pseudoIdxCache {
+			// Skip if we already have this index in real data
+			if t.HistColl.GetIdx(id) != nil {
+				continue
+			}
+			if f(id, idx) {
+				return
+			}
+		}
+	}
+}
+
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
 //
 //	needCopy: In order to protect the item in the cache from being damaged, we need to copy the item.
 func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
-		if idxStatsInfo, ok := t.indices[id]; ok {
+		if idxStatsInfo := t.GetIdx(id); idxStatsInfo != nil {
 			if needCopy {
 				return idxStatsInfo.Histogram.Copy(),
 					idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
@@ -722,7 +934,7 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 		// newly added index which is not analyzed yet
 		return nil, nil, nil, nil, false
 	}
-	if colStatsInfo, ok := t.columns[id]; ok {
+	if colStatsInfo := t.GetCol(id); colStatsInfo != nil {
 		if needCopy {
 			return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(),
 				colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
@@ -841,18 +1053,18 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (col *Column, loadNe
 	if t.Pseudo {
 		return nil, false, false
 	}
-	hasAnalyzed = t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
+	hasAnalyzed = t.HasAnalyzedCol(id)
 	col, ok := t.columns[id]
 	if !ok {
 		// If The column have no stats object in memory. We need to check it by existence map.
-		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => Has=false, HasAnalyzed=false
-		// If existence map says it has analyzed stats, we need to load it from storage. => Has=true, HasAnalyzed=true
-		// If existence map says it has no analyzed stats but have a uninitialized record in storage, we need to also create a fake object. => Has=true, HasAnalyzed=false
-		return nil, t.ColAndIdxExistenceMap.Has(id, false), hasAnalyzed
+		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => has=false, HasAnalyzed=false
+		// If existence map says it has analyzed stats, we need to load it from storage. => has=true, HasAnalyzed=true
+		// If existence map says it has no analyzed stats but have a uninitialized record in storage, we need to also create a fake object. => has=true, HasAnalyzed=false
+		return nil, t.HasCol(id), hasAnalyzed
 	}
 
 	// If it's not analyzed yet.
-	// The real check condition: !ok && !hashAnalyzed.(Has must be true since we've have the memory object so we should have the storage object)
+	// The real check condition: !ok && !hashAnalyzed.(has must be true since we've have the memory object so we should have the storage object)
 	// After this check, we will always have ok && hasAnalyzed.
 	if !hasAnalyzed {
 		return nil, false, false
@@ -876,7 +1088,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (col *Column, loadNe
 func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	idx, ok := t.indices[id]
 	// If the index is not in the memory, and we have its stats in the storage. We need to trigger the load.
-	if !ok && (t.ColAndIdxExistenceMap.HasAnalyzed(id, true) || !t.ColAndIdxExistenceMap.Checked()) {
+	if !ok && (t.HasAnalyzedIdx(id) || !t.IsStatsMetaInitialized()) {
 		return nil, true
 	}
 	// If the index is in the memory, we check its embedded func.
@@ -1017,51 +1229,37 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	return newColl
 }
 
+// PseudoHistColl creates a lightweight pseudo HistColl for cost calculation.
+// This is optimized for cases where only HistColl is needed, avoiding the overhead
+// of creating a full pseudo table with ColAndIdxExistenceMap and other structures.
+func PseudoHistColl(physicalID int64, allowTriggerLoading bool) HistColl {
+	return HistColl{
+		RealtimeCount:     PseudoRowCount,
+		PhysicalID:        physicalID,
+		columns:           nil,
+		indices:           nil,
+		Pseudo:            true,
+		CanNotTriggerLoad: !allowTriggerLoading,
+		ModifyCount:       0,
+		StatsVer:          0,
+	}
+}
+
 // PseudoTable creates a pseudo table statistics.
 // Usually, we don't want to trigger stats loading for pseudo table.
 // But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
 // Such case could possibly happen in getStatsTable().
 func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHistMeta bool) *Table {
-	pseudoHistColl := HistColl{
-		RealtimeCount:     PseudoRowCount,
-		PhysicalID:        tblInfo.ID,
-		columns:           make(map[int64]*Column, 2),
-		indices:           make(map[int64]*Index, 2),
-		Pseudo:            true,
-		CanNotTriggerLoad: !allowTriggerLoading,
-	}
 	t := &Table{
-		HistColl:              pseudoHistColl,
-		ColAndIdxExistenceMap: NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices)),
+		HistColl: PseudoHistColl(tblInfo.ID, allowTriggerLoading),
+		Version:  PseudoVersion,
 	}
-	for _, col := range tblInfo.Columns {
-		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.
-		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
-		// Thus we don't create pseudo stats for it.
-		if col.State == model.StatePublic && !col.Hidden {
-			t.ColAndIdxExistenceMap.InsertCol(col.ID, false)
-			if allowFillHistMeta {
-				t.columns[col.ID] = &Column{
-					PhysicalID: tblInfo.ID,
-					Info:       col,
-					IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-					Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
-				}
-			}
-		}
+	// Store tableInfo for pseudo tables to enable on-demand metadata derivation
+	if allowFillHistMeta {
+		t.tableInfo = tblInfo
 	}
-	for _, idx := range tblInfo.Indices {
-		if idx.State == model.StatePublic {
-			t.ColAndIdxExistenceMap.InsertIndex(idx.ID, false)
-			if allowFillHistMeta {
-				t.indices[idx.ID] = &Index{
-					PhysicalID: tblInfo.ID,
-					Info:       idx,
-					Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
-				}
-			}
-		}
-	}
+	// No longer pre-populate columns/indices maps for pseudo tables
+	// Metadata will be derived on-demand from tableInfo when needed
 	return t
 }
 

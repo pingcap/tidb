@@ -200,7 +200,7 @@ func recordUsedItemStatsStatus(sctx planctx.PlanContext, stats any, tableID, id 
 
 	if missing {
 		// Figure out whether it's really not existing.
-		if recordForTbl.ColAndIdxStatus != nil && recordForTbl.ColAndIdxStatus.(*statistics.ColAndIdxExistenceMap).HasAnalyzed(id, isIndex) {
+		if recordForTbl.HasAnalyzed(id, isIndex) {
 			// If this item has been analyzed but there's no its stats, we should mark it as uninitialized.
 			recordForColOrIdx[id] = statistics.StatsLoadedStatus{}.StatusToString()
 		} else {

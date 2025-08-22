@@ -204,7 +204,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 				tbl.StatsVer = int(statsVer)
 			}
 			tbl.SetIdx(idx.ID, idx)
-			tbl.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, true)
+			tbl.InsertIdxExistence(idxInfo.ID, true)
 		}
 	}
 
@@ -256,7 +256,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 				tbl.StatsVer = int(statsVer)
 			}
 			tbl.SetCol(col.ID, col)
-			tbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, true)
+			tbl.InsertColExistence(colInfo.ID, true)
 		}
 	}
 	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)

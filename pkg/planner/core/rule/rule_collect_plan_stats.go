@@ -124,7 +124,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if tableStats == nil || tableStats.Pseudo {
 			continue
 		}
-		if !tableStats.ColAndIdxExistenceMap.HasAnalyzed(neededCol.ID, neededCol.IsIndex) {
+		if !tableStats.HasAnalyzed(neededCol.ID, neededCol.IsIndex) {
 			continue
 		}
 		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
@@ -152,7 +152,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 			// 1. not in public state.
 			// 2. virtual generated column.
 			// 3. unanalyzed column.
-			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
+			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.HasAnalyzedCol(col.ID) {
 				continue
 			}
 			if colStats := tblStats.GetCol(col.ID); colStats != nil {

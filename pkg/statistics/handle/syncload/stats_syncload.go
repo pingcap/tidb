@@ -586,7 +586,7 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 	if !ok {
 		return false
 	}
-	if !tbl.ColAndIdxExistenceMap.Checked() {
+	if !tbl.IsStatsMetaInitialized() {
 		tbl = tbl.Copy()
 		for _, col := range tbl.HistColl.GetColSlice() {
 			if tblInfo.FindColumnByID(col.ID) == nil {
@@ -598,7 +598,7 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 				tbl.DelIdx(idx.ID)
 			}
 		}
-		tbl.ColAndIdxExistenceMap.SetChecked()
+		tbl.SetStatsMetaInitialized()
 	}
 	if !item.IsIndex && colHist != nil {
 		c := tbl.GetCol(item.ID)
@@ -612,14 +612,14 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 
 		// If the column is analyzed we refresh the map for the possible change.
 		if colHist.StatsAvailable() {
-			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
+			tbl.InsertColExistence(item.ID, true)
 		}
 		// All the objects shares the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
 			tbl.StatsVer = statistics.Version0
 		}
 		// we have to refresh the map for the possible change to ensure that the map information is not missing.
-		tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.StatsAvailable())
+		tbl.InsertColExistence(item.ID, colHist.StatsAvailable())
 	} else if item.IsIndex && idxHist != nil {
 		index := tbl.GetIdx(item.ID)
 		// - If the stats is fully loaded,
@@ -631,7 +631,7 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		tbl.SetIdx(item.ID, idxHist)
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
-			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, true)
+			tbl.InsertIdxExistence(item.ID, true)
 			// All the objects shares the same stats version. Update it here.
 			tbl.StatsVer = statistics.Version0
 		}
