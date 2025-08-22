@@ -409,5 +409,4 @@ func TestSubqueryWithDifferentDataTypesInExplainAnalyze(t *testing.T) {
 		{"  └─TableDual_76", "root", "rows:0"},
 	}
 	testKit.MustQuery(sql).CheckAt([]int{0, 3, 6}, rows)
-
 }
