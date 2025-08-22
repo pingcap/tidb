@@ -148,7 +148,7 @@ func estimateUniformNDV(originalNDV, originalRows, selectedRows float64) (newNDV
 	newNDV = originalNDV * (1 - notSelectedPossPerValue)
 
 	// revise newNDV
-	newNDV = max(newNDV, 1.0)          // at lease 1 value
+	newNDV = max(newNDV, 1.0)          // at least 1 value
 	newNDV = min(newNDV, selectedRows) // at most selectedRows values
 	return
 }
