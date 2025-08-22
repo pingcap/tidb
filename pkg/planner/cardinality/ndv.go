@@ -19,21 +19,15 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 const distinctFactor = 0.8
-
-// SessionVarProvider provides access to session variables for NDV estimation.
-// Both sessionctx.Context and planctx.PlanContext implement this interface.
-type SessionVarProvider interface {
-	GetSessionVars() *variable.SessionVars
-}
 
 // EstimateColumnNDV computes estimated NDV of specified column using the original
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
@@ -85,7 +79,7 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 // EstimateColsNDVWithMatchedLen returns the NDV of a couple of columns.
 // If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
 // This method is primarily used by join operations.
-func EstimateColsNDVWithMatchedLen(sctx SessionVarProvider, cols []*expression.Column, schema *expression.Schema,
+func EstimateColsNDVWithMatchedLen(sctx planctx.PlanContext, cols []*expression.Column, schema *expression.Schema,
 	profile *property.StatsInfo) (float64, int) {
 	// Early return for empty columns - no NDV estimation needed
 	if len(cols) == 0 {
@@ -201,7 +195,7 @@ func calculateGroupNDVWithSkewRatio(conservativeNDV, exponentialNDV, skewRatio f
 }
 
 // EstimateColsDNVWithMatchedLenFromUniqueIDs is similar to EstimateColsDNVWithMatchedLen, but it receives UniqueIDs instead of Columns.
-func EstimateColsDNVWithMatchedLenFromUniqueIDs(sctx SessionVarProvider, ids []int64, schema *expression.Schema,
+func EstimateColsDNVWithMatchedLenFromUniqueIDs(sctx planctx.PlanContext, ids []int64, schema *expression.Schema,
 	profile *property.StatsInfo) (float64, int) {
 	cols := make([]*expression.Column, 0, len(ids))
 	for _, id := range ids {

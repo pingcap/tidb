@@ -20,19 +20,15 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-// mockSessionVars provides a simple mock for testing
-type mockSessionVars struct {
-	riskGroupNDVSkewRatio float64
-}
-
-func (m *mockSessionVars) GetSessionVars() *variable.SessionVars {
-	return &variable.SessionVars{
-		RiskGroupNDVSkewRatio: m.riskGroupNDVSkewRatio,
-	}
+// createMockPlanContext creates a mock plan context with specified skew ratio
+func createMockPlanContext(riskGroupNDVSkewRatio float64) *mock.Context {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().RiskGroupNDVSkewRatio = riskGroupNDVSkewRatio
+	return ctx
 }
 
 func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
@@ -82,14 +78,14 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 	targetCols = []*expression.Column{colA, colB}
 
 	// Test with variable disabled (skewRatio = 0) - should use conservative estimate
-	mockCtxDisabled := &mockSessionVars{riskGroupNDVSkewRatio: 0.0}
+	mockCtxDisabled := createMockPlanContext(0.0)
 	ndvDisabled, matchedLen := EstimateColsNDVWithMatchedLen(mockCtxDisabled, targetCols, schema, statsInfo)
 	expectedConservative := 1000.0 // max(1000, 500) - conservative approach
 	require.InDelta(t, expectedConservative, ndvDisabled, 0.1)
 	require.Equal(t, 1, matchedLen)
 
 	// Test with variable enabled (skewRatio = 1.0) - should use exponential backoff
-	mockCtxEnabled := &mockSessionVars{riskGroupNDVSkewRatio: 1.0}
+	mockCtxEnabled := createMockPlanContext(1.0)
 	ndvEnabled, matchedLen := EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfo)
 	expectedExponential := 1000 * math.Sqrt(500) // ~22360.7 - exponential backoff
 	require.InDelta(t, expectedExponential, ndvEnabled, 0.1)
@@ -100,7 +96,7 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 	require.Greater(t, ndvEnabled, ndvDisabled) // Exponential should be higher
 
 	// Test with variable partially enabled (skewRatio = 0.5) - should blend
-	mockCtxBlended := &mockSessionVars{riskGroupNDVSkewRatio: 0.5}
+	mockCtxBlended := createMockPlanContext(0.5)
 	ndvBlended, _ := EstimateColsNDVWithMatchedLen(mockCtxBlended, targetCols, schema, statsInfo)
 	expectedBlended := expectedConservative + (expectedExponential-expectedConservative)*0.5
 	require.InDelta(t, expectedBlended, ndvBlended, 0.1)
