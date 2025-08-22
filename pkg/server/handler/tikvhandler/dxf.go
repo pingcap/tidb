@@ -53,7 +53,7 @@ func (h *DXFScheduleStatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 		return
 	}
 	if h.store.GetKeyspace() != keyspace.System {
-		handler.WriteError(w, errors.Errorf("This api only support SYSTEM keyspace"))
+		handler.WriteError(w, errors.Errorf("This api only support SYSTEM keyspace, current keyspace is %s", h.store.GetKeyspace()))
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *DXFScheduleHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	if h.store.GetKeyspace() != keyspace.System {
-		handler.WriteError(w, errors.Errorf("This api only support SYSTEM keyspace"))
+		handler.WriteError(w, errors.Errorf("This api only support SYSTEM keyspace, current keyspace is %s", h.store.GetKeyspace()))
 		return
 	}
 	name, param, err := parsePauseScaleInFlag(req)
