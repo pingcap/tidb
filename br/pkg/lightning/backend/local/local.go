@@ -646,12 +646,7 @@ func NewBackend(
 	if config.DupeDetectEnabled {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	var writeLimiter StoreWriteLimiter
-	if config.StoreWriteBWLimit > 0 {
-		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
-	} else {
-		writeLimiter = noopStoreWriteLimiter{}
-	}
+	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	alloc := manual.Allocator{}
 	if RunInTest {
 		alloc.RefCnt = new(atomic.Int64)
