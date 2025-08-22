@@ -2114,11 +2114,12 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	default:
 		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
 	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	switch req.Method {
 	case http.MethodGet:
 		var respValue float64
 		var respIsNull bool
-		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var getErr error
 			respValue, respIsNull, getErr = getter(m)
@@ -2148,7 +2149,7 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			handler.WriteError(w, errors.New("value must be >= 0"))
 			return
 		}
-		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			return setter(m, newValue)
 		})
