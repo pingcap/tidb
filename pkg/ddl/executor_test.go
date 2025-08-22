@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -315,4 +316,21 @@ func TestHandleLockTable(t *testing.T) {
 		require.Len(t, se.GetAllTableLocks(), 1)
 		checkTableLocked(1, ast.TableLockRead)
 	})
+}
+
+func TestRejectInvalidEngineAttribute(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("skip test not in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("CREATE TABLE test.t3 (id INT PRIMARY KEY, value VARCHAR(16383));")
+	tk.MustExecToErr("ALTER TABLE test.t3 ENGINE_ATTRIBUTE = '{\"storage_class\": \"INVALID\"}';")
+	tk.MustQuery("ADMIN SHOW DDL JOB QUERIES LIMIT 1;").
+		CheckNotContain("INVALID")
+
+	tk.MustExec("ALTER TABLE test.t3 ENGINE_ATTRIBUTE = '{\"storage_class\": \"IA\"}';")
+	tk.MustQuery("ADMIN SHOW DDL JOB QUERIES LIMIT 1;").
+		CheckContain("IA")
 }
