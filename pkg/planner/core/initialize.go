@@ -54,15 +54,6 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalIndexMergeJoin.
-func (p PhysicalIndexMergeJoin) Init(ctx base.PlanContext) *PhysicalIndexMergeJoin {
-	p.SetTP(plancodec.TypeIndexMergeJoin)
-	p.SetID(int(ctx.GetSessionVars().PlanID.Add(1)))
-	p.SetSCtx(ctx)
-	p.Self = &p
-	return &p
-}
-
 // Init initializes BatchPointGetPlan.
 func (p *BatchPointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)

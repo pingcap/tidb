@@ -115,6 +115,10 @@ func init() {
 	utilfuncp.GetCost4PhysicalIndexHashJoin = getCost4PhysicalIndexHashJoin
 	utilfuncp.GetPlanCostVer1PhysicalIndexHashJoin = getPlanCostVer1PhysicalIndexHashJoin
 	utilfuncp.Attach2Task4PhysicalIndexHashJoin = attach2Task4PhysicalIndexHashJoin
+	// for physical index merge join
+	utilfuncp.GetCost4PhysicalIndexMergeJoin = getCost4PhysicalIndexMergeJoin
+	utilfuncp.GetPlanCostVer14PhysicalIndexMergeJoin = getPlanCostVer14PhysicalIndexMergeJoin
+	utilfuncp.Attach2Task4PhysicalIndexMergeJoin = attach2Task4PhysicalIndexMergeJoin
 	// for physical hash agg
 	utilfuncp.GetCost4PhysicalHashAgg = getCost4PhysicalHashAgg
 	utilfuncp.Attach2Task4PhysicalHashAgg = attach2Task4PhysicalHashAgg
