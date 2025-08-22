@@ -87,7 +87,7 @@ func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (int, int, 
 	if len(nodes) == 0 {
 		// shouldn't happen normally as every node will register itself to the meta
 		// table.
-		logutil.BgLogger().Error("no managed nodes found, cannot calculate required nodes")
+		logutil.BgLogger().Warn("no managed nodes found, use local node CPU count instead")
 		cpuCount = cpu.GetCPUCount()
 	} else {
 		cpuCount = nodes[0].CPUCount

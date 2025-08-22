@@ -62,7 +62,7 @@ func (h *DXFScheduleStatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 	defer cancel()
 	status, err := handle.GetScheduleStatus(ctx)
 	if err != nil {
-		logutil.BgLogger().Error("failed to get DXF schedule status", zap.Error(err))
+		logutil.BgLogger().Warn("failed to get DXF schedule status", zap.Error(err))
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
