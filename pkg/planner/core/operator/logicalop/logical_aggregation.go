@@ -123,6 +123,9 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	allFirstRow := true
 	allRemainFirstRow := true
 	for i := len(used) - 1; i >= 0; i-- {
+		if la.AggFuncs[i].Name == ast.AggFuncMax || la.AggFuncs[i].Name == ast.AggFuncMin {
+			continue
+		}
 		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allFirstRow = false
 		}
