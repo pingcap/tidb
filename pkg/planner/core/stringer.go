@@ -289,7 +289,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.InnerJoinKeys[i]
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

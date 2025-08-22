@@ -959,7 +959,7 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
 	case *physicalop.PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
-		*PhysicalIndexMergeJoin:
+		*physicalop.PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 

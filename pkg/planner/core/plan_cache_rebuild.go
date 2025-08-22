@@ -79,7 +79,7 @@ func rebuildRange(p base.Plan) error {
 	switch x := p.(type) {
 	case *physicalop.PhysicalIndexHashJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
 	case *physicalop.PhysicalIndexJoin:
 		if err := x.Ranges.Rebuild(sctx); err != nil {
