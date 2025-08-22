@@ -191,7 +191,7 @@ func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 		c.write("if %v != %v {return false}", lhs, rhs)
 	default:
 		if fType.Implements(hashEqualsType) || fType.Implements(iHashEqualsType) ||
-			reflect.PtrTo(fType).Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(iHashEqualsType) {
+			reflect.PointerTo(fType).Implements(hashEqualsType) || reflect.PointerTo(fType).Implements(iHashEqualsType) {
 			if fType.Kind() == reflect.Struct {
 				rhs = "&" + rhs
 			}
@@ -226,7 +226,7 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 		c.write("h.HashFloat64(float64(%v))", callName)
 	default:
 		if fType.Implements(hashEqualsType) || fType.Implements(iHashEqualsType) ||
-			reflect.PtrTo(fType).Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(iHashEqualsType) {
+			reflect.PointerTo(fType).Implements(hashEqualsType) || reflect.PointerTo(fType).Implements(iHashEqualsType) {
 			c.write("%v.Hash64(h)", callName)
 			return
 		}
