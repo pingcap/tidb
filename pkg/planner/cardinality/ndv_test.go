@@ -24,6 +24,9 @@ import (
 )
 
 func TestScaleNDV(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().RiskScaleNDVSkewRatio = 0
 	type TestCase struct {
 		OriginalNDV  float64
 		OriginalRows float64
@@ -42,7 +45,7 @@ func TestScaleNDV(t *testing.T) {
 		{10, 100, 90, 10.00},
 	}
 	for _, tc := range cases {
-		newNDV := cardinality.ScaleNDV(tc.OriginalNDV, tc.OriginalRows, tc.SelectedRows)
+		newNDV := cardinality.ScaleNDV(tk.Session().GetSessionVars(), tc.OriginalNDV, tc.OriginalRows, tc.SelectedRows)
 		require.Equal(t, fmt.Sprintf("%.2f", tc.NewNDV), fmt.Sprintf("%.2f", newNDV), tc)
 	}
 }
