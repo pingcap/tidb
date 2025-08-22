@@ -324,26 +324,20 @@ func (*ScalarSubQueryExpr) Vectorized() bool {
 }
 
 // Schema implements the Plan interface.
-func (*ScalarSubqueryEvalCtx) Schema() *expression.Schema {
+func (ssctx *ScalarSubqueryEvalCtx) Schema() *expression.Schema {
 	return nil
 }
 
 // ExplainInfo implements the Plan interface.
-func (s *ScalarSubqueryEvalCtx) ExplainInfo() string {
+// ExplainInfo implements the Plan interface.
+func (ssctx *ScalarSubqueryEvalCtx) ExplainInfo() string {
 	builder := &strings.Builder{}
-
-	// Show output columns in the expected format
-	if len(s.outputColIDs) > 0 {
-		builder.WriteString("Output: ")
-		for i, id := range s.outputColIDs {
-			fmt.Fprintf(builder, "ScalarQueryCol#%d", id)
-			if i+1 != len(s.outputColIDs) {
-				builder.WriteString(", ")
-			}
+	fmt.Fprintf(builder, "Output: ")
+	for i, id := range ssctx.outputColIDs {
+		fmt.Fprintf(builder, "ScalarQueryCol#%d", id)
+		if i+1 != len(ssctx.outputColIDs) {
+			fmt.Fprintf(builder, ",")
 		}
-	} else {
-		builder.WriteString("Output: N/A")
 	}
-
 	return builder.String()
 }

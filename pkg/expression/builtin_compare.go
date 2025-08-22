@@ -1546,19 +1546,21 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
-				Value:        dt,
-				RetType:      targetFieldType,
-				DeferredExpr: con.DeferredExpr,
-				ParamMarker:  con.ParamMarker,
+				Value:         dt,
+				RetType:       targetFieldType,
+				DeferredExpr:  con.DeferredExpr,
+				ParamMarker:   con.ParamMarker,
+				SubqueryRefID: con.SubqueryRefID,
 			}, true
 		}
 		return con, false
 	}
 	return &Constant{
-		Value:        dt,
-		RetType:      targetFieldType,
-		DeferredExpr: con.DeferredExpr,
-		ParamMarker:  con.ParamMarker,
+		Value:         dt,
+		RetType:       targetFieldType,
+		DeferredExpr:  con.DeferredExpr,
+		ParamMarker:   con.ParamMarker,
+		SubqueryRefID: con.SubqueryRefID,
 	}, false
 }
 
@@ -1601,10 +1603,11 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 	}
 	if c == 0 {
 		return &Constant{
-			Value:        intDatum,
-			RetType:      &targetFieldType,
-			DeferredExpr: con.DeferredExpr,
-			ParamMarker:  con.ParamMarker,
+			Value:         intDatum,
+			RetType:       &targetFieldType,
+			DeferredExpr:  con.DeferredExpr,
+			ParamMarker:   con.ParamMarker,
+			SubqueryRefID: con.SubqueryRefID,
 		}, false
 	}
 	switch op {
@@ -1648,10 +1651,11 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 				return con, true
 			}
 			return &Constant{
-				Value:        intDatum,
-				RetType:      &targetFieldType,
-				DeferredExpr: con.DeferredExpr,
-				ParamMarker:  con.ParamMarker,
+				Value:         intDatum,
+				RetType:       &targetFieldType,
+				DeferredExpr:  con.DeferredExpr,
+				ParamMarker:   con.ParamMarker,
+				SubqueryRefID: con.SubqueryRefID,
 			}, false
 		}
 	}
@@ -1989,6 +1993,11 @@ func (c *compareFunctionClass) getFunction(ctx BuildContext, rawArgs []Expressio
 
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx BuildContext, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
+	if len(args) > 1 {
+		if c, ok := args[1].(*Constant); ok && c.SubqueryRefID > 0 {
+			fmt.Printf("DEBUG newFunctionImpl funcArgs[1] value: %v, x: %v, SubqueryRefID: %d\n", c.Value, c.Value.GetValue(), c.SubqueryRefID)
+		}
+	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
 	if err != nil {
 		return nil, err

@@ -53,8 +53,16 @@ Sort	3325.55	root		index_merge.t1.c1
 └─IndexMerge	1843.09	root		type: union
   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	1843.09	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5)))
+  └─Selection(Probe)	1843.09	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5<-(ScalarQueryCol#10))))
     └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#10
+└─MaxOneRow	1.00	root		
+  └─StreamAgg	1.00	root		funcs:max(index_merge.t1.c3)->Column#9
+    └─TopN	1.00	root		index_merge.t1.c3:desc, offset:0, count:1
+      └─TableReader	1.00	root		data:TopN
+        └─TopN	1.00	cop[tikv]		index_merge.t1.c3:desc, offset:0, count:1
+          └─Selection	9990.00	cop[tikv]		not(isnull(index_merge.t1.c3))
+            └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select max(c3) from t1) order by 1;
 c1	c2	c3
 1	1	1
@@ -109,8 +117,14 @@ Sort	3325.55	root		index_merge.t1.c1
 └─IndexMerge	1843.09	root		type: union
   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	1843.09	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5)))
+  └─Selection(Probe)	1843.09	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5<-(ScalarQueryCol#20))))
     └─TableRowIDScan	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#20
+└─MaxOneRow	1.00	root		
+  └─StreamAgg	1.00	root		funcs:count(Column#17)->Column#9
+    └─IndexReader	1.00	root		index:StreamAgg
+      └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#17
+        └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
 c1	c2	c3
 1	1	1
@@ -187,17 +201,23 @@ c1	c2	c3
 explain format = 'brief' select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 id	estRows	task	access object	operator info
 Sort	5542.21	root		index_merge.t1.c1
-└─Projection	5542.21	root		index_merge.t1.c1, 15->Column#25
+└─Projection	5542.21	root		index_merge.t1.c1, (ScalarQueryCol#25)->Column#26
   └─HashJoin	5542.21	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
     ├─StreamAgg(Build)	1.00	root		funcs:max(Column#13)->Column#14, funcs:sum(0)->Column#15, funcs:count(1)->Column#16
-    │ └─StreamAgg	1.00	root		funcs:count(Column#38)->Column#13
+    │ └─StreamAgg	1.00	root		funcs:count(Column#39)->Column#13
     │   └─IndexReader	1.00	root		index:StreamAgg
-    │     └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#38
+    │     └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#39
     │       └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
     └─IndexMerge(Probe)	5542.21	root		type: union
       ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
       ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
       └─TableRowIDScan(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#25
+└─MaxOneRow	1.00	root		
+  └─StreamAgg	1.00	root		funcs:sum(Column#24)->Column#22
+    └─IndexReader	1.00	root		index:StreamAgg
+      └─StreamAgg	1.00	cop[tikv]		funcs:sum(index_merge.t2.c2)->Column#24
+        └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c2(c2)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 c1	(select sum(c2) from t2)
 1	15

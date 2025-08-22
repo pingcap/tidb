@@ -1350,8 +1350,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	}
 
 	// register the subquery plan but continue with normal execution
-	var subqueryCtx *ScalarSubqueryEvalCtx
-	subqueryCtx = ScalarSubqueryEvalCtx{
+	subqueryCtx := ScalarSubqueryEvalCtx{
 		scalarSubQuery: physicalPlan,
 		ctx:            ctx,
 		is:             planCtx.builder.is,
@@ -1369,60 +1368,26 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		er.err = err
 		return v, true
 	}
-	if np.Schema().Len() > 1 {
-		newCols := make([]expression.Expression, 0, np.Schema().Len())
-		for i, data := range row {
-			constant := &expression.Constant{
-				Value:   data,
-				RetType: np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx())}
-			constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
-
-			// If preserving subquery plan, add reference information to the constant
-			var matchedSubQ *ScalarSubqueryEvalCtx
-			for _, scalarSubQ := range planCtx.builder.ctx.GetSessionVars().MapScalarSubQ {
-				if subQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx); ok {
-					if subQ.ScalarSubQuery().ID() == physicalPlan.ID() {
-						matchedSubQ = subQ
-						break
-					}
-				}
-			}
-
-			if matchedSubQ != nil && len(matchedSubQ.outputColIDs) > i {
-				constant.SubqueryRefID = matchedSubQ.outputColIDs[i]
-			}
-
-			newCols = append(newCols, constant)
+	newCols := make([]expression.Expression, 0, np.Schema().Len())
+	for i, data := range row {
+		constant := &expression.Constant{
+			Value:         data,
+			RetType:       np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx()),
+			SubqueryRefID: newColIDs[i],
 		}
-		expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
-		if err1 != nil {
-			er.err = err1
+		constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
+		newCols = append(newCols, constant)
+	}
+
+	if np.Schema().Len() > 1 {
+		expr, err := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
+		if err != nil {
+			er.err = err
 			return v, true
 		}
 		er.ctxStackAppend(expr, types.EmptyName)
 	} else {
-		constant := &expression.Constant{
-			Value:   row[0],
-			RetType: np.Schema().Columns[0].GetType(er.sctx.GetEvalCtx()),
-		}
-		constant.SetCoercibility(np.Schema().Columns[0].Coercibility())
-
-		// If preserving subquery plan, add reference information to the constant
-		var matchedSubQ *ScalarSubqueryEvalCtx
-		for _, scalarSubQ := range planCtx.builder.ctx.GetSessionVars().MapScalarSubQ {
-			if subQ, ok := scalarSubQ.(*ScalarSubqueryEvalCtx); ok {
-				if subQ.ScalarSubQuery().ID() == physicalPlan.ID() {
-					matchedSubQ = subQ
-					break
-				}
-			}
-		}
-
-		if matchedSubQ != nil && len(matchedSubQ.outputColIDs) > 0 {
-			constant.SubqueryRefID = matchedSubQ.outputColIDs[0]
-		}
-
-		er.ctxStackAppend(constant, types.EmptyName)
+		er.ctxStackAppend(newCols[0], types.EmptyName)
 	}
 	return v, true
 }
