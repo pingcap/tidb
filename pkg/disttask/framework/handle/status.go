@@ -95,7 +95,8 @@ func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (int, int, 
 	return len(nodes), cpuCount, nil
 }
 
-// GetBusyNodes get nodes that are currently running subtasks or is the DXF owner.
+// GetBusyNodes get nodes that are currently running subtasks, or is the DXF owner
+// as we don't want owner node floating around.
 // exported for test.
 func GetBusyNodes(ctx context.Context, manager *storage.TaskManager) ([]schstatus.Node, error) {
 	var ownerID string

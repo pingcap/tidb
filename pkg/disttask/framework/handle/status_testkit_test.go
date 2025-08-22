@@ -34,6 +34,27 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
+func TestGetScheduleStatus(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	store := testkit.CreateMockStore(t)
+	gtk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return gtk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	storage.SetTaskManager(storage.NewTaskManager(pool))
+	ctx := util.WithInternalSourceType(context.Background(), "handle_test")
+	status, err := handle.GetScheduleStatus(ctx)
+	require.NoError(t, err)
+	require.Equal(t, &schstatus.Status{
+		Version:    schstatus.Version1,
+		TaskQueue:  schstatus.TaskQueue{},
+		TiDBWorker: schstatus.NodeGroup{CPUCount: 16, RequiredCount: 1, CurrentCount: 1, BusyNodes: []schstatus.Node{{ID: ":4000", IsOwner: true}}},
+		TiKVWorker: schstatus.NodeGroup{RequiredCount: 1},
+		Flags:      make(map[schstatus.Flag]schstatus.TTLFlag),
+	}, status)
+}
+
 func TestNodeInfoAndBusyNodes(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")

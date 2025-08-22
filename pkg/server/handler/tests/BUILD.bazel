@@ -4,6 +4,7 @@ go_test(
     name = "tests_test",
     timeout = "short",
     srcs = [
+        "dxf_test.go",
         "http_handler_serial_test.go",
         "http_handler_test.go",
         "main_test.go",
@@ -12,8 +13,10 @@ go_test(
     shard_count = 41,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/util",
+        "//pkg/disttask/framework/schstatus",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
