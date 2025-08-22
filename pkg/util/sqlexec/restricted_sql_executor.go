@@ -58,15 +58,16 @@ type RestrictedSQLExecutor interface {
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
-	AnalyzeSnapshot    *bool
-	TrackSysProc       func(id uint64, ctx sysproctrack.TrackProc) error
-	UnTrackSysProc     func(id uint64)
-	PartitionPruneMode string
-	SnapshotTS         uint64
-	AnalyzeVer         int
-	TrackSysProcID     uint64
-	IgnoreWarning      bool
-	UseCurSession      bool
+	AnalyzeSnapshot     *bool
+	TrackSysProc        func(id uint64, ctx sysproctrack.TrackProc) error
+	UnTrackSysProc      func(id uint64)
+	PartitionPruneMode  string
+	SnapshotTS          uint64
+	AnalyzeVer          int
+	TrackSysProcID      uint64
+	IgnoreWarning       bool
+	UseCurSession       bool
+	AnalyzeReorgIndexes bool
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
@@ -75,6 +76,11 @@ type OptionFuncAlias = func(option *ExecOption)
 // ExecOptionIgnoreWarning tells ExecRestrictedStmt/SQL to ignore the warnings.
 var ExecOptionIgnoreWarning = func(option *ExecOption) {
 	option.IgnoreWarning = true
+}
+
+// ExecOptionAnalyzeReorgIndexes tells ExecRestrictedStmt/SQL analyze to include reorg state index.
+var ExecOptionAnalyzeReorgIndexes = func(option *ExecOption) {
+	option.AnalyzeReorgIndexes = true
 }
 
 // ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.

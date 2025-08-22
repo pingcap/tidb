@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -634,15 +635,17 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 			if err != nil {
 				return err
 			}
-			sessCtx.GetSessionVars().StmtCtx.InternalAnalyze = true
 			defer func() {
-				sessCtx.GetSessionVars().StmtCtx.InternalAnalyze = false
 				w.sessPool.Put(sessCtx)
 				close(doneCh)
 			}()
 			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
 
-			_, err = sessCtx.GetSQLExecutor().ExecuteInternal(w.ctx, "ANALYZE TABLE "+dbTable+";")
+			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
+			if !ok {
+				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
+			}
+			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionAnalyzeReorgIndexes}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",
 					zap.String("category", "ddl"),
@@ -663,7 +666,7 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 		logutil.DDLLogger().Info("analyze table after create index context done", zap.Int64("jobID", job.ID))
 		return true
 	case <-time.After(10 * time.Second):
-		logutil.DDLLogger().Info("analyze table after create index timeout", zap.Int64("jobID", job.ID))
+		logutil.DDLLogger().Info("analyze table after create index timeout check", zap.Int64("jobID", job.ID))
 		return false
 	}
 }

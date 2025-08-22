@@ -1476,6 +1476,9 @@ type SessionVars struct {
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
 
+	// AnalyzeReorgStateIndex is used to indicate whether the current session is used for internal analyze.
+	AnalyzeReorgStateIndex bool
+
 	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.

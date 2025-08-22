@@ -1164,6 +1164,7 @@ SwitchIndexState:
 
 		switch job.ReorgMeta.AnalyzeState {
 		case model.AnalyzeStateNone:
+			// reorg the index data.
 			var done bool
 			if job.MultiSchemaInfo != nil {
 				done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, job, tbl, allIndexInfos)
@@ -1175,6 +1176,7 @@ SwitchIndexState:
 			}
 			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 		case model.AnalyzeStateRunning:
+			// after all old index data are reorged. re-analyze it.
 			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 			if done {
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
