@@ -284,6 +284,7 @@ type TiKVChecksumManager struct {
 	distSQLScanConcurrency    uint
 	backoffWeight             int
 	resourceGroupName         string
+	requestSourceType         string
 	explicitRequestSourceType string
 }
 
@@ -297,6 +298,7 @@ func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 		distSQLScanConcurrency:    distSQLScanConcurrency,
 		backoffWeight:             backoffWeight,
 		resourceGroupName:         resourceGroupName,
+		requestSourceType:         kv.InternalTxnLightning,
 		explicitRequestSourceType: explicitRequestSourceType,
 	}
 }
@@ -310,6 +312,7 @@ func NewTiKVChecksumManagerForImportInto(store kv.Storage, taskID int64, distSQL
 		distSQLScanConcurrency:    distSQLScanConcurrency,
 		backoffWeight:             backoffWeight,
 		resourceGroupName:         resourceGroupName,
+		requestSourceType:         kv.InternalImportInto,
 		explicitRequestSourceType: importIntoServicePrefix,
 	}
 }
@@ -319,6 +322,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 		SetConcurrency(e.distSQLScanConcurrency).
 		SetBackoffWeight(e.backoffWeight).
 		SetResourceGroupName(e.resourceGroupName).
+		SetRequestSourceType(e.requestSourceType).
 		SetExplicitRequestSourceType(e.explicitRequestSourceType).
 		Build()
 	if err != nil {

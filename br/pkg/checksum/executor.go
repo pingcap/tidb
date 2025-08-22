@@ -36,6 +36,7 @@ type ExecutorBuilder struct {
 	newKeyspace []byte
 
 	resourceGroupName         string
+	requestSourceType         string
 	explicitRequestSourceType string
 }
 
@@ -82,6 +83,11 @@ func (builder *ExecutorBuilder) SetResourceGroupName(name string) *ExecutorBuild
 	return builder
 }
 
+func (builder *ExecutorBuilder) SetRequestSourceType(name string) *ExecutorBuilder {
+	builder.requestSourceType = name
+	return builder
+}
+
 func (builder *ExecutorBuilder) SetExplicitRequestSourceType(name string) *ExecutorBuilder {
 	builder.explicitRequestSourceType = name
 	return builder
@@ -97,6 +103,7 @@ func (builder *ExecutorBuilder) Build() (*Executor, error) {
 		builder.oldKeyspace,
 		builder.newKeyspace,
 		builder.resourceGroupName,
+		builder.requestSourceType,
 		builder.explicitRequestSourceType,
 	)
 	if err != nil {
@@ -112,7 +119,7 @@ func buildChecksumRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName, requestSourceType, explicitRequestSourceType string,
 ) ([]*kv.Request, error) {
 	var partDefs []model.PartitionDefinition
 	if part := newTable.Partition; part != nil {
@@ -125,7 +132,7 @@ func buildChecksumRequest(
 		oldTableID = oldTable.Info.ID
 	}
 	rs, err := buildRequest(newTable, newTable.ID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+		oldKeyspace, newKeyspace, resourceGroupName, requestSourceType, explicitRequestSourceType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -140,7 +147,7 @@ func buildChecksumRequest(
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+			oldKeyspace, newKeyspace, resourceGroupName, requestSourceType, explicitRequestSourceType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -159,11 +166,11 @@ func buildRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName, requestSourceType, explicitRequestSourceType string,
 ) ([]*kv.Request, error) {
 	reqs := make([]*kv.Request, 0)
 	req, err := buildTableRequest(tableInfo, tableID, oldTable, oldTableID, startTS, concurrency,
-		oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+		oldKeyspace, newKeyspace, resourceGroupName, requestSourceType, explicitRequestSourceType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -193,7 +200,7 @@ func buildRequest(
 		}
 		req, err = buildIndexRequest(
 			tableID, indexInfo, oldTableID, oldIndexInfo, startTS, concurrency,
-			oldKeyspace, newKeyspace, resourceGroupName, explicitRequestSourceType)
+			oldKeyspace, newKeyspace, resourceGroupName, requestSourceType, explicitRequestSourceType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -212,7 +219,7 @@ func buildTableRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, explicitRequestSourceType string,
+	resourceGroupName, requestSourceType, explicitRequestSourceType string,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
@@ -243,6 +250,7 @@ func buildTableRequest(
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		SetResourceGroupName(resourceGroupName).
+		SetRequestSourceType(requestSourceType).
 		SetExplicitRequestSourceType(explicitRequestSourceType).
 		Build()
 }
@@ -256,7 +264,7 @@ func buildIndexRequest(
 	concurrency uint,
 	oldKeyspace []byte,
 	newKeyspace []byte,
-	resourceGroupName, ExplicitRequestSourceType string,
+	resourceGroupName, requestSourceType, ExplicitRequestSourceType string,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
@@ -281,6 +289,7 @@ func buildIndexRequest(
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		SetResourceGroupName(resourceGroupName).
+		SetRequestSourceType(requestSourceType).
 		SetExplicitRequestSourceType(ExplicitRequestSourceType).
 		Build()
 }

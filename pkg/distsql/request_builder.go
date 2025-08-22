@@ -397,6 +397,12 @@ func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder
 	return builder
 }
 
+// SetRequestSourceType sets the request source type.
+func (builder *RequestBuilder) SetRequestSourceType(sourceType string) *RequestBuilder {
+	builder.RequestSource.RequestSourceType = sourceType
+	return builder
+}
+
 // SetExplicitRequestSourceType sets the explicit request source type.
 func (builder *RequestBuilder) SetExplicitRequestSourceType(sourceType string) *RequestBuilder {
 	builder.RequestSource.ExplicitRequestSourceType = sourceType
