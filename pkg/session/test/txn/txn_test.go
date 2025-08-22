@@ -212,7 +212,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	err = tk1.Session().PrepareTxnCtx(context.Background())
+	err = tk1.Session().PrepareTxnCtx(context.Background(), nil)
 	require.NoError(t, err)
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
