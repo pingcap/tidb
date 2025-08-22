@@ -29,6 +29,7 @@ go_library(
         "//pkg/planner/util/fixcontrol",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/tablecodec",
         "//pkg/types",

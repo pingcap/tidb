@@ -73,7 +73,7 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 		for _, partPlan := range p.partialPlans {
 			totalRowCount += partPlan.StatsCount()
 		}
-		p.SetStats(p.partialPlans[0].StatsInfo().ScaleByExpectCnt(totalRowCount))
+		p.SetStats(p.partialPlans[0].StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), totalRowCount))
 		p.StatsInfo().StatsVersion = p.partialPlans[0].StatsInfo().StatsVersion
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.partialPlans))

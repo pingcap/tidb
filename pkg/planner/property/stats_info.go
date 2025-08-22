@@ -18,11 +18,13 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 )
 
 // ScaleNDVFunc is used to avoid cycle import.
-var ScaleNDVFunc func(originalNDV, originalRows, selectedRows float64) (newNDV float64)
+// `sctx` should be base.PlanContext, use any to avoid cycle import.
+var ScaleNDVFunc func(vars *variable.SessionVars, originalNDV, originalRows, selectedRows float64) (newNDV float64)
 
 // GroupNDV stores the NDV of a group of columns.
 type GroupNDV struct {
@@ -63,7 +65,7 @@ func (s *StatsInfo) Count() int64 {
 }
 
 // Scale receives a selectivity and multiplies it with RowCount and NDV.
-func (s *StatsInfo) Scale(factor float64) *StatsInfo {
+func (s *StatsInfo) Scale(vars *variable.SessionVars, factor float64) *StatsInfo {
 	originalRowCount := s.RowCount
 	profile := &StatsInfo{
 		RowCount:     s.RowCount * factor,
@@ -73,11 +75,11 @@ func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 		GroupNDVs:    make([]GroupNDV, len(s.GroupNDVs)),
 	}
 	for id, c := range s.ColNDVs {
-		profile.ColNDVs[id] = ScaleNDVFunc(c, originalRowCount, profile.RowCount)
+		profile.ColNDVs[id] = ScaleNDVFunc(vars, c, originalRowCount, profile.RowCount)
 	}
 	for i, g := range s.GroupNDVs {
 		profile.GroupNDVs[i] = g
-		profile.GroupNDVs[i].NDV = ScaleNDVFunc(g.NDV, originalRowCount, profile.RowCount)
+		profile.GroupNDVs[i].NDV = ScaleNDVFunc(vars, g.NDV, originalRowCount, profile.RowCount)
 	}
 	return profile
 }
@@ -85,12 +87,12 @@ func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 // ScaleByExpectCnt tries to Scale StatsInfo to an expectCnt which must be
 // smaller than the derived cnt.
 // TODO: try to use a better way to do this.
-func (s *StatsInfo) ScaleByExpectCnt(expectCnt float64) *StatsInfo {
+func (s *StatsInfo) ScaleByExpectCnt(vars *variable.SessionVars, expectCnt float64) *StatsInfo {
 	if expectCnt >= s.RowCount {
 		return s
 	}
 	if s.RowCount > 1.0 { // if s.RowCount is too small, it will cause overflow
-		return s.Scale(expectCnt / s.RowCount)
+		return s.Scale(vars, expectCnt/s.RowCount)
 	}
 	return s
 }
