@@ -139,8 +139,8 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogConnIDStr].Match(ctx, items, uint64(123)))
 	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogDBStr].Match(ctx, items, "testdb"))
 	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogSucc].Match(ctx, items, true))
-	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.ProcessTimeStr].Match(ctx, items, float64(copExec.TimeDetail.ProcessTime.Seconds())))
-	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.BackoffTimeStr].Match(ctx, items, float64(copExec.BackoffTime.Seconds())))
+	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.ProcessTimeStr].Match(ctx, items, copExec.TimeDetail.ProcessTime.Seconds()))
+	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.BackoffTimeStr].Match(ctx, items, copExec.BackoffTime.Seconds()))
 	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.ProcessKeysStr].Match(ctx, items, copExec.ScanDetail.ProcessedKeys))
 	require.True(t, executor.SlowLogRuleFieldAccessors[execdetails.TotalKeysStr].Match(ctx, items, copExec.ScanDetail.TotalKeys))
 
@@ -157,14 +157,14 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.Equal(t, int64(1000), items.MemMax)
 	require.Equal(t, int64(2000), items.DiskMax)
 	require.Equal(t, sessVars.StmtCtx.ExecSuccess, items.Succ)
-	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogKVTotal].Match(ctx, items, float64(time.Duration(tikvExecDetail.WaitKVRespDuration).Seconds())))
-	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogPDTotal].Match(ctx, items, float64(time.Duration(tikvExecDetail.WaitPDRespDuration).Seconds())))
-	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogBackoffTotal].Match(ctx, items, float64(time.Duration(tikvExecDetail.BackoffDuration).Seconds())))
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogKVTotal].Match(ctx, items, time.Duration(tikvExecDetail.WaitKVRespDuration).Seconds()))
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogPDTotal].Match(ctx, items, time.Duration(tikvExecDetail.WaitPDRespDuration).Seconds()))
+	require.True(t, executor.SlowLogRuleFieldAccessors[variable.SlowLogBackoffTotal].Match(ctx, items, time.Duration(tikvExecDetail.BackoffDuration).Seconds()))
 }
 
 func newMockCtx() sessionctx.Context {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{}
+	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
 	ctx.GetSessionVars().SlowLogRules = &variable.SlowLogRules{
 		Rules:              []variable.SlowLogRule{},
 		AllConditionFields: make(map[string]struct{}),

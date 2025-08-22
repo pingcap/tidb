@@ -39,13 +39,13 @@ type SlowLogFieldAccessor struct {
 
 func makeExecDetailAccessor(match func(*execdetails.ExecDetails, any) bool) SlowLogFieldAccessor {
 	return SlowLogFieldAccessor{
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			if items.ExecDetail == nil {
 				execDetail := seCtx.GetSessionVars().StmtCtx.GetExecDetails()
 				items.ExecDetail = &execDetail
 			}
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			if items.ExecDetail == nil {
 				return false
 			}
@@ -56,7 +56,7 @@ func makeExecDetailAccessor(match func(*execdetails.ExecDetails, any) bool) Slow
 
 func makeKVExecDetailAccessor(match func(*util.ExecDetails, any) bool) SlowLogFieldAccessor {
 	return SlowLogFieldAccessor{
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(ctx context.Context, _ sessionctx.Context, items *variable.SlowQueryLogItems) {
 			if items.KVExecDetail == nil {
 				tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
 				if tikvExecDetailRaw != nil {
@@ -64,7 +64,7 @@ func makeKVExecDetailAccessor(match func(*util.ExecDetails, any) bool) SlowLogFi
 				}
 			}
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			if items.KVExecDetail == nil {
 				return false
 			}
@@ -118,129 +118,129 @@ func matchDurationVal(threshold any, v time.Duration) bool {
 // It's exporting for testing.
 var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 	variable.SlowLogConnIDStr: {
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
 			return matchUint64Val(threshold, seCtx.GetSessionVars().ConnectionID)
 		},
 	},
 	variable.SlowLogSessAliasStr: {
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
 			return matchStringVal(threshold, seCtx.GetSessionVars().SessionAlias)
 		},
 	},
 	variable.SlowLogDBStr: {
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
 			return matchStringVal(threshold, seCtx.GetSessionVars().CurrentDB)
 		},
 	},
 	variable.SlowLogExecRetryCount: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.ExecRetryCount = seCtx.GetSessionVars().StmtCtx.ExecRetryCount
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchUint64Val(threshold, items.ExecRetryCount)
 		},
 	},
 	variable.SlowLogQueryTimeStr: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.TimeTotal = seCtx.GetSessionVars().GetTotalCostDuration()
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchDurationVal(threshold, items.TimeTotal)
 		},
 	},
 	variable.SlowLogParseTimeStr: {
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
 			return matchDurationVal(threshold, seCtx.GetSessionVars().DurationParse)
 		},
 	},
 	variable.SlowLogCompileTimeStr: {
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
 			return matchDurationVal(threshold, seCtx.GetSessionVars().DurationCompile)
 		},
 	},
 	variable.SlowLogOptimizeTimeStr: {
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
 			return matchDurationVal(threshold, seCtx.GetSessionVars().DurationOptimization)
 		},
 	},
 	variable.SlowLogWaitTSTimeStr: {
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
 			return matchDurationVal(threshold, seCtx.GetSessionVars().DurationWaitTS)
 		},
 	},
 	variable.SlowLogIsInternalStr: {
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
 			return matchBoolVal(threshold, seCtx.GetSessionVars().InRestrictedSQL)
 		},
 	},
 	variable.SlowLogDigestStr: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			_, digest := seCtx.GetSessionVars().StmtCtx.SQLDigest()
 			items.Digest = digest.String()
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchStringVal(threshold, items.Digest)
 		},
 	},
 	variable.SlowLogNumCopTasksStr: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			copTasksDetail := seCtx.GetSessionVars().StmtCtx.CopTasksDetails()
 			items.CopTasks = copTasksDetail
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchInt64Val(threshold, int64(items.CopTasks.NumCopTasks))
 		},
 	},
 	variable.SlowLogMemMax: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.MemMax = seCtx.GetSessionVars().MemTracker.MaxConsumed()
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchInt64Val(threshold, items.MemMax)
 		},
 	},
 	variable.SlowLogDiskMax: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.DiskMax = seCtx.GetSessionVars().DiskTracker.MaxConsumed()
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchInt64Val(threshold, items.DiskMax)
 		},
 	},
 	variable.SlowLogWriteSQLRespTotal: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(ctx context.Context, _ sessionctx.Context, items *variable.SlowQueryLogItems) {
 			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 			if stmtDetailRaw != nil {
 				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
 			}
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchDurationVal(threshold, items.WriteSQLRespTotal)
 		},
 	},
 	variable.SlowLogSucc: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.Succ = seCtx.GetSessionVars().StmtCtx.ExecSuccess
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchBoolVal(threshold, items.Succ)
 		},
 	},
 	variable.SlowLogPlanDigest: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			_, planDigest := GetPlanDigest(seCtx.GetSessionVars().StmtCtx)
 			items.PlanDigest = planDigest.String()
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchStringVal(threshold, items.PlanDigest)
 		},
 	},
 	variable.SlowLogResourceGroup: {
-		Setter: func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.ResourceGroupName = seCtx.GetSessionVars().StmtCtx.ResourceGroupName
 		},
-		Match: func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
+		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
 			return matchStringVal(threshold, items.ResourceGroupName)
 		},
 	},
