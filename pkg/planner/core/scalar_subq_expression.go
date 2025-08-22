@@ -324,7 +324,7 @@ func (*ScalarSubQueryExpr) Vectorized() bool {
 }
 
 // Schema implements the Plan interface.
-func (ssctx *ScalarSubqueryEvalCtx) Schema() *expression.Schema {
+func (*ScalarSubqueryEvalCtx) Schema() *expression.Schema {
 	return nil
 }
 
