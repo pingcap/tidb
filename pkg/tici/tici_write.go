@@ -227,7 +227,7 @@ func (w *DataWriter) WriteHeader(ctx context.Context, commitTS uint64) error {
 	// Serialize TableInfo as JSON.
 	tblJSON, err := json.Marshal(w.tblInfo)
 	if err != nil {
-		return errors.Annotate(err, "marshal TableInfo (proto)")
+		return errors.Annotate(err, "marshal TableInfo (JSON)")
 	}
 
 	return w.ticiFileWriter.WriteHeader(ctx, tblJSON, commitTS)
