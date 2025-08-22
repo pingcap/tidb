@@ -34,9 +34,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -169,6 +169,7 @@ var (
 		diskQuotaOption:       {},
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
+		threadOption:          {},
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
@@ -612,11 +613,15 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
-	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
-	if p.DataSourceType == DataSourceTypeQuery {
-		threadCnt = 2
+	var threadCnt int
+	if kerneltype.IsNextGen() {
+		threadCnt = scheduler.CalcConcurrencyByDataSize(p.TotalFileSize, targetNodeCPUCnt)
+	} else {
+		threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+		if p.DataSourceType == DataSourceTypeQuery {
+			threadCnt = 2
+		}
 	}
-
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
@@ -866,10 +871,14 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ManualRecovery = true
 	}
 
-	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
-		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
-		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
-			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+	if kerneltype.IsNextGen() {
+		p.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(p.TotalFileSize, targetNodeCPUCnt)
+	} else {
+		if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+			p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+			if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+				p.MaxNodeCnt = scheduler.CalcMaxNodeCountByStoresNum(ctx, seCtx.GetStore())
+			}
 		}
 	}
 

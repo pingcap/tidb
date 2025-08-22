@@ -554,7 +554,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }
 
-func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
+func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 
@@ -585,10 +585,12 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
-	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
-	})
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
+		})
+	}
 
 	var pipeClosed bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
