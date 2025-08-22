@@ -138,6 +138,8 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
 			rs, err := tk.Exec("show variables like 'tidb_gc_enable'")
 			assert.NoError(t, err)
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
