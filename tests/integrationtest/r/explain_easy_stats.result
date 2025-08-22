@@ -120,7 +120,7 @@ Limit	1.00	root		offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'brief' select 1 in (select c2 from t2) from t1;
 id	estRows	task	access object	operator info
-HashJoin	1999.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(1, explain_easy_stats.t2.c2)
+HashJoin	1999.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy_stats.t2.c2, 1)
 ├─TableReader(Build)	1985.00	root		data:TableFullScan
 │ └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
 └─TableReader(Probe)	1999.00	root		data:TableFullScan

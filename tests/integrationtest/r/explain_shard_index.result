@@ -58,7 +58,7 @@ id	a	b
 explain format=brief select * from test3 where a = b and b = 100;
 id	estRows	task	access object	operator info
 Projection	1.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
-└─Selection	1.00	root		eq(explain_shard_index.test3.b, 100)
+└─Selection	1.00	root		eq(explain_shard_index.test3.a, explain_shard_index.test3.b), eq(explain_shard_index.test3.b, 100)
   └─Point_Get	1.00	root	table:test3, index:uk_expr(tidb_shard(`a`), a)	
 explain format=brief select * from test5 where a=100 and b = 100;
 id	estRows	task	access object	operator info

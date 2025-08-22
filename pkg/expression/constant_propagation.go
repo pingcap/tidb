@@ -256,7 +256,8 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, pushDownfilter func(expression Expression) bool, conditions []Expression) []Expression {
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext,
+	pushDownfilter func(expression Expression) bool, conditions []Expression) []Expression {
 	s.ctx = ctx
 	s.pushDownfilter = pushDownfilter
 	return s.solve(conditions)
@@ -280,6 +281,7 @@ func (s *propConstSolver) propagateConstantEQ() {
 	visited := make([]bool, len(s.conditions))
 	cols := make([]*Column, 0, 4)
 	cons := make([]Expression, 0, 4)
+	evalCtx := s.ctx.GetEvalCtx()
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -293,12 +295,43 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				if isColEqCondition(s.conditions[i]) {
+					// We should protect the equal condition. so we append the new expr.
+					// It is necessary to set visited to false, for example.
+					//   a = b, a = 1, c = b + 1
+					// -> a = b, a = 1, c = b + 1, b = 1
+					// -> a = b, a = 1, c = 1 + 1, b = 1
+					newExpr := ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+					if !newExpr.Equal(evalCtx, cond) {
+						visited = append(visited, false) // nolint:makezero
+						// it is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
+						// and then using `b = 1` to get `a = 1` again.
+						visited[i] = true
+						s.conditions = append(s.conditions, newExpr)
+					}
+				} else {
+					s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				}
 			}
 		}
 		cols = cols[:0]
 		cons = cons[:0]
 	}
+}
+
+func isColEqCondition(expr Expression) bool {
+	if sf, ok := expr.(*ScalarFunction); ok {
+		if sf.FuncName.L == ast.EQ {
+			args := sf.GetArgs()
+			_, ok := args[1].(*Column)
+			if !ok {
+				return false
+			}
+			_, ok = args[0].(*Column)
+			return ok
+		}
+	}
+	return false
 }
 
 // propagateColumnEQ propagates expressions like 'column A = column B' by adding extra filters
@@ -640,6 +673,7 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 	clear(s.eqMapper)
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
+	evalCtx := s.ctx.GetEvalCtx()
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -653,7 +687,23 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				if isColEqCondition(s.joinConds[i]) {
+					// We should protect the equal condition. so we append the new expr.
+					// It is necessary to set visited to false, for example.
+					//   a = b, a = 1, c = b + 1
+					// -> a = b, a = 1, c = b + 1, b = 1
+					// -> a = b, a = 1, c = 1 + 1, b = 1
+					newExpr := ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+					if !newExpr.Equal(evalCtx, cond) {
+						visited = append(visited, false) // nolint:makezero
+						// it is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
+						// and then using `b = 1` to get `a = 1` again.
+						visited[i+lenFilters] = true
+						s.joinConds = append(s.joinConds, newExpr)
+					}
+				} else {
+					s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				}
 			}
 		}
 	}
@@ -795,6 +845,8 @@ func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) 
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.pushDownFilter, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.pushDownFilter, s.filterConds...)
+	s.joinConds = RemoveDupExprs(s.joinConds)
+	s.filterConds = RemoveDupExprs(s.filterConds)
 	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 

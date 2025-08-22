@@ -52,8 +52,8 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 		{"'1' <= a", "le(1, a)"},
 		{"'1' > a", "gt(1, a)"},
 		{"'1' >= a", "ge(1, a)"},
-		{"'1' = a", "eq(1, a)"},
-		{"'1' <=> a", "nulleq(1, a)"},
+		{"'1' = a", "eq(a, 1)"},
+		{"'1' <=> a", "nulleq(a, 1)"},
 		{"'1' != a", "ne(1, a)"},
 		{"'1.1' < a", "lt(1, a)"},
 		{"'1.1' <= a", "le(2, a)"},
@@ -68,7 +68,7 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 		{"-123456789123456789123456789.12345 > a", "0"},
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
-		{"'aaaa'=a", "eq(0, a)"},
+		{"'aaaa'=a", "eq(a, 0)"},
 	}
 	for _, test := range tests {
 		f, err := ParseSimpleExpr(ctx, test.exprStr, WithTableInfo("", tblInfo))

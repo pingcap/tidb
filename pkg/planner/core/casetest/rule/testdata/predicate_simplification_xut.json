@@ -6,12 +6,12 @@
         "SQL": "SELECT i.id, ip_products.products FROM t1 AS i LEFT JOIN t4 ON i.id = t4.c3 LEFT JOIN (SELECT t4.c3, GROUP_CONCAT(DISTINCT t2.c3 ORDER BY t2.c3 ASC) AS products FROM t4 JOIN t3 ON t4.c1 = t3.c1 AND t4.c2 = t3.c2 LEFT JOIN t2 ON t4.c1 = t2.c1 AND t4.c2 = t2.c2 WHERE t3.c3 = 'production' AND t4.state = 'ACTIVE' GROUP BY t4.c3, t4.c1, t4.c2) AS ip_products ON t4.c3 = ip_products.c3 LEFT JOIN t5 ON i.id = t5.c1 AND t5.c2 = 'production' WHERE t4.state = 'ACTIVE' AND t5.c1 IS NULL GROUP BY i.id, ip_products.products HAVING FIND_IN_SET('info', products) ORDER BY i.id ASC LIMIT 500 OFFSET 5500;",
         "Plan": [
           "TopN 8.00 root  test.t1.id, offset:5500, count:500",
-          "└─HashAgg 8.00 root  group by:Column#16, test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id, funcs:firstrow(Column#16)->Column#16",
+          "└─HashAgg 8.00 root  group by:Column#21, test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id, funcs:firstrow(Column#21)->Column#21",
           "  └─Selection 8.00 root  isnull(test.t5.c1)",
-          "    └─Projection 10.00 root  test.t1.id, Column#16, test.t5.c1",
+          "    └─Projection 10.00 root  test.t1.id, Column#21, test.t5.c1",
           "      └─HashJoin 10.00 root  inner join, equal:[eq(test.t4.c3, test.t4.c3)]",
-          "        ├─Selection(Build) 6.40 root  find_in_set(\"info\", Column#16)",
-          "        │ └─HashAgg 8.00 root  group by:test.t4.c1, test.t4.c2, test.t4.c3, funcs:group_concat(distinct test.t2.c3 order by test.t2.c3 separator \",\")->Column#16, funcs:firstrow(test.t4.c3)->test.t4.c3",
+          "        ├─Selection(Build) 6.40 root  find_in_set(\"info\", Column#21)",
+          "        │ └─HashAgg 8.00 root  group by:test.t4.c1, test.t4.c2, test.t4.c3, funcs:group_concat(distinct test.t2.c3 order by test.t2.c3 separator \",\")->Column#21, funcs:firstrow(test.t4.c3)->test.t4.c3",
           "        │   └─IndexJoin 15.62 root  left outer join, inner:TableReader, left side:IndexJoin, outer key:test.t4.c1, test.t4.c2, inner key:test.t2.c1, test.t2.c2, equal cond:eq(test.t4.c1, test.t2.c1), eq(test.t4.c2, test.t2.c2)",
           "        │     ├─IndexJoin(Build) 12.50 root  inner join, inner:TableReader, outer key:test.t3.c1, test.t3.c2, inner key:test.t4.c1, test.t4.c2, equal cond:eq(test.t3.c1, test.t4.c1), eq(test.t3.c2, test.t4.c2)",
           "        │     │ ├─IndexReader(Build) 10.00 root  index:IndexRangeScan",
@@ -57,6 +57,27 @@
         "Plan": [
           "Projection 0.00 root  1->Column#48, Column#46, Column#47, test.tad03b424.col_41",
           "└─TableDual 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t4) */ * from t1 join t2 on t1.a=t2.a join t3 on t1.a=t3.a join t4 on t1.a=t4.a where t1.a=1",
+        "Plan": [
+          "Projection 19.53 root  test.t1.a, test.t1.id, test.t2.a, test.t2.c1, test.t2.c2, test.t2.c3, test.t3.a, test.t3.c1, test.t3.c2, test.t3.c3, test.t4.a, test.t4.c1, test.t4.c2, test.t4.c3, test.t4.state",
+          "└─HashJoin 19.53 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 10.00 root  data:Selection",
+          "  │ └─Selection 10.00 cop[tikv]  eq(test.t3.a, 1)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15.62 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 10.00 root  data:Selection",
+          "    │ └─Selection 10.00 cop[tikv]  eq(test.t2.a, 1)",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12.50 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
+          "      ├─TableReader(Build) 10.00 root  data:Selection",
+          "      │ └─Selection 10.00 cop[tikv]  eq(test.t1.a, 1)",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10.00 root  data:Selection",
+          "        └─Selection 10.00 cop[tikv]  eq(test.t4.a, 1)",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ]
       }
     ]
