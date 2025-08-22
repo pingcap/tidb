@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -1165,6 +1166,9 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
+	e.logger.Info("hjq start InitDataFiles")
+	defer e.logger.Info("hjq finish InitDataFiles")
+
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
@@ -1256,10 +1260,16 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
-
+		start := time.Now()
+		e.logger.Info("hjq before walk dir", zap.String("path", fileNameKey),
+			zap.String("commonPrefix", commonPrefix),
+			zap.String("escapedPath", escapedPath))
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
+				// e.logger.Info("hjq match one file start", zap.String("remote path", remotePath))
+				// start2 := time.Now()
+				// defer e.logger.Info("hjq match one file finished", zap.String("remote path", remotePath), zap.Duration("duration", time.Since(start2)))
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
 				match, _ := filepath.Match(escapedPath, remotePath)
@@ -1275,7 +1285,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
-
+		e.logger.Info("hjq finish walk dir", zap.Duration("duration", time.Since(start)), zap.Int("file number", len(allFiles)), zap.Int64("total size", totalSize))
 		var err error
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
