@@ -1040,7 +1040,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.Greater(unregisterTime, registerTime)
 	s.checkMode(s.tk, "SELECT * FROM load_data.register_task", "register_task", true)
 
-	client, err := importer.GetEtcdClient()
+	client, err := importer.GetEtcdClient(s.store)
 	s.NoError(err)
 	s.T().Cleanup(func() {
 		_ = client.Close()
@@ -1053,9 +1053,11 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		func() {
 			// cannot run 2 import job to the same target table.
 			tk2 := testkit.NewTestKit(s.T(), s.store)
-			err = tk2.ExecToErr(sql)
-			s.ErrorIs(err, infoschema.ErrProtectedTableMode)
-			s.ErrorContains(err, "Table register_task is in mode Import")
+			if kerneltype.IsClassic() {
+				err := tk2.ExecToErr(sql)
+				s.ErrorIs(err, infoschema.ErrProtectedTableMode)
+				s.ErrorContains(err, "Table register_task is in mode Import")
+			}
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
 				resp, err2 := client.Get(context.Background(), etcdKey)
@@ -1325,6 +1327,9 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 }
 
 func (s *mockGCSSuite) TestTableMode() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("switching table mode is not supported in nextgen")
+	}
 	content := []byte(`1,1
 	2,2`)
 	s.server.CreateObject(fakestorage.Object{

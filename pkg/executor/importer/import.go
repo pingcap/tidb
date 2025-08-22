@@ -66,7 +66,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/naming"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -97,6 +98,7 @@ const (
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
 	skipRowsOption            = "skip_rows"
+	groupKeyOption            = "group_key"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
 	threadOption              = "thread"
@@ -115,7 +117,7 @@ const (
 	//
 	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
-	cloudStorageURIOption       = "cloud_storage_uri"
+	cloudStorageURIOption       = ast.CloudStorageURI
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption  = "__max_engine_size"
@@ -134,6 +136,7 @@ var (
 		fieldsDefinedNullByOption:   true,
 		linesTerminatedByOption:     true,
 		skipRowsOption:              true,
+		groupKeyOption:              true,
 		splitFileOption:             false,
 		diskQuotaOption:             true,
 		threadOption:                true,
@@ -272,6 +275,7 @@ type Plan struct {
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
+	GroupKey              string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -294,6 +298,8 @@ type Plan struct {
 	ForceMergeStep bool
 	// see ManualRecovery in proto.ExtraParams
 	ManualRecovery bool
+	// the keyspace name when submitting this job, only for import-into
+	Keyspace string
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -477,6 +483,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		InImportInto:           true,
 		DataSourceType:         getDataSourceType(plan),
 		User:                   userSctx.GetSessionVars().User.String(),
+		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
@@ -654,7 +661,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	p.specifiedOptions = specifiedOptions
 
-	if kerneltype.IsNextGen() && sem.IsEnabled() {
+	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
+	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
+	if kerneltype.IsNextGen() && semv1.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
@@ -798,6 +807,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if err = p.Checksum.FromStringValue(v); err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+	}
+	if opt, ok := specifiedOptions[groupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.GroupKey = v
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		vInt, err := optAsInt64(opt)

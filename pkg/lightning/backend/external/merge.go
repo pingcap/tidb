@@ -75,6 +75,8 @@ func (c *mergeCollector) Add(bytes, rowCnt int64) {
 
 type mergeMinimalTask struct {
 	files []string
+
+	concurrency int
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
@@ -163,6 +165,7 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		w.collector,
 		w.checkHotspot,
 		w.onDup,
+		task.concurrency,
 	)
 }
 
@@ -187,7 +190,8 @@ func MergeOverlappingFiles(
 	mergeTasks := make([]*mergeMinimalTask, 0, len(dataFilesSlice))
 	for _, files := range dataFilesSlice {
 		mergeTasks = append(mergeTasks, &mergeMinimalTask{
-			files: files,
+			files:       files,
+			concurrency: len(dataFilesSlice),
 		})
 	}
 
@@ -266,6 +270,7 @@ func mergeOverlappingFilesInternal(
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
+	fileGroupNum int,
 ) (err error) {
 	failpoint.Inject("mergeOverlappingFilesInternal", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
@@ -291,7 +296,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, fileGroupNum)
 	if err != nil {
 		return err
 	}

@@ -42,11 +42,11 @@ func TestCleanUpRoutine(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
 	mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
 
-	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
+	sch, mgr := MockSchedulerManager(store, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
 	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	sch.Start()
 	defer sch.Stop()
-	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, "", 0, proto.ExtraParams{}, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 
 	checkTaskRunningCnt := func() []*proto.Task {

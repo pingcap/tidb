@@ -55,11 +55,11 @@ func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 	case *physicalop.PhysicalIndexScan:
 		x.Ranges = ranges
 		x.RangeInfo = rangeInfo
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		updateRange(x.TablePlans[0], ranges, rangeInfo)
-	case *PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		updateRange(x.IndexPlans[0], ranges, rangeInfo)
-	case *PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		updateRange(x.IndexPlans[0], ranges, rangeInfo)
 	}
 }
@@ -106,17 +106,17 @@ func rebuildRange(p base.Plan) error {
 		if err != nil {
 			return err
 		}
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		err = rebuildRange(x.TablePlans[0])
 		if err != nil {
 			return err
 		}
-	case *PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		err = rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
-	case *PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		err = rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
@@ -129,8 +129,8 @@ func rebuildRange(p base.Plan) error {
 		if err = buildRangesForBatchGet(sctx, x); err != nil {
 			return err
 		}
-	case *PhysicalIndexMergeReader:
-		indexMerge := p.(*PhysicalIndexMergeReader)
+	case *physicalop.PhysicalIndexMergeReader:
+		indexMerge := p.(*physicalop.PhysicalIndexMergeReader)
 		for _, partialPlans := range indexMerge.PartialPlans {
 			err = rebuildRange(partialPlans[0])
 			if err != nil {

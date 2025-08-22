@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"path/filepath"
 	"slices"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -88,8 +87,9 @@ type OneFileWriter struct {
 	minKey []byte
 	maxKey []byte
 
-	logger   *zap.Logger
-	partSize int64
+	logger       *zap.Logger
+	partSize     int64
+	writtenBytes int64
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -227,7 +227,6 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		return err
 	}
 	// 1. encode data and write to kvStore.
-	writeStartTime := time.Now()
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
@@ -257,10 +256,11 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
-	writeDuration := time.Since(writeStartTime)
-	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
-	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
-		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
+	w.writtenBytes += int64(length)
+	if w.writtenBytes >= 16*units.MiB {
+		metrics.MergeSortWriteBytes.Add(float64(w.writtenBytes))
+		w.writtenBytes = 0
+	}
 	return nil
 }
 

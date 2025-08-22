@@ -98,6 +98,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			Meta: bytes,
 		}, scheduler.Param{}),
+		store: &StoreWithoutKS{},
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*importScheduler).GlobalSort)
@@ -109,6 +110,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			Meta: bytes,
 		}, scheduler.Param{}),
+		store: &StoreWithoutKS{},
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*importScheduler).GlobalSort)

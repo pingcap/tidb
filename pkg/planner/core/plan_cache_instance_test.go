@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ func _miss(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int
 }
 
 func TestInstancePlanCacheBasic(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -124,7 +125,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 }
 
 func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -188,7 +189,7 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 }
 
 func TestInstancePlanCacheEvictAll(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -209,7 +210,7 @@ func TestInstancePlanCacheEvictAll(t *testing.T) {
 }
 
 func TestInstancePlanCacheConcurrentRead(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -246,7 +247,7 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 }
 
 func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

@@ -12,6 +12,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//br/pkg/storage",
         "//pkg/config/kerneltype",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
@@ -21,7 +22,6 @@ go_test(
         "//pkg/store",
         "//pkg/testkit",
         "//tests/realtikvtest",
-        "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_snappy//:snappy",
         "@com_github_klauspost_compress//zstd",

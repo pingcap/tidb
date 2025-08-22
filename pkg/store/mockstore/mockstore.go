@@ -231,7 +231,7 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		// test, we set the default keyspace meta to system keyspace.
 		if opt.keyspaceMeta == nil {
 			opt.keyspaceMeta = &keyspacepb.KeyspaceMeta{
-				Id:   1,
+				Id:   uint32(0xFFFFFF) - 1,
 				Name: keyspace.System,
 			}
 		}

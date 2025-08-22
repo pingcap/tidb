@@ -45,7 +45,6 @@ go_test(
         "//pkg/util/domainutil",
         "//pkg/util/sem",
         "//tests/realtikvtest",
-        "//tests/realtikvtest/testutils",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_ngaut_pools//:pools",

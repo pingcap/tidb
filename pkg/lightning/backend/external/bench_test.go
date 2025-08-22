@@ -371,7 +371,7 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 	var totalSize int
 	readBufSize := s.memoryLimit / len(files)
 	zeroOffsets := make([]uint64, len(files))
-	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 1)
 	intest.AssertNoError(err)
 
 	kvCnt := 0

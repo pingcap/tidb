@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -868,7 +869,9 @@ func TestMDLView(t *testing.T) {
 			tkDDL := s.newTestKitWithRoot(t)
 			tk3 := s.newTestKitWithRoot(t)
 			tk.MustExec("use test")
-			tk.MustExec("set global tidb_enable_metadata_lock=1")
+			if kerneltype.IsClassic() {
+				tk.MustExec("set global tidb_enable_metadata_lock=1")
+			}
 			for _, cr := range c.createTable {
 				if strings.Contains(c.name, "err") {
 					_, _ = tk.Exec(cr)

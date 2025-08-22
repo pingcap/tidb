@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -67,15 +68,17 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
+	Store  kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string) Param {
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, store kv.Storage) Param {
 	return Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
+		Store:     store,
 	}
 }
 
@@ -729,4 +732,9 @@ func (e *BaseTaskExecutor) failOneSubtask(ctx context.Context, taskID int64, sub
 		e.logger.Error("fail one subtask failed", zap.NamedError("subtaskErr", subtaskErr),
 			zap.Duration("takes", time.Since(start)), zap.Error(err1))
 	}
+}
+
+// GetTaskTable returns the TaskTable of the TaskExecutor.
+func (e *BaseTaskExecutor) GetTaskTable() TaskTable {
+	return e.taskTable
 }

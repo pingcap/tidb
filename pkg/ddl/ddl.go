@@ -673,8 +673,9 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
-		id = globalOwnerManager.ID()
-		manager = globalOwnerManager.OwnerManager()
+		ownerMgr := getOwnerManager(opt.Store)
+		id = ownerMgr.ID()
+		manager = ownerMgr.OwnerManager()
 		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
 		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)

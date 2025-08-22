@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/table"
@@ -78,9 +79,9 @@ const (
 // AccessObject implements DataAccesser interface.
 func (f *FKCheck) AccessObject() base.AccessObject {
 	if f.Idx == nil {
-		return OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
+		return access.OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
 	}
-	return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.Tbl.Meta().Name, f.Idx.Meta().Name))
+	return access.OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.Tbl.Meta().Name, f.Idx.Meta().Name))
 }
 
 // OperatorInfo implements DataAccesser interface.
@@ -115,9 +116,9 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 // AccessObject implements DataAccesser interface.
 func (f *FKCascade) AccessObject() base.AccessObject {
 	if f.FKIdx == nil {
-		return OtherAccessObject(fmt.Sprintf("table:%s", f.ChildTable.Meta().Name))
+		return access.OtherAccessObject(fmt.Sprintf("table:%s", f.ChildTable.Meta().Name))
 	}
-	return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.ChildTable.Meta().Name, f.FKIdx.Name))
+	return access.OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.ChildTable.Meta().Name, f.FKIdx.Name))
 }
 
 // OperatorInfo implements dataAccesser interface.

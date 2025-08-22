@@ -951,6 +951,9 @@ const (
 	SetCharset = "SetCharset"
 	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// CloudStorageURI is similar to above tidb var, but it's used in import into
+	// to set a separate param for a single import job.
+	CloudStorageURI = "cloud_storage_uri"
 )
 
 // VariableAssignment is a variable assignment struct.
