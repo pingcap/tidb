@@ -275,7 +275,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		if err == nil {
 			return nil
 		}
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.IncRetryableErrorCount(err)
 		logutil.DDLLogger().Warn("etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
 	}
 	return errors.Trace(err)
@@ -292,7 +292,7 @@ func DeleteKeysWithPrefixFromEtcd(prefix string, etcdCli *clientv3.Client, retry
 		if err == nil {
 			return nil
 		}
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.IncRetryableErrorCount(err)
 		logutil.DDLLogger().Warn(
 			"etcd-cli delete prefix failed",
 			zap.String("prefix", prefix),
@@ -345,7 +345,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
 		}
 
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.IncRetryableErrorCount(err)
 		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
@@ -377,7 +377,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		if err == nil {
 			return nil
 		}
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.IncRetryableErrorCount(err)
 		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
