@@ -15,9 +15,15 @@
 package external
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,4 +128,82 @@ func TestSplitDataFiles(t *testing.T) {
 		allPaths[38:47], allPaths[47:56], allPaths[56:65], allPaths[65:74],
 		allPaths[74:83], allPaths[83:92], allPaths[92:101],
 	}, splitDataFiles(allPaths[:101], 8))
+}
+
+func TestMergeOperator(t *testing.T) {
+	oldMaxMergingFilesPerThread := MaxMergingFilesPerThread
+	MaxMergingFilesPerThread = 2
+	defer func() {
+		MaxMergingFilesPerThread = oldMaxMergingFilesPerThread
+	}()
+
+	// test different error cause
+	testcases := []struct {
+		failpointValue string
+		expectError    error
+	}{
+		{
+			failpointValue: "return(0)",
+			expectError:    nil,
+		},
+		{
+			failpointValue: "return(1)",
+			expectError:    errors.Errorf("mock error in mergeOverlappingFilesInternal"),
+		},
+		{
+			failpointValue: "return(2)",
+			expectError:    errors.Errorf("task panic: merge_sort, func info: mergeMinimalTask"),
+		},
+		{
+			failpointValue: "return(3)",
+			expectError:    context.DeadlineExceeded,
+		},
+	}
+
+	for _, tc := range testcases {
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/lightning/backend/external/mergeOverlappingFilesInternal",
+			tc.failpointValue,
+		)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+		wctx := workerpool.NewContext(ctx)
+
+		op := NewMergeOperator(
+			wctx,
+			nil,
+			0,
+			"",
+			0,
+			nil,
+			nil,
+			1,
+			false,
+			engineapi.OnDuplicateKeyIgnore,
+		)
+
+		datas := []string{
+			"/tmp/1",
+			"/tmp/2",
+			"/tmp/3",
+			"/tmp/4",
+			"/tmp/5",
+			"/tmp/6",
+		}
+
+		err := MergeOverlappingFiles(
+			wctx,
+			datas,
+			1,
+			op,
+		)
+
+		if tc.expectError != nil {
+			require.True(t, errors.ErrorEqual(err, tc.expectError))
+		} else {
+			require.NoError(t, err)
+		}
+
+		cancel()
+	}
 }

@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -250,8 +250,7 @@ type FastCheckTableExec struct {
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	done       bool
-	err        *atomic.Pointer[error]
-	wg         sync.WaitGroup
+	is         infoschema.InfoSchema
 	contextCtx context.Context
 }
 
@@ -281,23 +280,27 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	workerPool := workerpool.NewWorkerPool("checkIndex",
-		poolutil.CheckTable, 3, e.createWorker)
-	workerPool.Start(ctx)
+	ch := make(chan checkIndexTask)
+	dc := operator.NewSimpleDataChannel(ch)
 
-	e.wg.Add(len(e.indexInfos))
+	wctx := workerpool.NewContext(ctx)
+	op := operator.NewAsyncOperator(wctx,
+		workerpool.NewWorkerPool("checkIndex",
+			poolutil.CheckTable, 3, e.createWorker))
+	op.SetSource(dc)
+	//nolint: errcheck
+	op.Open()
+
 	for i := range e.indexInfos {
-		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
+		ch <- checkIndexTask{indexOffset: i}
 	}
+	close(ch)
 
-	e.wg.Wait()
-	workerPool.ReleaseAndWait()
-
-	p := e.err.Load()
-	if p == nil {
-		return nil
+	err := op.Close()
+	if err := wctx.OperatorErr(); err != nil {
+		return err
 	}
-	return *p
+	return err
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
@@ -340,21 +343,15 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 }
 
 // HandleTask implements the Worker interface.
-func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
-	defer w.e.wg.Done()
+func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) error {
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
 
-	trySaveErr := func(err error) {
-		w.e.err.CompareAndSwap(nil, &err)
-	}
-
 	se, err := w.e.BaseExecutor.GetSysSession()
 	if err != nil {
-		trySaveErr(err)
-		return
+		return err
 	}
 	restoreCtx := w.initSessCtx(se)
 	defer func() {
@@ -409,8 +406,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
-		trySaveErr(err)
-		return
+		return err
 	}
 
 	times := 0
@@ -447,8 +443,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		// compute table side checksum.
 		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
 		if err != nil {
-			trySaveErr(err)
-			return
+			return err
 		}
 		slices.SortFunc(tableChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
@@ -457,8 +452,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		// compute index side checksum.
 		indexChecksum, err := getCheckSum(w.e.contextCtx, se, idxQuery)
 		if err != nil {
-			trySaveErr(err)
-			return
+			return err
 		}
 		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
@@ -535,13 +529,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 		idxRow, err := queryToRow(se, indexSQL)
 		if err != nil {
-			trySaveErr(err)
-			return
+			return err
 		}
 		tblRow, err := queryToRow(se, tableSQL)
 		if err != nil {
-			trySaveErr(err)
-			return
+			return err
 		}
 
 		errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
@@ -614,13 +606,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			} else {
 				handle, err = getHandleFromRow(tblRow[i])
 				if err != nil {
-					trySaveErr(err)
-					return
+					return err
 				}
 				value, err := getValueFromRow(tblRow[i])
 				if err != nil {
-					trySaveErr(err)
-					return
+					return err
 				}
 				tableRecord = &consistency.RecordData{Handle: handle, Values: value}
 			}
@@ -630,13 +620,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			} else {
 				indexHandle, err := getHandleFromRow(idxRow[i])
 				if err != nil {
-					trySaveErr(err)
-					return
+					return err
 				}
 				indexValue, err := getValueFromRow(idxRow[i])
 				if err != nil {
-					trySaveErr(err)
-					return
+					return err
 				}
 				indexRecord = &consistency.RecordData{Handle: indexHandle, Values: indexValue}
 			}
@@ -662,8 +650,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 				}
 			}
 			if err != nil {
-				trySaveErr(err)
-				return
+				return err
 			}
 			i++
 			if tableRecord != nil {
@@ -673,22 +660,22 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			}
 		}
 	}
+
+	return nil
 }
 
 // Close implements the Worker interface.
-func (*checkIndexWorker) Close() {}
+func (*checkIndexWorker) Close() error {
+	return nil
+}
 
 type checkIndexTask struct {
 	indexOffset int
-	err         *atomic.Pointer[error]
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "fast_check_table", "RecoverArgs", func() {
-		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", c.indexOffset)
-		c.err.CompareAndSwap(nil, &err)
-	}, false
+func (checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
+	return "fast_check_table", "checkIndexTask", false, nil
 }
 
 type groupByChecksum struct {
