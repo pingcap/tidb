@@ -77,7 +77,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	var tableSizeInBytes int64
 	var cpuNum int
-	if setReorgParam || setDistTaskParam && kerneltype.IsNextGen() {
+	if (setReorgParam || setDistTaskParam) && kerneltype.IsNextGen() {
 		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), tbl)
 		var err error
 		cpuNum, err = scheduler.GetExecCPUNode(ctx)
