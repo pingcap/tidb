@@ -4804,15 +4804,16 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		BinlogInfo: &model.HistoryInfo{},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
-		Charset:    charset,
-		Collate:    collate,
-		SQLMode:    ctx.GetSessionVars().SQLMode,
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		TableName:   t.Meta().Name.L,
+		BinlogInfo:  &model.HistoryInfo{},
+		Priority:    ctx.GetSessionVars().DDLReorgPriority,
+		Charset:     charset,
+		Collate:     collate,
+		SQLMode:     ctx.GetSessionVars().SQLMode,
+		SessionVars: make(map[string]string),
 	}
 	return job
 }
@@ -4923,6 +4924,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
+	job.AddSystemVars(vardef.TiDBEnableDDLEmbedIndexAnalyze, getEnableDDLEmbedIndexAnalyze(ctx))
 
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -7064,4 +7066,16 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 		scatterScope = val
 	}
 	return scatterScope
+}
+
+func getEnableDDLEmbedIndexAnalyze(sctx sessionctx.Context) string {
+	var ddlEmbedIndexAnalyze string
+	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLEmbedIndexAnalyze)
+	if !ok {
+		// set the system default value.
+		ddlEmbedIndexAnalyze = variable.BoolToOnOff(vardef.DefTiDBEnableDDLEmbedIndexAnalyze)
+	} else {
+		ddlEmbedIndexAnalyze = val
+	}
+	return ddlEmbedIndexAnalyze
 }
