@@ -24,6 +24,12 @@ type FTSInfo struct {
 	Column *Column
 }
 
+// FTSFuncMap stores the functions related to fulltext search.
+var FTSFuncMap map[string]struct{} = map[string]struct{}{
+	ast.FTSMatchWord:   {},
+	ast.FTSMatchPrefix: {},
+}
+
 // ContainsFullTextSearchFn recursively checks whether the expression tree contains a
 // possible FullTextSearch function.
 func ContainsFullTextSearchFn(exprs ...Expression) bool {
