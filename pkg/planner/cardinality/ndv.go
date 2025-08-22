@@ -155,5 +155,8 @@ func estimateUniformNDV(originalNDV, originalRows, selectedRows float64) (newNDV
 
 // estimateSkewedNDV estimates the new NDV based on skewed possibility.
 func estimateSkewedNDV(originalNDV, originalRows, selectedRows float64) (newNDV float64) {
+	if originalRows <= 0 {
+		return 0 // for safety
+	}
 	return originalNDV * selectedRows / originalRows
 }
