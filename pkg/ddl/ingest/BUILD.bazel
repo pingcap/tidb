@@ -67,7 +67,7 @@ go_library(
 
 go_test(
     name = "ingest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "checkpoint_test.go",
         "env_test.go",

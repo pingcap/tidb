@@ -100,7 +100,7 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 // the `_tidb_rowid` in different partitions can have the same value.
 func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
 	// Not adding the ExtraPhysTblID if already exists
-	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+	if model.FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
 		return columns, schema, false
 	}
 	columns = append(columns, model.NewExtraPhysTblIDColInfo())
@@ -160,7 +160,7 @@ func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnIn
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
+				copyColumn = append(copyColumn, model.FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
 			}
 		}
 	}

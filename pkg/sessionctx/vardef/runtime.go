@@ -69,7 +69,7 @@ func GetPlanReplayerGCLease() time.Duration {
 func IsReadOnlyVarInNextGen(name string) bool {
 	name = strings.ToLower(name)
 	switch name {
-	case TiDBEnableMDL:
+	case TiDBEnableMDL, TiDBMaxDistTaskNodes, TiDBDDLReorgMaxWriteSpeed, TiDBDDLDiskQuota:
 		return true
 	}
 	return false
