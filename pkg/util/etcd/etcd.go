@@ -16,7 +16,6 @@ package etcd
 
 import (
 	"context"
-<<<<<<< HEAD
 	"crypto/tls"
 	"fmt"
 	"path"
@@ -24,13 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-=======
-	"time"
-
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
->>>>>>> 1fa47888536 (dxf: prepare work for schedule status API in nextgen (#63140))
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/namespace"
 	"go.uber.org/zap"
