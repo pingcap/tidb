@@ -31,8 +31,8 @@ var part0Content []byte
 var part1Content []byte
 
 func (s *mockGCSSuite) TestImportParquetWithClusteredIndex() {
-	// Each file contains 50 rows, we manually set the row count to 10 when we skip reading the file.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount", "return(10)")
+	// Each file contains 10 rows, we manually set the row count to 5 when we skip reading the file.
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount", "return(5)")
 
 	tempDir := s.T().TempDir()
 	s.NoError(os.WriteFile(path.Join(tempDir, "test.0.parquet"), part0Content, 0o644))
@@ -40,26 +40,36 @@ func (s *mockGCSSuite) TestImportParquetWithClusteredIndex() {
 	importPath := path.Join(tempDir, "*.parquet")
 
 	type testCase struct {
-		createSQL string
-		importSQL string
-		readSQL   string
+		createSQL      string
+		importSQL      string
+		readSQL        string
+		checkCountOnly bool
 	}
 
 	testCases := []testCase{
 		{
-			createSQL: "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY, k bigint NOT NULL, c char(16), pad char(16))",
-			importSQL: "IMPORT INTO test.sbtest FROM '%s' FORMAT 'parquet'",
-			readSQL:   "SELECT id FROM test.sbtest ORDER BY id",
+			createSQL:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY, k bigint NOT NULL, c char(16), pad char(16))",
+			importSQL:      "IMPORT INTO test.sbtest FROM '%s' FORMAT 'parquet'",
+			readSQL:        "SELECT id FROM test.sbtest ORDER BY id",
+			checkCountOnly: false,
 		},
 		{
-			createSQL: "CREATE TABLE test.sbtest(id bigint NOT NULL, k bigint NOT NULL, c char(16), pad char(16))",
-			importSQL: "IMPORT INTO test.sbtest FROM '%s' FORMAT 'parquet'",
-			readSQL:   "SELECT _tidb_rowid FROM test.sbtest",
+			createSQL:      "CREATE TABLE test.sbtest(id bigint NOT NULL, k bigint NOT NULL, c char(16), pad char(16))",
+			importSQL:      "IMPORT INTO test.sbtest FROM '%s' FORMAT 'parquet'",
+			readSQL:        "SELECT _tidb_rowid FROM test.sbtest",
+			checkCountOnly: false,
 		},
 		{
-			createSQL: "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY AUTO_INCREMENT, k bigint NOT NULL, c char(16), pad char(16))",
-			importSQL: "IMPORT INTO test.sbtest(@1, k, c, pad) FROM '%s' FORMAT 'parquet'",
-			readSQL:   "SELECT id FROM test.sbtest",
+			createSQL:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY AUTO_INCREMENT, k bigint NOT NULL, c char(16), pad char(16))",
+			importSQL:      "IMPORT INTO test.sbtest(@1, k, c, pad) FROM '%s' FORMAT 'parquet'",
+			readSQL:        "SELECT id FROM test.sbtest",
+			checkCountOnly: false,
+		},
+		{
+			createSQL:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY AUTO_RANDOM, k bigint NOT NULL, c char(16), pad char(16))",
+			importSQL:      "IMPORT INTO test.sbtest(@1, k, c, pad) FROM '%s' FORMAT 'parquet'",
+			readSQL:        "SELECT id FROM test.sbtest",
+			checkCountOnly: true,
 		},
 	}
 
@@ -70,9 +80,11 @@ func (s *mockGCSSuite) TestImportParquetWithClusteredIndex() {
 		s.tk.MustQuery(fmt.Sprintf(tc.importSQL, importPath))
 
 		rs := s.tk.MustQuery(tc.readSQL).Rows()
-		require.Len(s.T(), rs, 100)
-		for i := range 100 {
-			s.EqualValues(fmt.Sprintf("%d", i+1), rs[i][0])
+		require.Len(s.T(), rs, 20)
+		if !tc.checkCountOnly {
+			for i := range 20 {
+				s.EqualValues(fmt.Sprintf("%d", i+1), rs[i][0])
+			}
 		}
 	}
 }

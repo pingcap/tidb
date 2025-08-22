@@ -257,6 +257,11 @@ type RawFile struct {
 	Size int64
 }
 
+type parquetInfo struct {
+	rowSize          float64 // the average row size of the parquet file
+	compressionRatio float64 // the estimated compression ratio of the parquet file
+}
+
 type mdLoaderSetup struct {
 	sourceID      string
 	loader        *MDLoader
@@ -269,7 +274,7 @@ type mdLoaderSetup struct {
 	setupCfg      *MDLoaderSetupConfig
 
 	// store file info of parquet from parallel reading
-	sampledParquetInfo sync.Map
+	sampledParquetInfos sync.Map
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -466,12 +471,11 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 
 		// process file size for parquet files
 		if info.FileMeta.Type == SourceTypeParquet {
-			v, _ := s.sampledParquetInfo.Load(info.TableName.String())
-			pinfo, _ := v.([]float64)
-			rowSize, ratio := pinfo[0], pinfo[1]
-			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * ratio)
+			v, _ := s.sampledParquetInfos.Load(info.TableName.String())
+			pinfo, _ := v.(parquetInfo)
+			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * pinfo.compressionRatio)
 			// Postpone reading the row count to `MakeTableRegion` if necessary.
-			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / rowSize)
+			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / pinfo.rowSize)
 
 			if m, ok := metric.FromContext(ctx); ok {
 				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, info.TableName.String()).Add(float64(info.FileMeta.Rows))
@@ -612,7 +616,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		tableName := info.TableName.String()
 
 		// Only sample once for each table
-		_, loaded := s.sampledParquetInfo.LoadOrStore(tableName, 0)
+		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, parquetInfo{})
 		if !loaded {
 			rows, rowSize, err := SampleParquetRowSize(ctx, info.FileMeta, s.loader.GetStore())
 			if err != nil {
@@ -622,7 +626,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 				return nil, errors.Trace(err)
 			}
 			compressionRatio := float64(info.FileMeta.FileSize) / (rowSize * float64(rows))
-			s.sampledParquetInfo.Store(tableName, []float64{rowSize, compressionRatio})
+			s.sampledParquetInfos.Store(tableName, parquetInfo{rowSize, compressionRatio})
 		}
 	}
 

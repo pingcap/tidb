@@ -171,8 +171,8 @@ type DataDivideConfig struct {
 	// we need it read row-count for parquet, and to read line terminator to split large CSV files
 	Store     storage.ExternalStorage
 	TableMeta *MDTableMeta
-	// only used when read parquet files, to check if the table has auto-increment column
-	TableInfo *model.TableInfo
+	// whether to skip reading parquet row count
+	SkipParquetRowCount bool
 
 	// only used when split large CSV files.
 	StrictFormat           bool
@@ -364,11 +364,11 @@ func MakeSourceFileRegion(
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.RealSize)}, nil
 }
 
-// Determines whether the target table requires a precise row count, which is used to for
+// NeedPreciseRowCount determines whether the target table requires a precise row count, which is used to for
 // auto-increment and auto-random columns. If any unique/primary index contains these columns,
 // we should read the actual row count to prevent generating duplicate key. Otherwise, the row
 // count is not used, so we can skip reading the row count to improve performance.
-func needPreciseRowCount(tblInfo *model.TableInfo) bool {
+func NeedPreciseRowCount(tblInfo *model.TableInfo) bool {
 	if common.TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
 		return true
 	}
@@ -407,7 +407,7 @@ func makeParquetFileRegion(
 		numberRows = dataFile.FileMeta.Rows
 		err        error
 	)
-	if needPreciseRowCount(cfg.TableInfo) {
+	if !cfg.skipParquetRowCount {
 		if numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta); err != nil {
 			return nil, nil, err
 		}
