@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -397,9 +398,9 @@ func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder
 	return builder
 }
 
-// SetRequestSourceType sets the request source type.
-func (builder *RequestBuilder) SetRequestSourceType(sourceType string) *RequestBuilder {
-	builder.RequestSource.RequestSourceType = sourceType
+// SetRequestSource sets the request source.
+func (builder *RequestBuilder) SetRequestSource(reqSource util.RequestSource) *RequestBuilder {
+	builder.RequestSource = reqSource
 	return builder
 }
 

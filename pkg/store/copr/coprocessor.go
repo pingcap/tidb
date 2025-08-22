@@ -1421,6 +1421,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
+	if req.InputRequestSource != "internal_DistTask" && req.InputRequestSource != "internal_others" &&
+		req.InputRequestSource != "internal_ddl" && req.InputRequestSource != "internal_stats" && req.InputRequestSource != "internal_DDLNotifier" {
+		fmt.Printf("cop request source: %+v\n", req.InputRequestSource)
+	}
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
 		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
