@@ -2816,6 +2816,7 @@ func waitTaskForAddIndex(ctx context.Context, taskID int64, mergingTempIndex boo
 		return err
 	}
 	hasMergeTempTasks := false
+	var meetErr error
 	_, err = handle.WaitTask(ctx, taskID, func(t *proto.TaskBase) bool {
 		taskDoneOrPaused := t.IsDone() || t.State == proto.TaskStatePaused
 		if mergingTempIndex {
@@ -2826,7 +2827,7 @@ func waitTaskForAddIndex(ctx context.Context, taskID int64, mergingTempIndex boo
 		}
 		cnt, err := taskManager.GetSubtaskCntGroupByStates(ctx, taskID, proto.BackfillStepMergeTempIndex)
 		if err != nil {
-			logger.Error("get subtask count failed", zap.Error(err))
+			meetErr = errors.Trace(err)
 			return true
 		}
 		if cnt[proto.SubtaskStateRunning] > 0 {
@@ -2837,6 +2838,9 @@ func waitTaskForAddIndex(ctx context.Context, taskID int64, mergingTempIndex boo
 	})
 	if err != nil {
 		return err
+	}
+	if meetErr != nil {
+		return meetErr
 	}
 	if hasMergeTempTasks {
 		return nil
@@ -2850,10 +2854,10 @@ func waitTaskForAddIndex(ctx context.Context, taskID int64, mergingTempIndex boo
 	case proto.TaskStateSucceed:
 		return nil
 	case proto.TaskStateReverted:
-		logger.Error("task reverted", zap.Error(found.Error))
+		logger.Warn("task reverted", zap.Error(found.Error))
 		return found.Error
 	case proto.TaskStatePaused:
-		logger.Error("task paused")
+		logger.Warn("task paused")
 		return nil
 	case proto.TaskStateFailed:
 		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
