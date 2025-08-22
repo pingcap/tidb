@@ -754,18 +754,9 @@ c = 3
 json_overlaps(j->'$.a', '[4,5,6]');
 id	task	access object	operator info
 Selection	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
-└─IndexMerge	root		type: union
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 4,1 4], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 5,1 5], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 6,1 6], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 4,2 4], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 5,2 5], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 6,2 6], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 4,3 4], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 5,3 5], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 6,3 6], keep order:false, stats:pseudo
-  └─Selection(Probe)	cop[tikv]		or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
-    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader	root		data:Selection
+  └─Selection	cop[tikv]		in(planner__core__indexmerge_path.t.c, 1, 2, 3)
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
 c = 1 or
@@ -775,7 +766,7 @@ c = 3
 (json_contains(j->'$.a', '[4,5,6]'));
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY)), or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
+└─Selection	cop[tikv]		in(planner__core__indexmerge_path.t.c, 1, 2, 3), json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
@@ -785,12 +776,9 @@ c = 3
 ) and
 json_contains(j->'$.a', '[2]');
 id	task	access object	operator info
-IndexMerge	root		type: union
-├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 2,1 2], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 2,2 2], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 2,3 2], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[2]", json BINARY)), or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
-  └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		in(planner__core__indexmerge_path.t.c, 1, 2, 3), json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[2]", json BINARY))
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
 1 member of (j->'$.a') or

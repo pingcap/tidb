@@ -13,7 +13,7 @@ Projection	1.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a,
 explain format=brief select * from test3 where a=100 and (b = 100 or b = 200);
 id	estRows	task	access object	operator info
 Projection	1.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
-└─Selection	1.00	root		or(eq(explain_shard_index.test3.b, 100), eq(explain_shard_index.test3.b, 200))
+└─Selection	1.00	root		in(explain_shard_index.test3.b, 100, 200)
   └─Point_Get	1.00	root	table:test3, index:uk_expr(tidb_shard(`a`), a)	
 explain format=brief select * from test3 where tidb_shard(a) = 8;
 id	estRows	task	access object	operator info

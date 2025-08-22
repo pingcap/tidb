@@ -343,3 +343,80 @@ CREATE TABLE tlcf30036b (
   UNIQUE KEY idx_14 (col_72,col_71) /*!80000 INVISIBLE */
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
 explain format='plan_tree' select /*+ NO_HASH_JOIN( t43fc4f8a , st_57 */ avg( distinct  st_57.r1 ) as r0 from t43fc4f8a , ( select  /*+ use_index( tlcf30036b ) */ /*+ agg_to_cop()  */  elt(2, tlcf30036b.col_72 , tlcf30036b.col_72 ) as r0 , bit_or( tlcf30036b.col_71 ) as r1 from tlcf30036b where IsNull( tlcf30036b.col_71 ) and not( tlcf30036b.col_72 in ( '1980-08-05' ,'2033-10-20' ,'2030-06-22' ,'1972-04-20' ) ) group by tlcf30036b.col_72  having tlcf30036b.col_72 in ( '2004-03-24' ,'2006-02-04' ,'1993-06-20' ,null ) and not( tlcf30036b.col_72 < '2026-03-29' ) order by r0,r1 ) st_57 where st_57.r1 in ( 13307631398032338238 ,10696905560280898882 ,5314440087685082217 ,17229250596274672311 ) group by t43fc4f8a.col_51,t43fc4f8a.col_49  having t43fc4f8a.col_49 <=> 11261 order by r0 limit 562300838;
+
+
+# -----------------------------------------------------------------------------
+# Tests for orList2InList subrule
+# This subrule rewrites OR-lists of equalities on the same column into IN-lists.
+# Example: (col = 1 OR col = 2 OR col = 3) → col IN (1, 2, 3)
+#
+# Positive cases: ensure the rewrite happens.
+# Negative cases: ensure expressions are preserved unchanged when conditions
+# do not fit the pattern (different columns, inequalities, nested AND, etc).
+# -----------------------------------------------------------------------------
+
+drop table if exists t;
+create table t (
+  a int,
+  b varchar(20),
+  c double,
+  d boolean
+);
+
+drop table if exists tt;
+create table tt (
+  a int,
+  b varchar(20),
+  c double,
+  d boolean
+);
+
+# -----------------
+# Positive test cases
+# -----------------
+
+# integers
+explain format=brief select * from t where a = 1 or a = 2 or a = 3;
+
+# strings
+explain format=brief select * from t where b = 'x' or b = 'y' or b = 'z';
+
+# mixed numeric types
+explain format=brief select * from t where c = 1 or c = 2.5 or c = 3;
+
+# booleans
+explain format=brief select * from t where d = true or d = false;
+
+# intersection of single predicate and in list
+explain format=brief select * from t where (a = 1 or a = 2 or a = 3) and a > 2;
+
+# interaction of propagate consatnts
+explain format=brief select * from t,tt  where t.a=tt.a and (t.a = 1 or t.a = 2 or t.a = 3) and tt.a > 2;
+
+# interaction of propagate consatnts using join syntax
+explain format=brief select * from t join tt on t.a=tt.a where (t.a = 1 or t.a = 2 or t.a = 3) and tt.a > 2;
+
+# Same above tests using IN list. Same result is expected.
+explain format=brief select * from t where a in (1,2,3);
+explain format=brief select * from t where b in ('x','y','z');
+explain format=brief select * from t where c in (1,2.5,3);
+explain format=brief select * from t where d in (true,false);
+explain format=brief select * from t where a in (1,2,3) and a > 2;
+explain format=brief select * from t,tt where t.a=tt.a and t.a in (1,2,3) and tt.a > 2;
+explain format=brief select * from t join tt on t.a=tt.a where t.a in (1,2,3) and tt.a > 2;
+
+# -----------------
+# Negative test cases
+# -----------------
+
+# OR of different columns
+explain format=brief select * from t where a = 1 or b = 1;
+
+# OR involving inequality
+explain format=brief select * from t where a = 1 or a < 5;
+
+# OR of column and constant (invalid mix)
+explain format=brief select * from t where a or 1;
+
+# OR with nested AND
+explain format=brief select * from t where (a = 1 and b = 2) or a = 3;

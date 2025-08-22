@@ -95,7 +95,7 @@ Selection	8000.00	root		or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Co
 └─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config","ddl","slow_query"]
 desc format='brief' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
 id	estRows	task	access object	operator info
-Selection	8000.00	root		or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))
+Selection	8000.00	root		in(Column#1, "config", "slow_query"), in(Column#3, "metric_name3", "metric_name1")
 └─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]
 desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
 id	estRows	task	access object	operator info

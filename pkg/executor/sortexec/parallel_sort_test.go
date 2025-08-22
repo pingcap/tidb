@@ -184,6 +184,6 @@ func TestIssue55344(t *testing.T) {
 	result = tk.MustQuery("select c from t1 order by c+1, -646041453, c;")
 	require.Equal(t, expectValue, result.String())
 
-	tk.MustExec("delete from mysql.opt_rule_blacklist where name='column_prune' or name='predicate_push_down';")
+	tk.MustExec("delete from mysql.opt_rule_blacklist where name in ('column_prune', 'predicate_push_down');")
 	tk.MustExec("ADMIN reload opt_rule_blacklist;")
 }

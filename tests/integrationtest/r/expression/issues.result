@@ -3280,7 +3280,7 @@ TableReader	20.00	root		data:Selection
 explain format=brief select * from t where a in (1, NULL, NULL, NULL, 2);
 id	estRows	task	access object	operator info
 TableReader	20.00	root		data:Selection
-└─Selection	20.00	cop[tikv]		in(test.t.a, 1, NULL, 2)
+└─Selection	20.00	cop[tikv]		in(test.t.a, 1, 2)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 create table t_date(dt date);
 insert into t_date values ('2023-01-01'), ('2023-01-02');

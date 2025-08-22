@@ -168,7 +168,7 @@ a	b
 explain format='brief' select * from t where a = 0 or a = 4;
 id	estRows	task	access object	operator info
 TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		or(eq(util__ranger.t.a, 0), eq(util__ranger.t.a, 4))
+└─Selection	1.00	cop[tikv]		in(util__ranger.t.a, 0, 4)
   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
 select * from t where a = 0 or a = 4;
 a	b
@@ -281,9 +281,9 @@ id	t
 1	aaaa
 explain format='brief' select * from t2 where t='aaaa' or t = 'a';
 id	estRows	task	access object	operator info
-IndexLookUp	16.00	root		
+IndexLookUp	20.00	root		
 ├─IndexRangeScan(Build)	20.00	cop[tikv]	table:t2, index:t(t)	range:["a","a"], ["aaa","aaa"], keep order:false, stats:pseudo
-└─Selection(Probe)	16.00	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
+└─Selection(Probe)	20.00	cop[tikv]		in(util__ranger.t2.t, "aaaa", "a")
   └─TableRowIDScan	20.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t2 where t='aaaa' or t = 'a';
 id	t
@@ -300,8 +300,8 @@ id	t
 1	aaaa
 explain format='brief' select * from t2 where t='aaaa' or t = 'a';
 id	estRows	task	access object	operator info
-TableReader	1.60	root		data:Selection
-└─Selection	1.60	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
+TableReader	2.00	root		data:Selection
+└─Selection	2.00	cop[tikv]		in(util__ranger.t2.t, "aaaa", "a")
   └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
 select * from t2 where t='aaaa' or t = 'a';
 id	t
@@ -424,7 +424,7 @@ a	b	c
 2	2	3
 explain format='brief' select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);
 id	estRows	task	access object	operator info
-Selection	1.00	root		eq(util__ranger.t.c, 3), or(eq(util__ranger.t.a, 1), eq(util__ranger.t.a, 2))
+Selection	1.00	root		eq(util__ranger.t.c, 3), in(util__ranger.t.a, 1, 2)
 └─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b)	keep order:false, desc:false
 select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);
 a	b	c
