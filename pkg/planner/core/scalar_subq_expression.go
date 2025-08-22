@@ -329,7 +329,6 @@ func (*ScalarSubqueryEvalCtx) Schema() *expression.Schema {
 }
 
 // ExplainInfo implements the Plan interface.
-// ExplainInfo implements the Plan interface.
 func (ssctx *ScalarSubqueryEvalCtx) ExplainInfo() string {
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "Output: ")
