@@ -79,40 +79,37 @@ func TestByteReader(t *testing.T) {
 		return rsc
 	}
 
+	buf := make([]byte, 16)
+
 	// Test basic next() usage.
 	br, err := newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	n, bs := br.next(1)
+	n := br.next(buf[:1])
 	require.Equal(t, 1, n)
-	require.Equal(t, [][]byte{{'a'}}, bs)
-	n, bs = br.next(2)
+	require.Equal(t, []byte{'a'}, buf[:1])
+	n = br.next(buf[1:])
 	require.Equal(t, 2, n)
-	require.Equal(t, [][]byte{{'b', 'c'}}, bs)
+	require.Equal(t, []byte{'b', 'c'}, buf[1:3])
 	require.NoError(t, br.Close())
 
 	// Test basic readNBytes() usage.
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	x, err := br.readNBytes(2)
-	require.NoError(t, err)
-	require.Equal(t, 2, len(x))
-	require.Equal(t, byte('a'), x[0])
-	require.Equal(t, byte('b'), x[1])
+	require.NoError(t, br.readNBytes(buf[:2]))
+	require.Equal(t, []byte("ab"), buf[:2])
 	require.NoError(t, br.Close())
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	x, err = br.readNBytes(5) // Read all the data.
-	require.NoError(t, err)
-	require.Equal(t, 5, len(x))
-	require.Equal(t, byte('e'), x[4])
-	_, err = br.readNBytes(1) // EOF
+	require.NoError(t, br.readNBytes(buf[:5])) // Read all the data.
+	require.Equal(t, byte('e'), buf[4])
+	err = br.readNBytes(buf[5:6]) // EOF
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, br.Close())
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	_, err = br.readNBytes(7) // EOF
+	err = br.readNBytes(buf[:7]) // EOF
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 
 	err = st.WriteFile(context.Background(), "testfile", []byte("abcdef"))
@@ -121,43 +118,39 @@ func TestByteReader(t *testing.T) {
 	ms := &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, err)
-	x, err = br.readNBytes(3)
+	err = br.readNBytes(buf[:3])
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
 	copy(ms.src, "xyz")
-	require.Equal(t, 3, len(x))
-	require.Equal(t, byte('c'), x[2])
+	require.Equal(t, []byte("abc"), buf[:3])
 	require.NoError(t, br.Close())
 
 	ms = &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, err)
-	x, err = br.readNBytes(2)
+	err = br.readNBytes(buf[:2])
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
 	copy(ms.src, "xyz")
-	require.Equal(t, 2, len(x))
-	require.Equal(t, byte('b'), x[1])
+	require.Equal(t, []byte("ab"), buf[:2])
 	require.NoError(t, br.Close())
 }
 
 func TestByteReaderAuxBuf(t *testing.T) {
-	ms := &mockExtStore{src: []byte("0123456789")}
+	buf := make([]byte, 16)
+
+	src := []byte("0123456789")
+
+	ms := &mockExtStore{src: src}
 	br, err := newByteReader(context.Background(), ms, 1)
 	require.NoError(t, err)
-	y1, err := br.readNBytes(1)
-	require.NoError(t, err)
-	require.Equal(t, []byte("0"), y1)
-	y2, err := br.readNBytes(2)
-	require.NoError(t, err)
-	require.Equal(t, []byte("12"), y2)
 
-	y3, err := br.readNBytes(1)
-	require.NoError(t, err)
-	require.Equal(t, []byte("3"), y3)
-	y4, err := br.readNBytes(2)
-	require.NoError(t, err)
-	require.Equal(t, []byte("45"), y4)
+	pos := 0
+	for _, readCount := range []int{1, 2, 1, 2, 1, 2} {
+		require.NoError(t, br.readNBytes(buf[pos:pos+readCount]))
+		pos += readCount
+		require.Equal(t, src[:pos], buf[:pos])
+	}
 }
 
 func TestUnexpectedEOF(t *testing.T) {
@@ -176,14 +169,16 @@ func TestUnexpectedEOF(t *testing.T) {
 		return rsc
 	}
 
+	buf := make([]byte, 256)
+
 	br, err := newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	_, err = br.readNBytes(100)
+	err = br.readNBytes(buf[:100])
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	_, err = br.readNBytes(100)
+	err = br.readNBytes(buf[:100])
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 

@@ -15,6 +15,7 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	goerrors "errors"
@@ -40,6 +41,7 @@ var (
 //   - <key-len> and <value-len> are uint64 in big-endian
 type KVReader struct {
 	byteReader *byteReader
+	kvBuffer   bytes.Buffer
 }
 
 // NewKVReader creates a KV reader.
@@ -60,8 +62,13 @@ func NewKVReader(
 	if err != nil {
 		return nil, err
 	}
+
+	var buf bytes.Buffer
+	buf.Grow(256)
+
 	return &KVReader{
 		byteReader: br,
+		kvBuffer:   buf,
 	}, nil
 }
 
@@ -69,21 +76,24 @@ func NewKVReader(
 // the returned key and value will be reused in later calls, so if the caller want
 // to save the KV for later use, it should copy the key and value.
 func (r *KVReader) nextKV() (key, val []byte, err error) {
-	lenBytes, err := r.byteReader.readNBytes(8)
-	if err != nil {
+	b := r.kvBuffer.Bytes()
+
+	if err := r.byteReader.readNBytes(b[:8]); err != nil {
 		return nil, nil, err
 	}
-	keyLen := int(binary.BigEndian.Uint64(lenBytes))
-	lenBytes, err = r.byteReader.readNBytes(8)
-	if err != nil {
+	keyLen := int(binary.BigEndian.Uint64(b[:8]))
+	if err := r.byteReader.readNBytes(b[:8]); err != nil {
+		return nil, nil, err
+	}
+	valLen := int(binary.BigEndian.Uint64(b[:8]))
+
+	r.kvBuffer.Grow(keyLen + valLen + 16)
+	b = r.kvBuffer.Bytes()
+	if err := r.byteReader.readNBytes(b[:keyLen+valLen]); err != nil {
 		return nil, nil, noEOF(err)
 	}
-	valLen := int(binary.BigEndian.Uint64(lenBytes))
-	keyAndValue, err := r.byteReader.readNBytes(keyLen + valLen)
-	if err != nil {
-		return nil, nil, noEOF(err)
-	}
-	return keyAndValue[:keyLen], keyAndValue[keyLen:], nil
+
+	return b[:keyLen], b[keyLen : keyLen+valLen], nil
 }
 
 // noEOF converts the EOF error to io.ErrUnexpectedEOF.
