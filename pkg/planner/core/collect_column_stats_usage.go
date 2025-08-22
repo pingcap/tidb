@@ -16,7 +16,15 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/model"
+=======
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/filter"
+	"github.com/pingcap/tidb/pkg/util/intest"
+>>>>>>> e54fe94984f (planner: TTL scan can trigger sync/async load/generateRuntimeFilter (#62616))
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"golang.org/x/exp/maps"
 )
@@ -116,7 +124,16 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
 }
 
+<<<<<<< HEAD
 func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
+=======
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedColGroups [][]*expression.Column, ds *logicalop.DataSource) {
+	// Skip all system tables.
+	if filter.IsSystemSchema(ds.DBName.L) {
+		intest.Assert(!ds.SCtx().GetSessionVars().InRestrictedSQL, "system table should have been skipped in restricted SQL mode")
+		return
+	}
+>>>>>>> e54fe94984f (planner: TTL scan can trigger sync/async load/generateRuntimeFilter (#62616))
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
 	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
 	tblID := ds.TableInfo().ID
