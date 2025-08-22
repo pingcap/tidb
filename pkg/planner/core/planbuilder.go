@@ -3952,13 +3952,12 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 }
 
 // resolveGeneratedColumns resolves generated columns with their generation expressions respectively.
-// onDups indicates which columns are in on-duplicate list
-// and it will be **modified** inside this function.
+// If not-nil onDups is passed in, it will be **modified in place** and record columns in on-duplicate list
 func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
 			// columns having on-update-now flag should also be considered.
-			if mysql.HasOnUpdateNowFlag(column.GetFlag()) {
+			if onDups != nil && mysql.HasOnUpdateNowFlag(column.GetFlag()) {
 				onDups[column.Name.L] = struct{}{}
 			}
 			continue
