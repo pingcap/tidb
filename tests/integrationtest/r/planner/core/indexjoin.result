@@ -1168,18 +1168,18 @@ UNIQUE KEY `idx_20` (`col_60`(2),`col_62`,`col_61`),
 KEY `idx_21` (`col_60`(1),`col_61`),
 UNIQUE KEY `idx_22` (`col_61`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
-explain format=brief select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
-id	estRows	task	access object	operator info
-Sort	12500.00	root		planner__core__indexjoin.td89f296a.col_64, Column#10, Column#11, Column#12
-└─Projection	12500.00	root		planner__core__indexjoin.td89f296a.col_64, substr(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)), 2)->Column#10, ord(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)))->Column#11, mid(cast(Column#9, var_string(20)), 0, 6)->Column#12
-  └─IndexJoin	12500.00	root		inner join, inner:Projection, outer key:Column#16, inner key:planner__core__indexjoin.tac9d3b07.col_61, equal cond:eq(Column#16, planner__core__indexjoin.tac9d3b07.col_61)
-    ├─Projection(Build)	10000.00	root		planner__core__indexjoin.td89f296a.col_64, cast(planner__core__indexjoin.td89f296a.col_64, decimal(3,0) BINARY)->Column#16
-    │ └─TableReader	10000.00	root		data:TableFullScan
-    │   └─TableFullScan	10000.00	cop[tikv]	table:td89f296a	keep order:false, stats:pseudo
-    └─Projection(Probe)	10000.00	root		planner__core__indexjoin.tac9d3b07.col_61, ifnull(cast(cast(planner__core__indexjoin.tac9d3b07.col_61, bigint BINARY), bigint UNSIGNED BINARY), 18446744073709551615)->Column#9
-      └─IndexLookUp	10000.00	root		
-        ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#16)], keep order:false, stats:pseudo
-        └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:tac9d3b07	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
+id	task	access object	operator info
+Sort	root		planner__core__indexjoin.td89f296a.col_64, Column#10, Column#11, Column#12
+└─Projection	root		planner__core__indexjoin.td89f296a.col_64, substr(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)), 2)->Column#10, ord(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)))->Column#11, mid(cast(Column#9, var_string(20)), 0, 6)->Column#12
+  └─IndexJoin	root		inner join, inner:Projection, outer key:Column#16, inner key:planner__core__indexjoin.tac9d3b07.col_61, equal cond:eq(Column#16, planner__core__indexjoin.tac9d3b07.col_61)
+    ├─Projection(Build)	root		planner__core__indexjoin.td89f296a.col_64, cast(planner__core__indexjoin.td89f296a.col_64, decimal(3,0) BINARY)->Column#16
+    │ └─TableReader	root		data:TableFullScan
+    │   └─TableFullScan	cop[tikv]	table:td89f296a	keep order:false, stats:pseudo
+    └─Projection(Probe)	root		planner__core__indexjoin.tac9d3b07.col_61, ifnull(cast(cast(planner__core__indexjoin.tac9d3b07.col_61, bigint BINARY), bigint UNSIGNED BINARY), 18446744073709551615)->Column#9
+      └─IndexLookUp	root		
+        ├─IndexRangeScan(Build)	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#16)], keep order:false, stats:pseudo
+        └─TableRowIDScan(Probe)	cop[tikv]	table:tac9d3b07	keep order:false, stats:pseudo
 select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
 r0	r1	r2	r3
 CREATE TABLE `t5602f14e` (

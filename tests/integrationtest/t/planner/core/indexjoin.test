@@ -120,7 +120,7 @@ CREATE TABLE `tac9d3b07` (
   UNIQUE KEY `idx_22` (`col_61`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
 
-explain format=brief select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
+explain format='plan_tree' select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
 select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
 
 CREATE TABLE `t5602f14e` (
