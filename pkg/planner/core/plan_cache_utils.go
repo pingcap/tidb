@@ -129,7 +129,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	prepared := &ast.Prepared{
 		Stmt:          paramStmt,
-		StmtType:      ast.GetStmtLabel(paramStmt),
+		StmtType:      stmtctx.GetStmtLabel(ctx, paramStmt),
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
