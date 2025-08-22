@@ -303,7 +303,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		case *physicalop.PhysicalIndexJoin:
 			label[plan.InnerChildIdx] = ProbeSide
 			label[1-plan.InnerChildIdx] = BuildSide
-		case *PhysicalIndexMergeJoin:
+		case *physicalop.PhysicalIndexMergeJoin:
 			label[plan.InnerChildIdx] = ProbeSide
 			label[1-plan.InnerChildIdx] = BuildSide
 		case *physicalop.PhysicalIndexHashJoin:
@@ -367,11 +367,11 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.isINLProbeChild = true
 		target, childIdx = f.flattenRecursively(plan.TablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
-	case *PhysicalIndexMergeReader:
+	case *physicalop.PhysicalIndexMergeReader:
 		childCtx.isRoot = false
 		childCtx.reqType = physicalop.Cop
 		childCtx.storeType = kv.TiKV
-		for _, pchild := range plan.partialPlans {
+		for _, pchild := range plan.PartialPlansRaw {
 			childCtx.label = BuildSide
 			childCtx.isLastChild = false
 			target, childIdx = f.flattenRecursively(pchild, childCtx, target)
@@ -381,7 +381,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.isLastChild = true
 		// set the index merge child signal.
 		childCtx.isINLProbeChild = true
-		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.TablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *physicalop.PhysicalShuffleReceiverStub:
 		childCtx.isRoot = true

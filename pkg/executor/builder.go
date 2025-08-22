@@ -271,7 +271,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildMergeJoin(v)
 	case *physicalop.PhysicalIndexJoin:
 		return b.buildIndexLookUpJoin(v)
-	case *plannercore.PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		return b.buildIndexLookUpMergeJoin(v)
 	case *physicalop.PhysicalIndexHashJoin:
 		return b.buildIndexNestedLoopHashJoin(v)
@@ -313,7 +313,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSplitRegion(v)
 	case *plannercore.DistributeTable:
 		return b.buildDistributeTable(v)
-	case *plannercore.PhysicalIndexMergeReader:
+	case *physicalop.PhysicalIndexMergeReader:
 		return b.buildIndexMergeReader(v)
 	case *plannercore.SelectInto:
 		return b.buildSelectInto(v)
@@ -3618,7 +3618,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 	return e
 }
 
-func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) exec.Executor {
+func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexMergeJoin) exec.Executor {
 	outerExec := b.build(v.Children()[1-v.InnerChildIdx])
 	if b.err != nil {
 		return nil
@@ -4394,7 +4394,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *physicalop.PhysicalIndexLook
 	return ret
 }
 
-func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
+func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
 	partialPlanCount := len(v.PartialPlans)
 	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
 	partialDataSizes := make([]float64, 0, partialPlanCount)
@@ -4505,7 +4505,7 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader, load
 	return buildIndexUsageReporter(b.ctx, plan, loadStats)
 }
 
-func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
+func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMergeReader) exec.Executor {
 	if b.Ti != nil {
 		b.Ti.UseIndexMerge = true
 		b.Ti.UseTableLookUp.Store(true)

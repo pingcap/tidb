@@ -959,7 +959,7 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
 	case *physicalop.PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
-		*PhysicalIndexMergeJoin:
+		*physicalop.PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
@@ -977,11 +977,11 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 	case *physicalop.PhysicalIndexLookUpReader:
 		propagateProbeParents(x.IndexPlan, probeParents)
 		propagateProbeParents(x.TablePlan, probeParents)
-	case *PhysicalIndexMergeReader:
-		for _, pchild := range x.partialPlans {
+	case *physicalop.PhysicalIndexMergeReader:
+		for _, pchild := range x.PartialPlansRaw {
 			propagateProbeParents(pchild, probeParents)
 		}
-		propagateProbeParents(x.tablePlan, probeParents)
+		propagateProbeParents(x.TablePlan, probeParents)
 	default:
 		for _, child := range plan.Children() {
 			propagateProbeParents(child, probeParents)
@@ -1299,7 +1299,7 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 	}
 	switch plan.(type) {
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
-		*physicalop.PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader, *PointGetPlan:
 		if existsOverlongType(plan.Schema()) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true

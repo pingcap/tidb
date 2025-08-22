@@ -79,7 +79,7 @@ func rebuildRange(p base.Plan) error {
 	switch x := p.(type) {
 	case *physicalop.PhysicalIndexHashJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
 	case *physicalop.PhysicalIndexJoin:
 		if err := x.Ranges.Rebuild(sctx); err != nil {
@@ -129,8 +129,8 @@ func rebuildRange(p base.Plan) error {
 		if err = buildRangesForBatchGet(sctx, x); err != nil {
 			return err
 		}
-	case *PhysicalIndexMergeReader:
-		indexMerge := p.(*PhysicalIndexMergeReader)
+	case *physicalop.PhysicalIndexMergeReader:
+		indexMerge := p.(*physicalop.PhysicalIndexMergeReader)
 		for _, partialPlans := range indexMerge.PartialPlans {
 			err = rebuildRange(partialPlans[0])
 			if err != nil {

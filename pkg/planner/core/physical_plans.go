@@ -20,19 +20,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -54,7 +48,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalTableReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexLookUpReader{}
-	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
+	_ base.PhysicalPlan = &physicalop.PhysicalIndexMergeReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalHashAgg{}
 	_ base.PhysicalPlan = &physicalop.PhysicalStreamAgg{}
 	_ base.PhysicalPlan = &physicalop.PhysicalApply{}
@@ -73,7 +67,7 @@ var (
 	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexHashJoin{}
-	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalIndexMergeJoin{}
 )
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
@@ -98,113 +92,6 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
 	return reader
-}
-
-// PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
-type PhysicalIndexMergeReader struct {
-	physicalop.PhysicalSchemaProducer
-
-	// IsIntersectionType means whether it's intersection type or union type.
-	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
-	IsIntersectionType bool
-	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
-	AccessMVIndex bool
-
-	// PushedLimit is used to avoid unnecessary table scan tasks of IndexMergeReader.
-	PushedLimit *physicalop.PushedDownLimit
-	// ByItems is used to support sorting the handles returned by partialPlans.
-	ByItems []*util.ByItems
-
-	// partialPlans are the partial plans that have not been flatted. The type of each element is permitted PhysicalIndexScan or PhysicalTableScan.
-	partialPlans []base.PhysicalPlan
-	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
-	tablePlan base.PhysicalPlan
-	// PartialPlans flats the partialPlans to construct executor pb.
-	PartialPlans [][]base.PhysicalPlan
-	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans []base.PhysicalPlan
-
-	// Used by partition table.
-	PlanPartInfo *physicalop.PhysPlanPartInfo
-
-	KeepOrder bool
-
-	HandleCols util.HandleCols
-}
-
-// GetAvgTableRowSize return the average row size of table plan.
-func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
-	for _, child := range p.TablePlans {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
-	}
-	for _, child := range p.partialPlans {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
-	}
-	for _, PartialPlan := range p.PartialPlans {
-		for _, child := range PartialPlan {
-			corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
-		}
-	}
-	return corCols
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.tablePlan != nil {
-		rp.Children = append(rp.Children, p.tablePlan.BuildPlanTrace())
-	}
-	for _, partialPlan := range p.partialPlans {
-		rp.Children = append(rp.Children, partialPlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.tablePlan != nil {
-		physicalop.AppendChildCandidate(p, p.tablePlan, op)
-	}
-	for _, partialPlan := range p.partialPlans {
-		physicalop.AppendChildCandidate(p, partialPlan, op)
-	}
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexMergeReader
-func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + p.PlanPartInfo.MemoryUsage()
-	if p.tablePlan != nil {
-		sum += p.tablePlan.MemoryUsage()
-	}
-
-	for _, plans := range p.PartialPlans {
-		for _, plan := range plans {
-			sum += plan.MemoryUsage()
-		}
-	}
-	for _, plan := range p.TablePlans {
-		sum += plan.MemoryUsage()
-	}
-	for _, plan := range p.partialPlans {
-		sum += plan.MemoryUsage()
-	}
-	return
-}
-
-// LoadTableStats preloads the stats data for the physical table
-func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
-	ts := p.TablePlans[0].(*physicalop.PhysicalTableScan)
-	loadTableStats(ctx, ts.Table, ts.PhysicalTableID)
 }
 
 // AddExtraPhysTblIDColumn for partition table.
@@ -287,34 +174,6 @@ type PhysicalJoin interface {
 	PhysicalJoinImplement()
 	GetInnerChildIdx() int
 	GetJoinType() logicalop.JoinType
-}
-
-// PhysicalIndexMergeJoin represents the plan of index look up merge join.
-type PhysicalIndexMergeJoin struct {
-	physicalop.PhysicalIndexJoin
-
-	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
-	KeyOff2KeyOffOrderByIdx []int
-	// CompareFuncs store the compare functions for outer join keys and inner join key.
-	CompareFuncs []expression.CompareFunc
-	// OuterCompareFuncs store the compare functions for outer join keys and outer join
-	// keys, it's for outer rows sort's convenience.
-	OuterCompareFuncs []expression.CompareFunc
-	// NeedOuterSort means whether outer rows should be sorted to build range.
-	NeedOuterSort bool
-	// Desc means whether inner child keep desc order.
-	Desc bool
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexMergeJoin
-func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
-		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
-	return
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.

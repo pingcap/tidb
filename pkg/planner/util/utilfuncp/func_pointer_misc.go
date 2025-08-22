@@ -235,9 +235,8 @@ var Attach2Task4PhysicalTopN func(pp base.PhysicalPlan, tasks ...base.Task) base
 // ResolveIndices4PhysicalTopN will be called by PhysicalTopN in physicalOp pkg.
 var ResolveIndices4PhysicalTopN func(pp base.PhysicalPlan) (err error)
 
-// GetPlanCostVer24PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
-var GetPlanCostVer24PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+// Attach2Task4PhysicalExpand will be called by PhysicalExpand in physicalOp pkg.
+var Attach2Task4PhysicalExpand func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // ResolveIndices4PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
 var ResolveIndices4PhysicalSelection func(pp base.PhysicalPlan) (err error)
@@ -245,12 +244,13 @@ var ResolveIndices4PhysicalSelection func(pp base.PhysicalPlan) (err error)
 // Attach2Task4PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
 var Attach2Task4PhysicalSelection func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
-// Attach2Task4PhysicalExpand will be called by PhysicalExpand in physicalOp pkg.
-var Attach2Task4PhysicalExpand func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
-
 // GetPlanCostVer14PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
 var GetPlanCostVer14PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
+var GetPlanCostVer24PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 // Attach2Task4PhysicalUnionScan will be called by PhysicalUnionScan in physicalOp pkg.
 var Attach2Task4PhysicalUnionScan func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
@@ -314,14 +314,32 @@ var GetPlanCostVer24PhysicalMergeJoin func(pp base.PhysicalPlan, taskType proper
 var GetPlanCostVer14PhysicalIndexScan func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
+// GetPlanCostVer24PhysicalIndexScan returns the plan-cost of this sub-plan, which is:
+// plan-cost = rows * log2(row-size) * scan-factor
+// log2(row-size) is from experiments.
+var GetPlanCostVer24PhysicalIndexScan func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
+
 // GetPlanCostVer14PhysicalTableScan calculates the cost of the plan if it has not been calculated yet
 // and returns the cost.
 var GetPlanCostVer14PhysicalTableScan func(pp base.PhysicalPlan,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
+// GetPlanCostVer24PhysicalTableScan returns the plan-cost of this sub-plan, which is:
+// plan-cost = rows * log2(row-size) * scan-factor
+// log2(row-size) is from experiments.
+var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
 // GetPlanCostVer14PhysicalIndexReader calculates the cost of the plan if it has not been calculated yet
 var GetPlanCostVer14PhysicalIndexReader func(pp base.PhysicalPlan, _ property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalIndexReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = (child-cost + net-cost) / concurrency
+// net-cost = rows * row-size * net-factor
+var GetPlanCostVer24PhysicalIndexReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
 // GetCost4PhysicalHashJoin computes cost of hash join operator itself.
 var GetCost4PhysicalHashJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64,
@@ -335,22 +353,16 @@ var GetPlanCostVer14PhysicalHashJoin func(pp base.PhysicalPlan, taskType propert
 // Attach2Task4PhysicalHashJoin implements PhysicalPlan interface for PhysicalHashJoin.
 var Attach2Task4PhysicalHashJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
-// GetPlanCostVer24PhysicalIndexScan returns the plan-cost of this sub-plan, which is:
-// plan-cost = rows * log2(row-size) * scan-factor
-// log2(row-size) is from experiments.
-var GetPlanCostVer24PhysicalIndexScan func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
+// GetPlanCostVer14PhysicalIndexMergeReader calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalIndexMergeReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
 
-// GetPlanCostVer24PhysicalTableScan returns the plan-cost of this sub-plan, which is:
-// plan-cost = rows * log2(row-size) * scan-factor
-// log2(row-size) is from experiments.
-var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
-
-// GetPlanCostVer24PhysicalIndexReader returns the plan-cost of this sub-plan, which is:
-// plan-cost = (child-cost + net-cost) / concurrency
-// net-cost = rows * row-size * net-factor
-var GetPlanCostVer24PhysicalIndexReader func(pp base.PhysicalPlan, taskType property.TaskType,
+// GetPlanCostVer24PhysicalIndexMergeReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + probe-child-cost +
+// build-hash-cost + build-filter-cost +
+// (probe-filter-cost + probe-hash-cost) / concurrency
+var GetPlanCostVer24PhysicalIndexMergeReader func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
 // GetPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
@@ -460,6 +472,17 @@ var GetPlanCostVer14PhysicalTableReader func(pp base.PhysicalPlan,
 
 // LoadTableStats will be called in physicalOp pkg.
 var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
+
+// GetCost4PhysicalIndexMergeJoin computes the cost of index merge join operator and its children.
+var GetCost4PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
+	outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64
+
+// GetPlanCostVer14PhysicalIndexMergeJoin computes the cost of index merge join operator and its children
+var GetPlanCostVer14PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
+	taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
+
+// Attach2Task4PhysicalIndexMergeJoin implements PhysicalPlan interface.
+var Attach2Task4PhysicalIndexMergeJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // ****************************************** task related ***********************************************
 
