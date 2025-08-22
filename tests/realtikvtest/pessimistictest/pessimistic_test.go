@@ -2461,7 +2461,11 @@ func TestIssue28011(t *testing.T) {
 
 func TestPessimisticAutoCommitTxn(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-
+	defer config.RestoreFunc()()
+	// false case
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2483,11 +2487,10 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	require.Regexp(t, ".*handle:\\[-1 1\\].*", explain)
 	require.NotRegexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
 
-	originCfg := config.GetGlobalConfig()
-	defer config.StoreGlobalConfig(originCfg)
-	newCfg := *originCfg
-	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
-	config.StoreGlobalConfig(&newCfg)
+	// true case
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	})
 
 	rows = tk.MustQuery("explain update t set i = -i").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
@@ -3482,21 +3485,6 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 
 func TestIssueBatchResolveLocks(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-
-	// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
-	// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
-	tkcfg := testkit.NewTestKit(t, store)
-	res := tkcfg.MustQuery("show config where name = 'pessimistic-txn.in-memory' and type = 'tikv'").Rows()
-	if len(res) > 0 && res[0][3].(string) == "true" {
-		tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"false\"")
-		tkcfg.MustQuery("show warnings").Check(testkit.Rows())
-		defer func() {
-			tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"true\"")
-		}()
-		time.Sleep(time.Second)
-	} else {
-		t.Log("skip disabling in-memory pessimistic lock, current config:", res)
-	}
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
