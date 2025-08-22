@@ -915,28 +915,28 @@
         "Right": "[]"
       },
       {
-        "Left": "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
-        "Right": "[or(eq(test.t.a, 1), eq(test.t.a, 2))]"
+        "Left": "[in(test.t.a, 1, 2)]",
+        "Right": "[in(test.t.a, 1, 2)]"
       },
       {
         "Left": "[or(eq(test.t.c, 1), eq(test.t.a, 2))]",
         "Right": "[]"
       },
       {
-        "Left": "[eq(test.t.c, 1) or(eq(test.t.a, 3), eq(test.t.a, 4))]",
-        "Right": "[or(eq(test.t.a, 3), eq(test.t.a, 4))]"
+        "Left": "[eq(test.t.c, 1) in(test.t.a, 3, 4)]",
+        "Right": "[in(test.t.a, 3, 4)]"
       },
       {
         "Left": "[or(and(gt(test.t.a, 1), lt(test.t.a, 3)), eq(test.t.a, 2))]",
-        "Right": "[or(eq(test.t.a, 1), eq(test.t.a, 2))]"
+        "Right": "[in(test.t.a, 1, 2)]"
       },
       {
-        "Left": "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
-        "Right": "[or(eq(test.t.a, 1), eq(test.t.a, 2))]"
+        "Left": "[in(test.t.a, 1, 2)]",
+        "Right": "[in(test.t.a, 1, 2)]"
       },
       {
         "Left": "[]",
-        "Right": "[or(eq(test.t.a, 1), eq(test.t.a, 2))]"
+        "Right": "[in(test.t.a, 1, 2)]"
       },
       {
         "Left": "[]",
@@ -956,7 +956,7 @@
       },
       {
         "Left": "[]",
-        "Right": "[or(eq(test.t.a, 3), or(eq(test.t.a, 4), eq(test.t.a, 2)))]"
+        "Right": "[in(test.t.a, 3, 4, 2)]"
       },
       {
         "Left": "[gt(test.t.a, 1)]",
@@ -1038,7 +1038,7 @@
     "Cases": [
       {
         "Sel": "[or(and(eq(test.t.a, 1), isnull(test.t.a)), and(eq(test.t.a, 2), eq(test.t.a, 2)))]",
-        "Left": "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
+        "Left": "[in(test.t.a, 1, 2)]",
         "Right": "[]"
       },
       {
