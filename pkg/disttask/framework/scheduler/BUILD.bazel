@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "scheduler",
     srcs = [
+        "autoscaler.go",
         "balancer.go",
         "collector.go",
         "interface.go",
@@ -32,9 +33,11 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/syncutil",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -43,6 +46,7 @@ go_test(
     name = "scheduler_test",
     timeout = "short",
     srcs = [
+        "autoscaler_test.go",
         "balancer_test.go",
         "main_test.go",
         "nodes_test.go",
@@ -55,7 +59,11 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
+<<<<<<< HEAD
     shard_count = 35,
+=======
+    shard_count = 37,
+>>>>>>> aa875ea4723 (dxf: calculate max_node_count and concurrency for next-gen automatically (#62995))
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -75,6 +83,7 @@ go_test(
         "//pkg/util/disttask",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
