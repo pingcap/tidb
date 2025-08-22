@@ -191,17 +191,15 @@ func TestWriteHeader(t *testing.T) {
 	assert.NoError(t, err)
 
 	tbl := []byte("table")
-	idx := []byte("index")
-	pk := []byte("pk")
 	commitTS := uint64(time.Now().UnixNano())
 
-	err = tfw.WriteHeader(ctx, tbl, idx, pk, commitTS)
+	err = tfw.WriteHeader(ctx, tbl, commitTS)
 	assert.NoError(t, err)
 	assert.True(t, tfw.headerWritten)
 	assert.Equal(t, 1, len(writer.writes))
 
 	// Write header again should fail
-	err = tfw.WriteHeader(ctx, tbl, idx, pk, commitTS)
+	err = tfw.WriteHeader(ctx, tbl, commitTS)
 	assert.Error(t, err)
 }
 
@@ -213,7 +211,7 @@ func TestWriteHeader_NilWriter(t *testing.T) {
 		headerWritten: false,
 		logger:        logger,
 	}
-	err := tfw.WriteHeader(ctx, []byte("t"), []byte("i"), nil, 1)
+	err := tfw.WriteHeader(ctx, []byte("t"), 1)
 	assert.Error(t, err)
 }
 
@@ -225,7 +223,7 @@ func TestWriteHeader_WriteFail(t *testing.T) {
 
 	tfw, err := NewTICIFileWriter(ctx, store, "testfile", 5*1024*1024, logger)
 	assert.NoError(t, err)
-	err = tfw.WriteHeader(ctx, []byte("t"), []byte("i"), nil, 1)
+	err = tfw.WriteHeader(ctx, []byte("t"), 1)
 	assert.Error(t, err)
 }
 

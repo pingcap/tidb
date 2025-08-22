@@ -185,54 +185,9 @@ func (t *ManagerCtx) checkMetaClient() error {
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	indexColumns := make([]*ColumnInfo, 0)
-	for i := range indexInfo.Columns {
-		offset := indexInfo.Columns[i].Offset
-		indexColumns = append(indexColumns, &ColumnInfo{
-			ColumnId:     tblInfo.Columns[offset].ID,
-			ColumnName:   tblInfo.Columns[offset].Name.String(),
-			Type:         int32(tblInfo.Columns[offset].GetType()),
-			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
-			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
-			Flag:         uint32(tblInfo.Columns[offset].GetFlag()),
-			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
-			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
-			IsArray:      len(indexInfo.Columns) > 1,
-		})
-	}
-	tableColumns := make([]*ColumnInfo, 0)
-	for i := range tblInfo.Columns {
-		tableColumns = append(tableColumns, &ColumnInfo{
-			ColumnId:     tblInfo.Columns[i].ID,
-			ColumnName:   tblInfo.Columns[i].Name.String(),
-			Type:         int32(tblInfo.Columns[i].GetType()),
-			ColumnLength: int32(tblInfo.Columns[i].FieldType.StorageLength()),
-			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
-			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
-			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[i].GetFlag()),
-			IsArray:      len(tblInfo.Columns) > 1,
-		})
-	}
 	req := &CreateIndexRequest{
-		IndexInfo: &IndexInfo{
-			TableId:   tblInfo.ID,
-			IndexId:   indexInfo.ID,
-			IndexName: indexInfo.Name.String(),
-			IndexType: IndexType_FULL_TEXT,
-			Columns:   indexColumns,
-			IsUnique:  indexInfo.Unique,
-			ParserInfo: &ParserInfo{
-				ParserType: ParserType_DEFAULT_PARSER,
-			},
-		},
-		TableInfo: &TableInfo{
-			TableId:      tblInfo.ID,
-			TableName:    tblInfo.Name.L,
-			DatabaseName: schemaName,
-			Version:      int64(tblInfo.Version),
-			Columns:      tableColumns,
-			IsClustered:  tblInfo.HasClusteredIndex(),
-		},
+		IndexInfo: ModelIndexToTiCIIndexInfo(indexInfo, tblInfo),
+		TableInfo: ModelTableToTiCITableInfo(tblInfo, schemaName),
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -506,6 +461,7 @@ func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableI
 			Type:         int32(tblInfo.Columns[offset].GetType()),
 			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
+			Flag:         uint32(tblInfo.Columns[offset].GetFlag()),
 			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
 			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
 			IsArray:      len(indexInfo.Columns) > 1,
@@ -522,52 +478,6 @@ func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableI
 		ParserInfo: &ParserInfo{
 			ParserType: ParserType_DEFAULT_PARSER,
 		},
-	}
-}
-
-// ModelPrimaryKeyToTiCIIndexInfo returns a IndexInfo describing the
-// primary key index of the table. If the table has no primary key, returns nil.
-func ModelPrimaryKeyToTiCIIndexInfo(
-	tblInfo *model.TableInfo,
-) *IndexInfo {
-	var pkIndex *model.IndexInfo
-	for _, idx := range tblInfo.Indices {
-		if idx.Primary {
-			pkIndex = idx
-			break
-		}
-	}
-	if pkIndex == nil ||
-		pkIndex.Name.String() == "" ||
-		len(pkIndex.Columns) == 0 {
-		return nil
-	}
-
-	pkColumns := make([]*ColumnInfo, 0, len(pkIndex.Columns))
-	for _, idxCol := range pkIndex.Columns {
-		offset := idxCol.Offset
-		if offset < 0 || offset >= len(tblInfo.Columns) {
-			return nil
-		}
-		col := tblInfo.Columns[offset]
-		pkColumns = append(pkColumns, &ColumnInfo{
-			ColumnId:     col.ID,
-			ColumnName:   col.Name.String(),
-			Type:         int32(col.GetType()),
-			ColumnLength: int32(col.FieldType.StorageLength()),
-			Decimal:      int32(col.GetDecimal()),
-			DefaultVal:   col.DefaultValueBit,
-			IsPrimaryKey: true,
-			IsArray:      false,
-		})
-	}
-
-	return &IndexInfo{
-		TableId:   tblInfo.ID,
-		IndexId:   pkIndex.ID,
-		IndexName: pkIndex.Name.String(),
-		Columns:   pkColumns,
-		IsUnique:  pkIndex.Unique,
 	}
 }
 
