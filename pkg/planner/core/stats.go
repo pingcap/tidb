@@ -613,7 +613,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else if path.FtsQueryInfo != nil {
 			deriveSearchPathStats(ds, path)
-			path.IsSingleScan = false
+			path.IsSingleScan = isTiCISingleScan(ds)
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
