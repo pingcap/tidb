@@ -164,6 +164,7 @@ go_library(
         "//pkg/util/dbutil",
         "//pkg/util/domainutil",
         "//pkg/util/engine",
+        "//pkg/util/etcd",
         "//pkg/util/execdetails",
         "//pkg/util/filter",
         "//pkg/util/gcutil",
