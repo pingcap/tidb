@@ -385,11 +385,9 @@ func NeedPreciseRowCount(tblInfo *model.TableInfo) bool {
 		}
 	}
 
-	if tblInfo.PKIsHandle {
-		for _, col := range tblInfo.Columns {
-			if mysql.HasPriKeyFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(col.GetFlag()) {
-				return true
-			}
+	for _, col := range tblInfo.Columns {
+		if mysql.HasPriKeyFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(col.GetFlag()) {
+			return true
 		}
 	}
 
