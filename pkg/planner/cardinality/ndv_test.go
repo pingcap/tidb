@@ -53,6 +53,7 @@ func TestScaleNDV(t *testing.T) {
 func TestIssue54812(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().RiskScaleNDVSkewRatio = 0
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (a int, b int, key(a), key(b));`)
