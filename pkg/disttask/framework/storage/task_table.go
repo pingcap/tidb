@@ -424,6 +424,29 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 	return task, nil
 }
 
+// GetTaskBasesInStates gets the task bases in the states(order by priority asc, create_time acs, id asc).
+func (mgr *TaskManager) GetTaskBasesInStates(ctx context.Context, states ...any) (task []*proto.TaskBase, err error) {
+	if len(states) == 0 {
+		return task, nil
+	}
+
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"select "+basicTaskColumns+" from mysql.tidb_global_task t "+
+			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
+			" order by priority asc, create_time asc, id asc", states...)
+	if err != nil {
+		return task, err
+	}
+
+	for _, r := range rs {
+		task = append(task, row2TaskBasic(r))
+	}
+	return task, nil
+}
+
 // GetTaskByID gets the task by the task ID.
 func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)

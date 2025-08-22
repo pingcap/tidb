@@ -16,6 +16,7 @@ package etcd
 
 import (
 	"context"
+<<<<<<< HEAD
 	"crypto/tls"
 	"fmt"
 	"path"
@@ -23,8 +24,25 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+=======
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+>>>>>>> 1fa47888536 (dxf: prepare work for schedule status API in nextgen (#63140))
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/namespace"
+	"go.uber.org/zap"
+)
+
+const (
+	// KeyOpDefaultTimeout is the default timeout for each key operation.
+	KeyOpDefaultTimeout = 2 * time.Second
+	// KeyOpDefaultRetryCnt is the default retry times for each key operation.
+	KeyOpDefaultRetryCnt = 5
+	// KeyOpRetryInterval is the interval between two key operations.
+	KeyOpRetryInterval = 30 * time.Millisecond
 )
 
 // Node organizes the ectd query result as a Trie tree
@@ -341,4 +359,21 @@ func SetEtcdCliByNamespace(cli *clientv3.Client, namespacePrefix string) {
 	cli.KV = namespace.NewKV(cli.KV, namespacePrefix)
 	cli.Watcher = namespace.NewWatcher(cli.Watcher, namespacePrefix)
 	cli.Lease = namespace.NewLease(cli.Lease, namespacePrefix)
+}
+
+// DeleteKeyFromEtcd deletes key value from etcd.
+func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
+	var err error
+	ctx := context.Background()
+	for i := range retryCnt {
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		_, err = etcdCli.Delete(childCtx, key)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		logutil.BgLogger().Warn("etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
+	}
+	return errors.Trace(err)
 }
