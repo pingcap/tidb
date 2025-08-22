@@ -195,12 +195,10 @@ func reportGlobalMemArbitratorMetrics() {
 
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
 func HandleGlobalMemArbitratorRuntime(s *runtime.MemStats) {
-	m := globalArbitrator.v.Load()
+	defer recover()
+
+	m := GlobalMemArbitrator()
 	if m == nil {
-		return
-	}
-	workMode := m.WorkMode()
-	if workMode == ArbitratorModeDisable {
 		return
 	}
 	m.HandleRuntimeStats(intoRuntimeMemStats(s))
