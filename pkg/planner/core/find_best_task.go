@@ -2962,15 +2962,16 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
-	pointGetPlan := physicalop.PointGetPlan{
+	pointGetPlan := &physicalop.PointGetPlan{
 		AccessConditions: candidate.path.AccessConds,
 		DBName:           ds.DBName.L,
 		TblInfo:          ds.TableInfo,
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
-	}.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
+	}
 	pointGetPlan.SetSchema(ds.Schema().Clone())
 	pointGetPlan.SetOutputNames(ds.OutputNames())
+	pointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
 	if ds.PartitionDefIdx != nil {
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
