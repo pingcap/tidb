@@ -689,7 +689,7 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 			condsToPush = append(condsToPush, newFunc)
 			if isFromAggFunction {
 				ctx := la.SCtx().GetExprCtx()
-				ret = append(ret, expression.BuildNotNullExpr(ctx, SchemaCol))
+				ret = append(ret, expression.BuildNotNullExpr(ctx, schemaCol))
 			}
 		} else {
 			ret = append(ret, cond)
