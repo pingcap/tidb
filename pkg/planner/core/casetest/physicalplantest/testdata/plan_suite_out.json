@@ -3306,12 +3306,12 @@
       {
         "SQL": "select * from t where a > (select /*+ SEMI_JOIN_REWRITE() */ min(b) from t t1 where t1.c = t.c)",
         "Plan": [
-          "HashJoin 7992.00 root  inner join, equal:[eq(test.t.c, test.t.c)], other cond:gt(test.t.a, Column#9)",
-          "├─Selection(Build) 6393.60 root  not(isnull(Column#9))",
-          "│ └─HashAgg 7992.00 root  group by:test.t.c, funcs:min(Column#10)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
-          "│   └─TableReader 7992.00 root  data:HashAgg",
-          "│     └─HashAgg 7992.00 cop[tikv]  group by:test.t.c, funcs:min(test.t.b)->Column#10",
-          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "HashJoin 7984.01 root  inner join, equal:[eq(test.t.c, test.t.c)], other cond:gt(test.t.a, Column#9)",
+          "├─Selection(Build) 6387.21 root  not(isnull(Column#9))",
+          "│ └─HashAgg 7984.01 root  group by:test.t.c, funcs:min(Column#10)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
+          "│   └─TableReader 7984.01 root  data:HashAgg",
+          "│     └─HashAgg 7984.01 cop[tikv]  group by:test.t.c, funcs:min(test.t.b)->Column#10",
+          "│       └─Selection 9980.01 cop[tikv]  not(isnull(test.t.b)), not(isnull(test.t.c))",
           "│         └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9980.01 root  data:Selection",
           "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.c))",
