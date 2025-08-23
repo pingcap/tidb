@@ -296,16 +296,17 @@
       {
         "SQL": "with cte as (select count(a2) as cnt,b2-5 as b3 from t1 left outer join t2 on a1=a2 group by b3) select * from cte where b3 > 1 -- aggregate case.",
         "Plan": [
-          "Projection 6393.60 root  Column#21, minus(test.t2.b2, 5)->Column#22",
-          "└─HashAgg 6393.60 root  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:firstrow(Column#25)->test.t2.b2",
-          "  └─Projection 9990.00 root  test.t2.a2->Column#24, test.t2.b2->Column#25, minus(test.t2.b2, 5)->Column#26",
-          "    └─HashJoin 9990.00 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
-          "      ├─TableReader(Build) 7992.00 root  data:Selection",
-          "      │ └─Selection 7992.00 cop[tikv]  gt(minus(test.t2.b2, 5), 1), not(isnull(test.t2.a2))",
-          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 9990.00 root  data:Selection",
-          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
-          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection 5114.88 root  Column#21, minus(test.t2.b2, 5)->Column#22",
+          "└─Selection 5114.88 root  not(isnull(test.t2.b2))",
+          "  └─HashAgg 6393.60 root  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:firstrow(Column#25)->test.t2.b2",
+          "    └─Projection 9990.00 root  test.t2.a2->Column#24, test.t2.b2->Column#25, minus(test.t2.b2, 5)->Column#26",
+          "      └─HashJoin 9990.00 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "        ├─TableReader(Build) 7992.00 root  data:Selection",
+          "        │ └─Selection 7992.00 cop[tikv]  gt(minus(test.t2.b2, 5), 1), not(isnull(test.t2.a2))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
