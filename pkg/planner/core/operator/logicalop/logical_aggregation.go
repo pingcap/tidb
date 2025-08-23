@@ -639,9 +639,11 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 		if len(subCondsToPush) > 0 {
 			condsToPush = append(condsToPush, subCondsToPush...)
 		}
-		subCondsToPush, subRet = la.pushDownDNFPredicatesForAggregation(subRet[0], aggColumns, exprsOriginal, true)
-		if len(subCondsToPush) > 0 {
-			condsToPush = append(condsToPush, subCondsToPush...)
+		if len(subRet) > 0 {
+			subCondsToPush, subRet = la.pushDownDNFPredicatesForAggregation(subRet[0], aggColumns, exprsOriginal, true)
+			if len(subCondsToPush) > 0 {
+				condsToPush = append(condsToPush, subCondsToPush...)
+			}
 		}
 		if len(subRet) > 0 {
 			ret = append(ret, subRet...)
