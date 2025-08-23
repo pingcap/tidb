@@ -109,7 +109,7 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownTopNOptimizer{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
-	//&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
@@ -1103,6 +1103,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			againRuleList = append(againRuleList, interactionRule)
 		}
 	}
+
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
