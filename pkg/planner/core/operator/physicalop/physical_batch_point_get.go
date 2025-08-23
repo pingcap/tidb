@@ -96,14 +96,12 @@ type PointGetPlan struct {
 	// NOTE: please update FastClonePointGetForPlanCache accordingly if you add new fields here.
 }
 
-// Init initializes BatchPointGetPlan.
-func (p *BatchPointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
-	p.SetSchema(schema)
-	p.SetOutputNames(names)
+// Init initializes PointGetPlan.
+func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, _ ...*property.PhysicalProperty) *PointGetPlan {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.SetStats(stats)
 	p.Columns = ExpandVirtualColumn(p.Columns, p.Schema(), p.TblInfo.Columns)
-	return p
+	return &p
 }
 
 // GetEstRowCountForDisplay implements PhysicalPlan interface.
@@ -555,12 +553,14 @@ type BatchPointGetPlan struct {
 	AccessCols []*expression.Column
 }
 
-// Init initializes PointGetPlan.
-func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, _ ...*property.PhysicalProperty) *PointGetPlan {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, offset)
+// Init initializes BatchPointGetPlan.
+func (p *BatchPointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
+	p.SetSchema(schema)
+	p.SetOutputNames(names)
 	p.SetStats(stats)
-	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
-	return &p
+	p.Columns = ExpandVirtualColumn(p.Columns, p.Schema(), p.TblInfo.Columns)
+	return p
 }
 
 // GetEstRowCountForDisplay implements PhysicalPlan interface.
