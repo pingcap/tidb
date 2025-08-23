@@ -100,10 +100,12 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	// Apply predicate simplification to the conditions. because propagateConstant has been dealed in the ConstantPropagationSolver
 	// so we don't need to do it again.
-	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
 	if p.MaxOneRow() {
+		p.Conditions = append(p.Conditions, predicates...)
+		p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
 		return predicates, p, nil
 	}
+	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
 
 	var child base.LogicalPlan
