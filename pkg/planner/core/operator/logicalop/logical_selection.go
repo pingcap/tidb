@@ -103,7 +103,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	if p.MaxOneRow() {
 		p.Conditions = append(p.Conditions, predicates...)
 		p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
-		return predicates, p, nil
+		return nil, p, nil
 	}
 	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
