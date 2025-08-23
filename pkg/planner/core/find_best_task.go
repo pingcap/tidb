@@ -1602,6 +1602,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				// We can break here because the current candidate cannot prune others anymore.
 				break
 			} else if result == -1 {
+				pruned = true
 				candidates = slices.Delete(candidates, i, i+1)
 			}
 		}
