@@ -646,7 +646,7 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 }
 
 // pushDownPredicatesForAggregation split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
+func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, _ []expression.Expression) (condsToPush, ret []expression.Expression) {
 	switch cond.(type) {
 	case *expression.Constant:
 		condsToPush = append(condsToPush, cond)
@@ -664,7 +664,7 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 			}
 		}
 		if ok {
-			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
+			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), nil)
 			condsToPush = append(condsToPush, newFunc)
 		} else {
 			ret = append(ret, cond)
