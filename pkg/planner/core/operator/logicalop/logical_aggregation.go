@@ -682,7 +682,7 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 		var schemaCol *expression.Column
 		for _, col := range extractedCols {
 			schemaCol = groupByColumns.RetrieveColumn(col)
-			if schemaCol != nil {
+			if schemaCol == nil {
 				break
 			}
 		}
