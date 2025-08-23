@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "core",
     srcs = [
-        "access_object.go",
         "columnar_index_utils.go",
         "common_plans.go",
         "core_init.go",
@@ -184,7 +183,6 @@ go_library(
         "//pkg/util/parser",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
-        "//pkg/util/redact",
         "//pkg/util/rowcodec",
         "//pkg/util/sem",
         "//pkg/util/sem/compat",
