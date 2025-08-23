@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/statistics"
+
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -144,8 +144,6 @@ func TestTableDual(t *testing.T) {
 
 func TestEstimation(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		statistics.RatioOfPseudoEstimate.Store(10.0)
-		defer statistics.RatioOfPseudoEstimate.Store(0.7)
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a int)")
 		testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
@@ -453,26 +451,18 @@ func TestOutdatedAnalyze(t *testing.T) {
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []struct {
-			SQL                          string
-			EnablePseudoForOutdatedStats bool
-			RatioOfPseudoEstimate        float64
+			SQL string
 		}
 		var output []struct {
-			SQL                          string
-			EnablePseudoForOutdatedStats bool
-			RatioOfPseudoEstimate        float64
-			Plan                         []string
+			SQL  string
+			Plan []string
 		}
 		analyzeSuiteData := GetAnalyzeSuiteData()
 		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, tt := range input {
-			testKit.Session().GetSessionVars().SetEnablePseudoForOutdatedStats(tt.EnablePseudoForOutdatedStats)
-			statistics.RatioOfPseudoEstimate.Store(tt.RatioOfPseudoEstimate)
 			plan := testKit.MustQuery(tt.SQL)
 			testdata.OnRecord(func() {
 				output[i].SQL = tt.SQL
-				output[i].EnablePseudoForOutdatedStats = tt.EnablePseudoForOutdatedStats
-				output[i].RatioOfPseudoEstimate = tt.RatioOfPseudoEstimate
 				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
 			})
 			plan.Check(testkit.Rows(output[i].Plan...))

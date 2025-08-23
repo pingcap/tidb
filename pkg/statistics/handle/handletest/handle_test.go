@@ -1321,9 +1321,6 @@ func TestUninitializedStatsStatus(t *testing.T) {
 		operatorInfo := rows[len(rows)-1][4].(string)
 		require.True(t, strings.Contains(operatorInfo, "stats:pseudo"))
 	}
-	tk.MustExec("set @@tidb_enable_pseudo_for_outdated_stats = true")
-	checkStatsPseudo()
-	tk.MustExec("set @@tidb_enable_pseudo_for_outdated_stats = false")
 	checkStatsPseudo()
 }
 
