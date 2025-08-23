@@ -1082,9 +1082,10 @@ func getPlanCostVer14PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 	return p.PlanCost, nil
 }
 
-// GetCost returns cost of the PointGetPlan.
-func (p *BatchPointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	cols := p.accessCols
+// getCost4BatchPointGetPlan returns cost of the PointGetPlan.
+func getCost4BatchPointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64 {
+	p := pp.(*physicalop.BatchPointGetPlan)
+	cols := p.AccessCols
 	if cols == nil {
 		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
 	}
@@ -1110,32 +1111,22 @@ func (p *BatchPointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float
 	return cost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BatchPointGetPlan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14BatchPointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14BatchPointGetPlan(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.BatchPointGetPlan)
 	costFlag := option.CostFlag
-	if p.planCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
-		return p.planCost, nil
+	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCost, nil
 	}
-	p.planCost = p.GetCost(option.GetTracer())
-	p.planCostInit = true
-	return p.planCost, nil
+	p.PlanCost = p.GetCost(option.GetTracer())
+	p.PlanCostInit = true
+	return p.PlanCost, nil
 }
 
-// GetAvgRowSize return the average row size.
-func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
-	cols := p.accessCols
-	if cols == nil {
-		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
-	}
-	if p.IndexInfo == nil {
-		return cardinality.GetTableAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, kv.TiKV, true)
-	}
-	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
-}
-
-// GetCost returns cost of the PointGetPlan.
-func (p *PointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	cols := p.accessCols
+// getCost4PointGetPlan returns cost of the PointGetPlan.
+func getCost4PointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64 {
+	p := pp.(*physicalop.PointGetPlan)
+	cols := p.AccessCols
 	if cols == nil {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
 	}
@@ -1158,27 +1149,16 @@ func (p *PointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
 	return cost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PointGetPlan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PointGetPlan(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PointGetPlan)
 	costFlag := option.CostFlag
-	if p.planCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
-		return p.planCost, nil
+	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCost, nil
 	}
-	p.planCost = p.GetCost(option.GetTracer())
-	p.planCostInit = true
-	return p.planCost, nil
-}
-
-// GetAvgRowSize return the average row size.
-func (p *PointGetPlan) GetAvgRowSize() float64 {
-	cols := p.accessCols
-	if cols == nil {
-		return 0 // the cost of PointGet generated in fast plan optimization is always 0
-	}
-	if p.IndexInfo == nil {
-		return cardinality.GetTableAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, kv.TiKV, true)
-	}
-	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
+	p.PlanCost = p.GetCost(option.GetTracer())
+	p.PlanCostInit = true
+	return p.PlanCost, nil
 }
 
 // getPlanCostVer14PhysicalUnionAll calculates the cost of the plan if it has not been calculated yet and returns the cost.

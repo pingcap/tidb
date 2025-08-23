@@ -59,7 +59,8 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalWindow{}
 	_ base.PhysicalPlan = &physicalop.PhysicalShuffle{}
 	_ base.PhysicalPlan = &physicalop.PhysicalShuffleReceiverStub{}
-	_ base.PhysicalPlan = &BatchPointGetPlan{}
+	_ base.PhysicalPlan = &physicalop.BatchPointGetPlan{}
+	_ base.PhysicalPlan = &physicalop.PointGetPlan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableSample{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSequence{}
 
@@ -110,61 +111,6 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 		ID:       model.ExtraPhysTblID,
 	})
 	return columns, schema, true
-}
-
-// ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
-func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
-	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
-	copyColumn := make([]*model.ColumnInfo, 0, len(columns))
-	copyColumn = append(copyColumn, columns...)
-
-	oldNumColumns := len(schema.Columns)
-	numExtraColumns := 0
-	ordinaryColumnExists := false
-	for i := oldNumColumns - 1; i >= 0; i-- {
-		cid := schema.Columns[i].ID
-		// Move extra columns to the end.
-		// ExtraRowChecksumID is ignored here since it's treated as an ordinary column.
-		// https://github.com/pingcap/tidb/blob/3c407312a986327bc4876920e70fdd6841b8365f/pkg/util/rowcodec/decoder.go#L206-L222
-		if cid != model.ExtraHandleID && cid != model.ExtraPhysTblID {
-			ordinaryColumnExists = true
-			break
-		}
-		numExtraColumns++
-	}
-	if ordinaryColumnExists && numExtraColumns > 0 {
-		extraColumns := make([]*expression.Column, numExtraColumns)
-		copy(extraColumns, schema.Columns[oldNumColumns-numExtraColumns:])
-		schema.Columns = schema.Columns[:oldNumColumns-numExtraColumns]
-
-		extraColumnModels := make([]*model.ColumnInfo, numExtraColumns)
-		copy(extraColumnModels, copyColumn[len(copyColumn)-numExtraColumns:])
-		copyColumn = copyColumn[:len(copyColumn)-numExtraColumns]
-
-		copyColumn = expandVirtualColumn(schema, copyColumn, colsInfo)
-		schema.Columns = append(schema.Columns, extraColumns...)
-		copyColumn = append(copyColumn, extraColumnModels...)
-		return copyColumn
-	}
-	return expandVirtualColumn(schema, copyColumn, colsInfo)
-}
-
-func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnInfo, colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
-	schemaColumns := schema.Columns
-	for _, col := range schemaColumns {
-		if col.VirtualExpr == nil {
-			continue
-		}
-
-		baseCols := expression.ExtractDependentColumns(col.VirtualExpr)
-		for _, baseCol := range baseCols {
-			if !schema.Contains(baseCol) {
-				schema.Columns = append(schema.Columns, baseCol)
-				copyColumn = append(copyColumn, model.FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
-			}
-		}
-	}
-	return copyColumn
 }
 
 // PhysicalJoin provides some common methods for join operators.
