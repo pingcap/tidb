@@ -334,15 +334,3 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
-
-func TestABC(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec(`create table t(a bigint, b int);`)
-	tk.MustExec(`create table t2(a int, b int);`)
-	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (1, 1), (2, 2), (3, 3), (4, 4);`)
-	tk.MustExec(`insert into t2 values (1, 1), (2, 2), (3, 3), (4, 4), (1, 1), (2, 2), (3, 3), (4, 4);`)
-	tk.MustQuery(`select * from t where (select min(t2.a) * 2 from t2 where t2.a < t.a) > 1;`).Check(testkit.Rows())
-	tk.MustQuery(`explain select * from t where (select min(t2.a) * 2 from t2 where t2.a < t.a) > 1;`).Check(testkit.Rows())
-}
