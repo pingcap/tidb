@@ -98,10 +98,14 @@ func (p *LogicalSelection) HashCode() []byte {
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
-	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
 	// Apply predicate simplification to the conditions. because propagateConstant has been dealed in the ConstantPropagationSolver
 	// so we don't need to do it again.
 	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
+	if p.MaxOneRow() {
+		return predicates, p, nil
+	}
+	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
+
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
