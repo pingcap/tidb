@@ -373,7 +373,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 25)
-	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("analyze table t")
 
@@ -387,7 +387,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 28)
-	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 }
 
 func hasPseudoStats(rows [][]any) bool {
