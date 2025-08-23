@@ -1129,8 +1129,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
 	}
+	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
+	// globalResult: comparison result of global index vs local index preference (1=LHS better, -1=RHS better, 0=equal)
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
+	// accessResult: comparison result of access condition coverage (1=LHS better, -1=RHS better, 0=equal)
+	// comparable1: whether the access conditions are comparable between LHS and RHS
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
+	// scanResult: comparison result of index back scan efficiency (1=LHS better, -1=RHS better, 0=equal)
+	// comparable2: whether the index back scan characteristics are comparable between LHS and RHS
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	eqOrInResult := compareEqOrIn(lhs, rhs)
@@ -1197,10 +1203,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && sum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && sum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
@@ -1602,7 +1608,6 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				// We can break here because the current candidate cannot prune others anymore.
 				break
 			} else if result == -1 {
-				pruned = true
 				candidates = slices.Delete(candidates, i, i+1)
 			}
 		}
