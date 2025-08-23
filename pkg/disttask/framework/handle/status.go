@@ -78,12 +78,11 @@ func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
 
 // GetNodesInfo retrieves the number of managed nodes and their CPU count.
 // exported for test.
-func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (int, int, error) {
+func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (nodeCount int, cpuCount int, err error) {
 	nodes, err := manager.GetAllNodes(ctx)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	var cpuCount int
 	if len(nodes) == 0 {
 		// shouldn't happen normally as every node will register itself to the meta
 		// table.
