@@ -1077,8 +1077,19 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 }
 
 func compareGlobalIndex(lhs, rhs *candidatePath) int {
-	if lhs.path.IsTablePath() || rhs.path.IsTablePath() ||
-		len(lhs.path.PartialIndexPaths) != 0 || len(rhs.path.PartialIndexPaths) != 0 {
+	if lhs.path.Index == nil {
+		if rhs.path.Index != nil && rhs.path.Index.Global {
+			return -1
+		}
+		return 0
+	}
+	if rhs.path.Index == nil {
+		if lhs.path.Index.Global {
+			return 1
+		}
+		return 0
+	}
+	if len(lhs.path.PartialIndexPaths) != 0 || len(rhs.path.PartialIndexPaths) != 0 {
 		return 0
 	}
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
@@ -1197,6 +1208,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	}
 	if !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
+	}
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult > 0 {
+		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+	}
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult < 0 {
+		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
@@ -1522,10 +1539,12 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) []*candidatePath {
-	candidates := make([]*candidatePath, 0, 4)
+	allCandidates := make([]*candidatePath, 0, 4)
 	idxMissingStats := false
 	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+
+	// First pass: collect all potential candidates without pruning
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
@@ -1535,12 +1554,12 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// OR normal index merge path, try to determine every index partial path for this property.
 			candidate := convergeIndexMergeCandidate(ds, path, prop)
 			if candidate != nil {
-				candidates = append(candidates, candidate)
+				allCandidates = append(allCandidates, candidate)
 			}
 			continue
 		}
 		if path.PartialIndexPaths != nil {
-			candidates = append(candidates, getIndexMergeCandidate(ds, path, prop))
+			allCandidates = append(allCandidates, getIndexMergeCandidate(ds, path, prop))
 			continue
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
@@ -1561,29 +1580,63 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			currentCandidate = getIndexCandidate(ds, path, prop)
 		}
-		pruned := false
-		for i := len(candidates) - 1; i >= 0; i-- {
-			if candidates[i].path.StoreType == kv.TiFlash {
+		allCandidates = append(allCandidates, currentCandidate)
+	}
+
+	// Second pass: apply skyline pruning with complete pairwise comparison
+	candidates := make([]*candidatePath, 0, len(allCandidates))
+
+	// Add all candidates first, then do complete pairwise pruning
+	for _, candidate := range allCandidates {
+		candidates = append(candidates, candidate)
+	}
+
+	// Complete pairwise comparison to remove dominated candidates
+	// This ensures that all candidates are compared against each other
+	for i := 0; i < len(candidates); i++ {
+		if candidates[i] == nil {
+			continue
+		}
+
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[j] == nil {
 				continue
 			}
+
+			// Skip TiFlash paths in comparison
+			if candidates[i].path.StoreType == kv.TiFlash || candidates[j].path.StoreType == kv.TiFlash {
+				continue
+			}
+
 			var result int
-			currentMissingStats := false
-			result, currentMissingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
-			if currentMissingStats {
-				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
+			var missingStats bool
+
+			// Compare candidates[i] vs candidates[j]
+			result, missingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], candidates[j], preferRange)
+			if missingStats {
+				idxMissingStats = true
 			}
+
 			if result == 1 {
-				pruned = true
-				// We can break here because the current candidate cannot prune others anymore.
-				break
+				// candidates[i] dominates candidates[j], mark j for removal
+				candidates[j] = nil
 			} else if result == -1 {
-				candidates = slices.Delete(candidates, i, i+1)
+				// candidates[j] dominates candidates[i], mark i for removal
+				candidates[i] = nil
+				break // candidates[i] is dominated, no need to compare it further
 			}
-		}
-		if !pruned {
-			candidates = append(candidates, currentCandidate)
+			// If result == 0, neither dominates the other, both stay
 		}
 	}
+
+	// Remove all nil entries (dominated candidates)
+	var finalCandidates []*candidatePath
+	for _, candidate := range candidates {
+		if candidate != nil {
+			finalCandidates = append(finalCandidates, candidate)
+		}
+	}
+	candidates = finalCandidates
 
 	// If we've forced an index merge - we want to keep these plans
 	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
