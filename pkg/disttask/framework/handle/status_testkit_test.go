@@ -113,13 +113,17 @@ func TestScheduleFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, flags)
 	// enabled flag
-	expireTime := time.Unix(time.Now().Add(time.Hour).Unix(), 0)
+	// in CI, the stored and unmarshalled time might have different time zone,
+	// so unify to UTC.
+	expireTime := time.Unix(time.Now().Add(time.Hour).Unix(), 0).In(time.UTC)
 	flag := schstatus.TTLFlag{Enabled: true, TTL: time.Hour, ExpireTime: expireTime}
 	require.NoError(t, handle.UpdatePauseScaleInFlag(ctx, &flag))
 	flags, err = handle.GetScheduleFlags(ctx, taskMgr)
 	require.NoError(t, err)
 	require.Len(t, flags, 1)
-	require.EqualValues(t, flag, flags[schstatus.PauseScaleInFlag])
+	gotFlag := flags[schstatus.PauseScaleInFlag]
+	gotFlag.ExpireTime = gotFlag.ExpireTime.In(time.UTC)
+	require.EqualValues(t, flag, gotFlag)
 	// expired flag
 	flag.ExpireTime = time.Now().Add(-time.Hour)
 	require.NoError(t, handle.UpdatePauseScaleInFlag(ctx, &flag))
