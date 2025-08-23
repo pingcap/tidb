@@ -677,14 +677,14 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 		ret = append(ret, cond)
 	case *expression.ScalarFunction:
 		extractedCols := expression.ExtractColumns(cond)
-		var SchemaCol *expression.Column
+		var schemaCol *expression.Column
 		for _, col := range extractedCols {
-			SchemaCol = groupByColumns.RetrieveColumn(col)
-			if SchemaCol != nil {
+			schemaCol = groupByColumns.RetrieveColumn(col)
+			if schemaCol != nil {
 				break
 			}
 		}
-		if SchemaCol != nil {
+		if schemaCol != nil {
 			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
 			condsToPush = append(condsToPush, newFunc)
 			if isFromAggFunction {
