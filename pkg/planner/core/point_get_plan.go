@@ -689,33 +689,60 @@ func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr)
 	return false
 }
 
+func (p *BatchPointGetPlan) isSinglePartitionAndNotMatch(idx int) bool {
+	return p.SinglePartition && p.PartitionIdxs[0] != idx
+}
+
 // Map each index value to Partition ID
-func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
+func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) (idxs []int, skipped []int, err error) {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 	intest.Assert(ok)
 	pTbl, ok := tbl.(table.PartitionedTable)
 	intest.Assert(ok)
 	intest.Assert(pTbl != nil)
+	pi := p.TblInfo.GetPartitionInfo()
 	r := make([]types.Datum, len(pTbl.Cols()))
 	rows := p.IndexValues
-	idxs := make([]int, 0, len(rows))
+	idxs = p.PartitionIdxs[:0]
+	if p.SinglePartition {
+		idxs = make([]int, 0, 1)
+	}
 	for i := range rows {
 		for j := range rows[i] {
 			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
 		}
-		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+		var pIdx int
+		pIdx, err = pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 		if err != nil {
-			// TODO: return errors others than No Matching Partition.
-			// Skip on any error, like:
-			// No matching partition, overflow etc.
-			idxs = append(idxs, -1)
+			if table.ErrNoPartitionForGivenValue.Equal(err) {
+				p.IndexValues[i] = nil
+				skipped = append(skipped, i)
+				continue
+			}
+			return nil, nil, err
+		}
+		if pIdx < 0 || // No matching partition
+			p.isSinglePartitionAndNotMatch(pIdx) ||
+			!isInExplicitPartitions(pi, pIdx, p.PartitionNames) { // Is not matching the given partitions
+			// Index value does not match any partitions,
+			// remove it from the plan
+			p.IndexValues[i] = nil
+			skipped = append(skipped, i)
 			continue
 		}
 		idxs = append(idxs, pIdx)
 	}
-	return idxs
+	if len(skipped) > 0 {
+		p.IndexValues = slices.DeleteFunc(p.IndexValues, func(values []types.Datum) bool {
+			return values == nil
+		})
+	}
+	if !p.SinglePartition {
+		p.PartitionIdxs = idxs
+	}
+	return idxs, skipped, nil
 }
 
 // PrunePartitionsAndValues will check which partition to use
@@ -729,50 +756,20 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 		// Skip pruning partitions here
 		pi = nil
 	}
-	// reset the PartitionIDs
-	if pi != nil && !p.SinglePartition {
-		p.PartitionIdxs = p.PartitionIdxs[:0]
-	}
 	if p.IndexInfo != nil && !(p.TblInfo.IsCommonHandle && p.IndexInfo.Primary) {
-		filteredVals := p.IndexValues[:0]
-		for _, idxVals := range p.IndexValues {
+		p.IndexValues = slices.DeleteFunc(p.IndexValues, func(values []types.Datum) bool {
 			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
-			if !types.DatumsContainNull(idxVals) {
-				filteredVals = append(filteredVals, idxVals)
-			}
-		}
-		p.IndexValues = filteredVals
+			return types.DatumsContainNull(values)
+		})
 		if pi != nil {
-			partIdxs := p.getPartitionIdxs(sctx)
-			partitionsFound := 0
-			for i, idx := range partIdxs {
-				if idx < 0 ||
-					(p.SinglePartition &&
-						idx != p.PartitionIdxs[0]) ||
-					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
-					// Index value does not match any partitions,
-					// remove it from the plan
-					partIdxs[i] = -1
-				} else {
-					partitionsFound++
-				}
+			partIdxs, _, err := p.getPartitionIdxs(sctx)
+			if err != nil {
+				return nil, false, err
 			}
-			if partitionsFound == 0 {
+			if len(partIdxs) == 0 {
 				return nil, true, nil
 			}
-			skipped := 0
-			for i, idx := range partIdxs {
-				if idx < 0 {
-					curr := i - skipped
-					next := curr + 1
-					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[next:]...)
-					skipped++
-				} else if !p.SinglePartition {
-					p.PartitionIdxs = append(p.PartitionIdxs, idx)
-				}
-			}
-			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
-			intest.Assert(partitionsFound == len(p.IndexValues))
+			intest.Assert(len(partIdxs) == len(p.IndexValues))
 		}
 		return nil, false, nil
 	}
@@ -794,9 +791,11 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			intest.Assert(ok)
 			intest.Assert(pTbl != nil)
 			r := make([]types.Datum, p.HandleColOffset+1)
-			partIdxs := make([]int, 0, len(handles))
-			partitionsFound := 0
-			for _, handle := range handles {
+			partIdxs := p.PartitionIdxs[:0]
+			if p.SinglePartition {
+				partIdxs = make([]int, 0, 1)
+			}
+			for i, handle := range handles {
 				var d types.Datum
 				if mysql.HasUnsignedFlag(p.TblInfo.Columns[p.HandleColOffset].GetFlag()) {
 					d = types.NewUintDatum(uint64(handle.IntValue()))
@@ -806,47 +805,44 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
-				if table.ErrNoPartitionForGivenValue.Equal(err) {
-					pIdx = -1
-				} else if err != nil {
-					return nil, false, err
-				} else if !isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
-					(p.SinglePartition &&
-						p.PartitionIdxs[0] != pIdx) {
-					{
-						pIdx = -1
+				if err != nil {
+					if table.ErrNoPartitionForGivenValue.Equal(err) {
+						handles[i] = nil
+						continue
 					}
-				} else if pIdx >= 0 {
-					partitionsFound++
+					return nil, false, err
+				}
+				if pIdx < 0 ||
+					p.isSinglePartitionAndNotMatch(pIdx) ||
+					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) {
+					handles[i] = nil
+					continue
 				}
 				partIdxs = append(partIdxs, pIdx)
 			}
-			if partitionsFound == 0 {
+			if len(partIdxs) == 0 {
 				return nil, true, nil
 			}
-			skipped := 0
-			for i, idx := range partIdxs {
-				if idx < 0 {
-					curr := i - skipped
-					next := curr + 1
-					handles = append(handles[:curr], handles[next:]...)
-					skipped++
-				} else if !p.SinglePartition {
-					p.PartitionIdxs = append(p.PartitionIdxs, idx)
-				}
+			handles = slices.DeleteFunc(handles, func(value kv.Handle) bool {
+				return value == nil
+			})
+			if !p.SinglePartition {
+				p.PartitionIdxs = partIdxs
 			}
-			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
-			intest.Assert(p.SinglePartition || partitionsFound == len(handles))
+			intest.Assert(p.IndexValues == nil)
+			intest.Assert(p.SinglePartition || len(partIdxs) == len(p.PartitionIdxs))
+			intest.Assert(p.SinglePartition || len(partIdxs) == len(handles))
 		}
 		p.Handles = handles
 	} else {
-		usedValues := make([]bool, len(p.IndexValues))
 		for i, value := range p.IndexValues {
 			if types.DatumsContainNull(value) {
+				p.IndexValues[i] = nil
 				continue
 			}
 			handleBytes, err := EncodeUniqueIndexValuesForKey(sctx, p.TblInfo, p.IndexInfo, value)
 			if err != nil {
+				p.IndexValues[i] = nil
 				if kv.ErrNotExist.Equal(err) {
 					continue
 				}
@@ -855,47 +851,43 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			}
 			handle, err := kv.NewCommonHandle(handleBytes)
 			if err != nil {
+				p.IndexValues[i] = nil
 				intest.Assert(false)
 				return nil, false, err
 			}
 			if _, found := dedup.Get(handle); found {
+				p.IndexValues[i] = nil
 				continue
 			}
 			dedup.Set(handle, true)
 			handles = append(handles, handle)
-			usedValues[i] = true
 		}
-		skipped := 0
-		for i, use := range usedValues {
-			if !use {
-				curr := i - skipped
-				p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
-				skipped++
-			}
+		if len(handles) != len(p.IndexValues) {
+			// Compact IndexValues, remove nil values
+			p.IndexValues = slices.DeleteFunc(p.IndexValues, func(values []types.Datum) bool {
+				return values == nil
+			})
 		}
 		if pi != nil {
-			partIdxs := p.getPartitionIdxs(sctx)
-			skipped = 0
-			partitionsFound := 0
-			for i, idx := range partIdxs {
-				if partIdxs[i] < 0 ||
-					(p.SinglePartition &&
-						partIdxs[i] != p.PartitionIdxs[0]) ||
-					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
-					curr := i - skipped
-					handles = slices.Delete(handles, curr, curr+1)
-					p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
-					skipped++
-					continue
-				} else if !p.SinglePartition {
-					p.PartitionIdxs = append(p.PartitionIdxs, idx)
-				}
-				partitionsFound++
+			partIdxs, skipped, err := p.getPartitionIdxs(sctx)
+			if err != nil {
+				return nil, false, err
 			}
-			if partitionsFound == 0 {
+			if len(partIdxs) == 0 {
 				return nil, true, nil
 			}
-			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
+			if !p.SinglePartition {
+				p.PartitionIdxs = partIdxs
+			}
+			if len(skipped) > 0 {
+				for i := range skipped {
+					handles[i] = nil
+				}
+				handles = slices.DeleteFunc(handles, func(value kv.Handle) bool {
+					return value == nil
+				})
+			}
+			intest.Assert(p.SinglePartition || len(p.IndexValues) == len(p.PartitionIdxs))
 		}
 	}
 	return handles, false, nil
