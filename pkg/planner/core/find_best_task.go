@@ -1587,9 +1587,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	candidates := make([]*candidatePath, 0, len(allCandidates))
 
 	// Add all candidates first, then do complete pairwise pruning
-	for _, candidate := range allCandidates {
-		candidates = append(candidates, candidate)
-	}
+	candidates = append(candidates, allCandidates...)
 
 	// Complete pairwise comparison to remove dominated candidates
 	// This ensures that all candidates are compared against each other
