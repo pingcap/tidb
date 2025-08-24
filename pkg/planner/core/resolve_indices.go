@@ -103,33 +103,6 @@ func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexReader) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	err = p.indexPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	for i, col := range p.OutputColumns {
-		newCol, err := col.ResolveIndices(p.indexPlan.Schema())
-		if err != nil {
-			// Check if there is duplicate virtual expression column matched.
-			sctx := p.SCtx()
-			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx().GetEvalCtx(), p.indexPlan.Schema())
-			if isOK {
-				p.OutputColumns[i] = newExprCol.(*expression.Column)
-				continue
-			}
-			return err
-		}
-		p.OutputColumns[i] = newCol.(*expression.Column)
-	}
-	return
-}
-
 // resolveIndices4PhysicalIndexLookUpReader implements Plan interface.
 func resolveIndices4PhysicalIndexLookUpReader(pp base.PhysicalPlan) (err error) {
 	p := pp.(*physicalop.PhysicalIndexLookUpReader)
@@ -160,33 +133,6 @@ func resolveIndices4PhysicalIndexLookUpReader(pp base.PhysicalPlan) (err error) 
 		p.CommonHandleCols[i] = newCol.(*expression.Column)
 	}
 	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
-	err = physicalop.ResolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	if p.tablePlan != nil {
-		err = p.tablePlan.ResolveIndices()
-		if err != nil {
-			return err
-		}
-	}
-	for i := range p.partialPlans {
-		err = p.partialPlans[i].ResolveIndices()
-		if err != nil {
-			return err
-		}
-	}
-	if p.HandleCols != nil && p.KeepOrder {
-		p.HandleCols, err = p.HandleCols.ResolveIndices(p.Schema())
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // resolveIndices4PhysicalSelection implements Plan interface.

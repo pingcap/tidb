@@ -20,18 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
-	clonedPlans := make([]base.PhysicalPlan, len(plans))
-	for i, plan := range plans {
-		cloned, ok := plan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		clonedPlans[i] = cloned.(base.PhysicalPlan)
-	}
-	return clonedPlans, true
-}
-
 func cloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expression.Expression {
 	if exprs == nil {
 		return nil

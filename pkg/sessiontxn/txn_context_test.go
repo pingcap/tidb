@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -150,6 +151,9 @@ func TestTxnContextForSimpleCases(t *testing.T) {
 }
 
 func TestTxnContextInExplicitTxn(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -251,6 +255,9 @@ func TestTxnContextBeginInUnfinishedTxn(t *testing.T) {
 }
 
 func TestTxnContextWithAutocommitFalse(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -687,6 +694,9 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 }
 
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")

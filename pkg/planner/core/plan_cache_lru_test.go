@@ -36,7 +36,7 @@ func randomPlanCacheKey() string {
 func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 	plans := []base.Plan{&Insert{}, &Update{}, &Delete{}, &physicalop.PhysicalTableScan{}, &physicalop.PhysicalTableDual{}, &physicalop.PhysicalTableReader{},
 		&physicalop.PhysicalTableScan{}, &physicalop.PhysicalIndexJoin{}, &physicalop.PhysicalIndexHashJoin{},
-		&PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
+		&physicalop.PhysicalIndexMergeJoin{}, &physicalop.PhysicalIndexMergeReader{},
 		&physicalop.PhysicalIndexLookUpReader{}, &physicalop.PhysicalApply{},
 		&physicalop.PhysicalApply{}, &physicalop.PhysicalLimit{}}
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))

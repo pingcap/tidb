@@ -36,8 +36,7 @@ import (
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{
-		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
-		core.PhysicalIndexMergeReader{},
+		core.PointGetPlan{}, core.BatchPointGetPlan{},
 		core.Update{}, core.Delete{}, core.Insert{}}
 
 	// todo: add all back with physicalop.x
@@ -167,7 +166,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = %v.(base.PhysicalPlan)", f.Name, f.Name)
 			c.write("}")
 		case "[]base.PhysicalPlan":
-			c.write("%v, ok := clonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
+			c.write("%v, ok := physicalop.ClonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
 			c.write("if !ok {return nil, false}")
 			c.write("cloned.%v = %v", f.Name, f.Name)
 		case "*int":

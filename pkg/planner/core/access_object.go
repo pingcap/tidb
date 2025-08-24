@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 )
 
 // AccessObject implements DataAccesser interface.
@@ -90,41 +89,4 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 		res.Indexes = []access.IndexAccess{index}
 	}
 	return res
-}
-
-func getAccessObjectFromIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexScan, p *physicalop.PhysPlanPartInfo) base.AccessObject {
-	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return access.DynamicPartitionAccessObjects(nil)
-	}
-	asName := ""
-	if is.TableAsName != nil && len(is.TableAsName.O) > 0 {
-		asName = is.TableAsName.O
-	}
-	res := physicalop.GetDynamicAccessPartition(sctx, is.Table, p, asName)
-	if res == nil {
-		return access.DynamicPartitionAccessObjects(nil)
-	}
-	return access.DynamicPartitionAccessObjects{res}
-}
-
-// AccessObject implements PartitionAccesser interface.
-func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*physicalop.PhysicalIndexScan), p.PlanPartInfo)
-}
-
-// AccessObject implements PartitionAccesser interface.
-func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return access.DynamicPartitionAccessObjects(nil)
-	}
-	ts := p.TablePlans[0].(*physicalop.PhysicalTableScan)
-	asName := ""
-	if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
-		asName = ts.TableAsName.O
-	}
-	res := physicalop.GetDynamicAccessPartition(sctx, ts.Table, p.PlanPartInfo, asName)
-	if res == nil {
-		return access.DynamicPartitionAccessObjects(nil)
-	}
-	return access.DynamicPartitionAccessObjects{res}
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -232,7 +233,7 @@ func (s *Syncer) RemoveServerInfo() {
 	if s.etcdCli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(s.serverInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
+	err := etcd.DeleteKeyFromEtcd(s.serverInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
 	}

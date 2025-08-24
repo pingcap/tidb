@@ -14,6 +14,7 @@ go_test(
     race = "on",
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/placement",
         "//pkg/errno",
         "//pkg/expression",
