@@ -468,10 +468,15 @@ func TestFastPointGetClone(t *testing.T) {
 	cloneFuncCode := strings.Join(codeLines[beginIdx:endIdx+1], "\n")
 	fieldNoNeedToClone := map[string]struct{}{
 		"cost":         {},
-		"planCostInit": {},
-		"planCost":     {},
-		"planCostVer2": {},
-		"accessCols":   {},
+		"PlanCostInit": {},
+		"PlanCost":     {},
+		"PlanCostVer2": {},
+		"AccessCols":   {},
+	}
+
+	fieldToPatternMap := map[string]string{
+		"schema":      "SetSchema",
+		"outputNames": "SetOutputNames",
 	}
 
 	pointPlan := reflect.TypeOf(physicalop.PointGetPlan{})
@@ -481,7 +486,16 @@ func TestFastPointGetClone(t *testing.T) {
 			continue
 		}
 		assignFieldCode := fmt.Sprintf("%v =", fieldName)
-		if !strings.Contains(cloneFuncCode, assignFieldCode) {
+		hasDirectAssign := strings.Contains(cloneFuncCode, assignFieldCode)
+
+		hasSetter := false
+		if setter, ok := fieldToPatternMap[fieldName]; ok {
+			if strings.Contains(cloneFuncCode, setter) {
+				hasSetter = true
+			}
+		}
+
+		if !hasDirectAssign && !hasSetter {
 			errMsg := fmt.Sprintf("field %v might not be set in FastClonePointGetForPlanCache correctly", fieldName)
 			t.Fatal(errMsg)
 		}
