@@ -1957,6 +1957,10 @@ func TestSkylinePruning(t *testing.T) {
 			result: "f_g",
 		},
 		{
+			sql:    "select * from t where (f = 1 and g = 1) or (f = 2 and g = 2)",
+			result: "f_g",
+		},
+		{
 			sql:    "select count(1) from t",
 			result: "PRIMARY_KEY,c_d_e,f,g,f_g,c_d_e_str,e_d_c_str_prefix",
 		},
@@ -2002,7 +2006,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where (b = 1 and c = 1) or (b = 2 and c = 2)",
-			result: "b_c, b_c_global",
+			result: "b_c_global",
 		},
 	}
 	s := coretestsdk.CreatePlannerSuiteElems()
