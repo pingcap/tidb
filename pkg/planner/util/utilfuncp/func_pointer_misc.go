@@ -484,7 +484,8 @@ var GetPlanCostVer24PointGetPlan func(pp base.PhysicalPlan, taskType property.Ta
 // GetCost4BatchPointGetPlan returns cost of the BatchPointGetPlan.
 var GetCost4BatchPointGetPlan func(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64
 
-// GetPlanCostVer14BatchPointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// GetPlanCostVer14BatchPointGetPlan calculates the cost of the plan if it has not
+// been calculated yet and returns the cost.
 var GetPlanCostVer14BatchPointGetPlan func(pp base.PhysicalPlan, _ property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
