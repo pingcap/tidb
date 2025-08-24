@@ -678,7 +678,7 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 		// with value 0 rather than an empty query result.
 		ret = append(ret, cond)
 	case *expression.ScalarFunction:
-		extractedCols := expression.ExtractColumns(cond)
+		extractedCols := expression.ExtractColumnsMapFromExpressions(nil, cond)
 		var schemaCol *expression.Column
 		if isFromAggFunction && len(extractedCols) != 1 {
 			ret = append(ret, cond)
