@@ -640,13 +640,13 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 			condsToPush = append(condsToPush, subCondsToPush...)
 		}
 		if len(subRet) > 0 {
-			subCondsToPush, subRet = la.pushDownDNFPredicatesForAggregation(subRet[0], aggColumns, exprsOriginal, true)
-			if len(subCondsToPush) > 0 {
-				condsToPush = append(condsToPush, subCondsToPush...)
+			for _, s := range subRet {
+				subCondsToPush1, subRet1 := la.pushDownDNFPredicatesForAggregation(s, aggColumns, exprsOriginal, true)
+				if len(subCondsToPush1) > 0 {
+					condsToPush = append(condsToPush, subCondsToPush1...)
+				}
+				ret = append(ret, subRet1...)
 			}
-		}
-		if len(subRet) > 0 {
-			ret = append(ret, subRet...)
 		}
 	}
 	return condsToPush, ret
@@ -680,6 +680,10 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 	case *expression.ScalarFunction:
 		extractedCols := expression.ExtractColumns(cond)
 		var schemaCol *expression.Column
+		if isFromAggFunction && len(extractedCols) != 1 {
+			ret = append(ret, cond)
+			return condsToPush, ret
+		}
 		for _, col := range extractedCols {
 			schemaCol = groupByColumns.RetrieveColumn(col)
 			if schemaCol == nil {
