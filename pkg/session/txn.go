@@ -73,8 +73,6 @@ type LazyTxn struct {
 
 	// commit ts of the last successful transaction, to ensure ordering of TS
 	lastCommitTS uint64
-	// tableDirtyContent records table's id which has wrote in txn.
-	tableDirtyContent map[int64]struct{}
 }
 
 // GetTableInfo returns the cached index name.
@@ -128,14 +126,14 @@ func (txn *LazyTxn) countHint() int {
 }
 
 func (txn *LazyTxn) recordTableDirtyContent() {
-	if txn.tableDirtyContent == nil {
-		txn.tableDirtyContent = map[int64]struct{}{}
+	if txn.mu.TxnInfo.TableDirtyContent == nil {
+		txn.mu.TxnInfo.TableDirtyContent = map[int64]struct{}{}
 	}
 	buf := txn.Transaction.GetMemBuffer()
 	buf.InspectStage(txn.stagingHandle, func(k kv.Key, _ kv.KeyFlags, _ []byte) {
 		tid := tablecodec.DecodeTableID(k)
 		if tid > 0 {
-			txn.tableDirtyContent[tid] = struct{}{}
+			txn.mu.TxnInfo.TableDirtyContent[tid] = struct{}{}
 		}
 	})
 }
@@ -202,6 +200,7 @@ func (txn *LazyTxn) resetTxnInfo(
 
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
+	txn.mu.TxnInfo.TableDirtyContent = nil
 }
 
 // Size implements the MemBuffer interface.
@@ -740,8 +739,8 @@ func (s *session) HasDirtyContent(tid int64) bool {
 	if s.txn.Transaction == nil || s.txn.Transaction.IsPipelined() {
 		return false
 	}
-	if s.txn.tableDirtyContent != nil {
-		_, exist := s.txn.tableDirtyContent[tid]
+	if s.txn.mu.TxnInfo.TableDirtyContent != nil {
+		_, exist := s.txn.mu.TxnInfo.TableDirtyContent[tid]
 		return exist
 	}
 	seekKey := tablecodec.EncodeTablePrefix(tid)

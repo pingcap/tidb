@@ -176,6 +176,9 @@ type TxnInfo struct {
 
 	// The following field will be filled in `session` instead of `LazyTxn`
 	ProcessInfo *ProcessInfo
+
+	// TableDirtyContent records table's id which has wrote in txn.
+	TableDirtyContent map[int64]struct{}
 }
 
 // ProcessInfo is part of fields of txnInfo, which will be filled in `session` instead of `LazyTxn`
