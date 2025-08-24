@@ -1630,7 +1630,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				}
 			}
 		}
-    if hasMultiRange {
+    	if hasMultiRange {
 			// Only log the fix control if we had multiple ranges
 			ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 		}
