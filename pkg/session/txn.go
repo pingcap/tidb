@@ -73,6 +73,8 @@ type LazyTxn struct {
 
 	// commit ts of the last successful transaction, to ensure ordering of TS
 	lastCommitTS uint64
+	// tableDirtyContent records table's id which has wrote in txn.
+	tableDirtyContent map[int64]struct{}
 }
 
 // GetTableInfo returns the cached index name.
@@ -123,6 +125,19 @@ func (txn *LazyTxn) countHint() int {
 		return 0
 	}
 	return txn.Transaction.GetMemBuffer().Len() - txn.initCnt
+}
+
+func (txn *LazyTxn) recordTableDirtyContent() {
+	if txn.tableDirtyContent == nil {
+		txn.tableDirtyContent = map[int64]struct{}{}
+	}
+	buf := txn.Transaction.GetMemBuffer()
+	buf.InspectStage(txn.stagingHandle, func(k kv.Key, _ kv.KeyFlags, _ []byte) {
+		tid := tablecodec.DecodeTableID(k)
+		if tid > 0 {
+			txn.tableDirtyContent[tid] = struct{}{}
+		}
+	})
 }
 
 func (txn *LazyTxn) flushStmtBuf() {
@@ -725,6 +740,10 @@ func (s *session) HasDirtyContent(tid int64) bool {
 	if s.txn.Transaction == nil || s.txn.Transaction.IsPipelined() {
 		return false
 	}
+	if s.txn.tableDirtyContent != nil {
+		_, exist := s.txn.tableDirtyContent[tid]
+		return exist
+	}
 	seekKey := tablecodec.EncodeTablePrefix(tid)
 	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
 	terror.Log(err)
@@ -744,6 +763,10 @@ func (s *session) StmtCommit(ctx context.Context) {
 	}
 
 	st := &s.txn
+	if s.sessionVars.InTxn() {
+		// only record when in txn, it is no need for auto-commit=1.
+		st.recordTableDirtyContent()
+	}
 	st.flushStmtBuf()
 }
 
