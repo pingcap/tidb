@@ -2528,7 +2528,7 @@ func TestLockKeysInDML(t *testing.T) {
 }
 
 func TestLockKeysInInsertIgnore(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int primary key);")

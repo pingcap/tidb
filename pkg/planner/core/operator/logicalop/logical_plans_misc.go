@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
@@ -83,24 +83,26 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	return false
 }
 
-func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+// AddSelection adds a LogicalSelection to the given LogicalPlan.
+func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
 	}
-	exprCtx := p.SCtx().GetExprCtx()
-	conditions = expression.PropagateConstant(exprCtx, conditions...)
+	conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), conditions, true, nil)
+	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
+	if dual, ok := child.(*LogicalTableDual); ok && dual.RowCount == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
 		AppendTableDualTraceStep(child, dual, conditions, opt)
-		return
-	}
-
-	conditions = constraint.DeleteTrueExprs(exprCtx, p.SCtx().GetSessionVars().StmtCtx, conditions)
-	if len(conditions) == 0 {
-		p.Children()[chIdx] = child
 		return
 	}
 	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
@@ -158,7 +160,64 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 	return
 }
 
+// CanSelfBeingPushedToCopImpl checks whether the logical operator itself can be pushed to coprocessor.
+func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
+	ret := true
+	switch c := lp.(type) {
+	case *DataSource:
+		validDs := false
+		// since CanPushToCopImpl is only used in physical enumeration of physical plan phase.
+		// we definitely here should use the specific PossibleAccessPaths for each DS alternative.
+		for _, path := range c.PossibleAccessPaths {
+			if path.StoreType == storeTp {
+				validDs = true
+			}
+		}
+		ret = ret && validDs
+
+		if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+			// Don't push to cop for cached table, it brings more harm than good:
+			// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
+			// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
+			// Once aggregation is pushed to cop, the cache data can't be use anymore.
+			return false
+		}
+		return ret
+	case *LogicalUnionAll, *LogicalSort, *LogicalProjection, *LogicalSequence:
+		return storeTp == kv.TiFlash
+	case *LogicalExpand:
+		// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
+		return storeTp == kv.TiFlash
+	case *LogicalAggregation:
+		if storeTp != kv.TiFlash {
+			return false
+		}
+		// logical aggregation has an additional variable to care about.
+		return !c.NoCopPushDown
+	case *LogicalSelection, *LogicalJoin, *LogicalWindow:
+		return storeTp == kv.TiFlash
+	case *LogicalLimit, *LogicalTopN:
+		// since these check is inside subtree, it's check for whether this subtree can be totally pushed to tikv/tiFlash.
+		// currently logicalLimit and logicalTopN can not be fully pushed down to tiFlash. ref: issues/61961
+		return false
+	case *LogicalCTE:
+		if storeTp != kv.TiFlash {
+			return false
+		}
+		if c.Cte.RecursivePartLogicalPlan != nil {
+			return false
+		}
+		// !c.Cte.SeedPartLogicalPlan.CanPushToCop(storeTp) check should return false is left to the children.
+		return true
+	default:
+		lp.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+			"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
+		return false
+	}
+}
+
 // CanPushToCopImpl checks whether the logical plan can be pushed to coprocessor.
+// Deprecated: don't depend on subtree based push check, use prop based `CanSelfBeingPushedToCopImpl` instead.
 func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 	p := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	ret := true
@@ -166,30 +225,20 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 		switch c := ch.(type) {
 		case *DataSource:
 			validDs := false
-			indexMergeIsIntersection := false
 			// since CanPushToCopImpl is only used in physical enumeration of physical plan phase.
 			// we definitely here should use the specific PossibleAccessPaths for each DS alternative.
 			for _, path := range c.PossibleAccessPaths {
 				if path.StoreType == storeTp {
 					validDs = true
 				}
-				if len(path.PartialIndexPaths) > 0 && path.IndexMergeIsIntersection {
-					indexMergeIsIntersection = true
-				}
 			}
 			ret = ret && validDs
-
-			_, isTopN := p.Self().(*LogicalTopN)
-			_, isLimit := p.Self().(*LogicalLimit)
-			if (isTopN || isLimit) && indexMergeIsIntersection {
-				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
-			}
 
 			if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 				// Don't push to cop for cached table, it brings more harm than good:
 				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
 				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
-				// Once aggregation is pushed to cop, the cache data can't be use any more.
+				// Once aggregation is pushed to cop, the cache data can't be use anymore.
 				return false
 			}
 		case *LogicalUnionAll:
@@ -220,6 +269,7 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 			ret = ret && c.CanPushToCop(storeTp)
 		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
 		case *LogicalLimit, *LogicalTopN:
+			// currently logicalLimit and logicalTopN can not be fully pushed down to tiFlash. ref: issues/61961
 			return false
 		case *LogicalSequence:
 			return storeTp == kv.TiFlash

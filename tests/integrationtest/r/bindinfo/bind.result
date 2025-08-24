@@ -311,9 +311,9 @@ original_sql	bind_sql
 select * from `bindinfo__bind` . `t`	SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)
 explain format = 'verbose' select * from t;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_6	10000.00	19517254.40	root		
-├─IndexFullScan_4(Build)	10000.00	2035000.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
-└─TableRowIDScan_5(Probe)	10000.00	2273079.74	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_7	10000.00	19517254.40	root		
+├─IndexFullScan_5(Build)	10000.00	2035000.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10000.00	2273079.74	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	Using the bindSQL: SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)
 drop global binding for select * from t using select * from t use index(a);
@@ -323,12 +323,12 @@ table t;
 id	value
 explain table t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc table t;
 id	estRows	task	access object	operator info
-TableReader_5	10000.00	root		data:TableFullScan_4
-└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_6	10000.00	root		data:TableFullScan_5
+└─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int, b int, c int, d int);
 create binding for select * from t where a in(1) using select * from t where a in(1);

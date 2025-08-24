@@ -94,22 +94,28 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
-		dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+		files, err := external.GetAllFileNames(context.Background(), extStore, prefix)
 		require.NoError(t, err)
 		require.Greater(t, jobID, int64(0))
-		require.Equal(t, 0, len(dataFiles))
-		require.Equal(t, 0, len(statFiles))
+		require.Equal(t, 0, len(files))
 	}
 }
 
-func checkFileExist(t *testing.T, sortStorageURI string, prefix string) {
+// check the file under dir or partitioned dir have files with keyword
+func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	dataFiles, _, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	dataFiles, err := external.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)
-	require.Greater(t, len(dataFiles), 0)
+	filteredFiles := make([]string, 0)
+	for _, f := range dataFiles {
+		if strings.Contains(f, keyword) {
+			filteredFiles = append(filteredFiles, f)
+		}
+	}
+	require.Greater(t, len(filteredFiles), 0)
 }
 
 func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
@@ -135,7 +141,7 @@ func getTaskID(t *testing.T, jobID int64) int64 {
 	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	task, err := mgr.GetTaskByKeyWithHistory(ctx, fmt.Sprintf("ddl/backfill/%d", jobID))
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID))
 	require.NoError(t, err)
 	return task.ID
 }
@@ -187,7 +193,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID := getTaskID(t, jobID)
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
 	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
@@ -197,8 +203,8 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID = getTaskID(t, jobID)
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/merge-sort")
 	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
@@ -207,8 +213,8 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID = getTaskID(t, jobID)
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/merge-sort")
 	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
@@ -404,9 +410,9 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	}
 
 	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
-		tk.MustExec("set session tidb_redact_log = on;")
+		tk.MustExec("set global tidb_redact_log = on;")
 		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
-		tk.MustExec("set session tidb_redact_log = off;")
+		tk.MustExec("set global tidb_redact_log = off;")
 		testErrStep = proto.StepInit
 	}
 
@@ -548,7 +554,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }
 
-func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
+func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 
@@ -579,10 +585,12 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
-	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
-	})
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
+		})
+	}
 
 	var pipeClosed bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {

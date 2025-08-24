@@ -26,13 +26,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -68,7 +71,12 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
-	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, config.DefaultBatchSize, plan.MaxEngineSize)
+	} else {
+		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	}
+
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
@@ -278,14 +286,14 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	c := &LoadDataController{
 		Plan: &Plan{},
 	}
-	cfg := c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	cfg := c.getLocalBackendCfg("", "http://1.1.1.1:1234", "/tmp")
 	require.Equal(t, "http://1.1.1.1:1234", cfg.PDAddr)
 	require.Equal(t, "/tmp", cfg.LocalStoreDir)
 	require.True(t, cfg.DisableAutomaticCompactions)
 	require.Zero(t, cfg.RaftKV2SwitchModeDuration)
 
 	c.Plan.IsRaftKV2 = true
-	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	cfg = c.getLocalBackendCfg("", "http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
@@ -436,7 +444,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 
 func TestGetDataSourceType(t *testing.T) {
 	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
-		SelectPlan: &plannercore.PhysicalSelection{},
+		SelectPlan: &physicalop.PhysicalSelection{},
 	}))
 	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
 }
@@ -471,5 +479,13 @@ func TestParseFileType(t *testing.T) {
 			actual := parseFileType(tc.path)
 			require.Equal(t, tc.expected, actual)
 		})
+	}
+}
+
+func TestGetDefMaxEngineSize(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.Equal(t, config.ByteSize(500*units.GiB), getDefMaxEngineSize())
+	} else {
+		require.Equal(t, config.ByteSize(100*units.GiB), getDefMaxEngineSize())
 	}
 }

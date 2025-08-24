@@ -456,7 +456,7 @@ func updateGlobalTableStats4ExchangePartition(
 	}
 
 	// Update the global stats.
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 	if ok {
@@ -572,7 +572,7 @@ func updateGlobalTableStats4TruncatePartition(
 		return nil
 	}
 
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 	if ok {

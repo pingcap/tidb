@@ -24,6 +24,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend",
@@ -32,6 +33,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/log",
         "//pkg/lightning/membuf",
+        "//pkg/lightning/metric",
         "//pkg/metrics",
         "//pkg/util",
         "//pkg/util/hack",
@@ -81,6 +83,7 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",

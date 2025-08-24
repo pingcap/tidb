@@ -93,10 +93,6 @@ func (idx *Index) DropUnnecessaryData() {
 	idx.evictedStatus = AllEvicted
 }
 
-func (idx *Index) isStatsInitialized() bool {
-	return idx.statsInitialized
-}
-
 // GetStatsVer returns the version of the current stats
 func (idx *Index) GetStatsVer() int64 {
 	return idx.StatsVer
@@ -219,6 +215,16 @@ func (idx *Index) GetIncreaseFactor(realtimeRowCount int64) float64 {
 		return 1.0
 	}
 	return float64(realtimeRowCount) / columnCount
+}
+
+// GetHistogram returns the histogram for this index.
+func (idx *Index) GetHistogram() *Histogram {
+	return &idx.Histogram
+}
+
+// GetTopN returns the TopN for this index.
+func (idx *Index) GetTopN() *TopN {
+	return idx.TopN
 }
 
 // IsAnalyzed indicates whether the index is analyzed.

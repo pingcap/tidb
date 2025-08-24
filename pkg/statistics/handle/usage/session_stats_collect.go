@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -59,7 +60,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	if !ok {
 		return false
 	}
-	if util.IsMemOrSysDB(tableItem.DBName.L) {
+	if metadef.IsMemOrSysDB(tableItem.DBName.L) {
 		return false
 	}
 	if dumpAll {
@@ -72,8 +73,10 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
-	statsTbl := s.statsHandle.GetPartitionStatsByID(is, id)
-	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
+	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly
+	statsTable, found := s.statsHandle.GetNonPseudoPhysicalTableStats(id)
+	if !found || statsTable == nil || statsTable.RealtimeCount == 0 ||
+		float64(item.Count)/float64(statsTable.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
 	}
@@ -124,7 +127,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		)
 		batchStart := time.Now()
 		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {

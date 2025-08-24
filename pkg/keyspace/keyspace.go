@@ -27,6 +27,9 @@ import (
 )
 
 const (
+	// System is the keyspace name for SYSTEM keyspace.
+	// see doc.go for more detail.
+	System = "SYSTEM"
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
 )

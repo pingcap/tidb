@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -196,11 +195,6 @@ func TestCacheable(t *testing.T) {
 	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
-	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
-	})
-	require.False(t, core.Cacheable(stmt, is))
-
 	// test UpdateStmt
 	whereExpr = &ast.FuncCallExpr{}
 	stmt = &ast.UpdateStmt{
@@ -251,11 +245,6 @@ func TestCacheable(t *testing.T) {
 	}
 	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
-
-	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
-	})
-	require.False(t, core.Cacheable(stmt, is))
 
 	// test SelectStmt
 	whereExpr = &ast.FuncCallExpr{}
@@ -316,11 +305,6 @@ func TestCacheable(t *testing.T) {
 		OrderBy: orderByClause,
 	}
 	require.True(t, core.Cacheable(stmt, is))
-
-	stmt.(*ast.SelectStmt).TableHints = append(stmt.(*ast.SelectStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
-	})
-	require.False(t, core.Cacheable(stmt, is))
 
 	boundExpr := &ast.FrameBound{Expr: &driver.ParamMarkerExpr{}}
 	require.False(t, core.Cacheable(boundExpr, is))

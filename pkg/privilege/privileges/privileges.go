@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -46,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -70,6 +71,8 @@ var dynamicPrivs = []string{
 	"RESTRICTED_USER_ADMIN",           // User can not have their access revoked by SUPER users.
 	"RESTRICTED_CONNECTION_ADMIN",     // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
+	"RESTRICTED_PRIV_ADMIN",           // Can grant the restricted priv to others
+	"RESTRICTED_SQL_ADMIN",            // Can execute restricted SQL statements
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
@@ -168,7 +171,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		if sem.IsInvisibleTable(dbLowerName, tblLowerName) {
 			return false
 		}
-		if util.IsMemOrSysDB(dbLowerName) {
+		if metadef.IsMemOrSysDB(dbLowerName) {
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 				mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
@@ -177,16 +180,16 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 	}
 
-	if util.IsMemDB(dbLowerName) {
+	if metadef.IsMemDB(dbLowerName) {
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv, mysql.ReferencesPriv, mysql.ExecutePriv,
 			mysql.ShowViewPriv, mysql.LockTablesPriv:
 			return false
 		}
-		if dbLowerName == util.InformationSchemaName.L {
+		if dbLowerName == metadef.InformationSchemaName.L {
 			return true
-		} else if dbLowerName == util.MetricSchemaName.L {
+		} else if dbLowerName == metadef.MetricSchemaName.L {
 			// PROCESS is the same with SELECT for metrics_schema.
 			if priv == mysql.SelectPriv && infoschema.IsMetricTable(table) {
 				priv |= mysql.ProcessPriv
@@ -223,7 +226,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(ctx context.Context, db, ta
 
 	// Skip check for INFORMATION_SCHEMA database.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
-	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+	if strings.EqualFold(db, metadef.InformationSchemaName.O) {
 		return true
 	}
 

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -218,7 +219,7 @@ func notNeedGetLatestTSFromPD(plan base.Plan, inLockOrWriteStmt bool) bool {
 		if len(v.Children()) == 0 {
 			return false
 		}
-		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
+		_, isPhysicalLock := v.(*physicalop.PhysicalLock)
 		for _, p := range v.Children() {
 			if !notNeedGetLatestTSFromPD(p, isPhysicalLock || inLockOrWriteStmt) {
 				return false
