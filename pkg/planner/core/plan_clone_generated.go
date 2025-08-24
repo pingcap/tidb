@@ -55,6 +55,7 @@ func (op *Delete) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 		}
 		cloned.SelectPlan = SelectPlan.(base.PhysicalPlan)
 	}
+
 	if op.FKChecks != nil {
 		return nil, false
 	}
