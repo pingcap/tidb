@@ -1236,13 +1236,21 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 func compareEqOrIn(lhs, rhs *candidatePath) int {
 	lhsEqOrIn := lhs.path.EqOrInCondCount
 	rhsEqOrIn := rhs.path.EqOrInCondCount
-	if lhs.path.IsDNFCond && lhs.path.MinAccessCondsForDNFCond > lhsEqOrIn &&
-		lhs.hasOnlyEqualPredicatesInDNF(false) {
+	if lhs.path.IsDNFCond && lhs.path.MinAccessCondsForDNFCond > lhsEqOrIn {
 		lhsEqOrIn = lhs.path.MinAccessCondsForDNFCond
+		// if we've used DNF accessConds for lhs, we should use for rhs also - since AccessConds for DNF conditions
+		// include equals plus range.
+		if !rhs.path.IsDNFCond {
+			rhsEqOrIn = max(rhsEqOrIn, len(rhs.path.AccessConds))
+		}
 	}
-	if rhs.path.IsDNFCond && rhs.path.MinAccessCondsForDNFCond > rhsEqOrIn &&
-		rhs.hasOnlyEqualPredicatesInDNF(false) {
+	if rhs.path.IsDNFCond && rhs.path.MinAccessCondsForDNFCond > rhsEqOrIn {
 		rhsEqOrIn = rhs.path.MinAccessCondsForDNFCond
+		// if we've used DNF accessConds for rhs, we should use for lhs also - since AccessConds for DNF conditions
+		// include equals plus range.
+		if !lhs.path.IsDNFCond {
+			lhsEqOrIn = max(lhsEqOrIn, len(lhs.path.AccessConds))
+		}
 	}
 	if lhsEqOrIn > rhsEqOrIn {
 		return 1
@@ -1256,7 +1264,7 @@ func compareEqOrIn(lhs, rhs *candidatePath) int {
 func isFullIndexMatch(candidate *candidatePath) bool {
 	// Check if the DNF condition is a full match
 	if candidate.path.IsDNFCond && candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns) &&
-		candidate.hasOnlyEqualPredicatesInDNF(true) {
+		candidate.hasOnlyEqualPredicatesInDNF() {
 		return true
 	}
 	// Return the non-DNF full index match result
@@ -1641,11 +1649,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				// Check if all access conditions in DNF form have at least one equal predicate. Pass false to
-				// identify that if we have multiple predicate in each DNF condition, only the first must be equals.
-				isDNFOnlyEquals := c.hasOnlyEqualPredicatesInDNF(false)
-				if preferMerge || isDNFOnlyEquals || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				indexFilters := c.path.EqOrInCondCount > 0 || c.hasOnlyEqualPredicatesInDNF() || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -1664,14 +1669,13 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 }
 
 // hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
-func (c *candidatePath) hasOnlyEqualPredicatesInDNF(needAllPredicates bool) bool {
+func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 	// Exit if this isn't a DNF condition or has no access conditions
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return false
 	}
-	// If needAllPredicates is true, then we require all access conditions to be equal predicates.
-	// If needAllPredicates is false, then we only require at least one equal predicate. Return true.
-	if !needAllPredicates && c.path.MinAccessCondsForDNFCond > 1 {
+	// If the DNF condition has more than one access condition, all OR conditions must have equal predicates.
+	if c.path.MinAccessCondsForDNFCond > 1 {
 		return true
 	}
 
