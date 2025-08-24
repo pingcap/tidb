@@ -1234,6 +1234,10 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 }
 
 func compareEqOrIn(lhs, rhs *candidatePath) int {
+	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
+		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
+		return 0
+	}
 	lhsEqOrIn := lhs.path.EqOrInCondCount
 	rhsEqOrIn := rhs.path.EqOrInCondCount
 	if lhs.path.IsDNFCond && lhs.path.MinAccessCondsForDNFCond > lhsEqOrIn {
@@ -1264,7 +1268,7 @@ func compareEqOrIn(lhs, rhs *candidatePath) int {
 func isFullIndexMatch(candidate *candidatePath) bool {
 	// Check if the DNF condition is a full match
 	if candidate.path.IsDNFCond && candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns) &&
-		candidate.hasOnlyEqualPredicatesInDNF() {
+		candidate.hasOnlyEqualPredicatesInDNF() { // hasOnlyEqualPredicatesInDNF is equivalent of EqOrInCondCount > 0
 		return true
 	}
 	// Return the non-DNF full index match result
