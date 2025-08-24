@@ -474,7 +474,7 @@ func TestFastPointGetClone(t *testing.T) {
 		"accessCols":   {},
 	}
 
-	pointPlan := reflect.TypeOf(core.PointGetPlan{})
+	pointPlan := reflect.TypeOf(physicalop.PointGetPlan{})
 	for i := range pointPlan.NumField() {
 		fieldName := pointPlan.Field(i).Name
 		if _, ok := fieldNoNeedToClone[fieldName]; ok {
@@ -502,8 +502,8 @@ func BenchmarkPointGetCloneFast(b *testing.B) {
 	require.NoError(b, err)
 
 	b.ResetTimer()
-	src := plan.(*core.PointGetPlan)
-	dst := new(core.PointGetPlan)
+	src := plan.(*physicalop.PointGetPlan)
+	dst := new(physicalop.PointGetPlan)
 	sctx := tk.Session().GetPlanCtx()
 	for i := 0; i < b.N; i++ {
 		core.FastClonePointGetForPlanCache(sctx, src, dst)
@@ -524,7 +524,7 @@ func BenchmarkPointGetClone(b *testing.B) {
 	require.NoError(b, err)
 
 	b.ResetTimer()
-	src := plan.(*core.PointGetPlan)
+	src := plan.(*physicalop.PointGetPlan)
 	sctx := tk.Session().GetPlanCtx()
 	for i := 0; i < b.N; i++ {
 		src.CloneForPlanCache(sctx)

@@ -15,12 +15,10 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -51,24 +49,6 @@ func (p LoadData) Init(ctx base.PlanContext) *LoadData {
 // Init initializes ImportInto.
 func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeImportInto, 0)
-	return &p
-}
-
-// Init initializes BatchPointGetPlan.
-func (p *BatchPointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
-	p.SetSchema(schema)
-	p.SetOutputNames(names)
-	p.SetStats(stats)
-	p.Columns = ExpandVirtualColumn(p.Columns, p.Schema(), p.TblInfo.Columns)
-	return p
-}
-
-// Init initializes PointGetPlan.
-func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, _ ...*property.PhysicalProperty) *PointGetPlan {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, offset)
-	p.SetStats(stats)
-	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
 }
 

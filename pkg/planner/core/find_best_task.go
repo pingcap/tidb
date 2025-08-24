@@ -2962,25 +2962,27 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
-	pointGetPlan := PointGetPlan{
+	pointGetPlan := &physicalop.PointGetPlan{
 		AccessConditions: candidate.path.AccessConds,
-		schema:           ds.Schema().Clone(),
-		dbName:           ds.DBName.L,
+		DBName:           ds.DBName.L,
 		TblInfo:          ds.TableInfo,
-		outputNames:      ds.OutputNames(),
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
-	}.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
+	}
+	pointGetPlan.SetSchema(ds.Schema().Clone())
+	pointGetPlan.SetOutputNames(ds.OutputNames())
+
+	pointGetPlan = pointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
+
 	if ds.PartitionDefIdx != nil {
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
-	pointGetPlan.PartitionNames = ds.PartitionNames
 	rTsk := &RootTask{}
 	rTsk.SetPlan(pointGetPlan)
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.HandleCols.GetCol(0).RetType.GetFlag())
-		pointGetPlan.accessCols = ds.TblCols
+		pointGetPlan.AccessCols = ds.TblCols
 		found := false
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
@@ -3006,9 +3008,9 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		if candidate.path.IsSingleScan {
-			pointGetPlan.accessCols = candidate.path.IdxCols
+			pointGetPlan.AccessCols = candidate.path.IdxCols
 		} else {
-			pointGetPlan.accessCols = ds.TblCols
+			pointGetPlan.AccessCols = ds.TblCols
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
@@ -3033,9 +3035,9 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
-	batchPointGetPlan := &BatchPointGetPlan{
-		ctx:              ds.SCtx(),
-		dbName:           ds.DBName.L,
+	batchPointGetPlan := &physicalop.BatchPointGetPlan{
+		Ctx:              ds.SCtx(),
+		DBName:           ds.DBName.L,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo,
 		KeepOrder:        !prop.IsSortItemEmpty(),
@@ -3054,7 +3056,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
-		batchPointGetPlan.accessCols = ds.TblCols
+		batchPointGetPlan.AccessCols = ds.TblCols
 		found := false
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
@@ -3088,9 +3090,9 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
 		if candidate.path.IsSingleScan {
-			batchPointGetPlan.accessCols = candidate.path.IdxCols
+			batchPointGetPlan.AccessCols = candidate.path.IdxCols
 		} else {
-			batchPointGetPlan.accessCols = ds.TblCols
+			batchPointGetPlan.AccessCols = ds.TblCols
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {

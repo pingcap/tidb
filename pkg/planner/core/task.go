@@ -2236,7 +2236,7 @@ func accumulateNetSeekCost4MPP(p base.PhysicalPlan) (cost float64) {
 
 func tryExpandVirtualColumn(p base.PhysicalPlan) {
 	if ts, ok := p.(*physicalop.PhysicalTableScan); ok {
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
+		ts.Columns = physicalop.ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		return
 	}
 	for _, child := range p.Children() {
