@@ -2971,18 +2971,17 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	}
 	pointGetPlan.SetSchema(ds.Schema().Clone())
 	pointGetPlan.SetOutputNames(ds.OutputNames())
-
 	pointGetPlan = pointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
-
 	if ds.PartitionDefIdx != nil {
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
+	pointGetPlan.PartitionNames = ds.PartitionNames
 	rTsk := &RootTask{}
 	rTsk.SetPlan(pointGetPlan)
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.HandleCols.GetCol(0).RetType.GetFlag())
-		pointGetPlan.AccessCols = ds.TblCols
+		pointGetPlan.SetAccessCols(ds.TblCols)
 		found := false
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
@@ -3008,9 +3007,9 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		if candidate.path.IsSingleScan {
-			pointGetPlan.AccessCols = candidate.path.IdxCols
+			pointGetPlan.SetAccessCols(candidate.path.IdxCols)
 		} else {
-			pointGetPlan.AccessCols = ds.TblCols
+			pointGetPlan.SetAccessCols(ds.TblCols)
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
@@ -3036,7 +3035,6 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
 	batchPointGetPlan := &physicalop.BatchPointGetPlan{
-		Ctx:              ds.SCtx(),
 		DBName:           ds.DBName.L,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo,
@@ -3044,6 +3042,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		Columns:          ds.Columns,
 		PartitionNames:   ds.PartitionNames,
 	}
+	batchPointGetPlan.SetCtx(ds.SCtx())
 	if ds.PartitionDefIdx != nil {
 		batchPointGetPlan.SinglePartition = true
 		batchPointGetPlan.PartitionIdxs = []int{*ds.PartitionDefIdx}
@@ -3056,7 +3055,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
-		batchPointGetPlan.AccessCols = ds.TblCols
+		batchPointGetPlan.SetAccessCols(ds.TblCols)
 		found := false
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
@@ -3090,9 +3089,9 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
 		if candidate.path.IsSingleScan {
-			batchPointGetPlan.AccessCols = candidate.path.IdxCols
+			batchPointGetPlan.SetAccessCols(candidate.path.IdxCols)
 		} else {
-			batchPointGetPlan.AccessCols = ds.TblCols
+			batchPointGetPlan.SetAccessCols(ds.TblCols)
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {

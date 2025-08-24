@@ -1085,7 +1085,7 @@ func getPlanCostVer14PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 // getCost4BatchPointGetPlan returns cost of the BatchPointGetPlan.
 func getCost4BatchPointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64 {
 	p := pp.(*physicalop.BatchPointGetPlan)
-	cols := p.AccessCols
+	cols := p.AccessCols()
 	if cols == nil {
 		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
 	}
@@ -1126,7 +1126,7 @@ func getPlanCostVer14BatchPointGetPlan(pp base.PhysicalPlan, _ property.TaskType
 // getCost4PointGetPlan returns cost of the PointGetPlan.
 func getCost4PointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64 {
 	p := pp.(*physicalop.PointGetPlan)
-	cols := p.AccessCols
+	cols := p.AccessCols()
 	if cols == nil {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
 	}

@@ -91,7 +91,7 @@ type PointGetPlan struct {
 	PlanCost     float64
 	PlanCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
-	AccessCols []*expression.Column
+	accessCols []*expression.Column
 
 	// NOTE: please update FastClonePointGetForPlanCache accordingly if you add new fields here.
 }
@@ -275,6 +275,16 @@ func (p *PointGetPlan) SetSchema(schema *expression.Schema) {
 	p.schema = schema
 }
 
+// AccessCols returns the accessCols field for external access
+func (p *PointGetPlan) AccessCols() []*expression.Column {
+	return p.accessCols
+}
+
+// SetAccessCols sets the accessCols field for external access
+func (p *PointGetPlan) SetAccessCols(cols []*expression.Column) {
+	p.accessCols = cols
+}
+
 // AppendChildCandidate implements PhysicalPlan interface.
 func (*PointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
 
@@ -287,7 +297,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPointGetPlanSize + p.Plan.MemoryUsage() + int64(len(p.DBName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.AccessCols))*size.SizeOfPointer
+		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
 	}
@@ -319,7 +329,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	for _, name := range p.outputNames {
 		sum += name.MemoryUsage()
 	}
-	for _, col := range p.AccessCols {
+	for _, col := range p.accessCols {
 		sum += col.MemoryUsage()
 	}
 	return
@@ -435,7 +445,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 
 // GetAvgRowSize return the average row size.
 func (p *PointGetPlan) GetAvgRowSize() float64 {
-	cols := p.AccessCols
+	cols := p.accessCols
 	if cols == nil {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
 	}
@@ -503,7 +513,7 @@ func (p *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bo
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
 	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(p.AccessConditions, nil)
-	cloned.AccessCols = utilfuncp.CloneColumnsForPlanCache(p.AccessCols, nil)
+	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(p.accessCols, nil)
 	return cloned, true
 }
 
@@ -518,7 +528,7 @@ type BatchPointGetPlan struct {
 	// explicit partition selection
 	PartitionNames []ast.CIStr `plan-cache-clone:"shallow"`
 
-	Ctx              base.PlanContext
+	ctx              base.PlanContext
 	DBName           string
 	TblInfo          *model.TableInfo `plan-cache-clone:"shallow"`
 	IndexInfo        *model.IndexInfo `plan-cache-clone:"shallow"`
@@ -550,7 +560,7 @@ type BatchPointGetPlan struct {
 	PlanCost     float64
 	PlanCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
-	AccessCols []*expression.Column
+	accessCols []*expression.Column
 }
 
 // Init initializes BatchPointGetPlan.
@@ -582,6 +592,26 @@ func (p *BatchPointGetPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStat
 // SetProbeParents implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) SetProbeParents(probeParents []base.PhysicalPlan) {
 	p.ProbeParents = probeParents
+}
+
+// SetCtx sets the context field for external access
+func (p *BatchPointGetPlan) SetCtx(ctx base.PlanContext) {
+	p.ctx = ctx
+}
+
+// GetCtx returns the context field for external access
+func (p *BatchPointGetPlan) GetCtx() base.PlanContext {
+	return p.ctx
+}
+
+// AccessCols returns the accessCols field for external access
+func (p *BatchPointGetPlan) AccessCols() []*expression.Column {
+	return p.accessCols
+}
+
+// SetAccessCols sets the accessCols field for external access
+func (p *BatchPointGetPlan) SetAccessCols(cols []*expression.Column) {
+	p.accessCols = cols
 }
 
 // GetCost implements PhysicalPlan interface.
@@ -727,7 +757,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 
 	sum = emptyBatchPointGetPlanSize + p.SimpleSchemaProducer.MemoryUsage() + int64(len(p.DBName)) +
 		int64(cap(p.IdxColLens)+cap(p.PartitionIdxs))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
-		int64(cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.AccessCols))*size.SizeOfPointer
+		int64(cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.HandleType != nil {
 		sum += p.HandleType.MemoryUsage()
 	}
@@ -754,7 +784,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 	for _, col := range p.IdxCols {
 		sum += col.MemoryUsage()
 	}
-	for _, col := range p.AccessCols {
+	for _, col := range p.accessCols {
 		sum += col.MemoryUsage()
 	}
 	return
@@ -998,7 +1028,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 
 // GetAvgRowSize return the average row size.
 func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
-	cols := p.AccessCols
+	cols := p.accessCols
 	if cols == nil {
 		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
 	}
@@ -1055,7 +1085,7 @@ func (p *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 		return nil, false
 	}
 	cloned.ProbeParents = probeParents
-	cloned.Ctx = newCtx
+	cloned.ctx = newCtx
 	cloned.Handles = util.CloneHandles(p.Handles)
 	cloned.HandleParams = utilfuncp.CloneConstantsForPlanCache(p.HandleParams, nil)
 	cloned.IndexValues = util.CloneDatum2D(p.IndexValues)
@@ -1066,6 +1096,6 @@ func (p *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 	copy(cloned.IdxColLens, p.IdxColLens)
 	cloned.PartitionIdxs = make([]int, len(p.PartitionIdxs))
 	copy(cloned.PartitionIdxs, p.PartitionIdxs)
-	cloned.AccessCols = utilfuncp.CloneColumnsForPlanCache(p.AccessCols, nil)
+	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(p.accessCols, nil)
 	return cloned, true
 }

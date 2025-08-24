@@ -471,12 +471,14 @@ func TestFastPointGetClone(t *testing.T) {
 		"PlanCostInit": {},
 		"PlanCost":     {},
 		"PlanCostVer2": {},
-		"AccessCols":   {},
+		"accessCols":   {},
 	}
 
-	fieldToPatternMap := map[string]string{
-		"schema":      "SetSchema",
-		"outputNames": "SetOutputNames",
+	fieldSetBySetter := map[string]string{
+		"dbName":      "SetDBName(",
+		"schema":      "SetSchema(",
+		"outputNames": "SetOutputNames(",
+		"ctx":         "SetCtx(",
 	}
 
 	pointPlan := reflect.TypeOf(physicalop.PointGetPlan{})
@@ -485,17 +487,17 @@ func TestFastPointGetClone(t *testing.T) {
 		if _, ok := fieldNoNeedToClone[fieldName]; ok {
 			continue
 		}
+
 		assignFieldCode := fmt.Sprintf("%v =", fieldName)
-		hasDirectAssign := strings.Contains(cloneFuncCode, assignFieldCode)
 
-		hasSetter := false
-		if setter, ok := fieldToPatternMap[fieldName]; ok {
-			if strings.Contains(cloneFuncCode, setter) {
-				hasSetter = true
+		if setterCode, ok := fieldSetBySetter[fieldName]; ok {
+			if !strings.Contains(cloneFuncCode, setterCode) {
+				errMsg := fmt.Sprintf("field %v should be set via setter method in FastClonePointGetForPlanCache", fieldName)
+				t.Fatal(errMsg)
 			}
+			continue
 		}
-
-		if !hasDirectAssign && !hasSetter {
+		if !strings.Contains(cloneFuncCode, assignFieldCode) {
 			errMsg := fmt.Sprintf("field %v might not be set in FastClonePointGetForPlanCache correctly", fieldName)
 			t.Fatal(errMsg)
 		}

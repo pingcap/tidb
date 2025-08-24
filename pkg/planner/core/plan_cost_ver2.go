@@ -861,7 +861,7 @@ func getPlanCostVer24PointGetPlan(pp base.PhysicalPlan, taskType property.TaskTy
 		return p.PlanCostVer2, nil
 	}
 
-	if p.AccessCols == nil { // from fast plan code path
+	if p.AccessCols() == nil { // from fast plan code path
 		p.PlanCostVer2 = costusage.ZeroCostVer2
 		p.PlanCostInit = true
 		return costusage.ZeroCostVer2, nil
@@ -912,7 +912,7 @@ func getPlanCostVer24BatchPointGetPlan(pp base.PhysicalPlan, taskType property.T
 		return p.PlanCostVer2, nil
 	}
 
-	if p.AccessCols == nil { // from fast plan code path
+	if p.AccessCols() == nil { // from fast plan code path
 		p.PlanCostVer2 = costusage.ZeroCostVer2
 		p.PlanCostInit = true
 		return costusage.ZeroCostVer2, nil
