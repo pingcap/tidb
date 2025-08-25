@@ -15,6 +15,7 @@ go_test(
         "//br/pkg/storage",
         "//pkg/config/kerneltype",
         "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
         "//pkg/executor/importer",
