@@ -855,7 +855,7 @@ func getPlanCostVer24PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 }
 
 // getPlanCostVer24PointGetPlan returns the plan-cost of this sub-plan, which is:
-func getPlanCostVer24PointGetPlan(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PointGetPlan(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PointGetPlan)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
@@ -906,7 +906,7 @@ func getPlanCostVer2PhysicalExchangeReceiver(pp base.PhysicalPlan, taskType prop
 }
 
 // getPlanCostVer24BatchPointGetPlan returns the plan-cost of this sub-plan, which is:
-func getPlanCostVer24BatchPointGetPlan(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24BatchPointGetPlan(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.BatchPointGetPlan)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil

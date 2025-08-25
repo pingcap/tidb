@@ -479,7 +479,7 @@ var GetPlanCostVer14PointGetPlan func(pp base.PhysicalPlan, _ property.TaskType,
 
 // GetPlanCostVer24PointGetPlan returns the plan-cost of this sub-plan, which is:
 var GetPlanCostVer24PointGetPlan func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
 
 // GetCost4BatchPointGetPlan returns cost of the BatchPointGetPlan.
 var GetCost4BatchPointGetPlan func(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64
@@ -491,7 +491,7 @@ var GetPlanCostVer14BatchPointGetPlan func(pp base.PhysicalPlan, _ property.Task
 
 // GetPlanCostVer24BatchPointGetPlan returns the plan-cost of this sub-plan, which is:
 var GetPlanCostVer24BatchPointGetPlan func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
 
 // LoadTableStats will be called in physicalOp pkg.
 var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)

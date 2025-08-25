@@ -142,7 +142,7 @@ func (p *PointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *optim
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24PointGetPlan(p, taskType, option, args...)
+	return utilfuncp.GetPlanCostVer24PointGetPlan(p, taskType, option)
 }
 
 // Cost implements PhysicalPlan interface
@@ -626,7 +626,7 @@ func (p *BatchPointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for BatchPointGetPlan.
 func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetPlanCostVer24BatchPointGetPlan(p, taskType, option, args...)
+	return utilfuncp.GetPlanCostVer24BatchPointGetPlan(p, taskType, option)
 }
 
 // Cost implements PhysicalPlan interface

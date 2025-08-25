@@ -224,6 +224,14 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 	return encodedIdxVals, nil
 }
 
+// TODO: Since these functions are about plan cache cloning,
+// we should move them in the future with all following functions:
+// - cloneExpressionsForPlanCache
+// - cloneExpression2DForPlanCache
+// - cloneColumnsForPlanCache
+// - ... (other related functions)
+// to plan_clone_utils.go for better code organization.
+
 // CloneConstant2DForPlanCache clones a 2D slice of *expression.Constant.
 func CloneConstant2DForPlanCache(constants [][]*expression.Constant) [][]*expression.Constant {
 	if constants == nil {
