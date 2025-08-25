@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"go.uber.org/atomic"
 )
 
 const (
@@ -886,10 +885,6 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	return idx, false
 }
 
-// RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
-// and use pseudo estimation.
-var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
-
 // IsInitialized returns true if any column/index stats of the table is initialized.
 func (t *Table) IsInitialized() bool {
 	for _, col := range t.columns {
@@ -901,18 +896,6 @@ func (t *Table) IsInitialized() bool {
 		if idx != nil && idx.IsStatsInitialized() {
 			return true
 		}
-	}
-	return false
-}
-
-// IsOutdated returns true if the table stats is outdated.
-func (t *Table) IsOutdated() bool {
-	rowcount := t.GetAnalyzeRowCount()
-	if rowcount < 0 {
-		rowcount = float64(t.RealtimeCount)
-	}
-	if rowcount > 0 && float64(t.ModifyCount)/rowcount > RatioOfPseudoEstimate.Load() {
-		return true
 	}
 	return false
 }

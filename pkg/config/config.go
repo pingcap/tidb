@@ -700,16 +700,15 @@ type Performance struct {
 	ServerMemoryQuota uint64 `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease        string `toml:"stats-lease" json:"stats-lease"`
 	// Deprecated: transaction auto retry is deprecated.
-	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntrySizeLimit   uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
-	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	TCPNoDelay          bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
-	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
-	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
-	MaxTxnTTL           uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	StmtCountLimit      uint   `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	BindInfoLease       string `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntrySizeLimit   uint64 `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
+	TxnTotalSizeLimit   uint64 `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive        bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	TCPNoDelay          bool   `toml:"tcp-no-delay" json:"tcp-no-delay"`
+	CrossJoin           bool   `toml:"cross-join" json:"cross-join"`
+	DistinctAggPushDown bool   `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
+	MaxTxnTTL           uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
@@ -1010,7 +1009,6 @@ var defaultConf = Config{
 		CrossJoin:                         true,
 		StatsLease:                        "3s",
 		StmtCountLimit:                    5000,
-		PseudoEstimateRatio:               0.8,
 		ForcePriority:                     "NO_PRIORITY",
 		BindInfoLease:                     "3s",
 		TxnEntrySizeLimit:                 DefTxnEntrySizeLimit,

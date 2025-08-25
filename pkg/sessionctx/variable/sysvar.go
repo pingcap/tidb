@@ -2616,10 +2616,6 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePseudoForOutdatedStats, Value: BoolToOnOff(vardef.DefTiDBEnablePseudoForOutdatedStats), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnablePseudoForOutdatedStats = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBRegardNULLAsPoint, Value: BoolToOnOff(vardef.DefTiDBRegardNULLAsPoint), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.RegardNULLAsPoint = TiDBOptOn(val)
 		return nil
