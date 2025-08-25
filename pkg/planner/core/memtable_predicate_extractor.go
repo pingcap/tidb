@@ -239,7 +239,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 
 // extractColLikeOpConsExpr extracts column name, pattern and escape character from LIKE expressions.
 // Returns column name, pattern datum, and escape character (as byte).
-func (helper extractHelper) extractColLikeOpConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, types.Datum, byte) {
+func (extractHelper) extractColLikeOpConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, types.Datum, byte) {
 	args := fn.GetArgs()
 	if len(args) < 2 {
 		return "", types.Datum{}, '\\'
