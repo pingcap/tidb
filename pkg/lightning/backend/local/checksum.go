@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pderrs "github.com/tikv/pd/client/errs"
 	"go.uber.org/atomic"
@@ -279,12 +280,12 @@ func updateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 
 // TiKVChecksumManager is a manager that can compute checksum of a table using TiKV.
 type TiKVChecksumManager struct {
-	client                    kv.Client
-	manager                   *gcTTLManager
-	distSQLScanConcurrency    uint
-	backoffWeight             int
-	resourceGroupName         string
-	explicitRequestSourceType string
+	client                 kv.Client
+	manager                *gcTTLManager
+	distSQLScanConcurrency uint
+	backoffWeight          int
+	resourceGroupName      string
+	requestSource          tikvutil.RequestSource
 }
 
 var _ ChecksumManager = &TiKVChecksumManager{}
@@ -292,12 +293,14 @@ var _ ChecksumManager = &TiKVChecksumManager{}
 // NewTiKVChecksumManager return a new tikv checksum manager
 func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName, explicitRequestSourceType string) *TiKVChecksumManager {
 	return &TiKVChecksumManager{
-		client:                    client,
-		manager:                   newGCTTLManager(pdClient, lightningServicePrefix),
-		distSQLScanConcurrency:    distSQLScanConcurrency,
-		backoffWeight:             backoffWeight,
-		resourceGroupName:         resourceGroupName,
-		explicitRequestSourceType: explicitRequestSourceType,
+		client:                 client,
+		manager:                newGCTTLManager(pdClient, lightningServicePrefix),
+		distSQLScanConcurrency: distSQLScanConcurrency,
+		backoffWeight:          backoffWeight,
+		resourceGroupName:      resourceGroupName,
+		requestSource: tikvutil.RequestSource{
+			ExplicitRequestSourceType: explicitRequestSourceType,
+		},
 	}
 }
 
@@ -305,12 +308,15 @@ func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 func NewTiKVChecksumManagerForImportInto(store kv.Storage, taskID int64, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName string) *TiKVChecksumManager {
 	prefix := fmt.Sprintf("%s-%d", importIntoServicePrefix, taskID)
 	return &TiKVChecksumManager{
-		client:                    store.GetClient(),
-		manager:                   newGCTTLManager(store.(kv.StorageWithPD).GetPDClient(), prefix),
-		distSQLScanConcurrency:    distSQLScanConcurrency,
-		backoffWeight:             backoffWeight,
-		resourceGroupName:         resourceGroupName,
-		explicitRequestSourceType: importIntoServicePrefix,
+		client:                 store.GetClient(),
+		manager:                newGCTTLManager(store.(kv.StorageWithPD).GetPDClient(), prefix),
+		distSQLScanConcurrency: distSQLScanConcurrency,
+		backoffWeight:          backoffWeight,
+		resourceGroupName:      resourceGroupName,
+		requestSource: tikvutil.RequestSource{
+			RequestSourceInternal: true,
+			RequestSourceType:     kv.InternalImportInto,
+		},
 	}
 }
 
@@ -319,7 +325,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 		SetConcurrency(e.distSQLScanConcurrency).
 		SetBackoffWeight(e.backoffWeight).
 		SetResourceGroupName(e.resourceGroupName).
-		SetExplicitRequestSourceType(e.explicitRequestSourceType).
+		SetRequestSource(e.requestSource).
 		Build()
 	if err != nil {
 		return nil, errors.Trace(err)
