@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -749,6 +750,9 @@ func TestSystemTimeZone(t *testing.T) {
 }
 
 func TestInternalSessionTxnStartTS(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	se, err := session.CreateSession4Test(ts.Store)

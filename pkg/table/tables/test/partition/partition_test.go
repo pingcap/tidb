@@ -380,7 +380,6 @@ func TestExchangePartitionStates(t *testing.T) {
 	dbName := "partSchemaVer"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
-	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + dbName)
 	tk3 := testkit.NewTestKit(t, store)
@@ -674,7 +673,6 @@ func TestAddKeyPartitionStates(t *testing.T) {
 	dbName := "partSchemaVer"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
-	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + dbName)
 	tk3 := testkit.NewTestKit(t, store)

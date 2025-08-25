@@ -71,7 +71,12 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
-	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, config.DefaultBatchSize, plan.MaxEngineSize)
+	} else {
+		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	}
+
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)

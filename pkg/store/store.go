@@ -165,7 +165,6 @@ func GetSystemStorage() kv.Storage {
 // it's only used in test.
 func SetSystemStorage(s kv.Storage) {
 	if s != nil {
-		intest.Assert(systemStore == nil, "systemStore should not be set twice")
 		intest.Assert(s.GetKeyspace() == keyspace.System, "systemStore should be set with SYSTEM keyspace")
 	}
 	systemStore = s

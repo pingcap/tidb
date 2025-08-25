@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1349,6 +1350,9 @@ func TestCachedTable(t *testing.T) {
 }
 
 func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1390,6 +1394,9 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 }
 
 func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1466,6 +1473,9 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 }
 
 func TestCacheHitInRc(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 

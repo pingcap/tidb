@@ -1950,26 +1950,31 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 }
 
 func TestTiDBEncodeKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1);")
-	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	err = tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000725f728000000000000001"))
+		Check(testkit.Rows(fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID)))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("7480000000000000725f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows(fmt.Sprintf("74800000000000%04x5f698000000000000001038000000000000001038000000000000001", tbl.Meta().ID)))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000775f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(
+		fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID+2)))
+	rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('74800000000000%04x5f728000000000000001');", tbl.Meta().ID+2))
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1978,14 +1983,15 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
+	err = tk2.QueryToErr(fmt.Sprintf("select tidb_mvcc_info('74800000000000%04x5f728000000000000001');", tbl.Meta().ID+2))
 	require.ErrorContains(t, err, "Access denied")
 	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000775f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(
+		fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID+2)))
 }
 
 func TestIssue9710(t *testing.T) {
