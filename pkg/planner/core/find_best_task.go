@@ -1138,9 +1138,15 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// scanResult: comparison result of index back scan efficiency (1=LHS better, -1=RHS better, 0=equal)
 	// comparable2: whether the index back scan characteristics are comparable between LHS and RHS
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
+	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
+	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult := compareEqOrIn(lhs, rhs)
-	sum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
+
+	// sum is the aggregate score of various comparison metrics between lhs and rhs. riskResult and eqOrInResult
+	// are excluded from the sum for consistency of the prior logic.
+	// TO-DO - extend riskResult such that both risk and eqOrIn factors can be integrated into the aggregate score.
+	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
