@@ -26,3 +26,9 @@ func IsNextGen() bool {
 func IsClassic() bool {
 	return !IsNextGen()
 }
+
+// TestIsNextGen is only for testing purposes.
+// enable NextGet config for specific functions.
+func TestIsNextGen() bool {
+	return true
+}

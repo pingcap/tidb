@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -656,7 +657,7 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 			return false
 		}
 		current := tmpVal.Current()
-		return current.Handle != nil || tablecodec.IndexKVIsUnique(current.Value)
+		return current.Handle != nil || tablecodec.IndexKVIsUnique(current.Value) || kerneltype.TestIsNextGen()
 	}
 
 	if !tablecodec.IndexKVIsUnique(v) {
