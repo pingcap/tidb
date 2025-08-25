@@ -5867,13 +5867,13 @@ def go_deps():
         name = "com_github_otiai10_mint",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/otiai10/mint",
-        sha256 = "2fd679bb9287f3c035dfeb1200c80abce6a466138cc44471f708217ce4c5d13f",
-        strip_prefix = "github.com/otiai10/mint@v1.5.1",
+        sha256 = "564d4d726a29a48adeb9c03e3755fc85a8329b7ec82202a24e3320f10358ae47",
+        strip_prefix = "github.com/otiai10/mint@v1.3.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/otiai10/mint/com_github_otiai10_mint-v1.5.1.zip",
-            "http://ats.apps.svc/gomod/github.com/otiai10/mint/com_github_otiai10_mint-v1.5.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/otiai10/mint/com_github_otiai10_mint-v1.5.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/otiai10/mint/com_github_otiai10_mint-v1.5.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/otiai10/mint/com_github_otiai10_mint-v1.3.1.zip",
+            "http://ats.apps.svc/gomod/github.com/otiai10/mint/com_github_otiai10_mint-v1.3.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/otiai10/mint/com_github_otiai10_mint-v1.3.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/otiai10/mint/com_github_otiai10_mint-v1.3.1.zip",
         ],
     )
     go_repository(
