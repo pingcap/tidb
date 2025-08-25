@@ -78,7 +78,7 @@ func TestOnUserKeyspace(t *testing.T) {
 
 	// reverse check
 	sysKSTk.MustQuery(jobQuerySQL).Check(testkit.Rows("0"))
-	userTK.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
+	require.Len(t, userTK.MustQuery(taskQuerySQL).Rows(), 0)
 
 	// Check the job summary from user keyspace is correct, which is get from subtask summaries.
 	rs = userTK.MustQuery(fmt.Sprintf("select summary from mysql.tidb_import_jobs where id = %d", jobID)).Rows()
