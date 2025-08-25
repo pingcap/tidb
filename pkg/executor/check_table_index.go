@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/admin"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -733,10 +732,8 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 
 		tableQuery = fmt.Sprintf(tableChecksumSQL, groupByKey, whereKey, groupByKey)
 		indexQuery = fmt.Sprintf(indexChecksumSQL, groupByKey, whereKey, groupByKey)
-		if idxInfo.MVIndex {
-			verifyCheckQuery(ctx, se, tableQuery, true)
-			verifyCheckQuery(ctx, se, indexQuery, false)
-		}
+		verifyCheckQuery(ctx, se, tableQuery, true)
+		verifyCheckQuery(ctx, se, indexQuery, false)
 
 		logutil.BgLogger().Info(
 			"fast check table by group",
@@ -816,10 +813,8 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		groupByKey := fmt.Sprintf("((CAST(%s AS SIGNED) - %d) MOD %d)", md5Handle, offset, mod)
 		tableQuery = fmt.Sprintf(tableCheckSQL, groupByKey)
 		indexQuery = fmt.Sprintf(indexCheckSQL, groupByKey)
-		if idxInfo.MVIndex {
-			verifyCheckQuery(ctx, se, tableQuery, true)
-			verifyCheckQuery(ctx, se, indexQuery, false)
-		}
+		verifyCheckQuery(ctx, se, tableQuery, true)
+		verifyCheckQuery(ctx, se, indexQuery, false)
 
 		var (
 			lastTableRecord *recordWithChecksum
@@ -907,10 +902,6 @@ type recordWithChecksum struct {
 }
 
 func verifyCheckQuery(ctx context.Context, se sessionctx.Context, sql string, useTableScan bool) {
-	if !intest.InTest {
-		return
-	}
-
 	rows, err := queryToRow(ctx, se, "explain "+sql)
 	if err != nil {
 		panic(err)
