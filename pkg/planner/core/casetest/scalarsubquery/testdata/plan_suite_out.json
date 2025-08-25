@@ -20,7 +20,13 @@
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 0.00 0 root ",
+          "ScalarSubQuery N/A 0 root ",
+          "└─MaxOneRow 1.00 1 root ",
+          "  └─Limit 1.00 0 root ",
+          "    └─TableReader 1.00 0 root ",
+          "      └─Limit 1.00 0 cop[tikv] ",
+          "        └─TableFullScan 1.00 0 cop[tikv] table:t2"
         ],
         "Error": ""
       },
@@ -88,7 +94,13 @@
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 0.00 0 root ",
+          "ScalarSubQuery N/A 0 root ",
+          "└─MaxOneRow 1.00 1 root ",
+          "  └─Limit 1.00 0 root ",
+          "    └─TableReader 1.00 0 root ",
+          "      └─Limit 1.00 0 cop[tikv] ",
+          "        └─TableFullScan 1.00 0 cop[tikv] table:t3"
         ],
         "Error": ""
       },
@@ -110,7 +122,13 @@
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 0.00 0 root ",
+          "ScalarSubQuery N/A 0 root ",
+          "└─MaxOneRow 1.00 1 root ",
+          "  └─Limit 1.00 0 root ",
+          "    └─TableReader 1.00 0 root ",
+          "      └─Limit 1.00 0 cop[tikv] ",
+          "        └─TableFullScan 1.00 0 cop[tikv] table:t2"
         ],
         "Error": ""
       }

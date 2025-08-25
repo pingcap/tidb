@@ -670,6 +670,10 @@ id	estRows	task	access object	operator info
 Sort	10000.00	root		explain_easy.t.a, explain_easy.t.b
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+ScalarSubQuery	N/A	root		Output: ScalarQueryCol#6
+└─MaxOneRow	1.00	root		
+  └─Projection	1.00	root		2->Column#5
+    └─TableDual	1.00	root		rows:1
 explain format = 'brief' select * from (select * from t order by c) t order by a, b;
 id	estRows	task	access object	operator info
 Sort	10000.00	root		explain_easy.t.a, explain_easy.t.b
