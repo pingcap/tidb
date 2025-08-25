@@ -55,7 +55,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
-	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap"
 )
 

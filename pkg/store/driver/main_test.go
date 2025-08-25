@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/pd/client/constants"
 	"go.uber.org/goleak"
 )
 
