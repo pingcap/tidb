@@ -55,6 +55,8 @@ func ContainsFullTextSearchFn(exprs ...Expression) bool {
 func ExprOnlyContainsLogicOpAndFTS(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
+		// TiDB's FTS functions return float value for potential BM25 score cases.
+		// So there'll be a IS TRUE wrapped to convert the float to boolean.
 		if x.FuncName.L == ast.LogicAnd || x.FuncName.L == ast.LogicOr || x.FuncName.L == ast.IsTruthWithNull {
 			for _, arg := range x.GetArgs() {
 				if !ExprOnlyContainsLogicOpAndFTS(arg) {

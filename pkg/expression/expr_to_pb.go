@@ -271,6 +271,8 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return nil
 	}
 
+	// TiDB's FTS functions return float value for potential BM25 score cases.
+	// So there'll be a IS TRUE wrapped to convert the float to boolean.
 	if pc.isTiCIExpr && expr.FuncName.L == ast.IsTruthWithNull {
 		return pc.ExprToPB(expr.GetArgs()[0])
 	}
