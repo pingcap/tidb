@@ -196,6 +196,11 @@ func (s *Syncer) setDynamicServerInfo(ds *DynamicInfo) {
 
 // GetAllServerInfo returns all server information from etcd.
 func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
+		res := make(map[string]*ServerInfo)
+		err := json.Unmarshal([]byte(val.(string)), &res)
+		failpoint.Return(res, err)
+	})
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
 		info := s.info.Load()

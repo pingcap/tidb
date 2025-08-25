@@ -11,7 +11,9 @@ go_test(
     shard_count = 19,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain/infosync",
+        "//pkg/keyspace",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/parser/auth",

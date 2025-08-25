@@ -518,7 +518,7 @@ func NewMergeKVIter(
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
 	if outerConcurrency <= 0 {
-		outerConcurrency = 1
+		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 	}
 	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
 	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be

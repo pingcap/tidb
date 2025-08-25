@@ -634,13 +634,13 @@ func attach2Task4PhysicalMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) bas
 
 func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	newTask := &RootTask{}
-	p := PhysicalIndexLookUpReader{
-		tablePlan:        t.tablePlan,
-		indexPlan:        t.indexPlan,
+	p := physicalop.PhysicalIndexLookUpReader{
+		TablePlan:        t.tablePlan,
+		IndexPlan:        t.indexPlan,
 		ExtraHandleCol:   t.extraHandleCol,
 		CommonHandleCols: t.commonHandleCols,
-		expectedCnt:      t.expectCnt,
-		keepOrder:        t.keepOrder,
+		ExpectedCnt:      t.expectCnt,
+		KeepOrder:        t.keepOrder,
 	}.Init(ctx, t.tablePlan.QueryBlockOffset())
 	p.PlanPartInfo = t.physPlanPartInfo
 	p.SetStats(t.tablePlan.StatsInfo())
@@ -649,7 +649,7 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
 	// We need to refactor these logics.
 	aggPushedDown := false
-	switch p.tablePlan.(type) {
+	switch p.TablePlan.(type) {
 	case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 		aggPushedDown = true
 	}
@@ -846,20 +846,20 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 
 func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 	root := t.(*RootTask)
-	reader, isDoubleRead := root.GetPlan().(*PhysicalIndexLookUpReader)
+	reader, isDoubleRead := root.GetPlan().(*physicalop.PhysicalIndexLookUpReader)
 	proj, isProj := root.GetPlan().(*physicalop.PhysicalProjection)
 	if !isDoubleRead && !isProj {
 		return false
 	}
 	if isProj {
-		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookUpReader)
+		reader, isDoubleRead = proj.Children()[0].(*physicalop.PhysicalIndexLookUpReader)
 		if !isDoubleRead {
 			return false
 		}
 	}
 
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
-	ts, isTableScan := reader.tablePlan.(*physicalop.PhysicalTableScan)
+	ts, isTableScan := reader.TablePlan.(*physicalop.PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
@@ -898,18 +898,18 @@ func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 
 func sinkIntoIndexMerge(p *physicalop.PhysicalLimit, t base.Task) bool {
 	root := t.(*RootTask)
-	imReader, isIm := root.GetPlan().(*PhysicalIndexMergeReader)
+	imReader, isIm := root.GetPlan().(*physicalop.PhysicalIndexMergeReader)
 	proj, isProj := root.GetPlan().(*physicalop.PhysicalProjection)
 	if !isIm && !isProj {
 		return false
 	}
 	if isProj {
-		imReader, isIm = proj.Children()[0].(*PhysicalIndexMergeReader)
+		imReader, isIm = proj.Children()[0].(*physicalop.PhysicalIndexMergeReader)
 		if !isIm {
 			return false
 		}
 	}
-	ts, ok := imReader.tablePlan.(*physicalop.PhysicalTableScan)
+	ts, ok := imReader.TablePlan.(*physicalop.PhysicalTableScan)
 	if !ok {
 		return false
 	}
@@ -2205,7 +2205,7 @@ func attach2Task4PhysicalSequence(pp base.PhysicalPlan, tasks ...base.Task) base
 	return mppTask
 }
 
-func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
+func collectPartitionInfosFromMPPPlan(p *physicalop.PhysicalTableReader, mppPlan base.PhysicalPlan) {
 	switch x := mppPlan.(type) {
 	case *physicalop.PhysicalTableScan:
 		p.TableScanAndPartitionInfos = append(p.TableScanAndPartitionInfos, physicalop.TableScanAndPartitionInfo{TableScan: x, PhysPlanPartInfo: x.PlanPartInfo})
