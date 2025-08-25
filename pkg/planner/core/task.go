@@ -179,8 +179,9 @@ func attach2Task4PhysicalApply(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalIndexMergeJoin implements PhysicalPlan interface.
+func attach2Task4PhysicalIndexMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalIndexMergeJoin)
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.InnerPlan)
@@ -1514,7 +1515,7 @@ func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) bas
 func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinInfo *IndexJoinInfo, stats *property.StatsInfo) {
 	var isIndexJoin bool
 	switch p.(type) {
-	case *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalIndexMergeJoin:
 		isIndexJoin = true
 	default:
 	}

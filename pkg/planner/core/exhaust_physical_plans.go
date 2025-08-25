@@ -626,7 +626,7 @@ func constructIndexMergeJoin(
 		// or outer join keys the prefix of the prop items. So we need `canKeepOuterOrder` or
 		// `isOuterKeysPrefix` to be true.
 		if canKeepOuterOrder || isOuterKeysPrefix {
-			indexMergeJoin := PhysicalIndexMergeJoin{
+			indexMergeJoin := physicalop.PhysicalIndexMergeJoin{
 				PhysicalIndexJoin:       *join,
 				KeyOff2KeyOffOrderByIdx: keyOff2KeyOffOrderByIdx,
 				NeedOuterSort:           !isOuterKeysPrefix,
@@ -1729,7 +1729,7 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 		return indexJoins
 	}
 	return slices.DeleteFunc(indexJoins, func(indexJoin base.PhysicalPlan) bool {
-		_, ok := indexJoin.(*PhysicalIndexMergeJoin)
+		_, ok := indexJoin.(*physicalop.PhysicalIndexMergeJoin)
 		return ok
 	})
 }
@@ -1751,7 +1751,7 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 	case *physicalop.PhysicalIndexHashJoin:
 		innerIdx = ij.GetInnerChildIdx()
 		joinMethod = indexHashJoinMethod
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		innerIdx = ij.GetInnerChildIdx()
 		joinMethod = indexMergeJoinMethod
 	default:

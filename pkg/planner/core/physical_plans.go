@@ -67,7 +67,7 @@ var (
 	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexHashJoin{}
-	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalIndexMergeJoin{}
 )
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
@@ -100,7 +100,7 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 // the `_tidb_rowid` in different partitions can have the same value.
 func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
 	// Not adding the ExtraPhysTblID if already exists
-	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+	if model.FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
 		return columns, schema, false
 	}
 	columns = append(columns, model.NewExtraPhysTblIDColInfo())
@@ -160,7 +160,7 @@ func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnIn
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
+				copyColumn = append(copyColumn, model.FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
 			}
 		}
 	}
@@ -174,34 +174,6 @@ type PhysicalJoin interface {
 	PhysicalJoinImplement()
 	GetInnerChildIdx() int
 	GetJoinType() logicalop.JoinType
-}
-
-// PhysicalIndexMergeJoin represents the plan of index look up merge join.
-type PhysicalIndexMergeJoin struct {
-	physicalop.PhysicalIndexJoin
-
-	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
-	KeyOff2KeyOffOrderByIdx []int
-	// CompareFuncs store the compare functions for outer join keys and inner join key.
-	CompareFuncs []expression.CompareFunc
-	// OuterCompareFuncs store the compare functions for outer join keys and outer join
-	// keys, it's for outer rows sort's convenience.
-	OuterCompareFuncs []expression.CompareFunc
-	// NeedOuterSort means whether outer rows should be sorted to build range.
-	NeedOuterSort bool
-	// Desc means whether inner child keep desc order.
-	Desc bool
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexMergeJoin
-func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
-		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
-	return
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.

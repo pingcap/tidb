@@ -473,6 +473,17 @@ var GetPlanCostVer14PhysicalTableReader func(pp base.PhysicalPlan,
 // LoadTableStats will be called in physicalOp pkg.
 var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
+// GetCost4PhysicalIndexMergeJoin computes the cost of index merge join operator and its children.
+var GetCost4PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
+	outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64
+
+// GetPlanCostVer14PhysicalIndexMergeJoin computes the cost of index merge join operator and its children
+var GetPlanCostVer14PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
+	taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
+
+// Attach2Task4PhysicalIndexMergeJoin implements PhysicalPlan interface.
+var Attach2Task4PhysicalIndexMergeJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
