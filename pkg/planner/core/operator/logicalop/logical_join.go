@@ -149,6 +149,9 @@ type LogicalJoin struct {
 
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
+
+	// allDataSouceSchema is used to identify the table where the column is located during constant propagation.
+	allDataSouceSchema []*expression.Schema
 }
 
 // Init initializes LogicalJoin.
@@ -207,6 +210,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
+	p.allDataSouceSchema = getAllDataSourceSchema(p)
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.joinPropConst(predicates)
@@ -256,7 +260,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
+		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -272,7 +276,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		rightCond = rightPushCond
 	case AntiSemiJoin:
 		predicates = p.joinPropConst(predicates)
-		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true,
+			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -1080,6 +1085,50 @@ func (p *LogicalJoin) AppendJoinConds(eq []*expression.ScalarFunction, left, rig
 	p.OtherConditions = append(other, p.OtherConditions...)
 }
 
+func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bool {
+	colset := slices.Collect(
+		maps.Keys(expression.ExtractColumnsMapFromExpressions(nil, cond)),
+	)
+	for _, schema := range p.allDataSouceSchema {
+		inTheSameSchema := true
+		for _, unique := range colset {
+			if !slices.ContainsFunc(schema.Columns, func(c *expression.Column) bool {
+				return c.UniqueID == unique
+			}) {
+				inTheSameSchema = false
+				break
+			}
+		}
+		if inTheSameSchema {
+			return true
+		}
+	}
+	return false
+}
+
+// getAllDataSourceSchema is to get all datasource's schema
+func getAllDataSourceSchema(plan base.LogicalPlan) []*expression.Schema {
+	switch p := plan.(type) {
+	case *LogicalAggregation:
+		// Because sometimes we put the output of the aggregation into the schema,
+		// we can consider it as a new table.
+		result := make([]*expression.Schema, 0, len(p.Children())+1)
+		for _, child := range p.Children() {
+			result = append(result, getAllDataSourceSchema(child)...)
+		}
+		result = append(result, p.Schema())
+		return result
+	case *DataSource:
+		return []*expression.Schema{p.Schema()}
+	default:
+		result := make([]*expression.Schema, 0, len(p.Children()))
+		for _, child := range p.Children() {
+			result = append(result, getAllDataSourceSchema(child)...)
+		}
+		return result
+	}
+}
+
 // ExtractJoinKeys extract join keys as a schema for child with childIdx.
 func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	joinKeys := make([]*expression.Column, 0, len(p.EqualConditions))
@@ -1263,26 +1312,37 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 	return false
 }
 
-// canPropagateConstantWithInnerJoinOrSemiJoin is to It is used to determine whether the newly created expression
-// during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
-// we will remove it.
 // This function is only used with inner join and semi join.
-func (p *LogicalJoin) canPropagateConstantWithInnerJoinOrSemiJoin(expr expression.Expression) bool {
-	_, _, _, otherCond := p.extractOnCondition([]expression.Expression{expr}, true, true)
-	// If otherCond is empty, we may consider this expression to be useful.
-	// This expression is created by the constant propagation
-	return len(otherCond) == 0
+func (p *LogicalJoin) isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin(expr expression.Expression) bool {
+	return p.isVaildConstantPropagationExpression(expr, true, true)
 }
 
-// canPropagateConstantForJoinPropConst is to It is used to determine whether the newly created expression
-// during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
-// we will remove it.
 // This function is only used in LogicalJoin.joinPropConst.
-func (p *LogicalJoin) canPropagateConstantForJoinPropConst(expr expression.Expression) bool {
-	_, _, _, otherCond := p.extractOnCondition([]expression.Expression{expr}, false, false)
-	// If otherCond is empty, we may consider this expression to be useful.
-	// This expression is created by the constant propagation
-	return len(otherCond) == 0
+func (p *LogicalJoin) isVaildConstantPropagationExpressionForJoinPropConst(expr expression.Expression) bool {
+	return p.isVaildConstantPropagationExpression(expr, false, false)
+}
+
+// isVaildConstantPropagationExpression is to judge whether the expression is created by PropagationContant is vaild.
+//
+// Some expressions are not suitable for constant propagation. After constant propagation,
+// these expressions will only become a projection, increasing the computational load without
+// being able to filter data directly from the data source.
+func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expression, deriveLeft bool, deriveRight bool) bool {
+	_, leftCond, rightCond, otherCond := p.extractOnCondition([]expression.Expression{cond}, deriveLeft, deriveRight)
+	if len(otherCond) > 0 {
+		// a new expression which is created by constant propagation, is a other condtion, we don't put it
+		// into our final result.
+		return false
+	}
+	// When the expression is a left/right condition, we want it to filter more of the underlying data.
+	if len(leftCond) > 0 || len(rightCond) > 0 {
+		// If this expression's columns is in the same table. We will push it down.
+		if p.isAllUniqueIDInTheSameTable(cond) {
+			return true
+		}
+		return false
+	}
+	return true
 }
 
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
@@ -1725,7 +1785,7 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expres
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
 	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema,
-		innerTableSchema, nullSensitive, p.canPropagateConstantForJoinPropConst)
+		innerTableSchema, nullSensitive, p.isVaildConstantPropagationExpressionForJoinPropConst)
 	p.AttachOnConds(joinConds)
 	return predicates
 }
