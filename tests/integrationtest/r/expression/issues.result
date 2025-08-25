@@ -3323,3 +3323,12 @@ set @a=NULL, @b=-2;
 execute stmt using @a,@b;
 COL1	COL3	COL1	COL3
 -2	2295421130981788987	-2	2295421130981788987
+use test;
+drop table if exists escape_like_test_1;
+drop table if exists escape_like_test_2;
+CREATE TABLE escape_like_test_1 (PersonID int);
+CREATE TABLE escape_like_test_2 (PersonID int);
+SELECT TABLE_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME LIKE 'escape_like_test!_%' ESCAPE '!';
+TABLE_NAME	TABLE_ROWS
+escape_like_test_1	0
+escape_like_test_2	0

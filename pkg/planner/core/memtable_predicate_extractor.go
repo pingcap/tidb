@@ -46,6 +46,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// PatternInfo stores a LIKE pattern along with its escape character
+type PatternInfo struct {
+	Pattern    string
+	EscapeChar byte
+}
+
 // extractHelper contains some common utililty functions for all extractor.
 // define an individual struct instead of a bunch of un-exported functions
 // to avoid polluting the global scope of current package.
@@ -231,6 +237,61 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	return name.ColName.L, []types.Datum{v}
 }
 
+// extractColLikeOpConsExpr extracts column name, pattern and escape character from LIKE expressions.
+// Returns column name, pattern datum, and escape character (as byte).
+func (helper extractHelper) extractColLikeOpConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, types.Datum, byte) {
+	args := fn.GetArgs()
+	if len(args) < 2 {
+		return "", types.Datum{}, '\\'
+	}
+
+	col, ok := args[0].(*expression.Column)
+	if !ok {
+		return "", types.Datum{}, '\\'
+	}
+
+	name, found := extractCols[col.UniqueID]
+	if !found {
+		return "", types.Datum{}, '\\'
+	}
+
+	patternConstant, ok := args[1].(*expression.Constant)
+	if !ok || patternConstant.DeferredExpr != nil {
+		return "", types.Datum{}, '\\'
+	}
+
+	patternValue := patternConstant.Value
+	if patternConstant.ParamMarker != nil {
+		var err error
+		patternValue, err = patternConstant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
+		intest.AssertNoError(err, "fail to get param")
+		if err != nil {
+			logutil.BgLogger().Warn("fail to get param", zap.Error(err))
+			return "", types.Datum{}, '\\'
+		}
+	}
+
+	escapeChar := byte('\\')
+	if len(args) >= 3 {
+		escapeConstant, ok := args[2].(*expression.Constant)
+		if ok && escapeConstant.DeferredExpr == nil {
+			escapeValue := escapeConstant.Value
+			if escapeConstant.ParamMarker != nil {
+				var err error
+				escapeValue, err = escapeConstant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
+				if err != nil {
+					escapeValue = types.NewIntDatum(int64('\\'))
+				}
+			}
+			if escapeInt, err := escapeValue.ToInt64(types.StrictContext); err == nil {
+				escapeChar = byte(escapeInt)
+			}
+		}
+	}
+
+	return name.ColName.L, patternValue, escapeChar
+}
+
 // extract the OR expression, e.g:
 // SELECT * FROM t1 WHERE c1='a' OR c1='b' OR c1='c'
 func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
@@ -404,6 +465,65 @@ func (helper *extractHelper) extractLikePatternCol(
 	return
 }
 
+// extractLikePatternColWithEscape extracts LIKE patterns with their escape characters
+func (helper *extractHelper) extractLikePatternColWithEscape(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	extractColName string,
+	toLower bool,
+	needLike2Regexp bool,
+) (
+	remained []expression.Expression,
+	patterns []PatternInfo,
+) {
+	remained = make([]expression.Expression, 0, len(predicates))
+	extractCols := helper.findColumn(schema, names, extractColName)
+	if len(extractCols) == 0 {
+		return predicates, nil
+	}
+
+	// Extract patterns with escape characters
+	for _, expr := range predicates {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			remained = append(remained, expr)
+			continue
+		}
+
+		var canBuildPattern bool
+		var pattern string
+		var escapeChar byte = '\\'
+
+		// Check if this is a LIKE operation
+		if fn.FuncName.L == ast.Like || fn.FuncName.L == ast.Ilike {
+			colName, patternDatum, escape := helper.extractColLikeOpConsExpr(ctx, extractCols, fn)
+			if colName == extractColName {
+				pattern = patternDatum.GetString()
+				escapeChar = escape
+				canBuildPattern = true
+			}
+		} else {
+			// For other operations, use the existing extractLikePattern
+			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+		}
+
+		if canBuildPattern && toLower {
+			pattern = strings.ToLower(pattern)
+		}
+		if canBuildPattern {
+			patterns = append(patterns, PatternInfo{
+				Pattern:    pattern,
+				EscapeChar: escapeChar,
+			})
+		} else {
+			remained = append(remained, expr)
+		}
+	}
+	return
+}
+
 func (helper extractHelper) extractOrLikePattern(
 	ctx base.PlanContext,
 	orFunc *expression.ScalarFunction,
@@ -445,24 +565,31 @@ func (helper extractHelper) extractLikePattern(
 	ok bool,
 	pattern string,
 ) {
-	var colName string
-	var datums []types.Datum
-	switch fn.FuncName.L {
-	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
-		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
-	}
-	if colName != extractColName {
-		return false, ""
-	}
 	switch fn.FuncName.L {
 	case ast.EQ:
+		var colName string
+		var datums []types.Datum
+		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+		if colName != extractColName {
+			return false, ""
+		}
 		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 	case ast.Like, ast.Ilike:
-		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+		colName, patternDatum, _ := helper.extractColLikeOpConsExpr(ctx, extractCols, fn)
+		if colName != extractColName {
+			return false, ""
 		}
-		return true, datums[0].GetString()
+		if needLike2Regexp {
+			return true, stringutil.CompileLike2Regexp(patternDatum.GetString())
+		}
+		return true, patternDatum.GetString()
 	case ast.Regexp, ast.RegexpLike:
+		var colName string
+		var datums []types.Datum
+		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+		if colName != extractColName {
+			return false, ""
+		}
 		return true, datums[0].GetString()
 	default:
 		return false, ""
