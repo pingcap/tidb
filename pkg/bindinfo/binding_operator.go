@@ -58,7 +58,7 @@ func newBindingOperator(sPool util.DestroyableSessionPool, cache BindingCacheUpd
 // It replaces all the exists bindings for the same normalized SQL.
 func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
 	for _, binding := range bindings {
-		if err := prepareHints(sctx, binding); err != nil {
+		if err := prepareHintsWithPool(sctx, binding, op.sPool); err != nil {
 			return err
 		}
 	}

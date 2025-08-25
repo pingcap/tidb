@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pkg/errors"
@@ -268,6 +269,12 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
+	return prepareHintsWithPool(sctx, binding, nil)
+}
+
+// prepareHintsWithPool builds ID and Hint for Bindings with an optional session pool.
+// If sPool is provided and sctx is not nil, we check if the BindSQL is still valid in a separate session.
+func prepareHintsWithPool(sctx sessionctx.Context, binding *Binding, sPool util.DestroyableSessionPool) (rerr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			rerr = errors.Errorf("panic when preparing hints for binding %v, panic: %v", binding.BindSQL, r)
@@ -295,7 +302,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	}
 	if !isCrossDB && !hasParam(stmt) {
 		// TODO: how to check cross-db binding and bindings with parameters?
-		if err = checkBindingValidation(sctx, binding.BindSQL); err != nil {
+		if err = checkBindingValidation(sctx, binding.BindSQL, sPool); err != nil {
 			return err
 		}
 	}
@@ -470,33 +477,45 @@ func hasParam(stmt ast.Node) bool {
 }
 
 // CheckBindingStmt checks whether the statement is valid.
-func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
-	origVals := sctx.GetSessionVars().UsePlanBaselines
-	sctx.GetSessionVars().UsePlanBaselines = false
-
-	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
-	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
-	// the statement won't be able to "break out" from EXPLAIN.
-	rs, err := exec(sctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", bindingSQL))
-	sctx.GetSessionVars().UsePlanBaselines = origVals
-	if rs != nil {
+func checkBindingValidation(sctx sessionctx.Context, bindingSQL string, sPool util.DestroyableSessionPool) error {
+	validateFn := func(validateSctx sessionctx.Context) error {
+		origVals := validateSctx.GetSessionVars().UsePlanBaselines
+		validateSctx.GetSessionVars().UsePlanBaselines = false
 		defer func() {
-			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
-			origin := sctx.GetSessionVars().InRestrictedSQL
-			sctx.GetSessionVars().InRestrictedSQL = true
-			if rerr := rs.Close(); rerr != nil {
-				bindingLogger().Error("close result set failed", zap.Error(rerr), zap.String("binding_sql", bindingSQL))
-			}
-			sctx.GetSessionVars().InRestrictedSQL = origin
+			validateSctx.GetSessionVars().UsePlanBaselines = origVals
 		}()
+
+		// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
+		// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
+		// the statement won't be able to "break out" from EXPLAIN.
+		rs, err := exec(validateSctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", bindingSQL))
+		if rs != nil {
+			defer func() {
+				// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
+				origin := validateSctx.GetSessionVars().InRestrictedSQL
+				validateSctx.GetSessionVars().InRestrictedSQL = true
+				if rerr := rs.Close(); rerr != nil {
+					bindingLogger().Error("close result set failed", zap.Error(rerr), zap.String("binding_sql", bindingSQL))
+				}
+				validateSctx.GetSessionVars().InRestrictedSQL = origin
+			}()
+		}
+		if err != nil {
+			return err
+		}
+		chk := rs.NewChunk(nil)
+		err = rs.Next(context.TODO(), chk)
+		if err != nil {
+			return err
+		}
+		return nil
 	}
-	if err != nil {
-		return err
+
+	// If we have a session pool, use a separate session for validation
+	if sPool != nil {
+		return callWithSCtx(sPool, false, validateFn)
 	}
-	chk := rs.NewChunk(nil)
-	err = rs.Next(context.TODO(), chk)
-	if err != nil {
-		return err
-	}
-	return nil
+
+	// Fallback: if no pool is available, use the current session
+	return validateFn(sctx)
 }
