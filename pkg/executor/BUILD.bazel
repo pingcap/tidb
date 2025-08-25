@@ -4,6 +4,7 @@ go_library(
     name = "executor",
     srcs = [
         "adapter.go",
+        "adapter_slow_log.go",
         "admin.go",
         "admin_plugins.go",
         "analyze.go",
