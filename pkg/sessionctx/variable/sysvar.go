@@ -3647,7 +3647,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case vardef.TiDBRowFormatVersion:
 		varVal = strconv.Itoa(vardef.DefTiDBRowFormatV2)
 	case vardef.TiDBTxnAssertionLevel:
-		varVal = vardef.AssertionFastStr
+		if kerneltype.IsNextGen() {
+			varVal = vardef.AssertionStrictStr
+		} else {
+			varVal = vardef.AssertionFastStr
+		}
 	case vardef.TiDBEnableMutationChecker:
 		varVal = vardef.On
 	case vardef.TiDBPessimisticTransactionFairLocking:
