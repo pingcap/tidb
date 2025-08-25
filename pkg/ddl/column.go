@@ -375,7 +375,7 @@ func updateModifyingCols(oldCol, changingCol *model.ColumnInfo) {
 	oldCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: changingCol.Offset}
 }
 
-func moveColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
+func moveChangingColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
 	// Swap the old column with new column position.
 	oldOffset := oldCol.Offset
 	changingOffset := changingCol.Offset
@@ -386,6 +386,30 @@ func moveColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.C
 	destOffset, err := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
 	intest.AssertNoError(err)
 	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
+}
+
+func moveOldColumnInfo(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
+	var prevColStates []model.SchemaState
+	switch oldCol.State {
+	case model.StateWriteOnly:
+		prevColStates = []model.SchemaState{model.StatePublic, model.StateWriteOnly}
+	case model.StateDeleteOnly:
+		prevColStates = []model.SchemaState{model.StatePublic, model.StateWriteOnly, model.StateDeleteOnly}
+	default:
+		intest.Assert(false, "unexpected old column state")
+		return
+	}
+	dest := len(tblInfo.Columns) - 1
+	for i, col := range tblInfo.Columns {
+		if col.ID == oldCol.ID {
+			continue
+		}
+		if !slices.Contains(prevColStates, col.State) {
+			dest = i
+			break
+		}
+	}
+	tblInfo.MoveColumnInfo(oldCol.Offset, dest)
 }
 
 func moveIndexInfoToDest(tblInfo *model.TableInfo, changingCol *model.ColumnInfo,
@@ -970,10 +994,10 @@ func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName 
 	col.Name = newName
 }
 
-func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
-	changingCol.State = schemaState
-	for _, idx := range changingIdxs {
-		idx.State = schemaState
+func updateObjectState(col *model.ColumnInfo, idxs []*model.IndexInfo, state model.SchemaState) {
+	col.State = state
+	for _, idx := range idxs {
+		idx.State = state
 	}
 }
 
