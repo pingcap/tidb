@@ -701,9 +701,9 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
 	// Please see the Case 2 in CalcTotalSelectivityForMVIdxPath for an example.
 	if idx.MVIndex && rowCount > ds.TableStats.RowCount {
-		is.SetStats(ds.TableStats.Scale(rowCount / ds.TableStats.RowCount))
+		is.SetStats(ds.TableStats.Scale(ds.SCtx().GetSessionVars(), rowCount/ds.TableStats.RowCount))
 	} else {
-		is.SetStats(ds.TableStats.ScaleByExpectCnt(rowCount))
+		is.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount))
 	}
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {

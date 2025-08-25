@@ -108,7 +108,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if ds.StatsInfo() != nil {
 		// Just reload the GroupNDVs.
 		selectivity := ds.StatsInfo().RowCount / ds.TableStats.RowCount
-		ds.SetStats(ds.TableStats.Scale(selectivity))
+		ds.SetStats(ds.TableStats.Scale(lp.SCtx().GetSessionVars(), selectivity))
 		return ds.StatsInfo(), false, nil
 	}
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -551,7 +551,7 @@ func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, fi
 	// Only '0' is suggested, see https://docs.pingcap.com/zh/tidb/stable/system-variables#tidb_optimizer_selectivity_level.
 	// stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.SCtx(), nodes)
 	// }
-	return ds.TableStats.Scale(selectivity)
+	return ds.TableStats.Scale(ds.SCtx().GetSessionVars(), selectivity)
 }
 
 // We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need

@@ -105,7 +105,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 			maxRowCount = max(maxRowCount, ds.PossibleAccessPaths[i].CountAfterAccess)
 		}
 		if ds.StatsInfo().RowCount > maxRowCount {
-			ds.SetStats(ds.TableStats.ScaleByExpectCnt(maxRowCount))
+			ds.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), maxRowCount))
 		}
 	}
 
