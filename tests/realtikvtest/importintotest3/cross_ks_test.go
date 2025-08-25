@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -37,6 +39,7 @@ func TestOnUserKeyspace(t *testing.T) {
 	userStore := runtimes["keyspace1"].Store
 	userTK := testkit.NewTestKit(t, userStore)
 	prepareAndUseDB("cross_ks", userTK)
+	userTK.MustExec("drop table if exists t;")
 	userTK.MustExec("create table t (a bigint, b varchar(100));")
 	ctx := context.Background()
 	s3Args := "access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%3a%2f%2f0.0.0.0%3a9000"
@@ -63,4 +66,11 @@ func TestOnUserKeyspace(t *testing.T) {
 	// reverse check
 	sysKSTk.MustQuery(jobQuerySQL).Check(testkit.Rows("0"))
 	userTK.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
+
+	// Check the summary from user keyspace is correct, which is get from subtask summaries.
+	rs := userTK.MustQuery(fmt.Sprintf("select summary from mysql.tidb_import_jobs where id = %d", jobID)).Rows()
+	require.Len(t, rs, 1)
+	summary := &importer.Summary{}
+	require.NoError(t, json.Unmarshal([]byte(rs[0][0].(string)), summary))
+	require.EqualValues(t, 1, summary.ImportedRows)
 }
