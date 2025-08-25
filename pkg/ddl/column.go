@@ -587,6 +587,15 @@ func (w *worker) updateCurrentElement(
 		}
 	}
 
+	origIsDistReorg := reorgInfo.ReorgMeta.IsDistReorg
+	origIsFastReorg := reorgInfo.ReorgMeta.IsFastReorg
+	defer func() {
+		reorgInfo.ReorgMeta.IsDistReorg = origIsDistReorg
+		reorgInfo.ReorgMeta.IsFastReorg = origIsFastReorg
+	}()
+	reorgInfo.ReorgMeta.IsDistReorg = true
+	reorgInfo.ReorgMeta.IsFastReorg = true
+
 	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
 		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].

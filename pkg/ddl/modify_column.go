@@ -632,7 +632,7 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *m
 
 func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
-	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		err = errors.Trace(err1)
