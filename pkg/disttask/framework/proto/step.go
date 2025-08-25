@@ -126,6 +126,9 @@ const (
 
 	// BackfillStepWriteAndIngest write sorted kv into TiKV and ingest it.
 	BackfillStepWriteAndIngest Step = 3
+
+	// BackfillStepMergeTempIndex is the step to merge temp index into the original index.
+	BackfillStepMergeTempIndex Step = 4
 )
 
 // StepStr convert proto.Step to string.
@@ -137,6 +140,8 @@ func backfillStep2Str(s Step) string {
 		return "merge-sort"
 	case BackfillStepWriteAndIngest:
 		return "ingest"
+	case BackfillStepMergeTempIndex:
+		return "merge-temp-index"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}
