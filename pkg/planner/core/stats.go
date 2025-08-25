@@ -380,7 +380,13 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
 	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+		if path.MinCountAfterAccess > 0 {
+			path.MinCountAfterAccess = min(path.MinCountAfterAccess, path.CountAfterAccess)
+		} else {
+			path.MinCountAfterAccess = path.CountAfterAccess
+		}
+		path.CountAfterAccess = min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+		path.MaxCountAfterAccess = max(path.CountAfterAccess, path.MaxCountAfterAccess)
 	}
 	return nil
 }
