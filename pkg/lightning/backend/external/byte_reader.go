@@ -110,6 +110,7 @@ func newByteReader(
 	}
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
+
 	return r, r.reload()
 }
 
