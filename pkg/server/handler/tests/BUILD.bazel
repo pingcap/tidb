@@ -10,12 +10,8 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     race = "on",
-    shard_count = 40,
-=======
-    shard_count = 42,
->>>>>>> 97c5139bf91 (dxf: add schedule status api for nextgen (#63159))
+    shard_count = 41,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
