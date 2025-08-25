@@ -189,4 +189,5 @@ func TestGrantColumnScope(t *testing.T) {
 
 	tk.MustGetErrMsg("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';",
 		"[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
+	tk.MustGetErrMsg("GRANT SELECT(c3) ON test.test3 TO 'testCol'@'localhost'", "[schema:1054]Unknown column 'c3' in 'test3'")
 }
