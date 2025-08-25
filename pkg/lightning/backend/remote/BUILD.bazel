@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "remote",
+    srcs = [
+        "chunk_sender.go",
+        "chunk_store.go",
+        "remote.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/backend/remote",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/lightning/backend",
+        "//pkg/lightning/backend/encode",
+        "//pkg/lightning/backend/local",
+        "//pkg/lightning/checkpoints",
+        "//pkg/lightning/common",
+        "//pkg/lightning/config",
+        "//pkg/lightning/errormanager",
+        "//pkg/lightning/log",
+        "//pkg/lightning/mydump",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_pd_client//servicediscovery",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "remote_test",
+    timeout = "short",
+    srcs = [
+        "chunk_sender_test.go",
+        "chunk_store_test.go",
+        "util_test.go",
+    ],
+    embed = [":remote"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "//pkg/lightning/checkpoints",
+        "//pkg/lightning/log",
+        "//pkg/lightning/mydump",
+        "//pkg/meta/model",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)
