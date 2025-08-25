@@ -4,17 +4,24 @@ go_test(
     name = "tests_test",
     timeout = "short",
     srcs = [
+        "dxf_test.go",
         "http_handler_serial_test.go",
         "http_handler_test.go",
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 40,
+=======
+    shard_count = 42,
+>>>>>>> 97c5139bf91 (dxf: add schedule status api for nextgen (#63159))
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/util",
+        "//pkg/disttask/framework/schstatus",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
