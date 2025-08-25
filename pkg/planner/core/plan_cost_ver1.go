@@ -804,7 +804,7 @@ func getCost4PhysicalMergeJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFla
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
 	// we compute average memory cost using estimated group size.
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(innerKeys, innerSchema, innerStats)
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(p.SCtx(), innerKeys, innerSchema, innerStats)
 	memoryCost := (innerCnt / ndv) * sessVars.GetMemoryFactor()
 	return cpuCost + memoryCost
 }

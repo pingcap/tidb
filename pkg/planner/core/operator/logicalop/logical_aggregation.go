@@ -238,7 +238,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		la.StatsInfo().GroupNDVs = la.getGroupNDVs(childProfile, gbyCols)
 		return la.StatsInfo(), false, nil
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), gbyCols, childSchema[0], childProfile)
 	la.SetStats(&property.StatsInfo{
 		RowCount: ndv,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),

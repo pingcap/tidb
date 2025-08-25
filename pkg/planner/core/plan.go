@@ -110,7 +110,7 @@ func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContex
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ctx, partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -151,7 +151,7 @@ func optimizeByShuffle4StreamAgg(pp *physicalop.PhysicalStreamAgg, ctx base.Plan
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ctx, partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}

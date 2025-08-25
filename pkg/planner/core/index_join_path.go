@@ -210,7 +210,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		}
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
@@ -259,7 +259,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 			remained = append(remained, colAccesses...)
 		}
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
 	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
@@ -279,7 +279,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColManager = nil
 	}
 	mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-	ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
+	ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
 	return ret, false, nil
 }
 
@@ -307,6 +307,7 @@ func indexJoinPathCompare(best, current *indexJoinPathResult) (curIsBetter bool)
 
 // indexJoinPathConstructResult constructs the index join path result.
 func indexJoinPathConstructResult(
+	sctx planctx.PlanContext,
 	indexJoinInfo *indexJoinPathInfo,
 	buildTmp *indexJoinPathTmp,
 	ranges ranger.MutableRanges,
@@ -316,7 +317,8 @@ func indexJoinPathConstructResult(
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
 	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
+		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(
+			sctx, path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
