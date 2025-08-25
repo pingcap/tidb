@@ -665,7 +665,6 @@ func (t *Table) ShallowCopy() *Table {
 
 // CopyForColumnMapUpdate creates a copy optimized for column updates.
 func (t *Table) CopyForColumnMapUpdate() *Table {
-
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
 		RealtimeCount: t.RealtimeCount,
