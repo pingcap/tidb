@@ -654,6 +654,7 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	matchedFuncs := make(map[*expression.ScalarFunction]struct{}, 2)
 	for _, cond := range ds.PushedDownConds {
 		sf, ok := cond.(*expression.ScalarFunction)
+		// Not a scalar function, go to next one.
 		if !ok {
 			continue
 		}

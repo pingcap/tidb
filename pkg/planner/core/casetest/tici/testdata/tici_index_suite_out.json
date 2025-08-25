@@ -12,6 +12,15 @@
         "Warn": null
       },
       {
+        "SQL": "explain format='brief' select * from t1 where fts_match_prefix('hello', title)",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
         "Plan": [
           "Projection 10000.00 root  test.t1.id",
@@ -133,6 +142,16 @@
           "Projection 10000.00 root  test.t1.id",
           "└─IndexLookUp 1000.00 root  ",
           "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:or(and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where (fts_match_prefix('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
+        "Plan": [
+          "Projection 10000.00 root  test.t1.id",
+          "└─IndexLookUp 1000.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:or(and(istrue_with_null(fts_match_prefix(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null

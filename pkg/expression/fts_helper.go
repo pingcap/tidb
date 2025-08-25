@@ -25,9 +25,10 @@ type FTSInfo struct {
 	Column *Column
 }
 
-// FTSFuncMap is a map of TiDB implemented FullTextSearch functions.
+// FTSFuncMap stores the functions related to fulltext search.
 var FTSFuncMap map[string]struct{} = map[string]struct{}{
-	ast.FTSMatchWord: {},
+	ast.FTSMatchWord:   {},
+	ast.FTSMatchPrefix: {},
 }
 
 // ContainsFullTextSearchFn recursively checks whether the expression tree contains a
