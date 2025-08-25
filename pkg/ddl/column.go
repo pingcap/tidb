@@ -614,7 +614,13 @@ func (w *worker) updateCurrentElement(
 		}
 	}
 
-	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
+	restoreReorgMeta := w.resetReorgMeta(reorgInfo.ReorgMeta, reorgInfo.Job)
+	elements := slices.Clone(reorgInfo.elements)
+	defer func() {
+		restoreReorgMeta()
+		reorgInfo.elements = elements
+	}()
+	for i := startElementOffset; i < len(elements[1:]); i++ {
 		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
@@ -622,7 +628,8 @@ func (w *worker) updateCurrentElement(
 		}
 
 		// Update the element in the reorgInfo for updating the reorg meta below.
-		reorgInfo.currElement = reorgInfo.elements[i+1]
+		reorgInfo.currElement = elements[i+1]
+		reorgInfo.elements = []*meta.Element{reorgInfo.currElement}
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.DDLLogger().Info("update column and indexes",
@@ -639,6 +646,32 @@ func (w *worker) updateCurrentElement(
 		}
 	}
 	return nil
+}
+
+func (w *worker) resetReorgMeta(reorgMeta *model.DDLReorgMeta, job *model.Job) func() {
+	origIsDistReorg := reorgMeta.IsDistReorg
+	origIsFastReorg := reorgMeta.IsFastReorg
+	origReorgTp := reorgMeta.ReorgTp
+	origUseCloud := reorgMeta.UseCloudStorage
+	restoreReorgMeta := func() {
+		reorgMeta.IsDistReorg = origIsDistReorg
+		reorgMeta.IsFastReorg = origIsFastReorg
+		reorgMeta.ReorgTp = origReorgTp
+		reorgMeta.UseCloudStorage = origUseCloud
+	}
+
+	reorgMeta.IsDistReorg = vardef.EnableDistTask.Load()
+	reorgMeta.IsFastReorg = vardef.EnableFastReorg.Load()
+	reorgMeta.ReorgTp = model.ReorgTypeNone
+	if len(vardef.TiDBCloudStorageURI) > 0 {
+		loadCloudStorageURI(w, job)
+	}
+	if newReorgTp, err := pickBackfillType(job); err == nil {
+		reorgMeta.ReorgTp = newReorgTp
+	} else {
+		restoreReorgMeta()
+	}
+	return restoreReorgMeta
 }
 
 type updateColumnWorker struct {

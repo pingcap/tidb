@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -99,8 +98,8 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	if err != nil {
 		return nil, err
 	}
-	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
-		job.Type == model.ActionAddIndex)
+	intest.Assert(job.Type == model.ActionAddPrimaryKey || job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionModifyColumn)
 	intest.Assert(job.ReorgMeta != nil)
 
 	failpoint.Inject("beforeCreateLocalBackend", func() {
@@ -144,24 +143,20 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 }
 
 // CreateLocalBackend creates a local backend for adding index.
-func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, attachDupSuffix bool, adjustedWorkerConcurrency int, dupeDetect bool) (*local.BackendConfig, *local.Backend, error) {
 	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
-	jobSortPath, err := genJobSortPath(job.ID, checkDup)
+	jobSortPath, err := genJobSortPath(job.ID, attachDupSuffix)
 	if err != nil {
 		return nil, nil, err
 	}
-	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
-		job.Type == model.ActionAddIndex)
+	intest.Assert(job.Type == model.ActionAddPrimaryKey || job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionModifyColumn)
 	intest.Assert(job.ReorgMeta != nil)
 
 	resGroupName := job.ReorgMeta.ResourceGroupName
 	concurrency := job.ReorgMeta.GetConcurrency()
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
-	hasUnique, err := hasUniqueIndex(job)
-	if err != nil {
-		return nil, nil, err
-	}
-	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
+	cfg := genConfig(ctx, jobSortPath, LitMemRoot, dupeDetect, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed)
 	if adjustedWorkerConcurrency > 0 {
 		cfg.WorkerConcurrency = adjustedWorkerConcurrency
 	}
@@ -185,26 +180,12 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, c
 		zap.Int64("job ID", job.ID),
 		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
 		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
-		zap.Bool("has unique index", hasUnique))
+		zap.Bool("duplicate detect", dupeDetect))
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
 	return cfg, be, err
-}
-
-func hasUniqueIndex(job *model.Job) (bool, error) {
-	args, err := model.GetModifyIndexArgs(job)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	for _, a := range args.IndexArgs {
-		if a.Unique {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 const checkpointUpdateInterval = 10 * time.Minute

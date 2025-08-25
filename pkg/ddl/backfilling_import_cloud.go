@@ -75,7 +75,8 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, false, e.taskConcurrency)
+	// For CLOUD IMPORT, we detected conflicts in the previous step.
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, false, e.taskConcurrency, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
