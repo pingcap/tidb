@@ -26,6 +26,7 @@ go_library(
         "//pkg/lightning/log",
         "//pkg/lightning/metric",
         "//pkg/lightning/worker",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
