@@ -134,3 +134,16 @@ PARTITION BY RANGE (YEAR(`dob`))
  PARTITION `p1980` VALUES LESS THAN (1990),
  PARTITION `p1990` VALUES LESS THAN (2000));
 ALTER TABLE members REORGANIZE PARTITION `p1990` INTO (PARTITION p1995 VALUES LESS THAN (1995),  PARTITION p2000 VALUES LESS THAN (2010));
+
+# TestAvoidDropModifyChangeColumnReferencedByPartialCondition
+create table t (a int, b int, key testidx(b) where a > 2);
+insert into t values (1, 2);
+--error 8266
+alter table t modify column a bigint;
+--error 8266
+alter table t drop column a;
+--error 8266
+alter table t change column a c int;
+alter table t drop index testidx;
+alter table t modify column b bigint;
+alter table t drop column b;
