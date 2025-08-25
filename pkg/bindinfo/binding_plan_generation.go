@@ -338,10 +338,10 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().OptOrderingIdxSelRatio = state.varValues[i].(float64)
 		case vardef.TiDBOptRiskEqSkewRatio:
 			sctx.GetSessionVars().RiskEqSkewRatio = state.varValues[i].(float64)
-		case vardef.TiDBOptRiskRangeSkewRatio:
-			sctx.GetSessionVars().RiskRangeSkewRatio = state.varValues[i].(float64)
 		case vardef.TiDBOptRiskGroupNDVSkewRatio:
 			sctx.GetSessionVars().RiskGroupNDVSkewRatio = state.varValues[i].(float64)
+		case vardef.TiDBOptRiskRangeSkewRatio:
+			sctx.GetSessionVars().RiskRangeSkewRatio = state.varValues[i].(float64)
 		case vardef.TiDBOptPreferRangeScan:
 			sctx.GetSessionVars().SetAllowPreferRangeScan(state.varValues[i].(bool))
 		default:
