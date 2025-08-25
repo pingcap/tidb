@@ -331,11 +331,12 @@ Sort	root		Column#5, Column#6, Column#7
 explain format='plan_tree' select min(a), max(b), sum(c) from t1 group by d having max(b) < 20;
 id	task	access object	operator info
 Sort	root		Column#5, Column#6, Column#7
-└─Selection	root		lt(Column#6, 20)
+└─Selection	root		not(isnull(Column#6))
   └─HashAgg	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7
     └─TableReader	root		data:HashAgg
       └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column#11, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column#12, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column#13
-        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+        └─Selection	cop[tikv]		lt(planner__core__casetest__rule__rule_result_reorder.t1.b, 20)
+          └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select case when a=1 then 'a1' when a=2 then 'a2' else 'ax' end from t1 ;
 id	task	access object	operator info
 Projection	root		case(eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 1), a1, eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 2), a2, ax)->Column#5
