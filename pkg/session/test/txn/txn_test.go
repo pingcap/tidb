@@ -24,7 +24,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -502,4 +504,30 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 		require.NoError(t, err)
 	}
 	tk.MustExec("commit")
+}
+
+func TestHasDirtyContent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	testcases := []struct {
+		sql      string
+		hasDirty bool
+	}{
+		{"insert into t values (0)", false},
+		{"begin", false},
+		{"insert into t values (1)", true},
+		{"commit", false},
+		{"set @@autocommit=0", false},
+		{"insert into t values (2)", true},
+		{"commit", false},
+	}
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	for _, ca := range testcases {
+		tk.MustExec(ca.sql)
+		require.Equal(t, ca.hasDirty, tk.Session().HasDirtyContent(tb.Meta().ID))
+	}
 }
