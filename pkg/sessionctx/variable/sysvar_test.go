@@ -1035,7 +1035,7 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 		val, err = mock.GetGlobalSysVar(vardef.TiDBServerMemoryLimit)
 		require.NoError(t, err)
 		require.Equal(t, "75%", val)
-		require.Equal(t, memory.ServerMemoryLimit.Load(), total/100*75)
+		require.Equal(t, memory.ServerMemoryLimit.Load(), total*75/100)
 	}
 	// Test can't obtain physical memory
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/GetMemTotalError", `return(true)`))

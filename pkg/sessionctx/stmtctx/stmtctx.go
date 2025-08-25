@@ -269,6 +269,9 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InShowWarning          bool
 
+	// MemSensitive indicates whether the mem usage of statement should be controlled by the global memory arbitrator.
+	MemSensitive bool
+
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
 

@@ -267,6 +267,7 @@ select * from t;
 # Cop_proc_avg: 0 Cop_proc_addr: 172.16.6.173:40161
 # Cop_wait_avg: 0 Cop_wait_addr: 172.16.6.173:40161
 # Mem_max: 186
+# Mem_arbitration: 215
 # Prepared: false
 # Plan_from_cache: false
 # Plan_from_binding: false
