@@ -474,6 +474,9 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				}
 
 				sql := "analyze table %n.%n"
+				if tblInfo.Name.L == "t" {
+					continue
+				}
 				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
