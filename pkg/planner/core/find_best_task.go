@@ -1141,7 +1141,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
-	eqOrInResult := compareEqOrIn(lhs, rhs)
+	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
 	// sum is the aggregate score of various comparison metrics between lhs and rhs. riskResult is excluded
 	// because more work is required.
@@ -1156,11 +1156,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && sum >= 0 &&
-			(eqOrInResult > 0 || (lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount)) {
+			(eqOrInResult > 0 || (lhs.path.EqOrInCondCount > 0 && lhsEqOrInCount >= rhsEqOrInCount)) {
 			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
 		if !rhsPseudo && sum <= 0 &&
-			(eqOrInResult < 0 || (rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount)) {
+			(eqOrInResult < 0 || (rhs.path.EqOrInCondCount > 0 && rhsEqOrInCount >= lhsEqOrInCount)) {
 			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
 		}
 		if preferRange {
@@ -1168,11 +1168,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			// 1) there are at least 2 equal/INs
 			// 2) OR - it's a full index match for all index predicates
 			if lhsPseudo && eqOrInResult > 0 && sum >= 0 &&
-				(lhs.path.EqOrInCondCount > 1 || isFullIndexMatch(lhs)) {
+				(lhsEqOrInCount > 1 || isFullIndexMatch(lhs)) {
 				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
 			if rhsPseudo && eqOrInResult < 0 && sum <= 0 &&
-				(rhs.path.EqOrInCondCount > 1 || isFullIndexMatch(rhs)) {
+				(rhsEqOrInCount > 1 || isFullIndexMatch(rhs)) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
 		}
@@ -1241,41 +1241,26 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 	return lhsPseudo, rhsPseudo
 }
 
-func compareEqOrIn(lhs, rhs *candidatePath) int {
+func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqOrInCount int) {
 	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
 		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
-		return 0
+		return 0, 0, 0
 	}
-	lhsEqOrIn := lhs.path.EqOrInCondCount
-	rhsEqOrIn := rhs.path.EqOrInCondCount
-	if lhs.path.IsDNFCond && lhs.path.MinAccessCondsForDNFCond > lhsEqOrIn {
-		lhsEqOrIn = lhs.path.MinAccessCondsForDNFCond
-		// if we've used DNF accessConds for lhs, we should use for rhs also - since AccessConds for DNF conditions
-		// include equals plus range.
-		if !rhs.path.IsDNFCond {
-			rhsEqOrIn = max(rhsEqOrIn, len(rhs.path.AccessConds))
-		}
+	lhsEqOrInCount = lhs.equalPredicateCount()
+	rhsEqOrInCount = rhs.equalPredicateCount()
+	if lhsEqOrInCount > rhsEqOrInCount {
+		return 1, lhsEqOrInCount, rhsEqOrInCount
 	}
-	if rhs.path.IsDNFCond && rhs.path.MinAccessCondsForDNFCond > rhsEqOrIn {
-		rhsEqOrIn = rhs.path.MinAccessCondsForDNFCond
-		// if we've used DNF accessConds for rhs, we should use for lhs also - since AccessConds for DNF conditions
-		// include equals plus range.
-		if !lhs.path.IsDNFCond {
-			lhsEqOrIn = max(lhsEqOrIn, len(lhs.path.AccessConds))
-		}
+	if lhsEqOrInCount < rhsEqOrInCount {
+		return -1, lhsEqOrInCount, rhsEqOrInCount
 	}
-	if lhsEqOrIn > rhsEqOrIn {
-		return 1
-	}
-	if lhsEqOrIn < rhsEqOrIn {
-		return -1
-	}
-	return 0
+	// We didn't find a winner, but return both counts for use by the caller
+	return 0, lhsEqOrInCount, rhsEqOrInCount
 }
 
 func isFullIndexMatch(candidate *candidatePath) bool {
 	// Check if the DNF condition is a full match
-		candidate.hasOnlyEqualPredicatesInDNF() {
+	if candidate.hasOnlyEqualPredicatesInDNF() {
 		return true
 	}
 	// Return the non-DNF full index match result
@@ -1660,7 +1645,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqOrInCondCount > 0 || c.hasOnlyEqualPredicatesInDNF() || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
@@ -1680,16 +1665,18 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 }
 
 // hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
-func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
+func (c *candidatePath) equalPredicateCount() int {
 	// Exit if this isn't a DNF condition or has no access conditions
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
-		return false
+		return c.path.EqOrInCondCount
 	}
-	// If the DNF condition has more than one access condition, all OR conditions must have equal predicates.
-	if c.path.MinAccessCondsForDNFCond > 1 {
-		return true
+	if c.hasOnlyEqualPredicatesInDNF() {
+		return c.path.MinAccessCondsForDNFCond
 	}
+	return max(0, c.path.MinAccessCondsForDNFCond-1)
+}
 
+func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
 	var isEqualPredicateOrOr func(expr expression.Expression) bool
 	isEqualPredicateOrOr = func(expr expression.Expression) bool {
