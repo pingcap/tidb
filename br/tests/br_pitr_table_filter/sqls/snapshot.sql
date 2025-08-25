@@ -23,9 +23,10 @@ create table test_snapshot_db_create.t_drop_index (id int, key i1(id));
 create table test_snapshot_db_create.t_drop_unique_key (id int, unique key i1(id));
 
 -- ActionAddForeignKey
--- TODO: Known issue - DROP FOREIGN KEY conflicts with auto-created indexes during PITR restore
--- create table test_snapshot_db_create.t_fk_parent (id int primary key, name varchar(50));
--- create table test_snapshot_db_create.t_fk_child_add (id int primary key, parent_id int);
+create table test_snapshot_db_create.t_fk_parent (id int primary key, name varchar(50));
+create table test_snapshot_db_create.t_fk_child_add (id int primary key, parent_id int);
+insert into test_snapshot_db_create.t_fk_parent values (1, 'a'), (2, 'b');
+insert into test_snapshot_db_create.t_fk_child_add values (1, 1), (2, 2);
 
 -- ActionTruncateTable
 create table test_snapshot_db_create.t_to_be_truncated (id int);
