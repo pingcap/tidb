@@ -83,6 +83,14 @@ func (d *Dumper) GetStatus() *DumpStatus {
 		} else {
 			ret.Progress = fmt.Sprintf("%5.2f %%", progress*100)
 		}
+	} else {
+		// Debug: Show ongoing chunk progress even when progressReady is false for streaming tables
+		totalChunks := d.metrics.totalChunks.Load()
+		completedChunks := d.metrics.completedChunks.Load()
+		if totalChunks > 0 {
+			progress := float64(completedChunks) / float64(totalChunks)
+			ret.Progress = fmt.Sprintf("%5.2f %% (streaming)", progress*100)
+		}
 	}
 	return ret
 }
