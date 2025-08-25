@@ -1275,8 +1275,7 @@ func compareEqOrIn(lhs, rhs *candidatePath) int {
 
 func isFullIndexMatch(candidate *candidatePath) bool {
 	// Check if the DNF condition is a full match
-	if candidate.path.IsDNFCond && candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns) &&
-		candidate.hasOnlyEqualPredicatesInDNF() { // hasOnlyEqualPredicatesInDNF is equivalent of EqOrInCondCount > 0
+		candidate.hasOnlyEqualPredicatesInDNF() {
 		return true
 	}
 	// Return the non-DNF full index match result
