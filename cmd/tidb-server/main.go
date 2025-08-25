@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/standby"
-	"github.com/pingcap/tidb/pkg/statistics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -823,7 +822,6 @@ func setGlobalVars() {
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	vardef.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
-	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}
