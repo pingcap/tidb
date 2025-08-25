@@ -57,15 +57,18 @@ func ExprOnlyContainsLogicOpAndFTS(expr Expression) bool {
 	case *ScalarFunction:
 		// TiDB's FTS functions return float value for potential BM25 score cases.
 		// So there'll be a IS TRUE wrapped to convert the float to boolean.
-		if x.FuncName.L == ast.LogicAnd || x.FuncName.L == ast.LogicOr || x.FuncName.L == ast.IsTruthWithNull {
+		switch x.FuncName.L {
+		case ast.LogicAnd, ast.LogicOr, ast.IsTruthWithNull:
 			for _, arg := range x.GetArgs() {
 				if !ExprOnlyContainsLogicOpAndFTS(arg) {
 					return false
 				}
 			}
 			return true
-		} else if _, ok := FTSFuncMap[x.FuncName.L]; ok {
-			return true
+		default:
+			if _, ok := FTSFuncMap[x.FuncName.L]; ok {
+				return true
+			}
 		}
 	default:
 		return false
