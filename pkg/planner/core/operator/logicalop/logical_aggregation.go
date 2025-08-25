@@ -575,14 +575,14 @@ func (la *LogicalAggregation) DistinctArgsMeetsProperty() bool {
 // For example,
 // (a > 1 or avg(b) > 1) and (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: a < 3, ret: a > 1 or avg(b) > 1
-func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, isFromAgg bool) (condsToPush, ret []expression.Expression) {
+func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
 	subCNFItem := expression.SplitCNFItems(cond)
 	if len(subCNFItem) == 1 {
-		return la.pushDownPredicatesForAggregation(subCNFItem[0], groupByColumns, exprsOriginal, isFromAgg)
+		return la.pushDownPredicatesForAggregation(subCNFItem[0], groupByColumns, exprsOriginal, pushDownFunc)
 	}
 	exprCtx := la.SCtx().GetExprCtx()
 	for _, item := range subCNFItem {
-		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal, isFromAgg)
+		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal, pushDownFunc)
 		if len(condsToPushForItem) > 0 {
 			condsToPush = append(condsToPush, expression.ComposeDNFCondition(exprCtx, condsToPushForItem...))
 		}
@@ -598,16 +598,16 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 // For example,
 // (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
-func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, isFromAgg bool) (_, _ []expression.Expression) {
+func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (_, _ []expression.Expression) {
 	subDNFItem := expression.SplitDNFItems(cond)
 	if len(subDNFItem) == 1 {
-		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal, isFromAgg)
+		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal, pushDownFunc)
 	}
 	condsToPush := make([]expression.Expression, 0, len(subDNFItem))
 	var ret []expression.Expression
 	exprCtx := la.SCtx().GetExprCtx()
 	for _, item := range subDNFItem {
-		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal, isFromAgg)
+		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal, pushDownFunc)
 		if len(condsToPushForItem) <= 0 {
 			return nil, []expression.Expression{cond}
 		}
@@ -635,13 +635,13 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 	aggColumns := expression.NewSchema(la.getAggFuncsColsForFirstRow()...)
 	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
-		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal, false)
+		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
 		if len(subCondsToPush) > 0 {
 			condsToPush = append(condsToPush, subCondsToPush...)
 		}
 		if len(subRet) > 0 {
 			for _, s := range subRet {
-				subCondsToPush1, subRet1 := la.pushDownDNFPredicatesForAggregation(s, aggColumns, exprsOriginal, true)
+				subCondsToPush1, subRet1 := la.pushDownDNFPredicatesForAggregation(s, aggColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
 				if len(subCondsToPush1) > 0 {
 					condsToPush = append(condsToPush, subCondsToPush1...)
 				}
@@ -669,8 +669,8 @@ func (la *LogicalAggregation) getAggFuncsColsForFirstRow() (aggFuncsCols []*expr
 }
 
 // pushDownPredicatesForAggregation split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, isFromAggFunction bool) (condsToPush, ret []expression.Expression) {
-	switch cond.(type) {
+func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
+	switch c := cond.(type) {
 	case *expression.Constant:
 		condsToPush = append(condsToPush, cond)
 		// Consider SQL list "select sum(b) from t group by a having 1=0". "1=0" is a constant predicate which should be
@@ -678,29 +678,51 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 		// with value 0 rather than an empty query result.
 		ret = append(ret, cond)
 	case *expression.ScalarFunction:
-		extractedCols := expression.ExtractColumnsMapFromExpressions(nil, cond)
-		var schemaCol *expression.Column
-		if isFromAggFunction && len(extractedCols) != 1 {
-			ret = append(ret, cond)
-			return condsToPush, ret
-		}
-		for _, col := range extractedCols {
-			schemaCol = groupByColumns.RetrieveColumn(col)
-			if schemaCol == nil {
-				break
-			}
-		}
-		if schemaCol != nil {
-			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
-			condsToPush = append(condsToPush, newFunc)
-			if isFromAggFunction {
-				ctx := la.SCtx().GetExprCtx()
-				ret = append(ret, expression.BuildNotNullExpr(ctx, schemaCol))
-			}
-		} else {
-			ret = append(ret, cond)
-		}
+		return pushDownFunc(c, groupByColumns, exprsOriginal)
 	default:
+		ret = append(ret, cond)
+	}
+	return condsToPush, ret
+}
+
+type pushDownPredicatesFunc func(cond *expression.ScalarFunction, cols *expression.Schema, exprsOriginal []expression.Expression) (_, _ []expression.Expression)
+
+func (la *LogicalAggregation) pushDownPredicatesByGroupby(cond *expression.ScalarFunction, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
+	extractedCols := expression.ExtractColumns(cond)
+	ok := true
+	for _, col := range extractedCols {
+		if !groupByColumns.Contains(col) {
+			ok = false
+			break
+		}
+	}
+	if ok {
+		newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
+		condsToPush = append(condsToPush, newFunc)
+	} else {
+		ret = append(ret, cond)
+	}
+	return
+}
+
+// pushDownPredicatesByAggFuncs is only used for firstrow
+func (la *LogicalAggregation) pushDownPredicatesByAggFuncs(cond *expression.ScalarFunction, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
+	extractedCols := expression.ExtractColumnsMapFromExpressions(nil, cond)
+	var schemaCol *expression.Column
+	if len(extractedCols) != 1 {
+		ret = append(ret, cond)
+		return condsToPush, ret
+	}
+	for _, col := range extractedCols {
+		schemaCol = groupByColumns.RetrieveColumn(col)
+		if schemaCol == nil {
+			break
+		}
+	}
+	if schemaCol != nil {
+		newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
+		condsToPush = append(condsToPush, newFunc)
+	} else {
 		ret = append(ret, cond)
 	}
 	return condsToPush, ret
