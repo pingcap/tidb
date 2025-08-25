@@ -599,7 +599,8 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 	return tMemUsage
 }
 
-// Copy copies the current table.
+// Copy creates a full deep copy of the current table.
+// This is the most expensive copy operation as it deep copies all histograms, sketches, and statistics data.
 func (t *Table) Copy() *Table {
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
@@ -656,6 +657,76 @@ func (t *Table) ShallowCopy() *Table {
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
+		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
+	}
+	return nt
+}
+
+// CopyForColumnMapUpdate creates a copy optimized for column updates.
+func (t *Table) CopyForColumnMapUpdate() *Table {
+
+	newHistColl := HistColl{
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       maps.Clone(t.columns),
+		indices:       t.indices,
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
+	}
+	nt := &Table{
+		HistColl:              newHistColl,
+		Version:               t.Version,
+		TblInfoUpdateTS:       t.TblInfoUpdateTS,
+		ExtendedStats:         t.ExtendedStats,
+		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
+		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
+	}
+	return nt
+}
+
+// CopyForIndexMapUpdate creates a copy optimized for index updates.
+func (t *Table) CopyForIndexMapUpdate() *Table {
+	newHistColl := HistColl{
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       t.columns,
+		indices:       maps.Clone(t.indices),
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
+	}
+	nt := &Table{
+		HistColl:              newHistColl,
+		Version:               t.Version,
+		TblInfoUpdateTS:       t.TblInfoUpdateTS,
+		ExtendedStats:         t.ExtendedStats,
+		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
+		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
+	}
+	return nt
+}
+
+// CopyForMapsUpdate creates a copy for both col and index map updates.
+func (t *Table) CopyForMapsUpdate() *Table {
+	newHistColl := HistColl{
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       maps.Clone(t.columns),
+		indices:       maps.Clone(t.indices),
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
+	}
+	nt := &Table{
+		HistColl:              newHistColl,
+		Version:               t.Version,
+		TblInfoUpdateTS:       t.TblInfoUpdateTS,
+		ExtendedStats:         t.ExtendedStats,
+		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
 		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
