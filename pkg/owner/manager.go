@@ -634,6 +634,7 @@ func AcquireDistributedLock(
 	}
 	mu := concurrency.NewMutex(se, key)
 	maxRetryCnt := 10
+	//startTime := time.Now()
 	err = util2.RunWithRetry(maxRetryCnt, util2.RetryInterval, func() (bool, error) {
 		err = mu.Lock(ctx)
 		if err != nil {
@@ -649,7 +650,8 @@ func AcquireDistributedLock(
 		}
 		return nil, err
 	}
-	logutil.Logger(ctx).Info("acquire distributed lock success", zap.String("key", key))
+	//logutil.Logger(ctx).Info("acquire distributed lock success", zap.String("key", key),
+	//	zap.Duration("cost time", time.Since(startTime)))
 	return func() {
 		err = mu.Unlock(ctx)
 		if err != nil {
