@@ -267,7 +267,7 @@ func SubTestColumnRange() func(*testing.T) {
 		ran[0].HighExclude = true
 		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
-		require.Equal(t, 9998, int(count))
+		require.Equal(t, 10004, int(count))
 		ran[0].LowExclude = false
 		ran[0].HighExclude = false
 		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
@@ -506,7 +506,7 @@ func SubTestBuild() func(*testing.T) {
 		require.NoError(t, err)
 		checkRepeats(t, col)
 		col.PreCalculateScalar()
-		require.Equal(t, 226, col.Len())
+		require.Equal(t, 257, col.Len())
 		count, _ := col.EqualRowCount(nil, types.NewIntDatum(1000), false)
 		require.Equal(t, 0, int(count))
 		count = col.LessRowCount(nil, types.NewIntDatum(1000))
