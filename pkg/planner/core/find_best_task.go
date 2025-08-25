@@ -1143,34 +1143,35 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult := compareEqOrIn(lhs, rhs)
 
-	// sum is the aggregate score of various comparison metrics between lhs and rhs. riskResult and eqOrInResult
-	// are excluded from the sum for consistency of the prior logic.
-	// TO-DO - extend riskResult such that both risk and eqOrIn factors can be integrated into the aggregate score.
-	sum := accessResult + scanResult + matchResult + globalResult
+	// sum is the aggregate score of various comparison metrics between lhs and rhs. riskResult is excluded
+	// because more work is required.
+	// TO-DO - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
+	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
+	// bound was applied, etc.)
+	sum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
+	// TO-DO: Consider a separate set of rules for global indexes.
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
-		if !lhsPseudo && globalResult >= 0 && sum >= 0 && eqOrInResult > 0 &&
-			// if rhs's maxCount hasn't been adjusted or its adjusted max risk is greater than than lhs's regular count, then lhs can win
-			(rhs.path.MaxCountAfterAccess <= rhs.path.CountAfterAccess || lhs.path.CountAfterAccess < rhs.path.MaxCountAfterAccess) {
+		if !lhsPseudo && sum >= 0 &&
+			(eqOrInResult > 0 || (lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount)) {
 			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
-		if !rhsPseudo && globalResult <= 0 && sum <= 0 && eqOrInResult < 0 &&
-			// if lhs's maxCount hasn't been adjusted or its adjusted max risk is greater than rhs's regular count, then rhs can win
-			(lhs.path.MaxCountAfterAccess <= lhs.path.CountAfterAccess || rhs.path.CountAfterAccess < lhs.path.MaxCountAfterAccess) {
+		if !rhsPseudo && sum <= 0 &&
+			(eqOrInResult < 0 || (rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount)) {
 			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
 		}
 		if preferRange {
 			// keep an index without statistics if that index has more equal/IN predicates, AND:
 			// 1) there are at least 2 equal/INs
 			// 2) OR - it's a full index match for all index predicates
-			if lhsPseudo && eqOrInResult > 0 && globalResult >= 0 && sum >= 0 &&
+			if lhsPseudo && eqOrInResult > 0 && sum >= 0 &&
 				(lhs.path.EqOrInCondCount > 1 || isFullIndexMatch(lhs)) {
 				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
-			if rhsPseudo && eqOrInResult < 0 && globalResult <= 0 && sum <= 0 &&
+			if rhsPseudo && eqOrInResult < 0 && sum <= 0 &&
 				(rhs.path.EqOrInCondCount > 1 || isFullIndexMatch(rhs)) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
@@ -1201,6 +1202,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// (2): does it require a double scan,
 	// (3): whether or not it matches the physical property,
 	// (4): it's a global index path or not.
+	// (5): whether the path has more equal/IN predicates.
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	if !comparable1 {
