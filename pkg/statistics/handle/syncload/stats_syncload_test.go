@@ -428,10 +428,10 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	statsTbl, ok := h.Get(tblInfo.ID)
 	require.True(t, ok)
 	// Only a and b.
-	require.Equal(t, 2, statsTbl.ColAndIdxExistenceMap.ColNum())
-	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(tblInfo.Columns[0].ID, false))
-	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(tblInfo.Columns[1].ID, false))
-	require.False(t, statsTbl.ColAndIdxExistenceMap.Has(tblInfo.Columns[2].ID, false))
+	require.Equal(t, 2, statsTbl.ColNum())
+	require.True(t, statsTbl.HasAnalyzedCol(tblInfo.Columns[0].ID))
+	require.True(t, statsTbl.HasAnalyzedCol(tblInfo.Columns[1].ID))
+	require.False(t, statsTbl.HasCol(tblInfo.Columns[2].ID))
 
 	// Do some DDL, one successfully handled by handleDDLEvent, the other not.
 	tk.MustExec("alter table t add column d int default 2")
@@ -444,8 +444,8 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tblInfo = tbl.Meta()
 	statsTbl, ok = h.Get(tblInfo.ID)
 	require.True(t, ok)
-	require.True(t, statsTbl.ColAndIdxExistenceMap.Has(tblInfo.Columns[3].ID, false))
-	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(tblInfo.Columns[3].ID, false))
+	require.True(t, statsTbl.HasCol(tblInfo.Columns[3].ID))
+	require.True(t, statsTbl.HasAnalyzedCol(tblInfo.Columns[3].ID))
 
 	// Try sync load.
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")

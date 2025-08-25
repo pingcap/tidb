@@ -1323,6 +1323,23 @@ type UsedStatsInfoForTable struct {
 	ColAndIdxStatus       any
 }
 
+// HasAnalyzedChecker defines the interface for checking analyzed status.
+type HasAnalyzedChecker interface {
+	HasAnalyzed(id int64, isIndex bool) bool
+}
+
+// HasAnalyzed safely checks whether a column or index has analyzed statistics.
+// Returns false if ColAndIdxStatus is nil (e.g., for pseudo tables).
+func (s *UsedStatsInfoForTable) HasAnalyzed(id int64, isIndex bool) bool {
+	if s.ColAndIdxStatus == nil {
+		return false
+	}
+	if checker, ok := s.ColAndIdxStatus.(HasAnalyzedChecker); ok {
+		return checker.HasAnalyzed(id, isIndex)
+	}
+	return false
+}
+
 // FormatForExplain format the content in the format expected to be printed in the execution plan.
 // case 1: if stats version is 0, print stats:pseudo.
 // case 2: if stats version is not 0, and there are column/index stats that are not full loaded,

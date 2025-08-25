@@ -151,13 +151,13 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 			table.StatsVer = int(statsVer)
 		}
 		if isIndex > 0 {
-			table.ColAndIdxExistenceMap.InsertIndex(id, statsVer != statistics.Version0)
+			table.InsertIdxExistence(id, statsVer != statistics.Version0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 			}
 		} else {
-			table.ColAndIdxExistenceMap.InsertCol(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			table.InsertColExistence(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
@@ -181,7 +181,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		if table == nil || table.PhysicalID != tblID {
 			if table != nil {
-				table.ColAndIdxExistenceMap.SetChecked()
+				table.SetStatsMetaInitialized()
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
@@ -241,7 +241,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			table.SetIdx(idxInfo.ID, index)
-			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
+			table.InsertIdxExistence(idxInfo.ID, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -263,7 +263,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				StatsVer:   statsVer,
 			}
 			table.SetCol(hist.ID, col)
-			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			table.InsertColExistence(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
@@ -278,7 +278,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 		}
 	}
 	if table != nil {
-		table.ColAndIdxExistenceMap.SetChecked()
+		table.SetStatsMetaInitialized()
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 }

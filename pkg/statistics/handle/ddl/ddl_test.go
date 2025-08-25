@@ -321,7 +321,7 @@ func TestDDLHistogram(t *testing.T) {
 	lastHistUpdateVersion2 := statsTbl.LastStatsHistVersion
 	require.Greater(t, lastHistUpdateVersion2, lastHistUpdateVersion1)
 
-	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, false))
+	require.True(t, statsTbl.HasAnalyzedCol(2))
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[2].ID).IsStatsInitialized())
 	require.Equal(t, int64(2), statsTbl.GetCol(tableInfo.Columns[2].ID).NullCount)
@@ -337,7 +337,7 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
-	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(3, false))
+	require.True(t, statsTbl.HasAnalyzedCol(3))
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[3].ID).IsStatsInitialized())
 	sctx := mock.NewContext()
 	count, err := cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(0), tableInfo.Columns[3].ID)
@@ -358,7 +358,7 @@ func TestDDLHistogram(t *testing.T) {
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// If we don't use original default value, we will get a pseudo table.
 	require.False(t, statsTbl.Pseudo)
-	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(4, false))
+	require.True(t, statsTbl.HasAnalyzedCol(4))
 
 	testKit.MustExec("alter table t add column c5 varchar(15) DEFAULT '123'")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -370,7 +370,7 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
-	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(5, false))
+	require.True(t, statsTbl.HasAnalyzedCol(5))
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[5].ID).IsStatsInitialized())
 	require.Equal(t, 3.0, cardinality.AvgColSize(statsTbl.GetCol(tableInfo.Columns[5].ID), statsTbl.RealtimeCount, false))
 
@@ -390,13 +390,13 @@ func TestDDLHistogram(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, true))
+	require.False(t, statsTbl.HasAnalyzedIdx(2))
 	testKit.MustExec("analyze table t")
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(1, true))
+	require.True(t, statsTbl.HasAnalyzedIdx(1))
 	rs := testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = 1 and is_index =1", tableInfo.ID)
 	rs.Check(testkit.Rows("1"))
 	rs = testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ? and hist_id = 1 and is_index = 1", tableInfo.ID)

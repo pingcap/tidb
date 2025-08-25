@@ -1211,14 +1211,14 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
 		if !lhsFullScan && lhs.path.Index != nil {
-			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
+			if statsTbl.HasAnalyzedIdx(lhs.path.Index.ID) {
 				lhsPseudo = false // We have statistics for the lhs index
 			} else {
 				lhsPseudo = true
 			}
 		}
 		if !rhsFullScan && rhs.path.Index != nil {
-			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
+			if statsTbl.HasAnalyzedIdx(rhs.path.Index.ID) {
 				rhsPseudo = false // We have statistics on the rhs index
 			} else {
 				rhsPseudo = true
@@ -2246,9 +2246,6 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *physi
 		rowCount := is.StatsInfo().RowCount * selectivity
 		stats := &property.StatsInfo{RowCount: rowCount}
 		stats.StatsVersion = ds.StatisticTable.Version
-		if ds.StatisticTable.Pseudo {
-			stats.StatsVersion = statistics.PseudoVersion
-		}
 		indexPlan := physicalop.PhysicalSelection{Conditions: pushedFilters}.Init(is.SCtx(), stats, ds.QueryBlockOffset())
 		indexPlan.SetChildren(is)
 		return indexPlan, remainingFilter, nil

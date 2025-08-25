@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unique"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -51,6 +52,20 @@ import (
 
 const (
 	outOfRangeBetweenRate float64 = 100
+)
+
+var (
+	// Global static chunk for pseudo histograms to avoid chunk allocation
+	globalPseudoChunkOnce sync.Once
+	globalPseudoChunk     *chunk.Chunk
+
+	// Interned field types for common pseudo histogram types
+	internedFieldTypes struct {
+		intType    unique.Handle[*types.FieldType]
+		stringType unique.Handle[*types.FieldType]
+		blobType   unique.Handle[*types.FieldType]
+	}
+	internedFieldTypesOnce sync.Once
 )
 
 // Histogram represents statistics for a column or index.
@@ -114,6 +129,65 @@ type scalar struct {
 
 // EmptyScalarSize is the size of empty scalar.
 const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
+
+// initInternedFieldTypes initializes the interned field types for pseudo histograms
+func initInternedFieldTypes() {
+	// Create interned field types that can be shared across many pseudo histograms
+	intType := types.NewFieldType(mysql.TypeLonglong)
+	stringType := types.NewFieldType(mysql.TypeVarchar)
+	stringType.SetCollate(charset.CollationBin) // Pre-set for string pseudo histograms
+	blobType := types.NewFieldType(mysql.TypeBlob)
+
+	internedFieldTypes.intType = unique.Make(intType)
+	internedFieldTypes.stringType = unique.Make(stringType)
+	internedFieldTypes.blobType = unique.Make(blobType)
+}
+
+// getInternedFieldType returns a shared field type for pseudo histograms
+func getInternedFieldType(tp *types.FieldType) *types.FieldType {
+	internedFieldTypesOnce.Do(initInternedFieldTypes)
+
+	switch tp.EvalType() {
+	case types.ETInt:
+		return internedFieldTypes.intType.Value()
+	case types.ETString:
+		return internedFieldTypes.stringType.Value()
+	default:
+		return internedFieldTypes.blobType.Value()
+	}
+}
+
+// initGlobalPseudoChunk initializes the global static chunk for pseudo histograms
+func initGlobalPseudoChunk() {
+	// Create a minimal empty chunk that can be shared across all pseudo histograms
+	// Use a basic field type that won't cause issues when shared
+	globalPseudoChunk = chunk.NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)})
+}
+
+// getGlobalPseudoChunk returns the shared static chunk for pseudo histograms
+func getGlobalPseudoChunk() *chunk.Chunk {
+	globalPseudoChunkOnce.Do(initGlobalPseudoChunk)
+	return globalPseudoChunk
+}
+
+// NewPseudoHistogram creates a pseudo histogram that reuses global static components
+// This avoids chunk allocation and uses interned field types for pseudo histograms
+func NewPseudoHistogram(id int64, tp *types.FieldType) *Histogram {
+	// Use interned field type to save memory across many pseudo histograms
+	internedType := getInternedFieldType(tp)
+
+	return &Histogram{
+		ID:                id,
+		NDV:               0,
+		NullCount:         0,
+		LastUpdateVersion: 0,
+		Tp:                internedType,           // Use interned field type
+		Bounds:            getGlobalPseudoChunk(), // Use shared chunk
+		Buckets:           make([]Bucket, 0),      // Keep user's preference
+		TotColSize:        0,
+		Correlation:       0,
+	}
+}
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {

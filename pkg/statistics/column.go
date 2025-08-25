@@ -266,7 +266,7 @@ func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column 
 	return &Column{
 		PhysicalID: tid,
 		Info:       colInfo,
-		Histogram:  *NewHistogram(colInfo.ID, 0, 0, 0, &colInfo.FieldType, 0, 0),
+		Histogram:  *NewPseudoHistogram(colInfo.ID, &colInfo.FieldType),
 		IsHandle:   pkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 	}
 }

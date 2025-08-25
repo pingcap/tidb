@@ -186,7 +186,7 @@ func (f *AnalysisJobFactory) CalculateChangePercentage(tblStats *statistics.Tabl
 // CalculateTableSize calculates the size of the table.
 func (*AnalysisJobFactory) CalculateTableSize(tblStats *statistics.Table) float64 {
 	tblCnt := float64(tblStats.RealtimeCount)
-	colCnt := float64(tblStats.ColAndIdxExistenceMap.ColNum())
+	colCnt := float64(tblStats.ColNum())
 	intest.Assert(colCnt != 0, "Column count should not be 0")
 
 	return tblCnt * colCnt
@@ -224,7 +224,7 @@ func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tbl
 	indexIDs := make(map[int64]struct{}, len(tblInfo.Indices))
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
-		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.HasAnalyzedIdx(idx.ID) && idx.State == model.StatePublic {
 			// Columnar index doesn't have stats currently.
 			if idx.IsColumnarIndex() {
 				continue
@@ -254,7 +254,7 @@ func (f *AnalysisJobFactory) CalculateIndicatorsForPartitions(
 	totalSize := 0.0
 	count := 0.0
 	partitionIDs = make(map[int64]struct{}, len(partitionStats))
-	cols := float64(globalStats.ColAndIdxExistenceMap.ColNum())
+	cols := float64(globalStats.ColNum())
 	intest.Assert(cols != 0, "Column count should not be 0")
 	totalLastAnalyzeDuration := time.Duration(0)
 
@@ -308,7 +308,7 @@ func (*AnalysisJobFactory) CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		// Find all the partitions that need to analyze this index.
 		ids := make([]int64, 0, len(partitionStats))
 		for pIDAndName, tblStats := range partitionStats {
-			if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
+			if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.HasAnalyzedIdx(idx.ID) {
 				ids = append(ids, pIDAndName.ID)
 			}
 		}
