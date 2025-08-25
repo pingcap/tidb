@@ -1145,7 +1145,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 
 	// sum is the aggregate score of various comparison metrics between lhs and rhs. riskResult is excluded
 	// because more work is required.
-	// TO-DO - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
+	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
 	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
 	// bound was applied, etc.)
 	sum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
