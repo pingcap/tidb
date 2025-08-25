@@ -122,6 +122,8 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
+	hasFullMatch := false
+	maxEqCount := 0
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -130,16 +132,26 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		if err != nil {
 			return nil, false, err
 		}
+		// Compute effective eq-cond count for pruning: consider DNF via MinAccessCondsForDNFCond.
+		effectiveEqCount := path.EqCondCount
+		if path.IsDNFCond && path.MinAccessCondsForDNFCond > 0 {
+			effectiveEqCount = path.MinAccessCondsForDNFCond
+		}
+		if effectiveEqCount > maxEqCount {
+			maxEqCount = effectiveEqCount
+			if len(path.IndexFilters) == 0 && len(path.TableFilters) == 0 {
+				hasFullMatch = true
+			}
+		}
 	}
-	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
-	// when ds.PossibleAccessPaths are pruned.
+	// Prune subset indexes based upon equal prefix.
+	ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqCondCount(ds.AllPossibleAccessPaths, maxEqCount, hasFullMatch)
 	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
 	// after heuristic pruning, the new path are stored into ds.PossibleAccessPaths.
 	err := derivePathStatsAndTryHeuristics(ds)
 	if err != nil {
 		return nil, false, err
 	}
-
 	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
 	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
 	if err := generateIndexMergePath(ds); err != nil {
@@ -228,8 +240,9 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	statsInfo := ds.StatsInfo()
+	if statsInfo != nil && (path.CountAfterAccess+cost.ToleranceFactor) < statsInfo.RowCount && !isIm {
+		path.CountAfterAccess = math.Min(statsInfo.RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	if path.IndexFilters != nil {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
@@ -240,7 +253,12 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		if isIm {
 			path.CountAfterIndex = path.CountAfterAccess * selectivity
 		} else {
-			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.StatsInfo().RowCount)
+			statsInfo := ds.StatsInfo()
+			if statsInfo != nil {
+				path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, statsInfo.RowCount)
+			} else {
+				path.CountAfterIndex = path.CountAfterAccess * selectivity
+			}
 		}
 	} else {
 		path.CountAfterIndex = path.CountAfterAccess
@@ -328,8 +346,9 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	statsInfo := ds.StatsInfo()
+	if statsInfo != nil && (path.CountAfterAccess+cost.ToleranceFactor) < statsInfo.RowCount && !isIm {
+		path.CountAfterAccess = math.Min(statsInfo.RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return err
 }
@@ -337,8 +356,10 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	if path.Index != nil {
+		path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+		path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	}
 	if len(conds) == 0 {
 		return nil
 	}
@@ -367,8 +388,9 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	statsInfo := ds.StatsInfo()
+	if statsInfo != nil && (path.CountAfterAccess+cost.ToleranceFactor) < statsInfo.RowCount && !isIm {
+		path.CountAfterAccess = math.Min(statsInfo.RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return nil
 }
@@ -708,6 +730,133 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		}
 	}
 	return nil
+}
+
+// pruneIndexesByPrefixAndEqCondCount prunes indexes that have the same prefix as other indexes
+// with the same eqCondCount, but where the other index also has a higher eqCondCount.
+func pruneIndexesByPrefixAndEqCondCount(paths []*util.AccessPath, maxEqCount int, hasFullMatch bool) []*util.AccessPath {
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	// Early optimization: Check for perfect covering indexes
+	if hasFullMatch {
+		var perfectCoveringIndexes []*util.AccessPath
+		var forcedIndexes []*util.AccessPath
+		var tablePaths []*util.AccessPath
+
+		for _, path := range paths {
+			if path.IsTablePath() {
+				tablePaths = append(tablePaths, path)
+				continue
+			}
+			if path.Forced {
+				forcedIndexes = append(forcedIndexes, path)
+				continue
+			}
+			// Check if this is a perfect covering index
+			if path.EqCondCount == maxEqCount &&
+				len(path.TableFilters) == 0 &&
+				len(path.IndexFilters) == 0 {
+				perfectCoveringIndexes = append(perfectCoveringIndexes, path)
+			}
+		}
+
+		// If we have perfect covering indexes, return only them plus forced indexes and table paths
+		if len(perfectCoveringIndexes) > 0 {
+			result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
+			result = append(result, tablePaths...)
+			result = append(result, forcedIndexes...)
+			result = append(result, perfectCoveringIndexes...)
+			return result
+		}
+	}
+
+	// Helper function to check if one index is a prefix of another
+	// This supports both same order and different sequence of columns
+	isIndexPrefix := func(idx1, idx2 *model.IndexInfo, minEq int) bool {
+		if minEq == 0 {
+			return false
+		}
+
+		// Check if the first minEq columns of idx1 are contained in idx2
+		// This handles both same order and different sequence cases
+		for i := 0; i < minEq && i < len(idx1.Columns); i++ {
+			found := false
+			for j := range len(idx2.Columns) {
+				if idx1.Columns[i].Name.L == idx2.Columns[j].Name.L {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Helper: effective eq count considers DNF.
+	effectiveEq := func(p *util.AccessPath) int {
+		if p.IsDNFCond && p.MinAccessCondsForDNFCond > 0 {
+			return p.MinAccessCondsForDNFCond
+		}
+		return p.EqCondCount
+	}
+
+	// Group paths by effective eqCondCount
+	pathsByEqCount := make(map[int][]*util.AccessPath)
+	for _, path := range paths {
+		if path.IsTablePath() {
+			continue // Skip table paths (including PK)
+		}
+		eqCount := effectiveEq(path)
+		pathsByEqCount[eqCount] = append(pathsByEqCount[eqCount], path)
+	}
+
+	// For each eqCondCount, check if there are indexes with higher eqCondCount
+	// that have the same prefix as indexes in the current group
+	pathsToRemove := make(map[*util.AccessPath]bool)
+
+	for currentEqCount, currentPaths := range pathsByEqCount {
+		// Check if there are any indexes with higher eqCount that have the same prefix
+		for higherEqCount, higherPaths := range pathsByEqCount {
+			if higherEqCount <= currentEqCount {
+				continue
+			}
+			for _, currentPath := range currentPaths {
+				for _, higherPath := range higherPaths {
+					if currentPath.Forced {
+						continue
+					}
+					// Don't prune if the current index has max effective eqCondCount
+					if effectiveEq(currentPath) == maxEqCount {
+						continue // Don't prune if the current index has max eqCondCount
+					}
+					// Don't prune if the current index is a single scan and the higher index is not
+					// Single scan indexes can avoid table lookups, so they should be preserved
+					if effectiveEq(currentPath) > 1 && currentPath.IsSingleScan && !higherPath.IsSingleScan {
+						continue
+					}
+					if isIndexPrefix(currentPath.Index, higherPath.Index, min(effectiveEq(currentPath), effectiveEq(higherPath))) {
+						// The current index is a prefix of the higher index, and the higher index
+						// has more eqOrIn conditions, so we can prune the current index
+						pathsToRemove[currentPath] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Remove the pruned paths
+	result := make([]*util.AccessPath, 0, len(paths))
+	for _, path := range paths {
+		if !pathsToRemove[path] {
+			result = append(result, path)
+		}
+	}
+
+	return result
 }
 
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
