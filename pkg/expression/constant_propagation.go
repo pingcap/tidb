@@ -358,19 +358,15 @@ func (s *propConstSolver) propagateColumnEQ() {
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
-					if s.vaildExprFunc != nil {
-						if !s.vaildExprFunc(newExpr) {
-							continue
-						}
+					if s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+						continue
 					}
 					s.conditions = append(s.conditions, newExpr)
 				}
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
-					if s.vaildExprFunc != nil {
-						if !s.vaildExprFunc(newExpr) {
-							continue
-						}
+					if s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+						continue
 					}
 					s.conditions = append(s.conditions, newExpr)
 				}
@@ -712,10 +708,8 @@ func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, sch
 		}
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
-			if s.vaildExprFunc != nil {
-				if !s.vaildExprFunc(newExpr) {
-					continue
-				}
+			if s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+				continue
 			}
 			s.joinConds = append(s.joinConds, newExpr)
 		}
