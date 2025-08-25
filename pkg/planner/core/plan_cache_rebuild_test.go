@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -243,7 +244,7 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 			"*collate", ".IdxCols", ".OutputColumns", ".EqualConditions", ".OuterHashKeys", ".InnerHashKeys",
 			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".PhysicalSchemaProducer.schema",
 			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".SimpleSchemaProducer.schema",
-			".pkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
+			".PkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
 	})
 	if isDML {
 		tk2.MustExecWithContext(ctx, exec2)
@@ -288,7 +289,7 @@ func TestCheckPlanClone(t *testing.T) {
 	// same sctx
 	l1.TblID2Handle[1] = nil
 	l2.TblID2Handle[1] = nil
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)
@@ -467,19 +468,35 @@ func TestFastPointGetClone(t *testing.T) {
 	cloneFuncCode := strings.Join(codeLines[beginIdx:endIdx+1], "\n")
 	fieldNoNeedToClone := map[string]struct{}{
 		"cost":         {},
-		"planCostInit": {},
-		"planCost":     {},
-		"planCostVer2": {},
+		"PlanCostInit": {},
+		"PlanCost":     {},
+		"PlanCostVer2": {},
 		"accessCols":   {},
 	}
 
-	pointPlan := reflect.TypeOf(core.PointGetPlan{})
+	fieldSetBySetter := map[string]string{
+		"dbName":      "SetDBName(",
+		"schema":      "SetSchema(",
+		"outputNames": "SetOutputNames(",
+		"ctx":         "SetCtx(",
+	}
+
+	pointPlan := reflect.TypeOf(physicalop.PointGetPlan{})
 	for i := range pointPlan.NumField() {
 		fieldName := pointPlan.Field(i).Name
 		if _, ok := fieldNoNeedToClone[fieldName]; ok {
 			continue
 		}
+
 		assignFieldCode := fmt.Sprintf("%v =", fieldName)
+
+		if setterCode, ok := fieldSetBySetter[fieldName]; ok {
+			if !strings.Contains(cloneFuncCode, setterCode) {
+				errMsg := fmt.Sprintf("field %v should be set via setter method in FastClonePointGetForPlanCache", fieldName)
+				t.Fatal(errMsg)
+			}
+			continue
+		}
 		if !strings.Contains(cloneFuncCode, assignFieldCode) {
 			errMsg := fmt.Sprintf("field %v might not be set in FastClonePointGetForPlanCache correctly", fieldName)
 			t.Fatal(errMsg)
@@ -501,8 +518,8 @@ func BenchmarkPointGetCloneFast(b *testing.B) {
 	require.NoError(b, err)
 
 	b.ResetTimer()
-	src := plan.(*core.PointGetPlan)
-	dst := new(core.PointGetPlan)
+	src := plan.(*physicalop.PointGetPlan)
+	dst := new(physicalop.PointGetPlan)
 	sctx := tk.Session().GetPlanCtx()
 	for i := 0; i < b.N; i++ {
 		core.FastClonePointGetForPlanCache(sctx, src, dst)
@@ -523,7 +540,7 @@ func BenchmarkPointGetClone(b *testing.B) {
 	require.NoError(b, err)
 
 	b.ResetTimer()
-	src := plan.(*core.PointGetPlan)
+	src := plan.(*physicalop.PointGetPlan)
 	sctx := tk.Session().GetPlanCtx()
 	for i := 0; i < b.N; i++ {
 		src.CloneForPlanCache(sctx)

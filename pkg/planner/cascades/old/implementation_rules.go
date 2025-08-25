@@ -178,7 +178,7 @@ func (*ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *prop
 	logicProp := expr.Group.Prop
 	sg := expr.ExprNode.(*logicalop.TiKVSingleGather)
 	if sg.IsIndexGather {
-		reader := plannercore.GetPhysicalIndexReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+		reader := physicalop.GetPhysicalIndexReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
 		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source)}, nil
 	}
 	reader := plannercore.GetPhysicalTableReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
@@ -221,7 +221,7 @@ func (*ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalScan := expr.ExprNode.(*logicalop.LogicalIndexScan)
-	is := plannercore.GetPhysicalIndexScan4LogicalIndexScan(logicalScan, expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	is := physicalop.GetPhysicalIndexScan4LogicalIndexScan(logicalScan, expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		is.KeepOrder = true
 		if reqProp.SortItems[0].Desc {
