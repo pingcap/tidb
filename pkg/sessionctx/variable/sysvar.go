@@ -451,9 +451,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBSlowTxnLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowTxnThreshold),
 		Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.SlowTxnThreshold = TidbOptUint64(val, logutil.DefaultSlowTxnThreshold)
-		return nil
-	},
+			s.SlowTxnThreshold = TidbOptUint64(val, logutil.DefaultSlowTxnThreshold)
+			return nil
+		},
 	},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBSlowLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowThreshold), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Instance.SlowThreshold, uint64(TidbOptInt64(val, logutil.DefaultSlowThreshold)))
@@ -631,8 +631,8 @@ var defaultSysVars = []*SysVar{
 			vardef.PasswordValidationLength.Store(int32(TidbOptInt64(val, 8)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return strconv.FormatInt(int64(vardef.PasswordValidationLength.Load()), 10), nil
-	},
+			return strconv.FormatInt(int64(vardef.PasswordValidationLength.Load()), 10), nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.ValidatePasswordMixedCaseCount, Value: "1", Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
@@ -653,8 +653,8 @@ var defaultSysVars = []*SysVar{
 			vardef.PasswordValidationMixedCaseCount.Store(int32(TidbOptInt64(val, 1)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return strconv.FormatInt(int64(vardef.PasswordValidationMixedCaseCount.Load()), 10), nil
-	},
+			return strconv.FormatInt(int64(vardef.PasswordValidationMixedCaseCount.Load()), 10), nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.ValidatePasswordNumberCount, Value: "1", Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
@@ -675,8 +675,8 @@ var defaultSysVars = []*SysVar{
 			vardef.PasswordValidtaionNumberCount.Store(int32(TidbOptInt64(val, 1)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return strconv.FormatInt(int64(vardef.PasswordValidtaionNumberCount.Load()), 10), nil
-	},
+			return strconv.FormatInt(int64(vardef.PasswordValidtaionNumberCount.Load()), 10), nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.ValidatePasswordSpecialCharCount, Value: "1", Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
@@ -697,8 +697,8 @@ var defaultSysVars = []*SysVar{
 			vardef.PasswordValidationSpecialCharCount.Store(int32(TidbOptInt64(val, 1)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return strconv.FormatInt(int64(vardef.PasswordValidationSpecialCharCount.Load()), 10), nil
-	},
+			return strconv.FormatInt(int64(vardef.PasswordValidationSpecialCharCount.Load()), 10), nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.ValidatePasswordDictionary, Value: "", Type: vardef.TypeStr},
 	{Scope: vardef.ScopeGlobal, Name: vardef.DefaultPasswordLifetime, Value: "0", Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxUint16},
@@ -798,8 +798,8 @@ var defaultSysVars = []*SysVar{
 			vardef.DDLReorgMaxWriteSpeed.Store(i64)
 			return nil
 		}, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
-		return strconv.FormatInt(vardef.DDLReorgMaxWriteSpeed.Load(), 10), nil
-	}},
+			return strconv.FormatInt(vardef.DDLReorgMaxWriteSpeed.Load(), 10), nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBDDLErrorCountLimit, Value: strconv.Itoa(vardef.DefTiDBDDLErrorCountLimit), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.SetDDLErrorCountLimit(TidbOptInt64(val, vardef.DefTiDBDDLErrorCountLimit))
 		return nil
@@ -915,11 +915,11 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBGOGCTunerMaxValue, Value: strconv.Itoa(vardef.DefTiDBGOGCMaxValue),
 		Type: vardef.TypeInt, MinValue: 10, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		maxValue := TidbOptInt64(val, vardef.DefTiDBGOGCMaxValue)
-		gctuner.SetMaxGCPercent(uint32(maxValue))
-		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
-		return nil
-	},
+			maxValue := TidbOptInt64(val, vardef.DefTiDBGOGCMaxValue)
+			gctuner.SetMaxGCPercent(uint32(maxValue))
+			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+			return nil
+		},
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return strconv.FormatInt(int64(gctuner.MaxGCPercent()), 10), nil
 		},
@@ -932,11 +932,11 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBGOGCTunerMinValue, Value: strconv.Itoa(vardef.DefTiDBGOGCMinValue),
 		Type: vardef.TypeInt, MinValue: 10, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		minValue := TidbOptInt64(val, vardef.DefTiDBGOGCMinValue)
-		gctuner.SetMinGCPercent(uint32(minValue))
-		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
-		return nil
-	},
+			minValue := TidbOptInt64(val, vardef.DefTiDBGOGCMinValue)
+			gctuner.SetMinGCPercent(uint32(minValue))
+			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+			return nil
+		},
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return strconv.FormatInt(int64(gctuner.MinGCPercent()), 10), nil
 		},
@@ -1012,17 +1012,17 @@ var defaultSysVars = []*SysVar{
 			vardef.AutoAnalyzePartitionBatchSize.Store(val)
 			return nil
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(vardef.TiDBAutoAnalyzePartitionBatchSize))
-		return normalizedValue, nil
-	},
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(vardef.TiDBAutoAnalyzePartitionBatchSize))
+			return normalizedValue, nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.MaxUserConnections, Value: strconv.FormatUint(vardef.DefMaxUserConnections, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.MaxUserConnectionsValue.Store(uint32(TidbOptInt64(val, vardef.DefMaxUserConnections)))
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return strconv.FormatUint(uint64(vardef.MaxUserConnectionsValue.Load()), 10), nil
-	},
+			return strconv.FormatUint(uint64(vardef.MaxUserConnectionsValue.Load()), 10), nil
+		},
 	},
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
@@ -1261,23 +1261,23 @@ var defaultSysVars = []*SysVar{
 			tls.RequireSecureTransport.Store(TiDBOptOn(val))
 			return nil
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
-			// On tidbcloud dedicated cluster with the default configuration, if an user modify
-			// @@global.require_secure_transport=on, he can not login the cluster anymore!
-			// A workaround for this is making require_secure_transport read-only for that case.
-			// SEM(security enhanced mode) is enabled by default with only that settings.
-			cfg := config.GetGlobalConfig()
-			if cfg.Security.EnableSEM {
-				return "", errors.New("require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
+			if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
+				// On tidbcloud dedicated cluster with the default configuration, if an user modify
+				// @@global.require_secure_transport=on, he can not login the cluster anymore!
+				// A workaround for this is making require_secure_transport read-only for that case.
+				// SEM(security enhanced mode) is enabled by default with only that settings.
+				cfg := config.GetGlobalConfig()
+				if cfg.Security.EnableSEM {
+					return "", errors.New("require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
+				}
+				// Refuse to set RequireSecureTransport to ON if the connection
+				// issuing the change is not secure. This helps reduce the chance of users being locked out.
+				if vars.TLSConnectionState == nil {
+					return "", errors.New("require_secure_transport can only be set to ON if the connection issuing the change is secure")
+				}
 			}
-			// Refuse to set RequireSecureTransport to ON if the connection
-			// issuing the change is not secure. This helps reduce the chance of users being locked out.
-			if vars.TLSConnectionState == nil {
-				return "", errors.New("require_secure_transport can only be set to ON if the connection issuing the change is secure")
-			}
-		}
-		return normalizedValue, nil
-	},
+			return normalizedValue, nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(vardef.DefTiDBStatsLoadPseudoTimeout), Type: vardef.TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -1299,15 +1299,15 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(_ context.Context, vars *SessionVars) (string, error) {
 			return strconv.FormatInt(vardef.StatsCacheMemQuota.Load(), 10), nil
 		}, SetGlobal: func(_ context.Context, vars *SessionVars, s string) error {
-		v := TidbOptInt64(s, vardef.DefTiDBStatsCacheMemQuota)
-		oldv := vardef.StatsCacheMemQuota.Load()
-		if v != oldv {
-			vardef.StatsCacheMemQuota.Store(v)
-			SetStatsCacheCapacityFunc := SetStatsCacheCapacity.Load()
-			(*SetStatsCacheCapacityFunc)(v)
-		}
-		return nil
-	},
+			v := TidbOptInt64(s, vardef.DefTiDBStatsCacheMemQuota)
+			oldv := vardef.StatsCacheMemQuota.Load()
+			if v != oldv {
+				vardef.StatsCacheMemQuota.Store(v)
+				SetStatsCacheCapacityFunc := SetStatsCacheCapacity.Load()
+				(*SetStatsCacheCapacityFunc)(v)
+			}
+			return nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBQueryLogMaxLen, Value: strconv.Itoa(vardef.DefTiDBQueryLogMaxLen), Type: vardef.TypeInt, MinValue: 0, MaxValue: 1073741824, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.QueryLogMaxLen.Store(int32(TidbOptInt64(val, vardef.DefTiDBQueryLogMaxLen)))
@@ -1575,13 +1575,13 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return vardef.HistoricalStatsDuration.Load().String(), nil
 		}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			return err
-		}
-		vardef.HistoricalStatsDuration.Store(d)
-		return nil
-	}},
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			vardef.HistoricalStatsDuration.Store(d)
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(vardef.DefTiDBLowResolutionTSOUpdateInterval), Type: vardef.TypeInt, MinValue: 10, MaxValue: 60000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.LowResolutionTSOUpdateInterval.Store(uint32(TidbOptInt64(val, vardef.DefTiDBLowResolutionTSOUpdateInterval)))
@@ -1684,16 +1684,16 @@ var defaultSysVars = []*SysVar{
 			}
 			return normalizedValue, nil
 		}, SetSession: func(s *SessionVars, val string) error {
-		val = mysql.FormatSQLModeStr(val)
-		// Modes is a list of different modes separated by commas.
-		sqlMode, err := mysql.GetSQLMode(val)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		s.SQLMode = sqlMode
-		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
-		return nil
-	}},
+			val = mysql.FormatSQLModeStr(val)
+			// Modes is a list of different modes separated by commas.
+			sqlMode, err := mysql.GetSQLMode(val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			s.SQLMode = sqlMode
+			s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
+			return nil
+		}},
 	{
 		Scope:                   vardef.ScopeGlobal,
 		Name:                    vardef.TiDBLoadBindingTimeout,
@@ -1766,13 +1766,13 @@ var defaultSysVars = []*SysVar{
 			_, err := timeutil.ParseTimeZone(normalizedValue)
 			return normalizedValue, err
 		}, SetSession: func(s *SessionVars, val string) error {
-		tz, err := timeutil.ParseTimeZone(val)
-		if err != nil {
-			return err
-		}
-		s.TimeZone = tz
-		return nil
-	}},
+			tz, err := timeutil.ParseTimeZone(val)
+			if err != nil {
+				return err
+			}
+			s.TimeZone = tz
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.ForeignKeyChecks, Value: BoolToOnOff(vardef.DefTiDBForeignKeyChecks), Type: vardef.TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		if TiDBOptOn(normalizedValue) {
 			vars.ForeignKeyChecks = true
@@ -2780,7 +2780,7 @@ var defaultSysVars = []*SysVar{
 		GenerateBinaryPlan.Store(TiDBOptOn(val))
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableDDLEmbedIndexAnalyze, Value: BoolToOnOff(vardef.DefTiDBEnableDDLEmbedIndexAnalyze), Type: vardef.TypeBool,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableDDLAnalyze, Value: BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnableDDLWithEmbeddedIndexAnalyze = TiDBOptOn(val)
 			return nil
@@ -2958,9 +2958,9 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBStoreBatchSize, Value: strconv.FormatInt(vardef.DefTiDBStoreBatchSize, 10),
 		Type: vardef.TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
-		s.StoreBatchSize = TidbOptInt(val, vardef.DefTiDBStoreBatchSize)
-		return nil
-	},
+			s.StoreBatchSize = TidbOptInt(val, vardef.DefTiDBStoreBatchSize)
+			return nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.MppExchangeCompressionMode, Type: vardef.TypeStr, Value: vardef.DefaultExchangeCompressionMode.Name(),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
@@ -3012,53 +3012,53 @@ var defaultSysVars = []*SysVar{
 	},
 	{
 		Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLJobScheduleWindowStartTime, Value: vardef.DefTiDBTTLJobScheduleWindowStartTime, Type: vardef.TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		startTime, err := time.ParseInLocation(vardef.FullDayTimeFormat, s, time.UTC)
-		if err != nil {
-			return err
-		}
-		vardef.TTLJobScheduleWindowStartTime.Store(startTime)
-		return nil
-	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		startTime := vardef.TTLJobScheduleWindowStartTime.Load()
-		return startTime.Format(vardef.FullDayTimeFormat), nil
-	},
+			startTime, err := time.ParseInLocation(vardef.FullDayTimeFormat, s, time.UTC)
+			if err != nil {
+				return err
+			}
+			vardef.TTLJobScheduleWindowStartTime.Store(startTime)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			startTime := vardef.TTLJobScheduleWindowStartTime.Load()
+			return startTime.Format(vardef.FullDayTimeFormat), nil
+		},
 	},
 	{
 		Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLJobScheduleWindowEndTime, Value: vardef.DefTiDBTTLJobScheduleWindowEndTime, Type: vardef.TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		endTime, err := time.ParseInLocation(vardef.FullDayTimeFormat, s, time.UTC)
-		if err != nil {
-			return err
-		}
-		vardef.TTLJobScheduleWindowEndTime.Store(endTime)
-		return nil
-	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		endTime := vardef.TTLJobScheduleWindowEndTime.Load()
-		return endTime.Format(vardef.FullDayTimeFormat), nil
-	},
+			endTime, err := time.ParseInLocation(vardef.FullDayTimeFormat, s, time.UTC)
+			if err != nil {
+				return err
+			}
+			vardef.TTLJobScheduleWindowEndTime.Store(endTime)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			endTime := vardef.TTLJobScheduleWindowEndTime.Load()
+			return endTime.Format(vardef.FullDayTimeFormat), nil
+		},
 	},
 	{
 		Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLScanWorkerCount, Value: strconv.Itoa(vardef.DefTiDBTTLScanWorkerCount), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 256, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		val, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return err
-		}
-		vardef.TTLScanWorkerCount.Store(int32(val))
-		return nil
-	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return strconv.Itoa(int(vardef.TTLScanWorkerCount.Load())), nil
-	},
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			vardef.TTLScanWorkerCount.Store(int32(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(vardef.TTLScanWorkerCount.Load())), nil
+		},
 	},
 	{
 		Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLDeleteWorkerCount, Value: strconv.Itoa(vardef.DefTiDBTTLDeleteWorkerCount), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 256, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		val, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return err
-		}
-		vardef.TTLDeleteWorkerCount.Store(int32(val))
-		return nil
-	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return strconv.Itoa(int(vardef.TTLDeleteWorkerCount.Load())), nil
-	},
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			vardef.TTLDeleteWorkerCount.Store(int32(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(vardef.TTLDeleteWorkerCount.Load())), nil
+		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableResourceControl, Value: BoolToOnOff(vardef.DefTiDBEnableResourceControl), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		if TiDBOptOn(s) != vardef.EnableResourceControl.Load() {
@@ -3476,8 +3476,8 @@ var defaultSysVars = []*SysVar{
 			vars.SessionAlias = s
 			return nil
 		}, GetSession: func(vars *SessionVars) (string, error) {
-		return vars.SessionAlias, nil
-	}},
+			return vars.SessionAlias, nil
+		}},
 	{
 		Scope:          vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:           vardef.TiDBOptObjective,
@@ -3504,8 +3504,8 @@ var defaultSysVars = []*SysVar{
 			}
 			return nil
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return vardef.ServiceScope.Load(), nil
-	}},
+			return vardef.ServiceScope.Load(), nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSchemaVersionCacheLimit, Value: strconv.Itoa(vardef.DefTiDBSchemaVersionCacheLimit), Type: vardef.TypeInt, MinValue: 2, MaxValue: math.MaxUint8, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.SchemaVersionCacheLimit.Store(TidbOptInt64(val, vardef.DefTiDBSchemaVersionCacheLimit))

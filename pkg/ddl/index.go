@@ -1176,9 +1176,15 @@ SwitchIndexState:
 			}
 			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 		case model.AnalyzeStateRunning:
-			// after all old index data are reorged. re-analyze it.
-			done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
-			if done {
+			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) {
+				// after all old index data are reorged. re-analyze it.
+				done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
+				if done {
+					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				}
+				// if not done yet, it will return ver=0 and nil directly back the main loop for a next ddl round.
+			} else {
+				// when TiDBEnableDDLAnalyze is default off, we just move to next DONE state for public this index.
 				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
 			}
 		case model.AnalyzeStateDone:
