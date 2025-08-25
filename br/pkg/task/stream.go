@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -63,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/spf13/pflag"
@@ -71,6 +73,7 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -730,17 +733,82 @@ func RunStreamMetadata(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	logInfo, err := getLogInfo(ctx, &cfg.Config)
+	_, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logInfo, err := getLogInfoFromStorage(ctx, s)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	logMinDate := utils.FormatDate(oracle.GetTimeFromTS(logInfo.logMinTS))
 	logMaxDate := utils.FormatDate(oracle.GetTimeFromTS(logInfo.logMaxTS))
+	logFileSize := uint64(0)
+	if err = stream.FastUnmarshalMetaData(ctx, s, logInfo.logMinTS, cfg.EndTS, cfg.MetadataDownloadBatchSize, func(path string, rawMetaData []byte) error {
+		meta := &backuppb.Metadata{}
+		if err := meta.Unmarshal(rawMetaData); err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("read metadata", zap.String("path", path))
+		for _, fg := range meta.FileGroups {
+			for _, f := range fg.DataFilesInfo {
+				if f.MinTs <= cfg.EndTS {
+					atomic.AddUint64(&logFileSize, f.GetLength())
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	ext := stream.MigrationExtension(s)
+	migs, err := ext.Load(ctx, stream.MLNotFoundIsErr())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	compactionSSTSize := uint64(0)
+	worker := tidbutil.NewWorkerPool(128, "compact")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, mig := range migs.ListAll() {
+		for _, compaction := range mig.Compactions {
+			if compaction.CompactionFromTs <= cfg.EndTS {
+				if err := s.WalkDir(ectx, &storage.WalkOption{SubDir: compaction.Artifacts}, func(path string, size int64) error {
+					if ectx.Err() != nil {
+						return errors.Trace(err)
+					}
+					worker.ApplyOnErrorGroup(eg, func() error {
+						data, err := s.ReadFile(ectx, path)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						lfs := &backuppb.LogFileSubcompactions{}
+						if err = lfs.Unmarshal(data); err != nil {
+							return errors.Trace(err)
+						}
+
+						for _, compaction := range lfs.Subcompactions {
+							for _, output := range compaction.SstOutputs {
+								if output.StartVersion < cfg.EndTS {
+									atomic.AddUint64(&compactionSSTSize, output.TotalBytes)
+								}
+							}
+						}
+						return nil
+					})
+					return nil
+				}); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
 	summary.Log(cmdName, zap.Uint64("log-min-ts", logInfo.logMinTS),
 		zap.String("log-min-date", logMinDate),
 		zap.Uint64("log-max-ts", logInfo.logMaxTS),
 		zap.String("log-max-date", logMaxDate),
+		zap.Uint64("log-file-size", logFileSize),
+		zap.Uint64("compaction-sst-size", compactionSSTSize),
 	)
 	return nil
 }
