@@ -15,6 +15,7 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 
@@ -23,6 +24,7 @@ import (
 
 type statsReader struct {
 	byteReader *byteReader
+	kvBuffer   bytes.Buffer
 }
 
 func newStatsReader(ctx context.Context, store storage.ExternalStorage, name string, bufSize int) (*statsReader, error) {
@@ -40,16 +42,18 @@ func newStatsReader(ctx context.Context, store storage.ExternalStorage, name str
 }
 
 func (r *statsReader) nextProp() (*rangeProperty, error) {
-	lenBytes, err := r.byteReader.readNBytes(4)
-	if err != nil {
+	r.kvBuffer.Grow(4)
+	b := r.kvBuffer.Bytes()[:4]
+	if err := r.byteReader.readNBytes(b); err != nil {
 		return nil, err
 	}
-	propLen := int(binary.BigEndian.Uint32(lenBytes))
-	propBytes, err := r.byteReader.readNBytes(propLen)
-	if err != nil {
+	propLen := int(binary.BigEndian.Uint32(b))
+
+	b = make([]byte, propLen)
+	if err := r.byteReader.readNBytes(b); err != nil {
 		return nil, noEOF(err)
 	}
-	return decodeProp(propBytes), nil
+	return decodeProp(b), nil
 }
 
 func (r *statsReader) Close() error {
