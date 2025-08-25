@@ -1019,7 +1019,7 @@
         "Plan": [
           "TableReader 20.00 root partition:p0,p3 MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 20.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Selection 20.00 mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "  └─Selection 20.00 mpp[tiflash]  in(test.rp_t.a, 1, 20)",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
@@ -1028,7 +1028,7 @@
         "Plan": [
           "TableReader 20.00 root partition:p0,p1 MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 20.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Selection 20.00 mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "  └─Selection 20.00 mpp[tiflash]  in(test.hp_t.a, 1, 20)",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
@@ -1039,7 +1039,7 @@
           "└─TableReader 1.00 root partition:p0,p3 MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#4",
-          "      └─Selection 20.00 mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "      └─Selection 20.00 mpp[tiflash]  in(test.rp_t.a, 1, 20)",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
@@ -1050,7 +1050,7 @@
           "└─TableReader 1.00 root partition:p0,p1 MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#4",
-          "      └─Selection 20.00 mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "      └─Selection 20.00 mpp[tiflash]  in(test.hp_t.a, 1, 20)",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       }
