@@ -663,17 +663,13 @@ func (t *Table) ShallowCopy() *Table {
 	return nt
 }
 
-// CopyForColumnUpdate creates a copy optimized for column updates.
-func (t *Table) CopyForColumnUpdate() *Table {
-	newColumns := make(map[int64]*Column, len(t.columns))
-	for id, col := range t.columns {
-		newColumns[id] = col
-	}
+// CopyForColumnMapUpdate creates a copy optimized for column updates.
+func (t *Table) CopyForColumnMapUpdate() *Table {
 
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
 		RealtimeCount: t.RealtimeCount,
-		columns:       newColumns,
+		columns:       maps.Clone(t.columns),
 		indices:       t.indices,
 		Pseudo:        t.Pseudo,
 		ModifyCount:   t.ModifyCount,
@@ -691,18 +687,13 @@ func (t *Table) CopyForColumnUpdate() *Table {
 	return nt
 }
 
-// CopyForIndexUpdate creates a copy optimized for index updates.
-func (t *Table) CopyForIndexUpdate() *Table {
-	newIndices := make(map[int64]*Index, len(t.indices))
-	for id, idx := range t.indices {
-		newIndices[id] = idx
-	}
-
+// CopyForIndexMapUpdate creates a copy optimized for index updates.
+func (t *Table) CopyForIndexMapUpdate() *Table {
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
 		RealtimeCount: t.RealtimeCount,
 		columns:       t.columns,
-		indices:       newIndices,
+		indices:       maps.Clone(t.indices),
 		Pseudo:        t.Pseudo,
 		ModifyCount:   t.ModifyCount,
 		StatsVer:      t.StatsVer,
@@ -719,13 +710,13 @@ func (t *Table) CopyForIndexUpdate() *Table {
 	return nt
 }
 
-// CopyForMapUpdate creates a copy optimized for map-only updates like DelCol/DelIdx.
-func (t *Table) CopyForMapUpdate() *Table {
+// CopyForMapsUpdate creates a copy for both col and index map updates.
+func (t *Table) CopyForMapsUpdate() *Table {
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
 		RealtimeCount: t.RealtimeCount,
-		columns:       t.columns,
-		indices:       t.indices,
+		columns:       maps.Clone(t.columns),
+		indices:       maps.Clone(t.indices),
 		Pseudo:        t.Pseudo,
 		ModifyCount:   t.ModifyCount,
 		StatsVer:      t.StatsVer,

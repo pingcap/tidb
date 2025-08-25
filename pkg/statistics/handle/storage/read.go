@@ -506,8 +506,8 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	defer tracker.Detach()
 
-	var needsCopy bool
-	var originalTable *statistics.Table
+	// Delay copying until we know what needs to be modified
+	needsCopy := true
 
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
@@ -518,10 +518,6 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 		}
 		needsCopy = false
-	} else {
-		// delay copying until we know what needs to be modified
-		originalTable = table
-		needsCopy = true
 	}
 
 	realtimeCount, modifyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
@@ -534,18 +530,17 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		return nil, err
 	}
 
-	// Decide copy strategy based on whether we need to modify
 	if needsCopy {
 		if len(rows) == 0 {
 			// Only metadata update needed - use cheap shallow copy
-			table = originalTable.ShallowCopy()
+			table = table.ShallowCopy()
 		} else {
 			// Histogram modifications needed - use full copy
-			table = originalTable.Copy()
+			table = table.Copy()
 		}
 	}
 
-	// Update metadata (common for both paths)
+	// Update metadata
 	table.Pseudo = false
 	table.ModifyCount = modifyCount
 	table.RealtimeCount = realtimeCount
@@ -783,7 +778,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		)
 		return nil
 	}
-	statsTbl = statsTbl.CopyForColumnUpdate()
+	statsTbl = statsTbl.CopyForColumnMapUpdate()
 	if colHist.StatsAvailable() {
 		if fullLoad {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
@@ -896,7 +891,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		)
 		return nil
 	}
-	tbl = tbl.CopyForIndexUpdate()
+	tbl = tbl.CopyForIndexMapUpdate()
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
