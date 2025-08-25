@@ -16,6 +16,7 @@ go_library(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/schstatus",
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/keyspace",
         "//pkg/kv",
@@ -52,6 +53,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/schstatus",
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/kv",
