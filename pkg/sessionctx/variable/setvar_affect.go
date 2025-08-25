@@ -71,6 +71,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_table_rowid_scan_cost_factor":           {},
 	"tidb_opt_table_tiflash_scan_cost_factor":         {},
 	"tidb_opt_topn_cost_factor":                       {},
+	"tidb_opt_selectivity_factor":                     {},
 	"tidb_opt_risk_eq_skew_ratio":                     {},
 	"tidb_opt_risk_range_skew_ratio":                  {},
 	"tidb_opt_group_ndv_skew_ratio":                   {},
