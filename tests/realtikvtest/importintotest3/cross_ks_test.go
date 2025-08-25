@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -59,16 +60,28 @@ func TestOnUserKeyspace(t *testing.T) {
 	// job to user keyspace, task to system keyspace
 	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
 	jobQuerySQL := fmt.Sprintf("select count(1) from mysql.tidb_import_jobs where id = %d", jobID)
-	taskQuerySQL := fmt.Sprintf(`select sum(c) from (select count(1) c from mysql.tidb_global_task where task_key='%s'
-		union select count(1) c from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
-	userTK.MustQuery(jobQuerySQL).Check(testkit.Rows("1"))
-	sysKSTk.MustQuery(taskQuerySQL).Check(testkit.Rows("1"))
+	taskQuerySQL := fmt.Sprintf(`select id from (select id from mysql.tidb_global_task where task_key='%s'
+		union select id from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
+	require.Len(t, userTK.MustQuery(jobQuerySQL).Rows(), 1)
+	rs := sysKSTk.MustQuery(taskQuerySQL).Rows()
+	require.Len(t, rs, 1)
+
+	// Check subtask summary from system keyspace is correct.
+	taskID := rs[0][0].(string)
+	subtaskQuery := fmt.Sprintf(`select summary from (select summary from mysql.tidb_background_subtask where task_key='%s' and step = 1
+		union select summary from mysql.tidb_background_subtask_history where task_key='%s' and step = 1) t`, taskID, taskID)
+	rs = sysKSTk.MustQuery(subtaskQuery).Rows()
+	require.Len(t, rs, 1)
+	subtaskSummary := &execute.SubtaskSummary{}
+	require.NoError(t, json.Unmarshal([]byte(rs[0][0].(string)), subtaskSummary))
+	require.EqualValues(t, 1, subtaskSummary.RowCnt.Load())
+
 	// reverse check
 	sysKSTk.MustQuery(jobQuerySQL).Check(testkit.Rows("0"))
 	userTK.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
 
-	// Check the summary from user keyspace is correct, which is get from subtask summaries.
-	rs := userTK.MustQuery(fmt.Sprintf("select summary from mysql.tidb_import_jobs where id = %d", jobID)).Rows()
+	// Check the job summary from user keyspace is correct, which is get from subtask summaries.
+	rs = userTK.MustQuery(fmt.Sprintf("select summary from mysql.tidb_import_jobs where id = %d", jobID)).Rows()
 	require.Len(t, rs, 1)
 	summary := &importer.Summary{}
 	require.NoError(t, json.Unmarshal([]byte(rs[0][0].(string)), summary))
