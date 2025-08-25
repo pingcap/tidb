@@ -16,6 +16,7 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 // FTSInfo is an easy to use struct for interpreting a FullTextSearch expression.
@@ -47,6 +48,51 @@ func ContainsFullTextSearchFn(exprs ...Expression) bool {
 		}
 	}
 	return false
+}
+
+// ExprOnlyContainsLogicOpAndFTS checks whether the expression contains only logical operators
+// and FullTextSearch functions. It does not allow any other functions or expressions.
+func ExprOnlyContainsLogicOpAndFTS(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		// TiDB's FTS functions return float value for potential BM25 score cases.
+		// So there'll be a IS TRUE wrapped to convert the float to boolean.
+		switch x.FuncName.L {
+		case ast.LogicAnd, ast.LogicOr, ast.IsTruthWithNull:
+			for _, arg := range x.GetArgs() {
+				if !ExprOnlyContainsLogicOpAndFTS(arg) {
+					return false
+				}
+			}
+			return true
+		default:
+			if _, ok := FTSFuncMap[x.FuncName.L]; ok {
+				return true
+			}
+		}
+	default:
+		return false
+	}
+	return false
+}
+
+// CollectColumnIDForFTS collects column IDs from a complex FullTextSearch expression.
+// You need to make sure that the parameter is a valid one that only contains FullTextSearch functions and logical operators.
+func CollectColumnIDForFTS(expr Expression, idSet *intset.FastIntSet) {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		startIdx := 0
+		if _, ok := FTSFuncMap[x.FuncName.L]; ok {
+			startIdx = 1 // Skip the first argument which is the query string.
+		}
+		for i := startIdx; i < len(x.GetArgs()); i++ {
+			CollectColumnIDForFTS(x.GetArgs()[i], idSet)
+		}
+	case *Column:
+		idSet.Insert(int(x.ID))
+	default:
+		return
+	}
 }
 
 // InterpretFullTextSearchExpr try to interpret a FullText search expression.
