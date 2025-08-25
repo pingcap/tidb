@@ -16,6 +16,7 @@ package cardinality_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -26,7 +27,7 @@ import (
 func TestScaleNDV(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().RiskScaleNDVSkewRatio = 0
+	tk.MustExec(`set @@tidb_opt_scale_ndv_skew_ratio = 0`)
 	type TestCase struct {
 		OriginalNDV  float64
 		OriginalRows float64
@@ -50,25 +51,42 @@ func TestScaleNDV(t *testing.T) {
 	}
 }
 
+func TestOptScaleNDVSkewRatioSetVar(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a), key(b));`)
+	vals := make([]string, 0, 100)
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%d, %d)", i%20, i))
+	}
+	tk.MustExec(`insert into t values ` + strings.Join(vals, ","))
+	tk.MustExec("analyze table t")
+	tk.MustExec(`set @@tidb_stats_load_sync_wait=100`)
+
+	aggEstRows := tk.MustQuery(`explain select /*+ set_var(tidb_opt_scale_ndv_skew_ratio=0) */ distinct(a) from t where b<50`).Rows()[0][1].(string)
+	require.Equal(t, aggEstRows, "19.44")
+	aggEstRows = tk.MustQuery(`explain select /*+ set_var(tidb_opt_scale_ndv_skew_ratio="0.5") */ distinct(a) from t where b<50`).Rows()[0][1].(string)
+	require.Equal(t, aggEstRows, "14.82") // less than the prior one
+	aggEstRows = tk.MustQuery(`explain select /*+ set_var(tidb_opt_scale_ndv_skew_ratio=1) */ distinct(a) from t where b<50`).Rows()[0][1].(string)
+	require.Equal(t, aggEstRows, "10.20") // less than the prior one
+}
+
 func TestIssue54812(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().RiskScaleNDVSkewRatio = 0
+	tk.MustExec(`set @@tidb_opt_scale_ndv_skew_ratio = 0`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (a int, b int, key(a), key(b));`)
+	vals := make([]string, 0, 100)
 	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, 1))
+		vals = append(vals, fmt.Sprintf("(%d, 1)", i))
 	}
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", 100, 2))
-	}
+	tk.MustExec(`insert into t values ` + strings.Join(vals, ","))
+	tk.MustExec(`insert into t values ` + strings.Repeat("(100, 2), ", 999) + "(100, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustExec(`set @@tidb_stats_load_sync_wait=100`)
-	tk.MustQuery(`explain select distinct(a) from t where b=1`).Check(testkit.Rows(
-		"HashAgg_15 65.23 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
-		"└─TableReader_16 65.23 root  data:HashAgg_5",
-		"  └─HashAgg_5 65.23 cop[tikv]  group by:test.t.a, ",
-		"    └─Selection_14 100.00 cop[tikv]  eq(test.t.b, 1)",
-		"      └─TableFullScan_13 1100.00 cop[tikv] table:t keep order:false"))
+	aggEstRows := tk.MustQuery(`explain select distinct(a) from t where b=1`).Rows()[0][1].(string)
+	require.Equal(t, "65.23", aggEstRows)
 }
