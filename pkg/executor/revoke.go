@@ -417,7 +417,7 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 			//TODO Optimized for batch, one-shot.
 		}
 	} else {
-		// FIXME(cbc): should not reach here?
+		// If the target table is not existent
 		err = removePrivFromColumnPriv(ctx, internalSession.GetSQLExecutor(), priv.Priv, host, user, dbName, e.Level.TableName, "")
 		if err != nil {
 			return err

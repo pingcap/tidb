@@ -697,7 +697,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	// SHOW COLUMNS displays information only for those columns for which you have some privilege.
 	// https://dev.mysql.com/doc/refman/8.4/en/show-columns.html
 	// 1. If you have table privilege, all columns can be shown
-	// 2. If you have only some columns privielge, these columns can be shown
+	// 2. If you have only some columns privilege, these columns can be shown
 	// 3. If you have neither table or column privilege, an error is returned
 	passTblPrivCheck, passColPrivCheck := false, false
 	checker := privilege.GetPrivilegeManager(e.Ctx())
