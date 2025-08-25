@@ -264,25 +264,24 @@ func TestBitColumnPushDown(t *testing.T) {
 		testKit.MustExec("insert into t2 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)")
 		sql := "select b from t1 where t1.b > (select min(t2.b) from t2 where t2.a < t1.a)"
 		testKit.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
-		rows := [][]any{
-			{"Projection_15", "root", "test.t1.b"},
-			{"└─Apply_19", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
-			{"  ├─TableReader_22(Build)", "root", "data:Selection_21"},
-			{"  │ └─Selection_21", "cop[tikv]", "not(isnull(test.t1.b))"},
-			{"  │   └─TableFullScan_20", "cop[tikv]", "keep order:false, stats:pseudo"},
-			{"  └─Selection_23(Probe)", "root", "not(isnull(Column#7))"},
-			{"    └─StreamAgg_30", "root", "funcs:min(test.t2.b)->Column#7"},
-			{"      └─TopN_31", "root", "test.t2.b, offset:0, count:1"},
-			{"        └─TableReader_41", "root", "data:TopN_40"},
-			{"          └─TopN_40", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-			{"            └─Selection_39", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
-			{"              └─TableFullScan_38", "cop[tikv]", "keep order:false, stats:pseudo"},
-		}
-		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+		testKit.MustQuery(fmt.Sprintf("explain format='brief' %s", sql)).Check(testkit.Rows(
+			"Projection 9990.00 root  test.t1.b",
+			"└─Apply 9990.00 root  CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)",
+			"  ├─TableReader(Build) 9990.00 root  data:Selection",
+			"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+			"  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+			"  └─Selection(Probe) 7992.00 root  not(isnull(Column#7))",
+			"    └─StreamAgg 9990.00 root  funcs:min(test.t2.b)->Column#7",
+			"      └─Selection 7992.00 root  not(isnull(test.t2.b))",
+			"        └─TopN 9990.00 root  test.t2.b, offset:0, count:1",
+			"          └─TableReader 9990.00 root  data:TopN",
+			"            └─TopN 9990.00 cop[tikv]  test.t2.b, offset:0, count:1",
+			"              └─Selection 79840080.00 cop[tikv]  lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))",
+			"                └─TableFullScan 99900000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 		testKit.MustExec("insert t1 values ('A', 1);")
 		sql = "select a from t1 where ascii(a)=65"
 		testKit.MustQuery(sql).Check(testkit.Rows("A"))
-		rows = [][]any{
+		rows := [][]any{
 			{"TableReader_7", "root", "data:Selection_6"},
 			{"└─Selection_6", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
 			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
