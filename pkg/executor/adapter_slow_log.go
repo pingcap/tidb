@@ -17,280 +17,34 @@ package executor
 import (
 	"bytes"
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/tikv/client-go/v2/util"
 )
 
-// SlowLogFieldAccessor defines how to get or set a specific field in SlowQueryLogItems.
-// - Setter is optional and pre-fills the field before matching if it needs explicit preparation.
-// - Match evaluates whether the field in SlowQueryLogItems meets a specific threshold.
-//   - threshold is the value to compare against when determining a match.
-type SlowLogFieldAccessor struct {
-	Setter func(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems)
-	Match  func(seCtx sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool
-}
-
-func makeExecDetailAccessor(match func(*execdetails.ExecDetails, any) bool) SlowLogFieldAccessor {
-	return SlowLogFieldAccessor{
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			if items.ExecDetail == nil {
-				execDetail := seCtx.GetSessionVars().StmtCtx.GetExecDetails()
-				items.ExecDetail = &execDetail
-			}
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			if items.ExecDetail == nil {
-				return false
-			}
-			return match(items.ExecDetail, threshold)
-		},
-	}
-}
-
-func makeKVExecDetailAccessor(match func(*util.ExecDetails, any) bool) SlowLogFieldAccessor {
-	return SlowLogFieldAccessor{
-		Setter: func(ctx context.Context, _ sessionctx.Context, items *variable.SlowQueryLogItems) {
-			if items.KVExecDetail == nil {
-				tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
-				if tikvExecDetailRaw != nil {
-					items.KVExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
-				}
-			}
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			if items.KVExecDetail == nil {
-				return false
-			}
-			return match(items.KVExecDetail, threshold)
-		},
-	}
-}
-
-// numericComparable defines a set of numeric types that support ordering operations (like >=).
-type numericComparable interface {
-	~int | ~int64 | ~uint64 | ~float64
-}
-
-func matchEqual[T comparable](threshold any, v T) bool {
-	tv, ok := threshold.(T)
-	return ok && v == tv
-}
-
-func matchGE[T numericComparable](threshold any, v T) bool {
-	tv, ok := threshold.(T)
-	return ok && v >= tv
-}
-
-// SlowLogRuleFieldAccessors defines the set of field accessors for SlowQueryLogItems
-// that are relevant to evaluating and triggering SlowLogRules.
-// It's exporting for testing.
-var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
-	variable.SlowLogConnIDStr: {
-		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, seCtx.GetSessionVars().ConnectionID)
-		},
-	},
-	variable.SlowLogSessAliasStr: {
-		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
-			return matchEqual(threshold, seCtx.GetSessionVars().SessionAlias)
-		},
-	},
-	variable.SlowLogDBStr: {
-		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
-			return matchEqual(threshold, seCtx.GetSessionVars().CurrentDB)
-		},
-	},
-	variable.SlowLogExecRetryCount: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.ExecRetryCount = seCtx.GetSessionVars().StmtCtx.ExecRetryCount
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, items.ExecRetryCount)
-		},
-	},
-	variable.SlowLogQueryTimeStr: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.TimeTotal = seCtx.GetSessionVars().GetTotalCostDuration()
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, items.TimeTotal.Seconds())
-		},
-	},
-	variable.SlowLogParseTimeStr: {
-		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, seCtx.GetSessionVars().DurationParse.Seconds())
-		},
-	},
-	variable.SlowLogCompileTimeStr: {
-		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, seCtx.GetSessionVars().DurationCompile.Seconds())
-		},
-	},
-	variable.SlowLogOptimizeTimeStr: {
-		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, seCtx.GetSessionVars().DurationOptimization.Seconds())
-		},
-	},
-	variable.SlowLogWaitTSTimeStr: {
-		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, seCtx.GetSessionVars().DurationWaitTS.Seconds())
-		},
-	},
-	variable.SlowLogIsInternalStr: {
-		Match: func(seCtx sessionctx.Context, _ *variable.SlowQueryLogItems, threshold any) bool {
-			return matchEqual(threshold, seCtx.GetSessionVars().InRestrictedSQL)
-		},
-	},
-	variable.SlowLogDigestStr: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			_, digest := seCtx.GetSessionVars().StmtCtx.SQLDigest()
-			items.Digest = digest.String()
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchEqual(threshold, items.Digest)
-		},
-	},
-	variable.SlowLogNumCopTasksStr: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			copTasksDetail := seCtx.GetSessionVars().StmtCtx.CopTasksDetails()
-			items.CopTasks = copTasksDetail
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, int64(items.CopTasks.NumCopTasks))
-		},
-	},
-	variable.SlowLogMemMax: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.MemMax = seCtx.GetSessionVars().MemTracker.MaxConsumed()
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, items.MemMax)
-		},
-	},
-	variable.SlowLogDiskMax: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.DiskMax = seCtx.GetSessionVars().DiskTracker.MaxConsumed()
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, items.DiskMax)
-		},
-	},
-	variable.SlowLogWriteSQLRespTotal: {
-		Setter: func(ctx context.Context, _ sessionctx.Context, items *variable.SlowQueryLogItems) {
-			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
-			if stmtDetailRaw != nil {
-				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
-			}
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchGE(threshold, items.WriteSQLRespTotal.Seconds())
-		},
-	},
-	variable.SlowLogSucc: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.Succ = seCtx.GetSessionVars().StmtCtx.ExecSuccess
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchEqual(threshold, items.Succ)
-		},
-	},
-	variable.SlowLogPlanDigest: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			_, planDigest := GetPlanDigest(seCtx.GetSessionVars().StmtCtx)
+func init() {
+	variable.SlowLogRuleFieldAccessors[variable.SlowLogPlanDigest] = variable.SlowLogFieldAccessor{
+		Setter: func(_ context.Context, seVars *variable.SessionVars, items *variable.SlowQueryLogItems) {
+			_, planDigest := GetPlanDigest(seVars.StmtCtx)
 			items.PlanDigest = planDigest.String()
 		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchEqual(threshold, items.PlanDigest)
+		Match: func(_ *variable.SessionVars, items *variable.SlowQueryLogItems, threshold any) bool {
+			return variable.MatchEqual(threshold, items.PlanDigest)
 		},
-	},
-	variable.SlowLogResourceGroup: {
-		Setter: func(_ context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.ResourceGroupName = seCtx.GetSessionVars().StmtCtx.ResourceGroupName
-		},
-		Match: func(_ sessionctx.Context, items *variable.SlowQueryLogItems, threshold any) bool {
-			return matchEqual(threshold, items.ResourceGroupName)
-		},
-	},
-	// The following fields are related to util.ExecDetails.
-	variable.SlowLogKVTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, time.Duration(d.WaitKVRespDuration).Seconds())
-	}),
-	variable.SlowLogPDTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, time.Duration(d.WaitPDRespDuration).Seconds())
-	}),
-	variable.SlowLogBackoffTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, time.Duration(d.BackoffDuration).Seconds())
-	}),
-	variable.SlowLogUnpackedBytesSentTiKVTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.UnpackedBytesSentKVTotal)
-	}),
-	variable.SlowLogUnpackedBytesReceivedTiKVTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.UnpackedBytesReceivedKVTotal)
-	}),
-	variable.SlowLogUnpackedBytesSentTiKVCrossZone: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.UnpackedBytesSentKVCrossZone)
-	}),
-	variable.SlowLogUnpackedBytesReceivedTiKVCrossZone: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.UnpackedBytesReceivedKVCrossZone)
-	}),
-	variable.SlowLogUnpackedBytesSentTiFlashTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.UnpackedBytesSentMPPTotal)
-	}),
-	variable.SlowLogUnpackedBytesReceivedTiFlashTotal: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.UnpackedBytesReceivedMPPTotal)
-	}),
-	variable.SlowLogUnpackedBytesSentTiFlashCrossZone: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.UnpackedBytesSentMPPCrossZone)
-	}),
-	variable.SlowLogUnpackedBytesReceivedTiFlashCrossZone: makeKVExecDetailAccessor(func(d *util.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.UnpackedBytesReceivedMPPCrossZone)
-	}),
-	// The following fields are related to execdetails.ExecDetails.
-	execdetails.ProcessTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.TimeDetail.ProcessTime.Seconds())
-	}),
-	execdetails.BackoffTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.BackoffTime.Seconds())
-	}),
-	execdetails.TotalKeysStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.ScanDetail.TotalKeys)
-	}),
-	execdetails.ProcessKeysStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.ScanDetail.ProcessedKeys)
-	}),
-	execdetails.PreWriteTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.CommitDetail.PrewriteTime.Seconds())
-	}),
-	execdetails.CommitTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, d.CommitDetail.CommitTime.Seconds())
-	}),
-	execdetails.WriteKeysStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, int64(d.CommitDetail.WriteKeys))
-	}),
-	execdetails.WriteSizeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, int64(d.CommitDetail.WriteSize))
-	}),
-	execdetails.PrewriteRegionStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails, threshold any) bool {
-		return matchGE(threshold, int64(atomic.LoadInt32(&d.CommitDetail.PrewriteRegionNum)))
-	}),
+	}
 }
 
 // PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by current session's SlowLogRules.
 // These pre-collected fields are later used for matching SQL execution details against the rules.
-func PrepareSlowLogItemsForRules(ctx context.Context, seCtx sessionctx.Context) *variable.SlowQueryLogItems {
+func PrepareSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionVars) *variable.SlowQueryLogItems {
 	items := &variable.SlowQueryLogItems{}
-	for field := range seCtx.GetSessionVars().SlowLogRules.AllConditionFields {
-		gs := SlowLogRuleFieldAccessors[field]
+	for field := range seVars.SlowLogRules.AllConditionFields {
+		gs := variable.SlowLogRuleFieldAccessors[field]
 		if gs.Setter != nil {
-			gs.Setter(ctx, seCtx, items)
+			gs.Setter(ctx, seVars, items)
 		}
 	}
 
@@ -305,16 +59,16 @@ func PrepareSlowLogItemsForRules(ctx context.Context, seCtx sessionctx.Context) 
 //   - Conditions inside a rule are combined with AND: all conditions must be met for that rule.
 //
 // Returns true if any rule matches, false otherwise.
-func Match(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) bool {
-	rules := seCtx.GetSessionVars().SlowLogRules
+func Match(seVars *variable.SessionVars, items *variable.SlowQueryLogItems) bool {
+	rules := seVars.SlowLogRules
 	// Or logical relationship
 	for _, rule := range rules.Rules {
 		matched := true
 
 		// And logical relationship
 		for _, condition := range rule.Conditions {
-			accessor := SlowLogRuleFieldAccessors[condition.Field]
-			if ok := accessor.Match(seCtx, items, condition.Threshold); !ok {
+			accessor := variable.SlowLogRuleFieldAccessors[condition.Field]
+			if ok := accessor.Match(seVars, items, condition.Threshold); !ok {
 				matched = false
 				break
 			}
@@ -330,25 +84,25 @@ func Match(seCtx sessionctx.Context, items *variable.SlowQueryLogItems) bool {
 // CompleteSlowLogItemsForRules fills in the remaining SlowQueryLogItems fields
 // that are relevant to triggering the current session's SlowLogRules.
 // It's exporting for testing.
-func CompleteSlowLogItemsForRules(ctx context.Context, seCtx sessionctx.Context, items *variable.SlowQueryLogItems) {
+func CompleteSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionVars, items *variable.SlowQueryLogItems) {
 	if items == nil {
 		return
 	}
 
-	for field, sg := range SlowLogRuleFieldAccessors {
-		if _, ok := seCtx.GetSessionVars().SlowLogRules.AllConditionFields[field]; ok {
+	for field, sg := range variable.SlowLogRuleFieldAccessors {
+		if _, ok := seVars.SlowLogRules.AllConditionFields[field]; ok {
 			continue
 		}
 
 		if sg.Setter != nil {
-			sg.Setter(ctx, seCtx, items)
+			sg.Setter(ctx, seVars, items)
 		}
 	}
 }
 
 // SetSlowLogItems fills the remaining fields of SlowQueryLogItems after SQL execution.
 func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *variable.SlowQueryLogItems) {
-	CompleteSlowLogItemsForRules(a.GoCtx, a.Ctx, items)
+	CompleteSlowLogItemsForRules(a.GoCtx, a.Ctx.GetSessionVars(), items)
 
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx

@@ -119,6 +119,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
