@@ -1591,15 +1591,18 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
+	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
+	minIndexRows := ds.TableStats.RowCount * ds.AccessPathMinSelectivity
 	if preferRange {
 		// Override preferRange with the following limitations to scope
-		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
+		preferRange = (ds.MostMatchingIndex > 1 && minIndexRows < 2 && ds.AccessPathMinSelectivity < 0.1) || preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
 	}
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
 		// candidate paths, if there exists any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
-		var hasRangeScanPath, hasMultiRange bool
+		mostMatchPath := make([]*candidatePath, 0, len(candidates))
+		var hasRangeScanPath, hasMultiRange, hasMostMatchPath bool
 		for _, c := range candidates {
 			if len(c.path.Ranges) > 1 {
 				hasMultiRange = true
@@ -1615,18 +1618,28 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				if preferMerge || isDNFOnlyEquals || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
+				} else if c.path.IsTablePath() || (c.path.Index != nil && c.path.Index.Global) {
+					// Also keep PK and global index
+					preferredPaths = append(preferredPaths, c)
+				}
+				// Preference the most matching index path for very selective index plans
+				if !preferMerge && c.path.EqOrInCondCount > 1 && c.path.EqOrInCondCount == ds.MostMatchingIndex &&
+					c.path.CountAfterIndex > 0 && minIndexRows < 2 && c.path.CountAfterIndex <= (minIndexRows*1.5) {
+					mostMatchPath = append(mostMatchPath, c)
+					hasMostMatchPath = true
 				}
 			}
 		}
-		if hasMultiRange {
+    	if hasMultiRange {
 			// Only log the fix control if we had multiple ranges
 			ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 		}
-		if hasRangeScanPath {
+		if hasMostMatchPath {
+			return mostMatchPath
+		} else if hasRangeScanPath {
 			return preferredPaths
 		}
 	}
-
 	return candidates
 }
 
