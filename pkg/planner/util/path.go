@@ -128,6 +128,12 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+
+	// GroupedRanges stores the result of grouping ranges by columns in case 3 of isMatchProp.
+	GroupedRanges map[string][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge-sort to satisfy physical property.
+	// This field is used to rebuild GroupedRanges in plan cache.
+	GroupByColIdxs []int
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -164,6 +170,8 @@ func (path *AccessPath) Clone() *AccessPath {
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+		GroupedRanges:                make(map[string][]*ranger.Range, len(path.GroupedRanges)),
+		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -177,6 +185,9 @@ func (path *AccessPath) Clone() *AccessPath {
 			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
 		}
 		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)
+	}
+	for key, ranges := range path.GroupedRanges {
+		ret.GroupedRanges[key] = SliceDeepClone(ranges)
 	}
 	return ret
 }
