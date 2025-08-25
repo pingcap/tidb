@@ -16,6 +16,7 @@ package handle
 
 import (
 	"context"
+	"encoding/json"
 	goerrors "errors"
 	"path"
 	"strconv"
@@ -26,12 +27,16 @@ import (
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -289,6 +294,24 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 		logutil.BgLogger().Warn("Can't get cluster id from store, use default cloud storage uri")
 	}
 	return cloudURI
+}
+
+// UpdatePauseScaleInFlag updates the pause scale-in flag.
+func UpdatePauseScaleInFlag(ctx context.Context, flag *schstatus.TTLFlag) error {
+	manager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	bytes, err := json.Marshal(flag)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		_, err2 := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`REPLACE INTO mysql.tidb(variable_name, variable_value) VALUES(%?, %?)`,
+			tidbvar.DXFSchedulePauseScaleIn, string(bytes))
+		return err2
+	})
 }
 
 func init() {
