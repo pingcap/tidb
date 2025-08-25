@@ -36,7 +36,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap/zapcore"
 )
 
