@@ -137,12 +137,12 @@ var maxRowTableSegmentSize = int64(1024)
 // 64 MB
 const maxRowTableSegmentByteSize = 64 * 1024 * 1024
 
-func newRowTableSegment(rowSizeHint uint) *rowTableSegment {
+func newRowTableSegment() *rowTableSegment {
 	return &rowTableSegment{
 		rawData:         make([]byte, 0),
-		hashValues:      make([]uint64, 0, rowSizeHint),
-		rowStartOffset:  make([]uint64, 0, rowSizeHint),
-		validJoinKeyPos: make([]int, 0, rowSizeHint),
+		hashValues:      make([]uint64, 0),
+		rowStartOffset:  make([]uint64, 0),
+		validJoinKeyPos: make([]int, 0),
 	}
 }
 
