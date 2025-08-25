@@ -116,6 +116,9 @@ func TestKillFlagInBackoff(t *testing.T) {
 	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `sleep(1000)->return("timeout")->return("")`))
 	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
+	// the above failpoint is not supported in async api, so disable async-cop.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/disableAsyncCop", `return`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/disableAsyncCop")
 	// Set kill flag and check its passed to backoffer.
 	go func() {
 		time.Sleep(300 * time.Millisecond)
