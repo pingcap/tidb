@@ -1974,7 +1974,6 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
-		tk.MustExec("analyze table admin_test")
 		err = tk.ExecToErr("admin check table admin_test")
 		require.Error(t, err)
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
@@ -1989,7 +1988,6 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
-		tk.MustExec("analyze table admin_test")
 		tk.MustExec("admin check table admin_test")
 
 		indexOpr = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
@@ -2002,7 +2000,6 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
-		tk.MustExec("analyze table admin_test")
 		err = tk.ExecToErr("admin check table admin_test")
 		require.Error(t, err)
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
@@ -2016,7 +2013,6 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
-		tk.MustExec("analyze table admin_test")
 		err = tk.ExecToErr("admin check table admin_test")
 		require.Error(t, err)
 		if !enabled {
@@ -2072,9 +2068,6 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		txn.Delete(tablecodec.EncodeRowKey(df.ID, kv.IntHandle(0).Encoded()))
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
-		// For global index, we must ensure the global stats is ready, otherwise index path will be pruned.
-		// See https://github.com/pingcap/tidb/blob/2010151c503c1a0b74d63e52a6019e03afada21d/pkg/planner/core/logical_plan_builder.go#L4506-L4518
-		tk.MustExec("analyze table admin_test")
 		err = tk.ExecToErr("admin check table admin_test")
 		require.Error(t, err)
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
@@ -2089,7 +2082,6 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
-		tk.MustExec("analyze table admin_test")
 		tk.MustExec("admin check table admin_test")
 
 		indexOpr = tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
@@ -2101,7 +2093,6 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
-		tk.MustExec("analyze table admin_test")
 		err = tk.ExecToErr("admin check table admin_test")
 		require.Error(t, err)
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
@@ -2115,7 +2106,6 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
-		tk.MustExec("analyze table admin_test")
 		err = tk.ExecToErr("admin check table admin_test")
 		require.Error(t, err)
 		if !enabled {

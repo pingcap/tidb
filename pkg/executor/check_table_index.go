@@ -370,9 +370,13 @@ func (w *checkIndexWorker) initSessCtx() (sessionctx.Context, func(), error) {
 	sessVars := se.GetSessionVars()
 	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
 	originMemQuotaQuery := sessVars.MemQuotaQuery
+	originSkipMissingPartitionStats := sessVars.SkipMissingPartitionStats
 
 	sessVars.OptimizerUseInvisibleIndexes = true
 	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	// Make sure using index scan for global index.
+	// See https://github.com/pingcap/tidb/blob/2010151c503c1a0b74d63e52a6019e03afada21d/pkg/planner/core/logical_plan_builder.go#L4506-L4518
+	sessVars.SkipMissingPartitionStats = true
 	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
 	if snapshot != 0 {
 		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
@@ -384,6 +388,7 @@ func (w *checkIndexWorker) initSessCtx() (sessionctx.Context, func(), error) {
 	return se, func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
+		sessVars.SkipMissingPartitionStats = originSkipMissingPartitionStats
 		if snapshot != 0 {
 			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
 			if err != nil {
@@ -732,8 +737,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 
 		tableQuery = fmt.Sprintf(tableChecksumSQL, groupByKey, whereKey, groupByKey)
 		indexQuery = fmt.Sprintf(indexChecksumSQL, groupByKey, whereKey, groupByKey)
-		verifyCheckQuery(ctx, se, tableQuery, true)
-		verifyCheckQuery(ctx, se, indexQuery, false)
+		verifyIndexSideQuery(ctx, se, indexQuery)
 
 		logutil.BgLogger().Info(
 			"fast check table by group",
@@ -813,8 +817,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		groupByKey := fmt.Sprintf("((CAST(%s AS SIGNED) - %d) MOD %d)", md5Handle, offset, mod)
 		tableQuery = fmt.Sprintf(tableCheckSQL, groupByKey)
 		indexQuery = fmt.Sprintf(indexCheckSQL, groupByKey)
-		verifyCheckQuery(ctx, se, tableQuery, true)
-		verifyCheckQuery(ctx, se, indexQuery, false)
+		verifyIndexSideQuery(ctx, se, indexQuery)
 
 		var (
 			lastTableRecord *recordWithChecksum
@@ -901,7 +904,7 @@ type recordWithChecksum struct {
 	checksum uint64
 }
 
-func verifyCheckQuery(ctx context.Context, se sessionctx.Context, sql string, useTableScan bool) {
+func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string) {
 	rows, err := queryToRow(ctx, se, "explain "+sql)
 	if err != nil {
 		panic(err)
@@ -918,7 +921,7 @@ func verifyCheckQuery(ctx context.Context, se sessionctx.Context, sql string, us
 		}
 	}
 
-	if (useTableScan && !isTableScan) || (!useTableScan && !isIndexScan) {
+	if isTableScan || !isIndexScan {
 		panic(fmt.Sprintf("check query %s error, table scan: %t, index scan: %t",
 			sql, isTableScan, isIndexScan))
 	}
