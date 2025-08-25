@@ -626,7 +626,7 @@ func constructIndexMergeJoin(
 		// or outer join keys the prefix of the prop items. So we need `canKeepOuterOrder` or
 		// `isOuterKeysPrefix` to be true.
 		if canKeepOuterOrder || isOuterKeysPrefix {
-			indexMergeJoin := PhysicalIndexMergeJoin{
+			indexMergeJoin := physicalop.PhysicalIndexMergeJoin{
 				PhysicalIndexJoin:       *join,
 				KeyOff2KeyOffOrderByIdx: keyOff2KeyOffOrderByIdx,
 				NeedOuterSort:           !isOuterKeysPrefix,
@@ -1729,7 +1729,7 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 		return indexJoins
 	}
 	return slices.DeleteFunc(indexJoins, func(indexJoin base.PhysicalPlan) bool {
-		_, ok := indexJoin.(*PhysicalIndexMergeJoin)
+		_, ok := indexJoin.(*physicalop.PhysicalIndexMergeJoin)
 		return ok
 	})
 }
@@ -1751,7 +1751,7 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 	case *physicalop.PhysicalIndexHashJoin:
 		innerIdx = ij.GetInnerChildIdx()
 		joinMethod = indexHashJoinMethod
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		innerIdx = ij.GetInnerChildIdx()
 		joinMethod = indexMergeJoinMethod
 	default:
@@ -3881,15 +3881,15 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 
 func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalCTE)
-	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
+	pcte := physicalop.PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
-		pcte.storageSender = physicalop.PhysicalExchangeSender{
+		pcte.StorageSender = physicalop.PhysicalExchangeSender{
 			ExchangeType: tipb.ExchangeType_Broadcast,
 		}.Init(p.SCtx(), p.StatsInfo())
 	}
 	pcte.SetSchema(p.Schema())
 	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})
-	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
+	return []base.PhysicalPlan{(*physicalop.PhysicalCTEStorage)(pcte)}, true, nil
 }
 
 // getGEAndLogicalSequence extracts the possible group expression and logical sequence operator from a common super pointer.

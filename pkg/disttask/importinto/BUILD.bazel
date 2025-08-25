@@ -58,6 +58,7 @@ go_library(
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/resourcemanager/util",
         "//pkg/sessionctx",
+        "//pkg/store",
         "//pkg/table/tables",
         "//pkg/types",
         "//pkg/util",
@@ -97,7 +98,6 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    race = "on",
     shard_count = 20,
     deps = [
         "//br/pkg/storage",

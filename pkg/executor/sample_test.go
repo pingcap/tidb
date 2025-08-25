@@ -20,7 +20,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -132,10 +134,13 @@ func TestMaxChunkSize(t *testing.T) {
 }
 
 func TestKeyspaceSample(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Keyspace is not supported in classic mode")
+	}
 	// Build an exist keyspace.
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
 	keyspaceMeta.Id = 2
-	keyspaceMeta.Name = "test_ks_name2"
+	keyspaceMeta.Name = keyspace.System
 
 	opts := mockstore.WithCurrentKeyspaceMeta(&keyspaceMeta)
 	store := testkit.CreateMockStore(t, opts)
@@ -147,7 +152,7 @@ func TestKeyspaceSample(t *testing.T) {
 	// Build another exist keyspace.
 	keyspaceMeta02 := keyspacepb.KeyspaceMeta{}
 	keyspaceMeta02.Id = 3
-	keyspaceMeta02.Name = "test_ks_name3"
+	keyspaceMeta02.Name = keyspace.System
 
 	opts02 := mockstore.WithCurrentKeyspaceMeta(&keyspaceMeta02)
 	store02 := testkit.CreateMockStore(t, opts02)

@@ -35,9 +35,8 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{core.PhysicalTableReader{},
-		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
-		core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
+	var structures = []any{
+		core.PointGetPlan{}, core.BatchPointGetPlan{},
 		core.Update{}, core.Delete{}, core.Insert{}}
 
 	// todo: add all back with physicalop.x
@@ -81,15 +80,15 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		switch fullFieldName { // handle some fields specially
 		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
 			"core.PhysicalIndexMergeReader.TablePlans":
-			c.write("cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)")
+			c.write("cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)")
 			continue
 		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
-			c.write("cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)")
+			c.write("cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)")
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
 			c.write("for i, plan := range cloned.partialPlans {")
-			c.write("cloned.PartialPlans[i] = flattenPushDownPlan(plan)")
+			c.write("cloned.PartialPlans[i] = physicalop.FlattenPushDownPlan(plan)")
 			c.write("}")
 			continue
 		}
@@ -167,7 +166,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = %v.(base.PhysicalPlan)", f.Name, f.Name)
 			c.write("}")
 		case "[]base.PhysicalPlan":
-			c.write("%v, ok := clonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
+			c.write("%v, ok := physicalop.ClonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
 			c.write("if !ok {return nil, false}")
 			c.write("cloned.%v = %v", f.Name, f.Name)
 		case "*int":
@@ -251,6 +250,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 `

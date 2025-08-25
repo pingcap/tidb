@@ -126,7 +126,7 @@ import (
 	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/redact"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -1134,7 +1134,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	orgStartTS := sessVars.TxnCtx.StartTS
 	label := s.GetSQLLabel()
 	for {
-		if err = s.PrepareTxnCtx(ctx); err != nil {
+		if err = s.PrepareTxnCtx(ctx, nil); err != nil {
 			return err
 		}
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -2067,7 +2067,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
 
-	if err := s.PrepareTxnCtx(ctx); err != nil {
+	if err := s.PrepareTxnCtx(ctx, stmtNode); err != nil {
 		return nil, err
 	}
 	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
@@ -2146,11 +2146,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
 		if err == nil && prepareStmt.PreparedAst != nil {
-			stmtLabel = ast.GetStmtLabel(prepareStmt.PreparedAst.Stmt)
+			stmtLabel = stmtctx.GetStmtLabel(ctx, prepareStmt.PreparedAst.Stmt)
 		}
 	}
 	if stmtLabel == "" {
-		stmtLabel = ast.GetStmtLabel(stmtNode)
+		stmtLabel = stmtctx.GetStmtLabel(ctx, stmtNode)
 	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
@@ -2525,7 +2525,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	ctx := context.Background()
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
-	if err = s.PrepareTxnCtx(ctx); err != nil {
+	if err = s.PrepareTxnCtx(ctx, nil); err != nil {
 		return
 	}
 
@@ -4088,29 +4088,97 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 }
 
 // PrepareTxnCtx begins a transaction, and creates a new transaction context.
-// It is called before we execute a sql query.
-func (s *session) PrepareTxnCtx(ctx context.Context) error {
+// When stmt is provided, it determines transaction mode based on the statement.
+// When stmt is nil, it uses the session's default transaction mode.
+func (s *session) PrepareTxnCtx(ctx context.Context, stmt ast.StmtNode) error {
 	s.currentCtx = ctx
 	if s.txn.validOrPending() {
 		return nil
 	}
 
-	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || (config.GetGlobalConfig().PessimisticTxn.
-		PessimisticAutoCommit.Load() && !s.GetSessionVars().BulkDMLEnabled) {
-		if s.sessionVars.TxnMode == ast.Pessimistic {
-			txnMode = ast.Pessimistic
-		}
-	}
-
-	if s.sessionVars.RetryInfo.Retrying {
-		txnMode = ast.Pessimistic
-	}
+	txnMode := s.decideTxnMode(stmt)
 
 	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
 		Type:    sessiontxn.EnterNewTxnBeforeStmt,
 		TxnMode: txnMode,
 	})
+}
+
+// decideTxnMode determines whether to use pessimistic or optimistic transaction mode
+// based on the current session state, configuration, and the statement being executed.
+// When stmt is nil, it uses the session's default transaction mode.
+func (s *session) decideTxnMode(stmt ast.StmtNode) string {
+	if s.sessionVars.RetryInfo.Retrying {
+		return ast.Pessimistic
+	}
+
+	if s.sessionVars.TxnMode != ast.Pessimistic {
+		return ast.Optimistic
+	}
+
+	if !s.sessionVars.IsAutocommit() {
+		return s.sessionVars.TxnMode
+	}
+
+	if stmt != nil && s.shouldUsePessimisticAutoCommit(stmt) {
+		return ast.Pessimistic
+	}
+
+	return ast.Optimistic
+}
+
+// shouldUsePessimisticAutoCommit checks if pessimistic-auto-commit should be applied
+// for the current statement.
+func (s *session) shouldUsePessimisticAutoCommit(stmtNode ast.StmtNode) bool {
+	// Check if pessimistic-auto-commit is enabled globally
+	if !config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+		return false
+	}
+
+	// Disabled for bulk DML operations
+	if s.GetSessionVars().BulkDMLEnabled {
+		return false
+	}
+
+	if s.isInternal() {
+		return false
+	}
+
+	// Use direct AST inspection to determine if this is a DML statement
+	return s.isDMLStatement(stmtNode)
+}
+
+// isDMLStatement checks if the given statement should use pessimistic-auto-commit.
+// It handles EXECUTE unwrapping and properly handles EXPLAIN statements by checking their inner statement.
+func (s *session) isDMLStatement(stmtNode ast.StmtNode) bool {
+	if stmtNode == nil {
+		return false
+	}
+
+	// Handle EXECUTE statements - unwrap to get the actual prepared statement
+	actualStmt := stmtNode
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
+		if err != nil || prepareStmt == nil {
+			return false
+		}
+		actualStmt = prepareStmt.PreparedAst.Stmt
+	}
+
+	// For EXPLAIN statements, check the underlying statement
+	// This ensures EXPLAIN shows the correct plan that would be used if the statement were executed
+	if explainStmt, ok := actualStmt.(*ast.ExplainStmt); ok {
+		return s.isDMLStatement(explainStmt.Stmt)
+	}
+
+	// Only these DML statements should use pessimistic-auto-commit
+	// Note: LOAD DATA and IMPORT are intentionally excluded
+	switch actualStmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	default:
+		return false
+	}
 }
 
 // PrepareTSFuture uses to try to get ts future.

@@ -745,7 +745,7 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	index := -1
 	var plan base.PhysicalPlan
 	switch join := pp.(type) {
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
 		plan = join.InnerPlan
 	case *physicalop.PhysicalIndexHashJoin:
@@ -1141,12 +1141,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
 			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount &&
-			(rhs.path.MaxCountAfterAccess <= 0 || lhs.path.CountAfterAccess < rhs.path.MaxCountAfterAccess) {
+			// if rhs's maxCount hasn't been adjusted or its adjusted max risk is greater than than lhs's regular count, then lhs can win
+			(rhs.path.MaxCountAfterAccess <= rhs.path.CountAfterAccess || lhs.path.CountAfterAccess < rhs.path.MaxCountAfterAccess) {
 			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
 		if !rhsPseudo && globalResult <= 0 && sum <= 0 &&
 			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount &&
-			(lhs.path.MaxCountAfterAccess <= 0 || rhs.path.CountAfterAccess < lhs.path.MaxCountAfterAccess) {
+			// if lhs's maxCount hasn't been adjusted or its adjusted max risk is greater than rhs's regular count, then rhs can win
+			(lhs.path.MaxCountAfterAccess <= lhs.path.CountAfterAccess || rhs.path.CountAfterAccess < lhs.path.MaxCountAfterAccess) {
 			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
 		}
 		if preferRange {
@@ -1609,7 +1611,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				isDNFOnlyEquals := c.hasOnlyEqualPredicatesInDNF()
+				if preferMerge || isDNFOnlyEquals || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -1625,6 +1628,60 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	}
 
 	return candidates
+}
+
+// hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
+func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
+	// Exit if this isn't a DNF condition or has no access conditions
+	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
+		return false
+	}
+	// If the minimum number of access conditions required for DNF is more than 1, then each OR condition
+	// must have at least 1 equal predicates to satisfy the DNF requirement. Return true.
+	if c.path.MinAccessCondsForDNFCond > 1 {
+		return true
+	}
+
+	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
+	var isEqualPredicateOrOr func(expr expression.Expression) bool
+	isEqualPredicateOrOr = func(expr expression.Expression) bool {
+		sf, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+
+		// Reject NOT operators - they can make predicates non-equal
+		if sf.FuncName.L == ast.UnaryNot {
+			return false
+		}
+
+		if sf.FuncName.L == ast.LogicOr {
+			for _, arg := range sf.GetArgs() {
+				if !isEqualPredicateOrOr(arg) {
+					return false
+				}
+			}
+			return true
+		}
+
+		// Check if it's an equal predicate (eq) or IN predicate (in)
+		// Also reject any other comparison operators that are not equal/IN
+		if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
+			return true
+		}
+
+		// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
+		// and any other functions that are not equal/IN predicates
+		return false
+	}
+
+	// Check all access conditions
+	for _, cond := range c.path.AccessConds {
+		if !isEqualPredicateOrOr(cond) {
+			return false
+		}
+	}
+	return true
 }
 
 func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop *property.PhysicalProperty) string {
@@ -3135,10 +3192,10 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 		return base.InvalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
-	pcte := PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, cteAsName: p.CteAsName, cteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
+	pcte := physicalop.PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, CteAsName: p.CteAsName, CteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
 	pcte.SetSchema(p.Schema())
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
-		pcte.readerReceiver = physicalop.PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
+		pcte.ReaderReceiver = physicalop.PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, 1, nil
 		}

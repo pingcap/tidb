@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -142,11 +143,13 @@ func TestAPI(t *testing.T) {
 	// Testing scenarios without keyspace.
 	testAPIWithKeyspace(t, nil)
 
-	// Testing scenarios with keyspace.
-	keyspaceMeta := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta.Id = 2
-	keyspaceMeta.Name = "test_ks_name2"
-	testAPIWithKeyspace(t, &keyspaceMeta)
+	if kerneltype.IsNextGen() {
+		// Testing scenarios with keyspace.
+		keyspaceMeta := keyspacepb.KeyspaceMeta{}
+		keyspaceMeta.Id = 2
+		keyspaceMeta.Name = "test_ks_name2"
+		testAPIWithKeyspace(t, &keyspaceMeta)
+	}
 }
 
 func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
