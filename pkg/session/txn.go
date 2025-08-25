@@ -763,7 +763,7 @@ func (s *session) StmtCommit(ctx context.Context) {
 
 	st := &s.txn
 	if s.sessionVars.InTxn() {
-		// only record when in txn, it is no need for auto-commit=1.
+		// only record when in txn, it is no need for autocommit=1.
 		st.recordTableDirtyContent()
 	}
 	st.flushStmtBuf()
