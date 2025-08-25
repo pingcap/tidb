@@ -1241,6 +1241,12 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 	return lhsPseudo, rhsPseudo
 }
 
+// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
+// and the count for each. For example:
+//
+//	where a=1 and b=1 and c=1 and d=1
+//	lhs == idx(a, b, e) <-- lhsEqOrInCount == 2 (loser)
+//	rhs == idx(d, c, b) <-- rhsEqOrInCount == 3 (winner)
 func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqOrInCount int) {
 	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
 		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
@@ -1664,18 +1670,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	return candidates
 }
 
-// hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
-func (c *candidatePath) equalPredicateCount() int {
-	// Exit if this isn't a DNF condition or has no access conditions
-	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
-		return c.path.EqOrInCondCount
-	}
-	if c.hasOnlyEqualPredicatesInDNF() {
-		return c.path.MinAccessCondsForDNFCond
-	}
-	return max(0, c.path.MinAccessCondsForDNFCond-1)
-}
-
+// hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form contain at least one equal predicate
 func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
 	var isEqualPredicateOrOr func(expr expression.Expression) bool
@@ -1717,6 +1712,17 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 		}
 	}
 	return true
+}
+
+func (c *candidatePath) equalPredicateCount() int {
+	// Exit if this isn't a DNF condition or has no access conditions
+	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
+		return c.path.EqOrInCondCount
+	}
+	if c.hasOnlyEqualPredicatesInDNF() {
+		return c.path.MinAccessCondsForDNFCond
+	}
+	return max(0, c.path.MinAccessCondsForDNFCond-1)
 }
 
 func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop *property.PhysicalProperty) string {
