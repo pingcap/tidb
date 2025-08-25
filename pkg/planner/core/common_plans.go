@@ -90,7 +90,7 @@ type CheckTable struct {
 	DBName             string
 	Table              table.Table
 	IndexInfos         []*model.IndexInfo
-	IndexLookUpReaders []*PhysicalIndexLookUpReader
+	IndexLookUpReaders []*physicalop.PhysicalIndexLookUpReader
 	CheckIndex         bool
 }
 
@@ -889,6 +889,8 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
+	case format == types.ExplainFormatPlanTree && (!e.Analyze && e.RuntimeStatsColl == nil):
+		fieldNames = []string{"id", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -918,6 +920,9 @@ func (e *Explain) prepareSchema() error {
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
 			"explain_analyze", "binding"}
 	default:
+		if e.Analyze {
+			return errors.Errorf("explain format '%s' with analyze is not supported now", e.Format)
+		}
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 
@@ -1031,7 +1036,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache, types.ExplainFormatPlanTree:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.Rows = ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl)
@@ -1212,11 +1217,14 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 	}
 	taskType, id := getExplainIDAndTaskTp(flatOp)
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := getOperatorInfo(p)
+	estRows, estCost, costFormula, accessObject, operatorInfo := getOperatorInfo(p, format)
 
 	var row []string
 	if analyze || runtimeStatsColl != nil {
-		row = []string{id, estRows}
+		row = []string{id}
+		if format != types.ExplainFormatPlanTree {
+			row = append(row, estRows)
+		}
 		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
@@ -1226,7 +1234,10 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
-		row = []string{id, estRows}
+		row = []string{id}
+		if format != types.ExplainFormatPlanTree {
+			row = append(row, estRows)
+		}
 		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost ||
 			format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
@@ -1244,14 +1255,16 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explai
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(p)
+	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(p, e.Format)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
-		EstRows:      estRows,
 		TaskType:     taskType,
 		AccessObject: accessObject,
 		OperatorInfo: operatorInfo,
 		SubOperators: make([]*ExplainInfoForEncode, 0),
+	}
+	if e.Format != types.ExplainFormatPlanTree {
+		jsonRow.EstRows = estRows
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
@@ -1260,14 +1273,16 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explai
 	return jsonRow
 }
 
-func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
+func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
 	estCost = "N/A"
 	costFormula = "N/A"
 	sctx := p.SCtx()
 	if isPhysicalPlan {
-		estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
+		if format != types.ExplainFormatPlanTree {
+			estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
+		}
 		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.GetCost(), 'f', 2, 64)
@@ -1350,7 +1365,7 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 		for i, op := range ops {
 			operators[i].BriefName = op.ExplainID().String()
 			switch op.Origin.(type) {
-			case *PhysicalTableReader, *PhysicalIndexReader, *physicalop.PhysicalHashJoin,
+			case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader, *physicalop.PhysicalHashJoin,
 				*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalMergeJoin:
 				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
 			}
@@ -1392,11 +1407,11 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 		out.TaskType = tipb.TaskType_root
 	} else {
 		switch fop.ReqType {
-		case Cop:
+		case physicalop.Cop:
 			out.TaskType = tipb.TaskType_cop
-		case BatchCop:
+		case physicalop.BatchCop:
 			out.TaskType = tipb.TaskType_batchCop
-		case MPP:
+		case physicalop.MPP:
 			out.TaskType = tipb.TaskType_mpp
 		}
 	}
@@ -1493,25 +1508,25 @@ func (e *Explain) prepareTaskDot(pa *pair, taskTp string, buffer *bytes.Buffer) 
 	for planQueue := []*pair{pa}; len(planQueue) > 0; planQueue = planQueue[1:] {
 		curPair := planQueue[0]
 		switch copPlan := curPair.physicalPlan.(type) {
-		case *PhysicalTableReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan})
-		case *PhysicalIndexReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
-		case *PhysicalIndexLookUpReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
-		case *PhysicalIndexMergeReader:
-			for i := range copPlan.partialPlans {
-				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
-				copTasks = append(copTasks, &pair{physicalPlan: copPlan.partialPlans[i]})
+		case *physicalop.PhysicalTableReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan})
+		case *physicalop.PhysicalIndexReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.IndexPlan.ExplainID()))
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.IndexPlan})
+		case *physicalop.PhysicalIndexLookUpReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.IndexPlan.ExplainID()))
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan, isChildOfINL: true})
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.IndexPlan})
+		case *physicalop.PhysicalIndexMergeReader:
+			for i := range copPlan.PartialPlansRaw {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.PartialPlansRaw[i].ExplainID()))
+				copTasks = append(copTasks, &pair{physicalPlan: copPlan.PartialPlansRaw[i]})
 			}
-			if copPlan.tablePlan != nil {
-				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-				copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
+			if copPlan.TablePlan != nil {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+				copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan, isChildOfINL: true})
 			}
 		}
 		for _, child := range curPair.physicalPlan.Children() {
@@ -1546,10 +1561,10 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 
 	switch v := p.(type) {
-	case *PhysicalIndexReader:
-		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
+	case *physicalop.PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(vars.StmtCtx.TypeCtx())
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		tableScan, ok := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if !ok {
 			return false

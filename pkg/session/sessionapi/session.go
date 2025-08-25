@@ -76,7 +76,7 @@ type Session interface {
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
 	// PrepareTxnCtx is exported for test.
-	PrepareTxnCtx(context.Context) error
+	PrepareTxnCtx(context.Context, ast.StmtNode) error
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*resolve.ResultField, err error)
 	SetPort(port string)

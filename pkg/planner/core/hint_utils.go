@@ -92,7 +92,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				HintName: ast.NewCIStr(h.HintLimitToCop),
 			})
 		}
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		tbl, ok := pp.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if !ok {
 			return res
@@ -123,8 +123,8 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				})
 			}
 		}
-	case *PhysicalIndexLookUpReader:
-		index := pp.IndexPlans[0].(*PhysicalIndexScan)
+	case *physicalop.PhysicalIndexLookUpReader:
+		index := pp.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: ast.NewCIStr(h.HintUseIndex),
@@ -141,8 +141,8 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []ast.CIStr{index.Index.Name},
 		})
-	case *PhysicalIndexReader:
-		index := pp.IndexPlans[0].(*PhysicalIndexScan)
+	case *physicalop.PhysicalIndexReader:
+		index := pp.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: ast.NewCIStr(h.HintUseIndex),
@@ -159,12 +159,12 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []ast.CIStr{index.Index.Name},
 		})
-	case *PhysicalIndexMergeReader:
+	case *physicalop.PhysicalIndexMergeReader:
 		indexs := make([]ast.CIStr, 0, 2)
 		var tableName ast.CIStr
 		var tableAsName *ast.CIStr
 		for _, partialPlan := range pp.PartialPlans {
-			if index, ok := partialPlan[0].(*PhysicalIndexScan); ok {
+			if index, ok := partialPlan[0].(*physicalop.PhysicalIndexScan); ok {
 				indexs = append(indexs, index.Index.Name)
 				tableName = index.Table.Name
 				tableAsName = index.TableAsName
@@ -276,7 +276,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		if hint != nil {
 			res = append(res, hint)
 		}
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		hint := genJoinMethodHintForSinglePhysicalJoin(
 			p.SCtx(),
 			h.HintINLMJ,
@@ -500,20 +500,20 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 		return nil, nil
 	}
 	switch x := p.(type) {
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		ts := x.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if ts.TableAsName != nil && ts.TableAsName.L != "" {
 			return &ts.DBName, ts.TableAsName
 		}
 		return &ts.DBName, &ts.Table.Name
-	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
+	case *physicalop.PhysicalIndexReader:
+		is := x.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		if is.TableAsName != nil && is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
-	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
+	case *physicalop.PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		if is.TableAsName != nil && is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName
 		}

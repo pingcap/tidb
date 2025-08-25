@@ -124,7 +124,7 @@ go_library(
         "//pkg/util/plancodec",
         "//pkg/util/printer",
         "//pkg/util/redact",
-        "//pkg/util/sem",
+        "//pkg/util/sem/compat",
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/sqlexec",

@@ -331,6 +331,22 @@ func (s *mockGCSSuite) TestInputNull() {
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 def 11", "2 test2 22"}...))
 }
 
+func (s *mockGCSSuite) TestOnUpdateColumn() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-on-update",
+			Name:       "on-update.tsv",
+		},
+		Content: []byte("1,2025-08-22 02:35:00"),
+	})
+	s.prepareAndUseDB("load_data")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t(id int, c1 datetime on update CURRENT_TIMESTAMP)")
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-on-update/on-update.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustQuery(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 2025-08-22 02:35:00"}...))
+}
+
 func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
@@ -1040,7 +1056,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.Greater(unregisterTime, registerTime)
 	s.checkMode(s.tk, "SELECT * FROM load_data.register_task", "register_task", true)
 
-	client, err := importer.GetEtcdClient()
+	client, err := importer.GetEtcdClient(s.store)
 	s.NoError(err)
 	s.T().Cleanup(func() {
 		_ = client.Close()
@@ -1053,9 +1069,11 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		func() {
 			// cannot run 2 import job to the same target table.
 			tk2 := testkit.NewTestKit(s.T(), s.store)
-			err = tk2.ExecToErr(sql)
-			s.ErrorIs(err, infoschema.ErrProtectedTableMode)
-			s.ErrorContains(err, "Table register_task is in mode Import")
+			if kerneltype.IsClassic() {
+				err := tk2.ExecToErr(sql)
+				s.ErrorIs(err, infoschema.ErrProtectedTableMode)
+				s.ErrorContains(err, "Table register_task is in mode Import")
+			}
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
 				resp, err2 := client.Get(context.Background(), etcdKey)
@@ -1325,6 +1343,9 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 }
 
 func (s *mockGCSSuite) TestTableMode() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("switching table mode is not supported in nextgen")
+	}
 	content := []byte(`1,1
 	2,2`)
 	s.server.CreateObject(fakestorage.Object{
