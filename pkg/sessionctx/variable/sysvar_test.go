@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1595,7 +1596,12 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBTxnAssertionLevel,
 			vardef.DefTiDBTxnAssertionLevel,
-			vardef.AssertionFastStr,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.AssertionStrictStr
+				}
+				return vardef.AssertionFastStr
+			}(),
 		},
 		{
 			vardef.TiDBEnableMutationChecker,
@@ -1605,7 +1611,12 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBPessimisticTransactionFairLocking,
 			BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking),
-			vardef.On,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.Off
+				}
+				return vardef.On
+			}(),
 		},
 	}
 	for _, v := range vars {
