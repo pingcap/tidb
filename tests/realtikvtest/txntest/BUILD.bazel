@@ -12,6 +12,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
