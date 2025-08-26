@@ -11,6 +11,7 @@ go_test(
         "multi_schema_change_test.go",
         "pitr_test.go",
     ],
+    shard_count = 30,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/testutil",
