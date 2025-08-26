@@ -55,11 +55,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-<<<<<<< HEAD
-    shard_count = 34,
-=======
-    shard_count = 38,
->>>>>>> 36a2af4b10b (dxf: start scheduler without reserve resource in nextgen (#63205))
+    shard_count = 35,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
