@@ -4134,8 +4134,6 @@ func TestIssue55886(t *testing.T) {
 		" (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from" +
 		" cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end);")
 }
-<<<<<<< HEAD
-=======
 
 func TestIssue57608(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -4166,4 +4164,3 @@ func TestDeepCopyRetType(t *testing.T) {
 	tk.MustExec("create view v0(c0) as select cast((t1.c0 div t1.c0) as decimal) from t1;")
 	tk.MustQuery("select * from v0 inner join t0 on (v0.c0 like cast(v0.c0 as char) <= t0.c0) and (not atan2(t0.c0, v0.c0));").Check(testkit.Rows())
 }
->>>>>>> 73ee7e2d2b0 (expression: fix unexpected modification of shared return type of cast expr (#63072))
