@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -851,6 +852,21 @@ func (w *updateColumnWorker) cleanRowMap() {
 	}
 }
 
+func (w *updateColumnWorker) getMockRowRecord(handleRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
+	mockRecord := make([]*rowRecord, 0)
+	n := 1000
+	tableID, handleStart, _ := tablecodec.DecodeRecordKey(handleRange.startKey)
+
+	pk := handleStart.IntValue()
+	for len(mockRecord) < n {
+		rowKey := tablecodec.EncodeRowKey(tableID, codec.EncodeInt(nil, pk))
+		newRowVal := []uint8{128, 0, 4, 0, 0, 0, 1, 2, 3, 4, 8, 0, 16, 0, 24, 0, 39, 0, 121, 223, 13, 134, 72, 112, 0, 0, 121, 223, 13, 134, 72, 112, 0, 0, 121, 223, 13, 134, 72, 112, 0, 0, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53}
+		mockRecord = append(mockRecord, &rowRecord{key: rowKey, vals: newRowVal})
+		pk++
+	}
+	return mockRecord, handleRange.endKey, true, nil
+}
+
 // BackfillData will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
 func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
@@ -879,7 +895,20 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		}
 		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
-		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		var (
+			rowRecords []*rowRecord
+			nextKey    kv.Key
+			taskDone   bool
+		)
+		if w.oldColInfo.Name.L == "random" {
+			rowRecords, nextKey, taskDone, err = w.getMockRowRecord(handleRange)
+			logutil.DDLLogger().Info("use MockRowRecord", zap.Int("len", len(rowRecords)))
+		} else {
+			rowRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
+			logutil.DDLLogger().Info("fetchRowColVals",
+				zap.Bool("taskDone", taskDone),
+				zap.Int("len", len(rowRecords)))
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
