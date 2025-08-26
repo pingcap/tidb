@@ -854,17 +854,17 @@ func (w *updateColumnWorker) cleanRowMap() {
 
 func (w *updateColumnWorker) getMockRowRecord(handleRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
 	mockRecord := make([]*rowRecord, 0)
-	n := 1000
+	n := w.batchCnt
 	tableID, handleStart, _ := tablecodec.DecodeRecordKey(handleRange.startKey)
 
 	pk := handleStart.IntValue()
 	for len(mockRecord) < n {
 		rowKey := tablecodec.EncodeRowKey(tableID, codec.EncodeInt(nil, pk))
-		newRowVal := []uint8{128, 0, 4, 0, 0, 0, 1, 2, 3, 4, 8, 0, 16, 0, 24, 0, 39, 0, 121, 223, 13, 134, 72, 112, 0, 0, 121, 223, 13, 134, 72, 112, 0, 0, 121, 223, 13, 134, 72, 112, 0, 0, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53}
+		newRowVal := []uint8{128, 0, 4, 0, 0, 0, 1, 2, 3, 4, 8, 0, 16, 0, 33, 0, 41, 0, 146, 75, 107, 93, 84, 220, 43, 0, 146, 75, 107, 93, 84, 220, 43, 0, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 55, 56, 146, 75, 107, 93, 84, 220, 43, 0}
 		mockRecord = append(mockRecord, &rowRecord{key: rowKey, vals: newRowVal})
 		pk++
 	}
-	return mockRecord, handleRange.endKey, true, nil
+	return mockRecord, tablecodec.EncodeRowKey(tableID, codec.EncodeInt(nil, pk)), false, nil
 }
 
 // BackfillData will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
@@ -905,6 +905,9 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 			logutil.DDLLogger().Info("use MockRowRecord", zap.Int("len", len(rowRecords)))
 		} else {
 			rowRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
+			//if len(rowRecords) > 0 {
+			//	fmt.Println("fetchRowColVals", rowRecords[0].key, rowRecords[0].vals)
+			//}
 			logutil.DDLLogger().Info("fetchRowColVals",
 				zap.Bool("taskDone", taskDone),
 				zap.Int("len", len(rowRecords)))
