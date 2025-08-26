@@ -388,23 +388,26 @@ func moveChangingColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol 
 	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
 }
 
+// moveOldColumnInfo is used to make sure the columns in TableInfo
+// are in correct order after the old column is changed to non-public state.
 func moveOldColumnInfo(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
-	var prevColStates []model.SchemaState
-	switch oldCol.State {
-	case model.StateWriteOnly:
-		prevColStates = []model.SchemaState{model.StatePublic, model.StateWriteOnly}
-	case model.StateDeleteOnly:
-		prevColStates = []model.SchemaState{model.StatePublic, model.StateWriteOnly, model.StateDeleteOnly}
-	default:
-		intest.Assert(false, "unexpected old column state")
-		return
+	order := []model.SchemaState{
+		model.StatePublic,
+		model.StateWriteReorganization,
+		model.StateWriteOnly,
+		model.StateDeleteReorganization,
+		model.StateDeleteOnly,
+		model.StateNone,
+	}
+	for len(order) > 0 && order[len(order)-1] != oldCol.State {
+		order = order[:len(order)-1]
 	}
 	dest := len(tblInfo.Columns) - 1
 	for i, col := range tblInfo.Columns {
 		if col.ID == oldCol.ID {
 			continue
 		}
-		if !slices.Contains(prevColStates, col.State) {
+		if !slices.Contains(order, col.State) {
 			dest = i
 			break
 		}

@@ -432,7 +432,12 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 
 func printTableInfo(tblInfo *model.TableInfo) {
 	for _, col := range tblInfo.Columns {
-		logutil.DDLLogger().Info("column", zap.Int64("id", col.ID), zap.String("name", col.Name.O), zap.Stringer("state", col.State))
+		logutil.DDLLogger().Info("column",
+			zap.Int64("id", col.ID),
+			zap.String("name", col.Name.O),
+			zap.Stringer("state", col.State),
+			zap.Any("changingState", col.ChangeStateInfo),
+		)
 	}
 
 	for _, idx := range tblInfo.Indices {
@@ -744,6 +749,19 @@ func checkColumnOrderByStates(tblInfo *model.TableInfo) {
 				minState = col.State
 			} else if colStateOrd[col.State] > colStateOrd[minState] {
 				intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
+			}
+			if col.ChangeStateInfo != nil {
+				offset := col.ChangeStateInfo.DependencyColumnOffset
+				intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
+				depCol := tblInfo.Columns[offset]
+				switch {
+				case strings.HasPrefix(col.Name.O, changingColumnPrefix):
+					name := getChangingColumnOriginName(col)
+					intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
+				case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
+					name := getRemovingObjOriginName(depCol.Name.O)
+					intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
+				}
 			}
 		}
 	}
