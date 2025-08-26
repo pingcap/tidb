@@ -239,14 +239,26 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 
 // extractColLikeOpConsExpr extracts column name, pattern and escape character from LIKE expressions.
 // Returns column name, pattern datum, and escape character (as byte).
-func (extractHelper) extractColLikeOpConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, types.Datum, byte) {
+// Supports both forms: column LIKE pattern and pattern LIKE column
+func (helper extractHelper) extractColLikeOpConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, types.Datum, byte) {
 	args := fn.GetArgs()
 	if len(args) < 2 {
 		return "", types.Datum{}, '\\'
 	}
 
-	col, ok := args[0].(*expression.Column)
-	if !ok {
+	var col *expression.Column
+	var patternIdx int
+
+	// Check both positions for column: col LIKE 'pattern' or 'pattern' LIKE col
+	for i := range 2 {
+		if column, ok := args[i].(*expression.Column); ok {
+			col = column
+			patternIdx = 1 - i
+			break
+		}
+	}
+
+	if col == nil {
 		return "", types.Datum{}, '\\'
 	}
 
@@ -255,7 +267,7 @@ func (extractHelper) extractColLikeOpConsExpr(ctx base.PlanContext, extractCols 
 		return "", types.Datum{}, '\\'
 	}
 
-	patternConstant, ok := args[1].(*expression.Constant)
+	patternConstant, ok := args[patternIdx].(*expression.Constant)
 	if !ok || patternConstant.DeferredExpr != nil {
 		return "", types.Datum{}, '\\'
 	}
@@ -484,7 +496,7 @@ func (helper *extractHelper) extractLikePatternColWithEscape(
 		return predicates, nil
 	}
 
-	// Extract patterns with escape characters
+	// We use a PatternInfo array to save multiple patterns with their escape characters
 	for _, expr := range predicates {
 		fn, ok := expr.(*expression.ScalarFunction)
 		if !ok {
@@ -496,17 +508,10 @@ func (helper *extractHelper) extractLikePatternColWithEscape(
 		var pattern string
 		var escapeChar byte = '\\'
 
-		// Check if this is a LIKE operation
-		if fn.FuncName.L == ast.Like || fn.FuncName.L == ast.Ilike {
-			colName, patternDatum, escape := helper.extractColLikeOpConsExpr(ctx, extractCols, fn)
-			if colName == extractColName {
-				pattern = patternDatum.GetString()
-				escapeChar = escape
-				canBuildPattern = true
-			}
+		if fn.FuncName.L == ast.LogicOr && !toLower {
+			canBuildPattern, pattern = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
 		} else {
-			// For other operations, use the existing extractLikePattern
-			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, escapeChar = helper.extractLikePatternWithEscape(ctx, fn, extractColName, extractCols, needLike2Regexp)
 		}
 
 		if canBuildPattern && toLower {
@@ -565,34 +570,52 @@ func (helper extractHelper) extractLikePattern(
 	ok bool,
 	pattern string,
 ) {
+	ok, pattern, _ = helper.extractLikePatternWithEscape(ctx, fn, extractColName, extractCols, needLike2Regexp)
+	return
+}
+
+func (helper extractHelper) extractLikePatternWithEscape(
+	ctx base.PlanContext,
+	fn *expression.ScalarFunction,
+	extractColName string,
+	extractCols map[int64]*types.FieldName,
+	needLike2Regexp bool,
+) (
+	ok bool,
+	pattern string,
+	escapeChar byte,
+) {
+	escapeChar = '\\'
+
 	switch fn.FuncName.L {
 	case ast.EQ:
 		var colName string
 		var datums []types.Datum
 		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 		if colName != extractColName {
-			return false, ""
+			return false, "", escapeChar
 		}
-		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$", escapeChar
 	case ast.Like, ast.Ilike:
-		colName, patternDatum, _ := helper.extractColLikeOpConsExpr(ctx, extractCols, fn)
+		colName, patternDatum, escape := helper.extractColLikeOpConsExpr(ctx, extractCols, fn)
 		if colName != extractColName {
-			return false, ""
+			return false, "", escapeChar
 		}
+		escapeChar = escape
 		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(patternDatum.GetString())
+			return true, stringutil.CompileLike2Regexp(patternDatum.GetString()), escapeChar
 		}
-		return true, patternDatum.GetString()
+		return true, patternDatum.GetString(), escapeChar
 	case ast.Regexp, ast.RegexpLike:
 		var colName string
 		var datums []types.Datum
 		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 		if colName != extractColName {
-			return false, ""
+			return false, "", escapeChar
 		}
-		return true, datums[0].GetString()
+		return true, datums[0].GetString(), escapeChar
 	default:
-		return false, ""
+		return false, "", escapeChar
 	}
 }
 
