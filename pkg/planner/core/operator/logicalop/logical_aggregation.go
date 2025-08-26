@@ -575,14 +575,14 @@ func (la *LogicalAggregation) DistinctArgsMeetsProperty() bool {
 // For example,
 // (a > 1 or avg(b) > 1) and (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: a < 3, ret: a > 1 or avg(b) > 1
-func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
+func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, isFromAgg bool) (condsToPush, ret []expression.Expression) {
 	subCNFItem := expression.SplitCNFItems(cond)
 	if len(subCNFItem) == 1 {
-		return la.pushDownPredicatesForAggregation(subCNFItem[0], groupByColumns, exprsOriginal)
+		return la.pushDownPredicatesForAggregation(subCNFItem[0], groupByColumns, exprsOriginal, isFromAgg)
 	}
 	exprCtx := la.SCtx().GetExprCtx()
 	for _, item := range subCNFItem {
-		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
+		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal, isFromAgg)
 		if len(condsToPushForItem) > 0 {
 			condsToPush = append(condsToPush, expression.ComposeDNFCondition(exprCtx, condsToPushForItem...))
 		}
@@ -598,16 +598,16 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 // For example,
 // (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
-func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (_, _ []expression.Expression) {
+func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, isFromAgg bool) (_, _ []expression.Expression) {
 	subDNFItem := expression.SplitDNFItems(cond)
 	if len(subDNFItem) == 1 {
-		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal)
+		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal, isFromAgg)
 	}
 	condsToPush := make([]expression.Expression, 0, len(subDNFItem))
 	var ret []expression.Expression
 	exprCtx := la.SCtx().GetExprCtx()
 	for _, item := range subDNFItem {
-		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
+		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal, isFromAgg)
 		if len(condsToPushForItem) <= 0 {
 			return nil, []expression.Expression{cond}
 		}
@@ -632,21 +632,44 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
+	aggColumns := expression.NewSchema(la.getAggFuncsCols()...)
 	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
-		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal)
+		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal, false)
 		if len(subCondsToPush) > 0 {
 			condsToPush = append(condsToPush, subCondsToPush...)
 		}
 		if len(subRet) > 0 {
-			ret = append(ret, subRet...)
+			for _, s := range subRet {
+				subCondsToPush1, subRet1 := la.pushDownDNFPredicatesForAggregation(s, aggColumns, exprsOriginal, true)
+				if len(subCondsToPush1) > 0 {
+					condsToPush = append(condsToPush, subCondsToPush1...)
+				}
+				ret = append(ret, subRet1...)
+			}
 		}
 	}
 	return condsToPush, ret
 }
 
+// getAggFuncsCols returns the columns used by firstrow aggregate functions.
+func (la *LogicalAggregation) getAggFuncsCols() (aggFuncsCols []*expression.Column) {
+	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
+	for idx, col := range la.Schema().Columns {
+		aggFunc := la.AggFuncs[idx]
+		switch aggFunc.Name {
+		case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin:
+			cols := expression.ExtractColumns(aggFunc.Args[0])
+			if len(cols) == 1 {
+				aggFuncsCols = append(aggFuncsCols, col)
+			}
+		}
+	}
+	return aggFuncsCols
+}
+
 // pushDownPredicatesForAggregation split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
+func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, isFromAggFunction bool) (condsToPush, ret []expression.Expression) {
 	switch cond.(type) {
 	case *expression.Constant:
 		condsToPush = append(condsToPush, cond)
@@ -655,17 +678,25 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 		// with value 0 rather than an empty query result.
 		ret = append(ret, cond)
 	case *expression.ScalarFunction:
-		extractedCols := expression.ExtractColumns(cond)
-		ok := true
+		extractedCols := expression.ExtractColumnsMapFromExpressions(nil, cond)
+		var schemaCol *expression.Column
+		if isFromAggFunction && len(extractedCols) != 1 {
+			ret = append(ret, cond)
+			return condsToPush, ret
+		}
 		for _, col := range extractedCols {
-			if !groupByColumns.Contains(col) {
-				ok = false
+			schemaCol = groupByColumns.RetrieveColumn(col)
+			if schemaCol == nil {
 				break
 			}
 		}
-		if ok {
+		if schemaCol != nil {
 			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
 			condsToPush = append(condsToPush, newFunc)
+			if isFromAggFunction {
+				ctx := la.SCtx().GetExprCtx()
+				ret = append(ret, expression.BuildNotNullExpr(ctx, schemaCol))
+			}
 		} else {
 			ret = append(ret, cond)
 		}
