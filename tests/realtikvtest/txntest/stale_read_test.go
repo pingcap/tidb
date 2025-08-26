@@ -1508,20 +1508,20 @@ func TestStaleReadAllCombinations(t *testing.T) {
 
 	// Insert row #1
 	tk.MustExec("insert into t values (1, 10)")
-	time.Sleep(1000 * time.Millisecond)
-	firstTime := time.Now().Add(-500 * time.Millisecond)
+	time.Sleep(3000 * time.Millisecond)                   // Increased from 1s to 3s for better timing separation
+	firstTime := time.Now().Add(-1500 * time.Millisecond) // Adjusted offset
 	// Retrieve current TSO from store's Oracle instead of @@tidb_current_ts.
 	externalTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	if err != nil {
 		t.Fatalf("failed to get TSO: %v", err)
 	}
 
-	time.Sleep(1000 * time.Millisecond)
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s
 	// Insert row #2
 	tk.MustExec("insert into t values (2, 20)")
 	row2CreatedTime := time.Now()
-	time.Sleep(1000 * time.Millisecond)
-	secondTime := time.Now().Add(-500 * time.Millisecond)
+	time.Sleep(3000 * time.Millisecond)                    // Increased from 1s to 3s
+	secondTime := time.Now().Add(-1500 * time.Millisecond) // Adjusted offset
 
 	staleReadMethods := []struct {
 		name   string
@@ -1534,7 +1534,9 @@ func TestStaleReadAllCombinations(t *testing.T) {
 			name: "tidb_read_staleness",
 			setup: func() {
 				row2CreatedElapsed := int(time.Since(row2CreatedTime).Seconds())
-				staleness := row2CreatedElapsed + 1 // The time `now - staleness(second)` is between row1 and row2.
+				// Ensure sufficient buffer: with 3s sleep intervals, elapsed should be ~3s
+				// Adding 2s buffer ensures stale read is safely before row2 insertion
+				staleness := row2CreatedElapsed + 2
 				tk.MustExec(fmt.Sprintf("set @@tidb_read_staleness='-%d'", staleness))
 			},
 			query: "select * from t",
