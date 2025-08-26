@@ -26,10 +26,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	util2 "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
@@ -466,14 +466,14 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 			return "", nil, op, 0, 0, errors.Trace(err)
 		}
 
-		childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
+		childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 		resp, err = etcdCli.Get(childCtx, ownerPath, clientv3.WithFirstCreate()...)
 		cancel()
 		if err == nil {
 			break
 		}
 		logger.Info("etcd-cli get owner info failed", zap.Int("retryCnt", i), zap.Error(err))
-		time.Sleep(util.KeyOpRetryInterval)
+		time.Sleep(etcd.KeyOpRetryInterval)
 	}
 	if err != nil {
 		logger.Warn("etcd-cli get owner info failed", zap.Error(err))

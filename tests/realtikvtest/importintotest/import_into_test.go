@@ -326,6 +326,22 @@ func (s *mockGCSSuite) TestInputNull() {
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 def 11", "2 test2 22"}...))
 }
 
+func (s *mockGCSSuite) TestOnUpdateColumn() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-on-update",
+			Name:       "on-update.tsv",
+		},
+		Content: []byte("1,2025-08-22 02:35:00"),
+	})
+	s.prepareAndUseDB("load_data")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t(id int, c1 datetime on update CURRENT_TIMESTAMP)")
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-on-update/on-update.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustQuery(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 2025-08-22 02:35:00"}...))
+}
+
 func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},
@@ -1034,7 +1050,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
 
-	client, err := importer.GetEtcdClient()
+	client, err := importer.GetEtcdClient(s.store)
 	s.NoError(err)
 	s.T().Cleanup(func() {
 		_ = client.Close()
@@ -1052,7 +1068,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 			s.ErrorContains(err, "there is active job on the target table already")
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
-				resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+				resp, err2 := client.Get(context.Background(), etcdKey)
 				s.NoError(err2)
 				return len(resp.Kvs) == 1
 			}, maxWaitTime, 300*time.Millisecond)
@@ -1069,7 +1085,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 
 	// the task should be unregistered
-	resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+	resp, err2 := client.Get(context.Background(), etcdKey)
 	s.NoError(err2)
 	s.Len(resp.Kvs, 0)
 }

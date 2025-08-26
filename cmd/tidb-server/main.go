@@ -418,6 +418,9 @@ func registerStores() {
 }
 
 func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+		kv.StandAloneTiDB = true
+	}
 	storage := kvstore.MustInitStorage(keyspaceName)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
@@ -737,11 +740,11 @@ func setGlobalVars() {
 			zap.String("lease", schemaLeaseDuration.String()))
 		schemaLeaseDuration = config.DefSchemaLease
 	}
-	session.SetSchemaLease(schemaLeaseDuration)
+	vardef.SetSchemaLease(schemaLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
-	session.SetStatsLease(statsLeaseDuration)
+	vardef.SetStatsLease(statsLeaseDuration)
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
-	session.SetPlanReplayerGCLease(planReplayerGCLease)
+	vardef.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	if cfg.SplitTable {
@@ -922,12 +925,12 @@ func setupTracing() {
 func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
-	ddl.CloseOwnerManager()
+	ddl.CloseOwnerManager(storage)
 	copr.GlobalMPPFailedStoreProber.Stop()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
-	if keyspace.IsRunningOnUser() {
+	if kv.IsUserKS(storage) {
 		err = kvstore.GetSystemStorage().Close()
 		terror.Log(errors.Annotate(err, "close system storage"))
 	}

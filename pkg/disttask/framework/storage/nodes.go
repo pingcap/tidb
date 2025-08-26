@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
@@ -125,6 +126,29 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 		})
 	}
 	return nodes, nil
+}
+
+// GetBusyNodes gets nodes that are currently running subtasks.
+func (mgr *TaskManager) GetBusyNodes(ctx context.Context) ([]schstatus.Node, error) {
+	var execIDs []schstatus.Node
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return execIDs, err
+	}
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+		rs, err2 := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			select distinct exec_id from mysql.tidb_background_subtask
+			where state in (%?, %?)`,
+			proto.SubtaskStatePending, proto.SubtaskStateRunning)
+		if err2 != nil {
+			return err2
+		}
+		execIDs = make([]schstatus.Node, 0, len(rs))
+		for _, r := range rs {
+			execIDs = append(execIDs, schstatus.Node{ID: r.GetString(0)})
+		}
+		return nil
+	})
+	return execIDs, err
 }
 
 // GetUsedSlotsOnNodes implements the scheduler.TaskManager interface.

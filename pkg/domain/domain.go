@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
+	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
@@ -226,7 +227,7 @@ type Domain struct {
 
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory
+	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -292,6 +293,11 @@ func (do *Domain) DDL() ddl.DDL {
 // DDLExecutor gets the ddl executor from domain.
 func (do *Domain) DDLExecutor() ddl.Executor {
 	return do.ddlExecutor
+}
+
+// GetDDLOwnerMgr implements the sqlsvrapi.Server interface.
+func (do *Domain) GetDDLOwnerMgr() owner.Manager {
+	return do.DDL().OwnerManager()
 }
 
 // SetDDL sets DDL to domain, it's only used in tests.
@@ -541,7 +547,7 @@ func NewDomainWithEtcdClient(
 	statsLease time.Duration,
 	dumpFileGcLease time.Duration,
 	factory pools.Factory,
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory,
+	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
@@ -605,10 +611,11 @@ func NewDomainWithEtcdClient(
 		do.infoCache,
 		do.schemaLease,
 		do.sysSessionPool,
+		isvalidator.New(do.schemaLease),
 	)
 	do.initDomainSysVars()
 
-	do.crossKSSessMgr = crossks.NewManager()
+	do.crossKSSessMgr = crossks.NewManager(do.store)
 	return do
 }
 
@@ -695,10 +702,12 @@ func (do *Domain) Init(
 		return err
 	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
-	err = do.ddl.SchemaSyncer().Init(ctx)
+	schemaVerSyncer := do.ddl.SchemaSyncer()
+	err = schemaVerSyncer.Init(ctx)
 	if err != nil {
 		return err
 	}
+	schemaVerSyncer.SetServerInfoSyncer(do.info.ServerInfoSyncer())
 
 	// step 2: initialize the global kill, which depends on `globalInfoSyncer`.`
 	if config.GetGlobalConfig().EnableGlobalKill {
@@ -730,7 +739,14 @@ func (do *Domain) Init(
 	}
 
 	do.isSyncer.InitRequiredFields(
-		do.info, do.ddl.SchemaSyncer(), do.autoidClient,
+		func() sessmgr.InfoSchemaCoordinator {
+			if do.info == nil {
+				return nil
+			}
+			return do.info.GetSessionManager()
+		},
+		schemaVerSyncer,
+		do.autoidClient,
 		func() (pools.Resource, error) {
 			return do.sysExecutorFactory(do)
 		},
@@ -801,7 +817,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
-	if keyspace.IsRunningOnUser() && startMode == ddl.Normal {
+	if kv.IsUserKS(do.store) && startMode == ddl.Normal {
 		if err = do.loadSysKSInfoSchema(); err != nil {
 			return err
 		}
@@ -846,6 +862,18 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 		return nil, errors.Trace(err)
 	}
 	return mgr.SessPool(), nil
+}
+
+// CloseKSSessMgr closes the session manager for the given keyspace.
+// it's exported for test only.
+func (do *Domain) CloseKSSessMgr(targetKS string) {
+	do.crossKSSessMgr.CloseKS(targetKS)
+}
+
+// GetCrossKSMgr returns the cross keyspace session manager.
+// it's exported for test only.
+func (do *Domain) GetCrossKSMgr() *crossks.Manager {
+	return do.crossKSSessMgr
 }
 
 // GetSchemaLease return the schema lease.
@@ -1030,7 +1058,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	taskManager := storage.NewTaskManager(do.sysSessionPool)
 	storage.SetTaskManager(taskManager)
 
-	if keyspace.IsRunningOnUser() {
+	if kv.IsUserKS(do.store) {
 		sp, err := do.GetKSSessPool(keyspace.System)
 		if err != nil {
 			return err
@@ -1064,7 +1092,7 @@ func (do *Domain) InitDistTaskLoop() error {
 		return err
 	}
 	disthandle.SetNodeResource(nodeRes)
-	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
+	executorManager, err := taskexecutor.NewManager(managerCtx, do.store, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
 	}
@@ -1136,7 +1164,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
-		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID, nodeRes)
+		schedulerManager = scheduler.NewManager(ctx, do.store, taskManager, serverID, nodeRes)
 		schedulerManager.Start()
 	}
 	stopSchedulerMgrIfNeeded := func() {
@@ -2373,7 +2401,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		if uint64(len(data)) > size.MB {
 			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
 		}
-		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, privilegeKey, string(data))
+		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, etcd.KeyOpDefaultRetryCnt, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -2394,7 +2422,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
@@ -2599,7 +2627,7 @@ func (do *Domain) releaseServerID(context.Context) {
 		return
 	}
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
-	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
+	err := etcd.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
 	} else {

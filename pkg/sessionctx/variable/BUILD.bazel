@@ -24,6 +24,7 @@ go_library(
         "//pkg/config/kerneltype",
         "//pkg/errno",
         "//pkg/executor/join/joinversion",
+        "//pkg/infoschema/issyncer/mdldef",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta/model",

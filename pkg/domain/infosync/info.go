@@ -46,6 +46,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -330,11 +331,6 @@ func GetServerInfoByID(ctx context.Context, id string) (*serverinfo.ServerInfo, 
 
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*serverinfo.ServerInfo, error) {
-	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
-		res := make(map[string]*serverinfo.ServerInfo)
-		err := json.Unmarshal([]byte(val.(string)), &res)
-		failpoint.Return(res, err)
-	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -582,7 +578,7 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 	if cli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(is.minStartTSPath, cli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
+	err := etcd.DeleteKeyFromEtcd(is.minStartTSPath, cli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
 	}
@@ -610,7 +606,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage, session *concurrency.Se
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
-		if info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue {
+		if info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue.Load() {
 			// Ignore DDL sessions.
 			continue
 		}

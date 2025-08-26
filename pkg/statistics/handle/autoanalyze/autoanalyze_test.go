@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -568,13 +569,13 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	require.NoError(
 		t,
 		failpoint.Enable(
-			"github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo",
+			"github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo",
 			makeFailpointRes(t, getMockedServerInfo()),
 		),
 	)
 	defer func() {
 		require.NoError(
-			t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"),
+			t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"),
 		)
 	}()
 	// Create a new chunk with capacity for three fields
@@ -609,7 +610,9 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		[]any{[]string{"2"}},
 	).Return(nil, nil, nil)
 
-	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil)
+	require.NoError(t, err)
+	err = autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
