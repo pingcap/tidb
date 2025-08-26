@@ -372,7 +372,7 @@ func generateWildcard(
 	}
 
 	// Try Mydumper-specific pattern first
-	p := generateMydumperPattern(files)
+	p := generateMydumperPattern(files[0])
 	if p != "" && validatePattern(p, tableFiles, allFiles) {
 		return p, nil
 	}
@@ -419,18 +419,14 @@ func validatePattern(pattern string, tableFiles map[string]struct{}, allFiles ma
 // generateMydumperPattern generates a wildcard pattern for Mydumper-formatted data files
 // belonging to a specific table, based on their naming convention.
 // It returns a pattern string that matches all data files for the table, or an empty string if not applicable.
-func generateMydumperPattern(files []mydump.FileInfo) string {
-	if len(files) == 0 {
-		return ""
-	}
-
-	dbName, tableName := files[0].TableName.Schema, files[0].TableName.Name
+func generateMydumperPattern(file mydump.FileInfo) string {
+	dbName, tableName := file.TableName.Schema, file.TableName.Name
 	if dbName == "" || tableName == "" {
 		return ""
 	}
 
 	// compute dirPrefix and basename
-	full := files[0].FileMeta.Path
+	full := file.FileMeta.Path
 	dirPrefix, name := "", full
 	if idx := strings.LastIndex(full, "/"); idx >= 0 {
 		dirPrefix = full[:idx+1]
@@ -439,7 +435,7 @@ func generateMydumperPattern(files []mydump.FileInfo) string {
 
 	// compression ext from filename when compression exists (last suffix like .gz/.zst)
 	compExt := ""
-	if files[0].FileMeta.Compression != mydump.CompressionNone {
+	if file.FileMeta.Compression != mydump.CompressionNone {
 		compExt = filepath.Ext(name)
 	}
 

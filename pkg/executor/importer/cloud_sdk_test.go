@@ -430,22 +430,16 @@ func generateFileMetas(t *testing.T, paths []string) []mydump.FileInfo {
 
 func TestGenerateMydumperPattern(t *testing.T) {
 	paths := []string{"db.tb.0001.sql", "db.tb.0002.sql"}
-	p := generateMydumperPattern(generateFileMetas(t, paths))
+	p := generateMydumperPattern(generateFileMetas(t, paths)[0])
 	require.Equal(t, "db.tb.*.sql", p)
 
 	paths2 := []string{"s3://bucket/dir/db.tb.0001.sql", "s3://bucket/dir/db.tb.0002.sql"}
-	p2 := generateMydumperPattern(generateFileMetas(t, paths2))
+	p2 := generateMydumperPattern(generateFileMetas(t, paths2)[0])
 	require.Equal(t, "s3://bucket/dir/db.tb.*.sql", p2)
 
-	// empty inputs
-	require.Equal(t, "", generateMydumperPattern(nil))
-	require.Equal(t, "", generateMydumperPattern([]mydump.FileInfo{}))
-
 	// not mydumper pattern
-	require.Equal(t, "", generateMydumperPattern([]mydump.FileInfo{
-		{
-			TableName: filter.Table{},
-		},
+	require.Equal(t, "", generateMydumperPattern(mydump.FileInfo{
+		TableName: filter.Table{},
 	}))
 }
 
