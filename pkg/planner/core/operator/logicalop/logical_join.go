@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -1337,6 +1338,7 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 		// into our final result.
 		return false
 	}
+	intest.Assert(len(leftCond) == 0 || len(rightCond) == 0, "An expression cannot be both a left and a right condition at the same time.")
 	// When the expression is a left/right condition, we want it to filter more of the underlying data.
 	if len(leftCond) > 0 || len(rightCond) > 0 {
 		// If this expression's columns is in the same table. We will push it down.
