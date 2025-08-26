@@ -1099,14 +1099,13 @@ func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bo
 		// They are impossible in the same table. we can directly return.
 		findedSchema := false
 		for _, unique := range colset {
-			if slices.ContainsFunc(schema.Columns, func(c *expression.Column) bool {
+			if !slices.ContainsFunc(schema.Columns, func(c *expression.Column) bool {
 				return c.UniqueID == unique
 			}) {
-				findedSchema = true
-			} else {
 				inTheSameSchema = false
 				break
 			}
+			findedSchema = true
 		}
 		if inTheSameSchema {
 			return true
