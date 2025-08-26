@@ -867,9 +867,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ManualRecovery = true
 	}
 
-	if kerneltype.IsNextGen() {
-		p.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(p.TotalFileSize, targetNodeCPUCnt)
-	} else {
+	if kerneltype.IsClassic() {
 		if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 			p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
 			if p.MaxNodeCnt == -1 { // -1 means calculate automatically
@@ -1316,8 +1314,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err
 		}
 		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
+		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
 		e.logger.Info("set import thread count for nextgen kernel",
 			zap.Int("thread count", e.ThreadCnt),
+			zap.Int("max node count", e.MaxNodeCnt),
 			zap.Int("target node cpu count", targetNodeCPUCnt),
 			zap.Int64("total file size", totalSize))
 	}
