@@ -16,7 +16,6 @@ package rule
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"time"
 

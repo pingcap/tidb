@@ -177,12 +177,14 @@ func (s *SchemaChangeEvent) GetAddColumnInfo() (
 func NewModifyColumnEvent(
 	tableInfo *model.TableInfo,
 	modifiedColumns []*model.ColumnInfo,
+	analyzed bool,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
 			Tp:        model.ActionModifyColumn,
 			TableInfo: tableInfo,
 			Columns:   modifiedColumns,
+			Analyzed:  analyzed,
 		},
 	}
 }
@@ -500,6 +502,7 @@ type jsonSchemaChangeEvent struct {
 	DroppedPartInfo *model.PartitionInfo      `json:"dropped_partition_info,omitempty"`
 	Columns         []*model.ColumnInfo       `json:"columns,omitempty"`
 	Indexes         []*model.IndexInfo        `json:"indexes,omitempty"`
+	Analyzed        bool                      `json:"Analyzed,omitempty"`
 	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
 	// or vice versa.
 	OldTableID4Partition int64 `json:"old_table_id_for_partition,omitempty"`

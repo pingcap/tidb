@@ -2071,7 +2071,10 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		err := b.addColumnsWithVirtualExprs(tbl, cols, func(columns []*expression.Column) []expression.Expression {
 			virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 			for _, idx := range tblInfo.Indices {
-				if idx.State != model.StatePublic || idx.MVIndex || idx.IsColumnarIndex() {
+				indexStateAnalyzable := idx.State == model.StatePublic ||
+					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().AnalyzeReorgStateIndex)
+				// for mv index and ci index fail it first, then analyze those analyzable indexes.
+				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {

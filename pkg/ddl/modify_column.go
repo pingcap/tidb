@@ -606,7 +606,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
-			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
+			analyzed := false
+			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) {
+				analyzed = true
+			}
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
