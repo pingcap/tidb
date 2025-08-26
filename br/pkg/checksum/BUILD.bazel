@@ -34,10 +34,7 @@ go_test(
     ],
     embed = [":checksum"],
     flaky = True,
-<<<<<<< HEAD
-=======
     shard_count = 3,
->>>>>>> 4f18d8d4b11 (importinto: set request resource during checksum for nextgen (#63155))
     deps = [
         "//br/pkg/metautil",
         "//br/pkg/mock",
