@@ -502,7 +502,7 @@ func getStartState(vars []string, fixes []uint64) (*state, error) {
 		case vardef.TiDBOptPreferRangeScan:
 			s.varValues = append(s.varValues, vardef.DefOptPreferRangeScan)
 		case vardef.TiDBOptSelectivityFactor:
-			s.varValues = append(s.varValues, vardef.TiDBOptSelectivityFactor)
+			s.varValues = append(s.varValues, vardef.DefOptSelectivityFactor)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}
