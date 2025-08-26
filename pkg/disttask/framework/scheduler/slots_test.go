@@ -34,6 +34,8 @@ func TestSlotManagerReserveNextGen(t *testing.T) {
 	sm := newSlotManager()
 	sm.updateCapacity(16)
 	// no node
+	// this case will fail in classic kernel, but in nextgen kernel, we will not
+	// reserve slots, and always return true.
 	nodeID, ok := sm.canReserve(&proto.TaskBase{Concurrency: 1})
 	require.True(t, ok)
 	require.Equal(t, "", nodeID)
