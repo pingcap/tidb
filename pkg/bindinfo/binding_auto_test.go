@@ -78,7 +78,7 @@ func TestExplainExploreBasic(t *testing.T) {
 		require.Equal(t, len(rows), expectedRowCount)
 		for _, row := range rows {
 			planDigest := row[3]
-			require.NotEqual(t, planDigest, "")
+			require.NotEmpty(t, planDigest)
 		}
 	}
 
