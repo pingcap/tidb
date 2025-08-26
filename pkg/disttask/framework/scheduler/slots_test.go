@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/stretchr/testify/require"
@@ -27,6 +28,9 @@ import (
 )
 
 func TestSlotManagerReserve(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in nextgen kernel, we will start scheduler without reserving slots, as cluster controller will scale nodes on demand")
+	}
 	sm := newSlotManager()
 	sm.updateCapacity(16)
 	// no node
