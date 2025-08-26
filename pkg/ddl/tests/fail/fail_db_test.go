@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -51,7 +52,7 @@ func createFailDBSuite(t *testing.T) (s *failedSuite) {
 func createFailDBSuiteWithLease(t *testing.T, lease time.Duration) (s *failedSuite) {
 	s = new(failedSuite)
 	var err error
-	s.store, err = mockstore.NewMockStore(
+	s.store, err = teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
