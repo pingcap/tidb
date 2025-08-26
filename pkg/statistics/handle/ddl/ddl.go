@@ -44,7 +44,7 @@ func NewDDLHandler(
 	statsHandler types.StatsHandle,
 ) types.DDL {
 	return &ddlHandlerImpl{
-		ddlEventCh:   make(chan *notifier.SchemaChangeEvent, 1000),
+		ddlEventCh:   make(chan *notifier.SchemaChangeEvent, 50),
 		statsWriter:  statsWriter,
 		statsHandler: statsHandler,
 		sub:          newSubscriber(statsHandler),
