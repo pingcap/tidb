@@ -334,6 +334,12 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	})
 	store = schematracker.UnwrapStorage(store)
 	_ = store.(helper.Storage)
+<<<<<<< HEAD
+=======
+	if kerneltype.IsNextGen() && store.GetKeyspace() == keyspace.System {
+		kvstore.SetSystemStorage(store)
+	}
+>>>>>>> 36a2af4b10b (dxf: start scheduler without reserve resource in nextgen (#63205))
 	return store, dom
 }
 

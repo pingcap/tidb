@@ -15,6 +15,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/scheduler",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
@@ -54,9 +55,15 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
+<<<<<<< HEAD
     shard_count = 34,
+=======
+    shard_count = 38,
+>>>>>>> 36a2af4b10b (dxf: start scheduler without reserve resource in nextgen (#63205))
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler/mock",
