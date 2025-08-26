@@ -407,7 +407,10 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 	// If c1 and c2 have the same columns but have different lengths on some column, we regard c1 and c2 incomparable.
 	for colID, colLen2 := range c2 {
 		colLen1, ok := c1[colID]
-		if !ok || colLen1 != colLen2 {
+		if !ok {
+			return 0, false
+		}
+		if colLen1 != colLen2 {
 			// If lengths are not equal, return 1 if c1 is larger, or -1 if c2 is larger
 			if colLen1 > colLen2 {
 				return 1, false
