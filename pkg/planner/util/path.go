@@ -386,7 +386,7 @@ func (c1 Col2Len) dominate(c2 Col2Len) bool {
 // CompareCol2Len will compare the two Col2Len maps.
 // The first return value:
 // (1) -1 means that len(c1) is less than len(c2);
-// (2) 0 means that c1 equals to c2;
+// (2) 0 means that len(c1) equals to len(c2);
 // (3) 1 means that c1 is better than c2;
 // The 2nd return value is used to indicate whether they are comparable. If they are NOT comparable, then the caller
 // should use other criteria to determine whether the winner is justified.
