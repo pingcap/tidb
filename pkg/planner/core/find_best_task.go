@@ -2968,14 +2968,10 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		TblInfo:          ds.TableInfo,
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
-<<<<<<< HEAD
-	}.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.QueryBlockOffset())
-=======
 	}
 	pointGetPlan.SetSchema(ds.Schema().Clone())
 	pointGetPlan.SetOutputNames(ds.OutputNames())
-	pointGetPlan = pointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
->>>>>>> upstream/master
+	pointGetPlan = pointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.QueryBlockOffset())
 	if ds.PartitionDefIdx != nil {
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
