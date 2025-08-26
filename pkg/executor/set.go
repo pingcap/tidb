@@ -183,7 +183,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			if err != nil {
 				return err
 			}
-			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
+			return taskMgr.WithNewSession(func(se sessionctx.Context) error {
+				return taskMgr.InitMetaSession(ctx, se, serverID, valStr)
+			})
 		}
 		return err
 	}

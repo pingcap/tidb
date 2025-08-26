@@ -1610,7 +1610,7 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 	}
 	for _, v := range vars {
 		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
-		require.Equal(t, v.initVal, initVal)
+		require.Equal(t, v.initVal, initVal, v.name)
 	}
 }
 

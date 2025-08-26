@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -40,6 +41,9 @@ const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
 	vardef.SetEnableMDL(false)
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled in next-gen TiDB")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -115,7 +119,7 @@ func TestSyncerSimple(t *testing.T) {
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
 	err := syncers[1].UpdateSelfVersion(childCtx, 0, currentVer)
-	require.True(t, isTimeoutError(err))
+	require.True(t, isTimeoutError(err), err)
 
 	// for CheckAllVersions
 	syncSummary, err2 := syncers[0].WaitVersionSynced(context.Background(), 0, currentVer-1, false)

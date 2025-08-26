@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -317,6 +318,9 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 }
 
 func TestSchemaCheckerTempTable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	tk1 := testkit.NewTestKit(t, store)
