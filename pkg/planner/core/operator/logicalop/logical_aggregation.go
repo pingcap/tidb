@@ -668,7 +668,7 @@ func (la *LogicalAggregation) getAggFuncsColsForFirstRow() (aggFuncsCols []*expr
 }
 
 // pushDownPredicates split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (la *LogicalAggregation) pushDownPredicates(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
+func (*LogicalAggregation) pushDownPredicates(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
 	switch c := cond.(type) {
 	case *expression.Constant:
 		condsToPush = append(condsToPush, cond)
