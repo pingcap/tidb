@@ -32,7 +32,7 @@ func TestGroupBySchema(t *testing.T) {
     col_date DATE,
     PRIMARY KEY (col_int_auto_increment, col_pk_char, col_datetime, col_int, col_date)
 );`)
-		testKit.MustQuery(`explain format='brief' SELECT *
+		testKit.MustQuery(`explain format='plan_tree' SELECT *
 FROM mysql_3 t1
 WHERE EXISTS
     (SELECT DISTINCT a1.*

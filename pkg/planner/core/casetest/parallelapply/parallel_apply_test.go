@@ -31,7 +31,7 @@ func TestParallelApplyWarnning(t *testing.T) {
 		testKit.MustQuery("show warnings").Check(testkit.Rows())
 		// https://github.com/pingcap/tidb/issues/59863
 		testKit.MustExec("create table t(a int, b int, index idx(a));")
-		testKit.MustQuery(`explain format='brief' select  t3.a from t t3 where (select /*+ inl_join(t1) */  count(*) from t t1 join t t2 on t1.a=t2.a and t1.b>t3.b);`).
+		testKit.MustQuery(`explain format='plan_tree' select  t3.a from t t3 where (select /*+ inl_join(t1) */  count(*) from t t1 join t t2 on t1.a=t2.a and t1.b>t3.b);`).
 			Check(testkit.Rows(
 				"Projection 10000.00 root  test.t.a",
 				"└─Apply 10000.00 root  CARTESIAN inner join",

@@ -45,7 +45,7 @@ func TestOuter2Inner(t *testing.T) {
 		suiteData := GetOuter2InnerSuiteData()
 		suiteData.LoadTestCasesByName("TestOuter2Inner", t, &input, &output, cascades, caller)
 		for i, sql := range input {
-			plan := testKit.MustQuery("explain format = 'brief' " + sql)
+			plan := testKit.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
 				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
@@ -73,7 +73,7 @@ func TestOuter2InnerIssue55886(t *testing.T) {
 		suiteData := GetOuter2InnerSuiteData()
 		suiteData.LoadTestCasesByName("TestOuter2InnerIssue55886", t, &input, &output, cascades, caller)
 		for i, sql := range input {
-			plan := testKit.MustQuery("explain format = 'brief' " + sql)
+			plan := testKit.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
 				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())

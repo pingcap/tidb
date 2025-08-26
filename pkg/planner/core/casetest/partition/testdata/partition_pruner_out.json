@@ -3,241 +3,241 @@
     "Name": "TestHashPartitionPruner",
     "Cases": [
       {
-        "SQL": "explain format = 'brief' select * from t1 where id = 7 and a = 6",
+        "SQL": "explain format = 'plan_tree' select * from t1 where id = 7 and a = 6",
         "Result": [
-          "Selection 1.00 root  eq(test_partition.t1.a, 6)",
-          "└─Point_Get 1.00 root table:t1, partition:p7 handle:7"
+          "Selection root  eq(test_partition.t1.a, 6)",
+          "└─Point_Get root table:t1, partition:p7 handle:7"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t3 where id = 9 and a = 1",
+        "SQL": "explain format = 'plan_tree' select * from t3 where id = 9 and a = 1",
         "Result": [
-          "Point_Get 1.00 root table:t3, partition:p9, index:PRIMARY(id, a) "
+          "Point_Get root table:t3, partition:p9, index:PRIMARY(id, a) "
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t2 where id = 9 and a = -110",
+        "SQL": "explain format = 'plan_tree' select * from t2 where id = 9 and a = -110",
         "Result": [
-          "Point_Get 1.00 root table:t2, partition:p1, index:PRIMARY(id, a) "
+          "Point_Get root table:t2, partition:p1, index:PRIMARY(id, a) "
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 where id = -17",
+        "SQL": "explain format = 'plan_tree' select * from t1 where id = -17",
         "Result": [
-          "Point_Get 1.00 root table:t1, partition:p7 handle:-17"
+          "Point_Get root table:t1, partition:p7 handle:-17"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
+        "SQL": "explain format = 'plan_tree' select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
-          "HashJoin 1.00 root  CARTESIAN inner join",
-          "├─Point_Get(Build) 1.00 root table:t2, partition:p2, index:PRIMARY(id, a) ",
-          "└─Point_Get(Probe) 1.00 root table:t1, partition:p5 handle:5"
+          "HashJoin root  CARTESIAN inner join",
+          "├─Point_Get(Build) root table:t2, partition:p2, index:PRIMARY(id, a) ",
+          "└─Point_Get(Probe) root table:t1, partition:p5 handle:5"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
+        "SQL": "explain format = 'plan_tree' select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
-          "HashJoin 1.00 root  CARTESIAN inner join",
-          "├─Point_Get(Build) 1.00 root table:t2, partition:p9, index:PRIMARY(id, a) ",
-          "└─Point_Get(Probe) 1.00 root table:t1, partition:p1 handle:1"
+          "HashJoin root  CARTESIAN inner join",
+          "├─Point_Get(Build) root table:t2, partition:p9, index:PRIMARY(id, a) ",
+          "└─Point_Get(Probe) root table:t1, partition:p1 handle:1"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
+        "SQL": "explain format = 'plan_tree' select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
-          "HashJoin 1.00 root  CARTESIAN inner join",
-          "├─Point_Get(Build) 1.00 root table:t1, partition:p2 handle:12",
-          "└─Point_Get(Probe) 1.00 root table:t2, partition:p4, index:PRIMARY(id, a) "
+          "HashJoin root  CARTESIAN inner join",
+          "├─Point_Get(Build) root table:t1, partition:p2 handle:12",
+          "└─Point_Get(Probe) root table:t2, partition:p4, index:PRIMARY(id, a) "
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and false",
+        "SQL": "explain format = 'plan_tree' select * from t1 left join t2 on true where t1.a = 1 and false",
         "Result": [
-          "TableDual 0.00 root  rows:0"
+          "TableDual root  rows:0"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and null",
+        "SQL": "explain format = 'plan_tree' select * from t1 left join t2 on true where t1.a = 1 and null",
         "Result": [
-          "TableDual 0.00 root  rows:0"
+          "TableDual root  rows:0"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = null",
+        "SQL": "explain format = 'plan_tree' select * from t1 left join t2 on true where t1.a = null",
         "Result": [
-          "TableDual 0.00 root  rows:0"
+          "TableDual root  rows:0"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t4 where d = '2019-10-07 10:40:00' and a = 1",
+        "SQL": "explain format = 'plan_tree' select * from t4 where d = '2019-10-07 10:40:00' and a = 1",
         "Result": [
-          "Point_Get 1.00 root table:t4, partition:p9, index:PRIMARY(d, a) "
+          "Point_Get root table:t4, partition:p9, index:PRIMARY(d, a) "
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t5 where d = '2019-10-07'",
+        "SQL": "explain format = 'plan_tree' select * from t5 where d = '2019-10-07'",
         "Result": [
-          "IndexLookUp 10.00 root partition:p0 ",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t5, index:PRIMARY(d, a) range:[2019-10-07,2019-10-07], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t5 keep order:false, stats:pseudo"
+          "IndexLookUp root partition:p0 ",
+          "├─IndexRangeScan(Build) cop[tikv] table:t5, index:PRIMARY(d, a) range:[2019-10-07,2019-10-07], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) cop[tikv] table:t5 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t6 where a is null",
+        "SQL": "explain format = 'plan_tree' select * from t6 where a is null",
         "Result": [
-          "TableReader 10.00 root partition:p0 data:Selection",
-          "└─Selection 10.00 cop[tikv]  isnull(test_partition.t6.a)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo"
+          "TableReader root partition:p0 data:Selection",
+          "└─Selection cop[tikv]  isnull(test_partition.t6.a)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t6 where b is null",
+        "SQL": "explain format = 'plan_tree' select * from t6 where b is null",
         "Result": [
-          "TableReader 10.00 root partition:all data:Selection",
-          "└─Selection 10.00 cop[tikv]  isnull(test_partition.t6.b)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo"
+          "TableReader root partition:all data:Selection",
+          "└─Selection cop[tikv]  isnull(test_partition.t6.b)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t6 where a = 7 or a = 6",
+        "SQL": "explain format = 'plan_tree' select * from t6 where a = 7 or a = 6",
         "Result": [
-          "TableReader 20.00 root partition:p0,p1 data:Selection",
-          "└─Selection 20.00 cop[tikv]  or(eq(test_partition.t6.a, 7), eq(test_partition.t6.a, 6))",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo"
+          "TableReader root partition:p0,p1 data:Selection",
+          "└─Selection cop[tikv]  or(eq(test_partition.t6.a, 7), eq(test_partition.t6.a, 6))",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t6 where a in (6, 7)",
+        "SQL": "explain format = 'plan_tree' select * from t6 where a in (6, 7)",
         "Result": [
-          "TableReader 20.00 root partition:p0,p1 data:Selection",
-          "└─Selection 20.00 cop[tikv]  in(test_partition.t6.a, 6, 7)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo"
+          "TableReader root partition:p0,p1 data:Selection",
+          "└─Selection cop[tikv]  in(test_partition.t6.a, 6, 7)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t5 where d is null",
+        "SQL": "explain format = 'plan_tree' select * from t5 where d is null",
         "Result": [
-          "TableDual 0.00 root  rows:0"
+          "TableDual root  rows:0"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t7 where b = -3 and a is null",
+        "SQL": "explain format = 'plan_tree' select * from t7 where b = -3 and a is null",
         "Result": [
-          "TableReader 1.00 root partition:p0 data:Selection",
-          "└─Selection 1.00 cop[tikv]  eq(test_partition.t7.b, -3), isnull(test_partition.t7.a)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+          "TableReader root partition:p0 data:Selection",
+          "└─Selection cop[tikv]  eq(test_partition.t7.b, -3), isnull(test_partition.t7.a)",
+          "  └─TableFullScan cop[tikv] table:t7 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t7 where (a, b) in ((3, 4), (5, 6))",
+        "SQL": "explain format = 'plan_tree' select * from t7 where (a, b) in ((3, 4), (5, 6))",
         "Result": [
-          "TableReader 2.00 root partition:p1,p7 data:Selection",
-          "└─Selection 2.00 cop[tikv]  or(and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)), and(eq(test_partition.t7.a, 5), eq(test_partition.t7.b, 6)))",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+          "TableReader root partition:p1,p7 data:Selection",
+          "└─Selection cop[tikv]  or(and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)), and(eq(test_partition.t7.a, 5), eq(test_partition.t7.b, 6)))",
+          "  └─TableFullScan cop[tikv] table:t7 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t7 where (a = 1 and b = 2) or (a = 3 and b = 4)",
+        "SQL": "explain format = 'plan_tree' select * from t7 where (a = 1 and b = 2) or (a = 3 and b = 4)",
         "Result": [
-          "TableReader 2.00 root partition:p3,p7 data:Selection",
-          "└─Selection 2.00 cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)))",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+          "TableReader root partition:p3,p7 data:Selection",
+          "└─Selection cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)))",
+          "  └─TableFullScan cop[tikv] table:t7 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t7 where (a = 1 and b = 2) or (a = 1 and b = 2)",
+        "SQL": "explain format = 'plan_tree' select * from t7 where (a = 1 and b = 2) or (a = 1 and b = 2)",
         "Result": [
-          "TableReader 2.00 root partition:p3 data:Selection",
-          "└─Selection 2.00 cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)))",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+          "TableReader root partition:p3 data:Selection",
+          "└─Selection cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)))",
+          "  └─TableFullScan cop[tikv] table:t7 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)",
+        "SQL": "explain format = 'plan_tree' select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)",
         "Result": [
-          "TableReader 2.00 root partition:dual data:Selection",
-          "└─Selection 2.00 cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)))",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+          "TableReader root partition:dual data:Selection",
+          "└─Selection cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)))",
+          "  └─TableFullScan cop[tikv] table:t7 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t8 where a between 10 and 11",
+        "SQL": "explain format = 'plan_tree' select * from t8 where a between 10 and 11",
         "Result": [
-          "TableReader 250.00 root partition:p4,p5 data:Selection",
-          "└─Selection 250.00 cop[tikv]  ge(test_partition.t8.a, 10), le(test_partition.t8.a, 11)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+          "TableReader root partition:p4,p5 data:Selection",
+          "└─Selection cop[tikv]  ge(test_partition.t8.a, 10), le(test_partition.t8.a, 11)",
+          "  └─TableFullScan cop[tikv] table:t8 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t8 where (a is null) or (a between 5 and 8)",
+        "SQL": "explain format = 'plan_tree' select * from t8 where (a is null) or (a between 5 and 8)",
         "Result": [
-          "TableReader 260.00 root partition:p0,p1,p2,p5 data:Selection",
-          "└─Selection 260.00 cop[tikv]  or(isnull(test_partition.t8.a), and(ge(test_partition.t8.a, 5), le(test_partition.t8.a, 8)))",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+          "TableReader root partition:p0,p1,p2,p5 data:Selection",
+          "└─Selection cop[tikv]  or(isnull(test_partition.t8.a), and(ge(test_partition.t8.a, 5), le(test_partition.t8.a, 8)))",
+          "  └─TableFullScan cop[tikv] table:t8 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t8 where a between 5 and 12",
+        "SQL": "explain format = 'plan_tree' select * from t8 where a between 5 and 12",
         "Result": [
-          "TableReader 250.00 root partition:all data:Selection",
-          "└─Selection 250.00 cop[tikv]  ge(test_partition.t8.a, 5), le(test_partition.t8.a, 12)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+          "TableReader root partition:all data:Selection",
+          "└─Selection cop[tikv]  ge(test_partition.t8.a, 5), le(test_partition.t8.a, 12)",
+          "  └─TableFullScan cop[tikv] table:t8 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t8 where (a <= 10 and a >= 8) or (a <= 13 and a >= 11) or (a <= 16 and a >= 14)",
+        "SQL": "explain format = 'plan_tree' select * from t8 where (a <= 10 and a >= 8) or (a <= 13 and a >= 11) or (a <= 16 and a >= 14)",
         "Result": [
-          "TableReader 750.00 root partition:p0,p1,p2,p3,p4,p5 data:Selection",
-          "└─Selection 750.00 cop[tikv]  or(and(le(test_partition.t8.a, 10), ge(test_partition.t8.a, 8)), or(and(le(test_partition.t8.a, 13), ge(test_partition.t8.a, 11)), and(le(test_partition.t8.a, 16), ge(test_partition.t8.a, 14))))",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+          "TableReader root partition:p0,p1,p2,p3,p4,p5 data:Selection",
+          "└─Selection cop[tikv]  or(and(le(test_partition.t8.a, 10), ge(test_partition.t8.a, 8)), or(and(le(test_partition.t8.a, 13), ge(test_partition.t8.a, 11)), and(le(test_partition.t8.a, 16), ge(test_partition.t8.a, 14))))",
+          "  └─TableFullScan cop[tikv] table:t8 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t8 where a < 12 and a > 9",
+        "SQL": "explain format = 'plan_tree' select * from t8 where a < 12 and a > 9",
         "Result": [
-          "TableReader 250.00 root partition:p4,p5 data:Selection",
-          "└─Selection 250.00 cop[tikv]  gt(test_partition.t8.a, 9), lt(test_partition.t8.a, 12)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+          "TableReader root partition:p4,p5 data:Selection",
+          "└─Selection cop[tikv]  gt(test_partition.t8.a, 9), lt(test_partition.t8.a, 12)",
+          "  └─TableFullScan cop[tikv] table:t8 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t9",
+        "SQL": "explain format = 'plan_tree' select * from t9",
         "Result": [
-          "TableReader 10000.00 root partition:p0,p1 data:TableFullScan",
-          "└─TableFullScan 10000.00 cop[tikv] table:t9 keep order:false, stats:pseudo"
+          "TableReader root partition:p0,p1 data:TableFullScan",
+          "└─TableFullScan cop[tikv] table:t9 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t10 where a between 0 AND 15218001646226433652",
+        "SQL": "explain format = 'plan_tree' select * from t10 where a between 0 AND 15218001646226433652",
         "Result": [
-          "TableReader 250.00 root partition:all data:Selection",
-          "└─Selection 250.00 cop[tikv]  ge(test_partition.t10.a, 0), le(test_partition.t10.a, 15218001646226433652)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t10 keep order:false, stats:pseudo"
+          "TableReader root partition:all data:Selection",
+          "└─Selection cop[tikv]  ge(test_partition.t10.a, 0), le(test_partition.t10.a, 15218001646226433652)",
+          "  └─TableFullScan cop[tikv] table:t10 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t11 where a is null",
+        "SQL": "explain format = 'plan_tree' select * from t11 where a is null",
         "Result": [
-          "TableReader 10.00 root partition:all data:Selection",
-          "└─Selection 10.00 cop[tikv]  isnull(test_partition.t11.a)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+          "TableReader root partition:all data:Selection",
+          "└─Selection cop[tikv]  isnull(test_partition.t11.a)",
+          "  └─TableFullScan cop[tikv] table:t11 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t11 where a is null and b = 2",
+        "SQL": "explain format = 'plan_tree' select * from t11 where a is null and b = 2",
         "Result": [
-          "TableReader 1.00 root partition:p0 data:Selection",
-          "└─Selection 1.00 cop[tikv]  eq(test_partition.t11.b, 2), isnull(test_partition.t11.a)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+          "TableReader root partition:p0 data:Selection",
+          "└─Selection cop[tikv]  eq(test_partition.t11.b, 2), isnull(test_partition.t11.a)",
+          "  └─TableFullScan cop[tikv] table:t11 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t11 where a = 1 and b = 2",
+        "SQL": "explain format = 'plan_tree' select * from t11 where a = 1 and b = 2",
         "Result": [
-          "TableReader 1.00 root partition:p0 data:Selection",
-          "└─Selection 1.00 cop[tikv]  eq(test_partition.t11.a, 1), eq(test_partition.t11.b, 2)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+          "TableReader root partition:p0 data:Selection",
+          "└─Selection cop[tikv]  eq(test_partition.t11.a, 1), eq(test_partition.t11.b, 2)",
+          "  └─TableFullScan cop[tikv] table:t11 keep order:false, stats:pseudo"
         ]
       }
     ]

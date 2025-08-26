@@ -159,14 +159,14 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
 				testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-				output[i].DynamicPlan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+				output[i].DynamicPlan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + tt).Rows())
 				dynamicQuery := testKit.MustQuery(tt)
 				if !strings.Contains(tt, "order by") {
 					dynamicQuery = dynamicQuery.Sort()
 				}
 				dynamicRes := testdata.ConvertRowsToStrings(dynamicQuery.Rows())
 				testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
-				output[i].StaticPlan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+				output[i].StaticPlan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + tt).Rows())
 				staticQuery := testKit.MustQuery(tt)
 				if !strings.Contains(tt, "order by") {
 					staticQuery = staticQuery.Sort()
@@ -177,14 +177,14 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 			})
 
 			testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-			testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].DynamicPlan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].DynamicPlan...))
 			if strings.Contains(tt, "order by") {
 				testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 			} else {
 				testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 			}
 			testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
-			testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].StaticPlan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].StaticPlan...))
 			if strings.Contains(tt, "order by") {
 				testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 			} else {
@@ -284,7 +284,7 @@ func TestPartitionPruneWithPredicateSimplification(t *testing.T) {
       PARTITION p2 VALUES LESS THAN ('Q&h髑UDZ娻躸(襲!籂35'),
       PARTITION p3 VALUES LESS THAN ('f獟@'),
       PARTITION p4 VALUES LESS THAN ('~W噽纓'));`)
-		testKit.MustQuery(`explain format='brief' SELECT /*+ set_var(tidb_partition_prune_mode="static") */
+		testKit.MustQuery(`explain format='plan_tree' SELECT /*+ set_var(tidb_partition_prune_mode="static") */
     1,
     char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4) AS col_383,
     tla842d94a.col_2 AS col_384
@@ -299,7 +299,7 @@ ORDER BY char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4), tla842d94a.col_
 			`  └─Projection 0.00 root  Column#4, Column#5, test.tla842d94a.col_2, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#6`,
 			`    └─Projection 0.00 root  1->Column#4, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#5, test.tla842d94a.col_2`,
 			`      └─TableDual 0.00 root  rows:0`))
-		testKit.MustQuery(`explain format='brief' SELECT
+		testKit.MustQuery(`explain format='plan_tree' SELECT
     1,
     char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4) AS col_383,
     tla842d94a.col_2 AS col_384

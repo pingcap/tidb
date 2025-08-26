@@ -42,7 +42,7 @@ func TestPushDerivedTopnFlash(t *testing.T) {
 		suiteData := GetDerivedTopNSuiteData()
 		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, sql := range input {
-			plan := testKit.MustQuery("explain format = 'brief' " + sql)
+			plan := testKit.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
 				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())

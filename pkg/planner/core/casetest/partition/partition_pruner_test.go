@@ -181,10 +181,10 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		valid := false
 		for i, tt := range input {
 			// Test for table without index.
-			plan := testKit.MustQuery("explain format = 'brief' " + tt.SQL)
+			plan := testKit.MustQuery("explain format = 'plan_tree' " + tt.SQL)
 			planTree := testdata.ConvertRowsToStrings(plan.Rows())
 			// Test for table with index.
-			indexPlan := tk1.MustQuery("explain format = 'brief' " + tt.SQL)
+			indexPlan := tk1.MustQuery("explain format = 'plan_tree' " + tt.SQL)
 			indexPlanTree := testdata.ConvertRowsToStrings(indexPlan.Rows())
 			testdata.OnRecord(func() {
 				output[i].SQL = tt.SQL
@@ -687,9 +687,9 @@ func TestIssue61176Char(t *testing.T) {
 			testKit.MustQuery(`select a from t where a <=> 'D'`).Check(testkit.Rows("D"))
 			testKit.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
 			testKit.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
-			testKit.MustQuery(`explain format=brief select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
-			testKit.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
-			testKit.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
 			testKit.MustExec(`drop table t`)
 			testKit.MustExec(`CREATE TABLE t (a varchar(9) PRIMARY KEY)` + t.partitionBy)
 			testKit.MustExec(`insert into t values ('Y'),('D')`)
@@ -697,9 +697,9 @@ func TestIssue61176Char(t *testing.T) {
 			testKit.MustQuery(`select a from t where a <=> 'D'`).Check(testkit.Rows("D"))
 			testKit.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
 			testKit.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
-			testKit.MustQuery(`explain format=brief select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
-			testKit.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
-			testKit.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"TableRangeScan", "partition:" + t.partNull})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> NULL`).MultiCheckContain([]string{"TableRangeScan", "partition:" + t.partNull})
 			testKit.MustExec(`drop table t`)
 		}
 	})
@@ -742,9 +742,9 @@ func TestIssue61176Int(t *testing.T) {
 			testKit.MustQuery(`select a from t where a <=> 1`).Check(testkit.Rows("1"))
 			testKit.MustQuery(`select a from t where a <=> 5`).Check(testkit.Rows("5"))
 			testKit.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
-			testKit.MustQuery(`explain format=brief select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
-			testKit.MustQuery(`explain format=brief select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
-			testKit.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
 			testKit.MustExec(`drop table t`)
 			testKit.MustExec(`CREATE TABLE t (a int PRIMARY KEY)` + t.partitionBy)
 			testKit.MustExec(`insert into t values (1),(5)`)
@@ -752,10 +752,10 @@ func TestIssue61176Int(t *testing.T) {
 			testKit.MustQuery(`select a from t where a <=> 1`).Check(testkit.Rows("1"))
 			testKit.MustQuery(`select a from t where a <=> 5`).Check(testkit.Rows("5"))
 			testKit.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
-			testKit.MustQuery(`explain format=brief select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
-			testKit.MustQuery(`explain format=brief select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
 			// TODO: Also do this for RANGE COLUMNS? Why is this different?!?
-			testKit.MustQuery(`explain format=brief select a from t where a <=> NULL`).CheckContain("TableDual")
+			testKit.MustQuery(`explain format = 'plan_tree' select a from t where a <=> NULL`).CheckContain("TableDual")
 			testKit.MustExec(`drop table t`)
 		}
 	})

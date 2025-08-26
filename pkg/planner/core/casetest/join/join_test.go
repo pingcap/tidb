@@ -38,7 +38,7 @@ func TestSemiJoinOrder(t *testing.T) {
 		testKit.MustQuery("select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 		testKit.MustQuery("select /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 		testKit.MustQuery("select /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
-		testKit.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+		testKit.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 			"Sort 7992.00 root  test.t1.col0, test.t1.col1",
 			"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
 			"  ├─TableReader(Build) 9990.00 root  data:Selection",
@@ -50,7 +50,7 @@ func TestSemiJoinOrder(t *testing.T) {
 		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
-		testKit.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+		testKit.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 			"Sort 7992.00 root  test.t1.col0, test.t1.col1",
 			"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
 			"  ├─TableReader(Build) 9990.00 root  data:Selection",
@@ -64,7 +64,7 @@ func TestSemiJoinOrder(t *testing.T) {
 		testKit.MustQuery("select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 		testKit.MustQuery("select /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 		testKit.MustQuery("select /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
-		testKit.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+		testKit.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 			"Sort 7992.00 root  test.t1.col0, test.t1.col1",
 			"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
 			"  ├─TableReader(Build) 9990.00 root  data:Selection",
@@ -79,7 +79,7 @@ func TestSemiJoinOrder(t *testing.T) {
 			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints"))
-		testKit.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+		testKit.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 			"Sort 7992.00 root  test.t1.col0, test.t1.col1",
 			"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
 			"  ├─TableReader(Build) 9990.00 root  data:Selection",
@@ -100,7 +100,7 @@ func TestJoinWithNullEQ(t *testing.T) {
 		// https://github.com/pingcap/tidb/issues/57583
 		testKit.MustExec("create table t1(id int, v1 int, v2 int, v3 int);")
 		testKit.MustExec(" create table t2(id int, v1 int, v2 int, v3 int);")
-		testKit.MustQuery("explain format='brief' select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
+		testKit.MustQuery("explain format='plan_tree' select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
 			"HashJoin 6393.60 root  semi join, left side:HashAgg, equal:[nulleq(test.t1.id, test.t1.id)]",
 			"├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
 			"│ ├─TableReader(Build) 9990.00 root  data:Selection",
@@ -123,7 +123,7 @@ func TestJoinWithNullEQ(t *testing.T) {
 		testKit.MustExec("CREATE TABLE tt1(c0 CHAR );")
 		testKit.MustExec("INSERT INTO tt1 VALUES (NULL);")
 		testKit.MustExec("INSERT INTO tt0(c0) VALUES (false);")
-		testKit.MustQuery(`explain format='brief' SELECT * FROM tt1
+		testKit.MustQuery(`explain format='plan_tree' SELECT * FROM tt1
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows(
@@ -149,7 +149,7 @@ func TestJoinSimplifyCondition(t *testing.T) {
 		testKit.MustExec("use test;")
 		testKit.MustExec(`CREATE TABLE t1 (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL,KEY idx_a (a));`)
 		testKit.MustExec(`CREATE TABLE t2 (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL,KEY idx_a (a));`)
-		testKit.MustQuery(`explain format='brief' select * from t1,t2 where t1.a=t2.a and t1.b = 1 or 1=2;`).
+		testKit.MustQuery(`explain format='plan_tree' select * from t1,t2 where t1.a=t2.a and t1.b = 1 or 1=2;`).
 			Check(testkit.Rows(
 				"IndexHashJoin 12.49 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
 				"├─TableReader(Build) 9.99 root  data:Selection",

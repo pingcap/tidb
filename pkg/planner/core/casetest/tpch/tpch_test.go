@@ -199,7 +199,7 @@ func TestQ14(t *testing.T) {
 		)
 		integrationSuiteData := GetTPCHSuiteData()
 		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		costTraceFormat := `explain format='brief' `
+		costTraceFormat := `explain format='plan_tree' `
 		for i := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = input[i]
@@ -391,7 +391,7 @@ func BenchmarkTPCHQ1(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		tk.MustQuery("explain format='brief' SELECT l_returnflag, l_linestatus, SUM(l_quantity) AS sum_qty, SUM(l_extendedprice) AS sum_base_price, SUM(l_extendedprice * (1 - l_discount)) AS sum_disc_price, SUM(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge, AVG(l_quantity) AS avg_qty, AVG(l_extendedprice) AS avg_price, AVG(l_discount) AS avg_disc, COUNT(*) AS count_order FROM lineitem WHERE l_shipdate <= DATE_SUB('1998-12-01', INTERVAL 108 DAY) GROUP BY l_returnflag, l_linestatus ORDER BY l_returnflag, l_linestatus;")
+		tk.MustQuery("explain format='plan_tree' SELECT l_returnflag, l_linestatus, SUM(l_quantity) AS sum_qty, SUM(l_extendedprice) AS sum_base_price, SUM(l_extendedprice * (1 - l_discount)) AS sum_disc_price, SUM(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge, AVG(l_quantity) AS avg_qty, AVG(l_extendedprice) AS avg_price, AVG(l_discount) AS avg_disc, COUNT(*) AS count_order FROM lineitem WHERE l_shipdate <= DATE_SUB('1998-12-01', INTERVAL 108 DAY) GROUP BY l_returnflag, l_linestatus ORDER BY l_returnflag, l_linestatus;")
 	}
 }
 
@@ -412,7 +412,7 @@ func BenchmarkTPCHQ2(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		tk.MustQuery("explain format='brief' SELECT s_acctbal, s_name, n_name, p_partkey, p_mfgr, s_address, s_phone, s_comment FROM part, supplier, partsupp, nation, region WHERE p_partkey = ps_partkey AND s_suppkey = ps_suppkey AND p_size = 30 AND p_type LIKE '%STEEL' AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND r_name = 'ASIA' AND ps_supplycost = (SELECT MIN(ps_supplycost) FROM partsupp, supplier, nation, region WHERE p_partkey = ps_partkey AND s_suppkey = ps_suppkey AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND r_name = 'ASIA') ORDER BY s_acctbal DESC, n_name, s_name, p_partkey LIMIT 100;")
+		tk.MustQuery("explain format='plan_tree' SELECT s_acctbal, s_name, n_name, p_partkey, p_mfgr, s_address, s_phone, s_comment FROM part, supplier, partsupp, nation, region WHERE p_partkey = ps_partkey AND s_suppkey = ps_suppkey AND p_size = 30 AND p_type LIKE '%STEEL' AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND r_name = 'ASIA' AND ps_supplycost = (SELECT MIN(ps_supplycost) FROM partsupp, supplier, nation, region WHERE p_partkey = ps_partkey AND s_suppkey = ps_suppkey AND s_nationkey = n_nationkey AND n_regionkey = r_regionkey AND r_name = 'ASIA') ORDER BY s_acctbal DESC, n_name, s_name, p_partkey LIMIT 100;")
 	}
 }
 
@@ -428,9 +428,9 @@ func BenchmarkTPCHQ3(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		tk.MustQuery("explain format='brief' select /*+ HASH_JOIN(orders, lineitem, customer) */ l_orderkey, sum(l_extendedprice * (1 - l_discount)) as revenue, o_orderdate, o_shippriority from customer, orders, lineitem where c_mktsegment = 'AUTOMOBILE' and c_custkey = o_custkey and l_orderkey = o_orderkey and o_orderdate < '1995-03-13' and l_shipdate > '1995-03-13' group by l_orderkey, o_orderdate, o_shippriority order by revenue desc, o_orderdate limit 10;")
-		tk.MustQuery("explain format='brief' SELECT /*+ HASH_JOIN(orders, lineitem, customer) */ l_orderkey, SUM(l_extendedprice * (1 - l_discount)) AS revenue, o_orderdate, o_shippriority FROM customer AS c LEFT JOIN orders AS o ON c.c_custkey = o.o_custkey LEFT JOIN lineitem AS l ON l.l_orderkey = o.o_orderkey WHERE c.c_mktsegment = 'AUTOMOBILE' AND o.o_orderdate < '1995-03-13' AND l.l_shipdate > '1995-03-13' GROUP BY l_orderkey, o_orderdate, o_shippriority ORDER BY revenue DESC, o_orderdate LIMIT 10;")
-		tk.MustQuery("explain format='brief' SELECT /*+ SHUFFLE_JOIN(orders, lineitem) */ o.o_orderdate, SUM(l.l_extendedprice * (1 - l.l_discount)) AS revenue FROM orders AS o JOIN lineitem AS l ON o.o_orderkey = l.l_orderkey WHERE o.o_orderdate BETWEEN '1994-01-01' AND '1994-12-31' GROUP BY o.o_orderdate ORDER BY revenue DESC LIMIT 10;")
+		tk.MustQuery("explain format='plan_tree' select /*+ HASH_JOIN(orders, lineitem, customer) */ l_orderkey, sum(l_extendedprice * (1 - l_discount)) as revenue, o_orderdate, o_shippriority from customer, orders, lineitem where c_mktsegment = 'AUTOMOBILE' and c_custkey = o_custkey and l_orderkey = o_orderkey and o_orderdate < '1995-03-13' and l_shipdate > '1995-03-13' group by l_orderkey, o_orderdate, o_shippriority order by revenue desc, o_orderdate limit 10;")
+		tk.MustQuery("explain format='plan_tree' SELECT /*+ HASH_JOIN(orders, lineitem, customer) */ l_orderkey, SUM(l_extendedprice * (1 - l_discount)) AS revenue, o_orderdate, o_shippriority FROM customer AS c LEFT JOIN orders AS o ON c.c_custkey = o.o_custkey LEFT JOIN lineitem AS l ON l.l_orderkey = o.o_orderkey WHERE c.c_mktsegment = 'AUTOMOBILE' AND o.o_orderdate < '1995-03-13' AND l.l_shipdate > '1995-03-13' GROUP BY l_orderkey, o_orderdate, o_shippriority ORDER BY revenue DESC, o_orderdate LIMIT 10;")
+		tk.MustQuery("explain format='plan_tree' SELECT /*+ SHUFFLE_JOIN(orders, lineitem) */ o.o_orderdate, SUM(l.l_extendedprice * (1 - l.l_discount)) AS revenue FROM orders AS o JOIN lineitem AS l ON o.o_orderkey = l.l_orderkey WHERE o.o_orderdate BETWEEN '1994-01-01' AND '1994-12-31' GROUP BY o.o_orderdate ORDER BY revenue DESC LIMIT 10;")
 	}
 }
 
@@ -465,7 +465,7 @@ func BenchmarkTPCHQ21(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		tk.MustQuery("explain format='brief' SELECT s_name, COUNT(*) AS numwait FROM supplier, lineitem l1, orders, nation WHERE s_suppkey = l1.l_suppkey AND o_orderkey = l1.l_orderkey AND o_orderstatus = 'F' AND l1.l_receiptdate > l1.l_commitdate AND EXISTS (SELECT * FROM lineitem l2 WHERE l2.l_orderkey = l1.l_orderkey AND l2.l_suppkey <> l1.l_suppkey) AND NOT EXISTS (SELECT * FROM lineitem l3 WHERE l3.l_orderkey = l1.l_orderkey AND l3.l_suppkey <> l1.l_suppkey AND l3.l_receiptdate > l3.l_commitdate) AND s_nationkey = n_nationkey AND n_name = 'EGYPT' GROUP BY s_name ORDER BY numwait DESC, s_name LIMIT 100;")
+		tk.MustQuery("explain format='plan_tree' SELECT s_name, COUNT(*) AS numwait FROM supplier, lineitem l1, orders, nation WHERE s_suppkey = l1.l_suppkey AND o_orderkey = l1.l_orderkey AND o_orderstatus = 'F' AND l1.l_receiptdate > l1.l_commitdate AND EXISTS (SELECT * FROM lineitem l2 WHERE l2.l_orderkey = l1.l_orderkey AND l2.l_suppkey <> l1.l_suppkey) AND NOT EXISTS (SELECT * FROM lineitem l3 WHERE l3.l_orderkey = l1.l_orderkey AND l3.l_suppkey <> l1.l_suppkey AND l3.l_receiptdate > l3.l_commitdate) AND s_nationkey = n_nationkey AND n_name = 'EGYPT' GROUP BY s_name ORDER BY numwait DESC, s_name LIMIT 100;")
 	}
 }
 
