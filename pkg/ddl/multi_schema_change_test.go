@@ -782,7 +782,7 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	require.NoError(t, checkErr)
 }
 
-func TestMultiSchemaChangeModifyAndAddColumn(t *testing.T) {
+func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -800,6 +800,14 @@ func TestMultiSchemaChangeModifyAndAddColumn(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c char(10));")
 	tk.MustExec("insert into t values (1, 1, '1');")
 	tk.MustExec("alter table t modify column c int after a, add column d int, add column e int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t modify column c2 int after id, modify column id int after c2;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t1(id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t1 modify column c2 int, drop column id;")
 }
 
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
