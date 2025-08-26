@@ -284,9 +284,10 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	lockWaitTime := e.Ctx().GetSessionVars().LockWaitTimeout
-	if e.Lock.LockType == ast.SelectLockForUpdateNoWait || e.Lock.LockType == ast.SelectLockForShareNoWait {
+	switch e.Lock.LockType {
+	case ast.SelectLockForUpdateNoWait, ast.SelectLockForShareNoWait:
 		lockWaitTime = tikvstore.LockNoWait
-	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
+	case ast.SelectLockForUpdateWaitN:
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 

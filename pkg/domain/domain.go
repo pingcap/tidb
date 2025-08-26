@@ -298,6 +298,11 @@ func (do *Domain) DDLExecutor() ddl.Executor {
 	return do.ddlExecutor
 }
 
+// GetDDLOwnerMgr implements the sqlsvrapi.Server interface.
+func (do *Domain) GetDDLOwnerMgr() owner.Manager {
+	return do.DDL().OwnerManager()
+}
+
 // SetDDL sets DDL to domain, it's only used in tests.
 func (do *Domain) SetDDL(d ddl.DDL, executor ddl.Executor) {
 	do.ddl = d
@@ -2404,7 +2409,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		if uint64(len(data)) > size.MB {
 			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
 		}
-		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, privilegeKey, string(data))
+		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, etcd.KeyOpDefaultRetryCnt, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -2425,7 +2430,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
@@ -2630,7 +2635,7 @@ func (do *Domain) releaseServerID(context.Context) {
 		return
 	}
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
-	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
+	err := etcd.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
 	} else {

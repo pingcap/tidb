@@ -24,41 +24,41 @@ index j0_1((cast(j0->'$.path1' as signed array))),
 index j0_string((cast(j0->'$.path_string' as char(10) array))),
 index j0_date((cast(j0->'$.path_date' as date array))),
 index j1((cast(j1 as signed array))));
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where (1 member of (j0->'$.path0'));
-explain format = 'brief' select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.XXX')) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10;
-explain format = 'brief' select /*+ use_index(t, j0_0) */ * from t where (1 member of (j0->'$.path0'));
-explain format = 'brief' select /*+ use_index(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10;
-explain format = 'brief' select * from t use index(j0_0) where (1 member of (j0->'$.path0'));
-explain format = 'brief' select * from t use index(j0_1) where (1 member of (j0->'$.path1')) and a<10;
-explain format = 'brief' select * from t force index(j0_0) where (1 member of (j0->'$.path0'));
-explain format = 'brief' select * from t force index(j0_1) where (1 member of (j0->'$.path1')) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]');
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]');
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('[1, 2, 3]', (j0->'$.path0'));
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]') and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]') and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('[1, 2, 3]', (j0->'$.path0')) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '1');
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '1');
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('1', (j0->'$.path0'));
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '1') and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '1') and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('1', (j0->'$.path0')) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_string) */ * from t where ("a" member of (j0->'$.path_string'));
-explain format = 'brief' select /*+ use_index_merge(t, j0_string) */ * from t where ("a" member of (j0->'$.path_string')) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_string) */ * from t where json_contains((j0->'$.path_string'), '["a", "b", "c"]');
-explain format = 'brief' select /*+ use_index_merge(t, j0_string) */ * from t where json_contains((j0->'$.path_string'), '["a", "b", "c"]') and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_string) */ * from t where json_overlaps((j0->'$.path_string'), '["a", "b", "c"]');
-explain format = 'brief' select /*+ use_index_merge(t, j0_string) */ * from t where json_overlaps((j0->'$.path_string'), '["a", "b", "c"]') and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_date) */ * from t where ("2023-01-01" member of (j0->'$.path_date'));
-explain format = 'brief' select /*+ use_index_merge(t, j0_date) */ * from t where ("2023-01-01" member of (j0->'$.path_date')) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_date) */ * from t where json_contains((j0->'$.path_date'), json_array(cast('2023-01-01' as date), cast('2023-01-02' as date), cast('2023-01-03' as date)));
-explain format = 'brief' select /*+ use_index_merge(t, j0_date) */ * from t where json_contains((j0->'$.path_date'), json_array(cast('2023-01-01' as date), cast('2023-01-02' as date), cast('2023-01-03' as date))) and a<10;
-explain format = 'brief' select /*+ use_index_merge(t, j0_date) */ * from t where json_overlaps((j0->'$.path_date'), json_array(cast('2023-01-01' as date), cast('2023-01-02' as date), cast('2023-01-03' as date)));
-explain format = 'brief' select /*+ use_index_merge(t, j0_date) */ * from t where json_overlaps((j0->'$.path_date'), json_array(cast('2023-01-01' as date), cast('2023-01-02' as date), cast('2023-01-03' as date))) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where (1 member of (j0->'$.path0'));
+explain format='plan_tree' select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.XXX')) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10;
+explain format='plan_tree' select /*+ use_index(t, j0_0) */ * from t where (1 member of (j0->'$.path0'));
+explain format='plan_tree' select /*+ use_index(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10;
+explain format='plan_tree' select * from t use index(j0_0) where (1 member of (j0->'$.path0'));
+explain format='plan_tree' select * from t use index(j0_1) where (1 member of (j0->'$.path1')) and a<10;
+explain format='plan_tree' select * from t force index(j0_0) where (1 member of (j0->'$.path0'));
+explain format='plan_tree' select * from t force index(j0_1) where (1 member of (j0->'$.path1')) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]');
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]');
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('[1, 2, 3]', (j0->'$.path0'));
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]') and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]') and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('[1, 2, 3]', (j0->'$.path0')) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '1');
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '1');
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('1', (j0->'$.path0'));
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '1') and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '1') and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('1', (j0->'$.path0')) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_string) */ * from t where ("a" member of (j0->'$.path_string'));
+explain format='plan_tree' select /*+ use_index_merge(t, j0_string) */ * from t where ("a" member of (j0->'$.path_string')) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_string) */ * from t where json_contains((j0->'$.path_string'), '["a", "b", "c"]');
+explain format='plan_tree' select /*+ use_index_merge(t, j0_string) */ * from t where json_contains((j0->'$.path_string'), '["a", "b", "c"]') and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_string) */ * from t where json_overlaps((j0->'$.path_string'), '["a", "b", "c"]');
+explain format='plan_tree' select /*+ use_index_merge(t, j0_string) */ * from t where json_overlaps((j0->'$.path_string'), '["a", "b", "c"]') and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_date) */ * from t where ("2023-01-01" member of (j0->'$.path_date'));
+explain format='plan_tree' select /*+ use_index_merge(t, j0_date) */ * from t where ("2023-01-01" member of (j0->'$.path_date')) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_date) */ * from t where json_contains((j0->'$.path_date'), json_array(cast('2023-01-01' as date), cast('2023-01-02' as date), cast('2023-01-03' as date)));
+explain format='plan_tree' select /*+ use_index_merge(t, j0_date) */ * from t where json_contains((j0->'$.path_date'), json_array(cast('2023-01-01' as date), cast('2023-01-02' as date), cast('2023-01-03' as date))) and a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, j0_date) */ * from t where json_overlaps((j0->'$.path_date'), json_array(cast('2023-01-01' as date), cast('2023-01-02' as date), cast('2023-01-03' as date)));
+explain format='plan_tree' select /*+ use_index_merge(t, j0_date) */ * from t where json_overlaps((j0->'$.path_date'), json_array(cast('2023-01-01' as date), cast('2023-01-02' as date), cast('2023-01-03' as date))) and a<10;
 
 
 # TestDNFOnMVIndex
@@ -66,14 +66,14 @@ drop table if exists t;
 create table t(a int, b int, c int, j json,
 index idx1((cast(j as signed array))),
 index idx2(a, b, (cast(j as signed array)), c));
-explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where (1 member of (j)) or (2 member of (j));
-explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where ((1 member of (j)) or (2 member of (j))) and (a > 10);
-explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where (json_overlaps(j, '[1, 2]')) or (json_overlaps(j, '[3, 4]'));
-explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where ((json_overlaps(j, '[1, 2]')) or (json_overlaps(j, '[3, 4]'))) and (a > 10);
-explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '[1, 2]')) or (json_contains(j, '[3, 4]'));
-explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where (a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)));
-explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where (a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)) and c=14);
-explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where ((a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)))) and (c > 10);
+explain format='plan_tree' select /*+ use_index_merge(t, idx1) */ * from t where (1 member of (j)) or (2 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, idx1) */ * from t where ((1 member of (j)) or (2 member of (j))) and (a > 10);
+explain format='plan_tree' select /*+ use_index_merge(t, idx1) */ * from t where (json_overlaps(j, '[1, 2]')) or (json_overlaps(j, '[3, 4]'));
+explain format='plan_tree' select /*+ use_index_merge(t, idx1) */ * from t where ((json_overlaps(j, '[1, 2]')) or (json_overlaps(j, '[3, 4]'))) and (a > 10);
+explain format='plan_tree' select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '[1, 2]')) or (json_contains(j, '[3, 4]'));
+explain format='plan_tree' select /*+ use_index_merge(t, idx2) */ * from t where (a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)));
+explain format='plan_tree' select /*+ use_index_merge(t, idx2) */ * from t where (a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)) and c=14);
+explain format='plan_tree' select /*+ use_index_merge(t, idx2) */ * from t where ((a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)))) and (c > 10);
 
 
 # TestCompositeMVIndex
@@ -81,35 +81,35 @@ drop table if exists t;
 create table t(a int, b int , c int, j json,
 index idx(a, b, (cast(j as signed array)), c),
 index idx2(a, b, (cast(j->'$.str' as char(10) array)), c));
-explain format = 'brief' select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2 and (3 member of (j)) and c=4;
-explain format = 'brief' select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2 and (3 member of (j));
-explain format = 'brief' select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2;
-explain format = 'brief' select /*+ use_index_merge(t, idx) */ * from t where a=1;
-explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str')) and c=4;
-explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str'));
-explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2;
-explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where a=1;
-explain format = 'brief' select /*+ use_index(t, idx) */ * from t where a=1 and b=2 and (3 member of (j)) and c=4;
-explain format = 'brief' select * from t use index(idx) where a=1 and b=2 and (3 member of (j));
-explain format = 'brief' select /*+ use_index(t, idx) */ * from t where a=1 and b=2;
-explain format = 'brief' select * from t use index(idx) where a=1;
-explain format = 'brief' select * from t force index(idx) where a=1 and b=2 and (3 member of (j));
-explain format = 'brief' select * from t force index(idx) where a=1;
+explain format='plan_tree' select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2 and (3 member of (j)) and c=4;
+explain format='plan_tree' select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2 and (3 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2;
+explain format='plan_tree' select /*+ use_index_merge(t, idx) */ * from t where a=1;
+explain format='plan_tree' select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str')) and c=4;
+explain format='plan_tree' select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str'));
+explain format='plan_tree' select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2;
+explain format='plan_tree' select /*+ use_index_merge(t, idx2) */ * from t where a=1;
+explain format='plan_tree' select /*+ use_index(t, idx) */ * from t where a=1 and b=2 and (3 member of (j)) and c=4;
+explain format='plan_tree' select * from t use index(idx) where a=1 and b=2 and (3 member of (j));
+explain format='plan_tree' select /*+ use_index(t, idx) */ * from t where a=1 and b=2;
+explain format='plan_tree' select * from t use index(idx) where a=1;
+explain format='plan_tree' select * from t force index(idx) where a=1 and b=2 and (3 member of (j));
+explain format='plan_tree' select * from t force index(idx) where a=1;
 
 
 # TestMVIndexSelection
 drop table if exists t;
 create table t(a int, j json,
 index i_int((cast(j->'$.int' as signed array))));
-explain format = 'brief' select (j->'$.int') from t where (1 member of (j->'$.int'));
-explain format = 'brief' select * from t where (1 member of (j->'$.int'));
-explain format = 'brief' select * from t where (1 member of (j->'$.int')) and a<10;
-explain format = 'brief' select (j->'$.int') from t where json_contains((j->'$.int'), '[1, 2, 3]');
-explain format = 'brief' select * from t where json_contains((j->'$.int'), '[1, 2, 3]');
-explain format = 'brief' select * from t where json_contains((j->'$.int'), '[1, 2, 3]') and a<10;
-explain format = 'brief' select (j->'$.int') from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
-explain format = 'brief' select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
-explain format = 'brief' select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]') and a<10;
+explain format='plan_tree' select (j->'$.int') from t where (1 member of (j->'$.int'));
+explain format='plan_tree' select * from t where (1 member of (j->'$.int'));
+explain format='plan_tree' select * from t where (1 member of (j->'$.int')) and a<10;
+explain format='plan_tree' select (j->'$.int') from t where json_contains((j->'$.int'), '[1, 2, 3]');
+explain format='plan_tree' select * from t where json_contains((j->'$.int'), '[1, 2, 3]');
+explain format='plan_tree' select * from t where json_contains((j->'$.int'), '[1, 2, 3]') and a<10;
+explain format='plan_tree' select (j->'$.int') from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
+explain format='plan_tree' select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
+explain format='plan_tree' select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]') and a<10;
 
 
 # TestMVIndexIndexMergePlanCache
@@ -134,27 +134,27 @@ explain select j from t where j in (1, 2);
 # TestEnforceMVIndex
 drop table if exists t;
 create table t(a int, j json, index kj((cast(j as signed array))));
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t;
-explain format = 'brief' select /*+ use_index(t, kj) */ a from t;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where a<10;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j));
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) and a=10;
-explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) or a=10;
-explain format = 'brief' select /*+ use_index_merge(t, kj) */ * from t;
-explain format = 'brief' select /*+ use_index_merge(t, kj) */ a from t;
-explain format = 'brief' select /*+ use_index_merge(t, kj) */ * from t where a<10;
-explain format = 'brief' select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j)) or a=10;
+explain format='plan_tree' select /*+ use_index(t, kj) */ * from t;
+explain format='plan_tree' select /*+ use_index(t, kj) */ a from t;
+explain format='plan_tree' select /*+ use_index(t, kj) */ * from t where a<10;
+explain format='plan_tree' select /*+ use_index(t, kj) */ * from t where (1 member of (j));
+explain format='plan_tree' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) and a=10;
+explain format='plan_tree' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) or a=10;
+explain format='plan_tree' select /*+ use_index_merge(t, kj) */ * from t;
+explain format='plan_tree' select /*+ use_index_merge(t, kj) */ a from t;
+explain format='plan_tree' select /*+ use_index_merge(t, kj) */ * from t where a<10;
+explain format='plan_tree' select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j)) or a=10;
 
 
 # TestMVIndexInvisible
 drop table if exists t;
 create table t(a int, j json, index kj((cast(j as signed array))));
-explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j));
+explain format='plan_tree' select /*+ use_index(t, kj) */ * from t where (1 member of (j));
 ALTER TABLE t ALTER INDEX kj INVISIBLE;
-explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j));
-explain format='brief' select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j));
+explain format='plan_tree' select /*+ use_index(t, kj) */ * from t where (1 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j));
 ALTER TABLE t ALTER INDEX kj VISIBLE;
-explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j));
+explain format='plan_tree' select /*+ use_index(t, kj) */ * from t where (1 member of (j));
 
 
 # TestMVIndexFullScan
@@ -248,11 +248,11 @@ explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 drop table if exists t, t1;
 create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
 insert into t values ('[1,2,3]', 1);
-explain format=brief select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
+explain format='plan_tree' select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
 select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
 create table t1 (j json, a bigint(20), b int, primary key(a,b), key mvi((cast(j as unsigned array))));
-explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where a = 1 or json_contains(j, '1');
-explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where (a = 1 and b = 2) or json_contains(j, '1');
+explain format='plan_tree' select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where a = 1 or json_contains(j, '1');
+explain format='plan_tree' select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where (a = 1 and b = 2) or json_contains(j, '1');
 
 # TestExpandANDListWithNestedORList
 drop table if exists t, t1;
@@ -263,7 +263,7 @@ key mvi3((cast(j->'$.d' as unsigned array)), c),
 key idx(b, c)
 );
 
-explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  json_overlaps(j->'$.a', '[4,5,6]') or
  (2 member of (j->'$.a'))
@@ -271,7 +271,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 c = 10 and
 a = 20;
 
-explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  c = 1 or
  c = 2 or
@@ -279,7 +279,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 ) and
 json_overlaps(j->'$.a', '[4,5,6]');
 
-explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  c = 1 or
  c = 2 or
@@ -287,7 +287,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 ) and
 (json_contains(j->'$.a', '[4,5,6]'));
 
-explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  c = 1 or
  c = 2 or
@@ -295,7 +295,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 ) and
 json_contains(j->'$.a', '[2]');
 
-explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  1 member of (j->'$.a') or
  2 member of (j->'$.a')
@@ -303,14 +303,14 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 c = 10 and
 a = 20;
 
-explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  1 member of (j->'$.a') or
  2 member of (j->'$.d')
 ) and
 a = 20;
 
-explain format=brief select /*+ use_index_merge(t, mvi1, mvi3) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1, mvi3) */ * from t where
 c = 5 and
 (
  1 member of (j->'$.a') or
@@ -318,7 +318,7 @@ c = 5 and
 ) and
 a = 20;
 
-explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * from t where
 (
  pk = 2 or
  json_overlaps(j->'$.a', '[4,5,6]') or
@@ -328,7 +328,7 @@ a = 1 and
 b = '2' and
 c = 3;
 
-explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * from t where
 a = 1 and
 b = '2' and
 c = 3 and
@@ -338,7 +338,7 @@ c = 3 and
  (3 member of (j->'$.c'))
 );
 
-explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 b = '2' and
 (
@@ -347,7 +347,7 @@ b = '2' and
  3 member of (j->'$.c')
 );
 
-explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 (json_overlaps(j->'$.a', '[4,5,6]')) and
 (
@@ -356,7 +356,7 @@ a = 1 and
  3 member of (j->'$.c')
 );
 
-explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 (json_overlaps(j->'$.a', '[4,5,6]')) and
 (
@@ -366,8 +366,8 @@ a = 1 and
 );
 
 create table t1 (a int, b int, c int, d int, j json, key kb(b, (cast(j as unsigned array))), key(d, c));
-explain format=brief select * from t1 where (c=1 or b=1) and (1 member of (j));
-explain format=brief select * from t1 where (c=1 or b=1) and (1 member of (j)) and d=1;
+explain format='plan_tree' select * from t1 where (c=1 or b=1) and (1 member of (j));
+explain format='plan_tree' select * from t1 where (c=1 or b=1) and (1 member of (j)) and d=1;
 
 # TestIssue52395
 drop table if exists t;
@@ -396,24 +396,24 @@ CREATE TABLE `t1` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 INSERT INTO t1 VALUES('1988-07-19','[0.9233398239291353, 0.9396459773262974, 0.540018481999012, 0.181978533893545]',x'652539286c5f7e6b482a7265575a');
 SELECT col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
-EXPLAIN format=brief SELECT /*+ use_index_merge(t1) */ col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
+explain format='plan_tree' SELECT /*+ use_index_merge(t1) */ col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
 
 # TestIssue52869
 drop table if exists t;
 create table t(pk varbinary(255) primary key, a int, b varchar(50), c int, d varchar(45), index ia(a), index ib(b), index ic(c), index id(d));
-EXPLAIN format = brief SELECT /*+ use_index_merge(t) */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
-EXPLAIN format = brief SELECT /*+ set_var(tidb_opt_fix_control='52869:on') */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
-EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
-EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
-EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5);
-EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
-EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
+explain format='plan_tree' SELECT /*+ use_index_merge(t) */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+explain format='plan_tree' SELECT /*+ set_var(tidb_opt_fix_control='52869:on') */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+explain format='plan_tree' SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
+explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5);
+explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
+explain format='plan_tree' SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
 SET @@tidb_opt_fix_control = '52869:on';
-EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
-EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
-EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5);
-EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
-EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
+explain format='plan_tree' SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
+explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5);
+explain format='plan_tree' SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
+explain format='plan_tree' SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
 SET @@tidb_opt_fix_control = default;
 
 # Test deriving index filters for mv index paths
@@ -435,7 +435,7 @@ c = 1 and
 json_overlaps(j->'$.a', '[4,5,6]') and
 b not like '%test%';
 
-EXPLAIN format = brief SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+explain format='plan_tree' SELECT /*+ use_index_merge(t, mvi1) */ * from t where
 c = 1 and
 json_overlaps(j->'$.a', '[4,5,6]') and
 b not like '%test%';
@@ -446,7 +446,7 @@ c = 1 and
 json_contains(j->'$.a', '[4,5]') and
 b not like '%test%';
 
-EXPLAIN format = brief SELECT /*+ use_index_merge(t, mvi1) */ * from t where
+explain format='plan_tree' SELECT /*+ use_index_merge(t, mvi1) */ * from t where
 c = 1 and
 json_contains(j->'$.a', '[4,5]') and
 b not like '%test%';
@@ -460,7 +460,7 @@ c = 10 and
 3 member of (j->'$.a') and
 3 member of (j->'$.c');
 
-EXPLAIN format=brief SELECT /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+explain format='plan_tree' SELECT /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 b > 'abc' and
 b not like '%test%' and
@@ -482,23 +482,23 @@ key mvi4((cast(j as unsigned array)), d(255))
 );
 
 
-EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi1) */ * from t1 where
+explain format='plan_tree' SELECT /*+ use_index_merge(t1, mvi1) */ * from t1 where
 c = 1 and
 json_contains(j, '[4,5]') and
 b = 'abcdefg';
 
-EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi2) */ * from t1 where
+explain format='plan_tree' SELECT /*+ use_index_merge(t1, mvi2) */ * from t1 where
 c = 1 and
 json_contains(j, '[4,5]') and
 b = 'abcdefg' and
 b like '%test%';
 
-EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi3) */ * from t1 where
+explain format='plan_tree' SELECT /*+ use_index_merge(t1, mvi3) */ * from t1 where
 c = 1 and
 json_contains(j, '[4,5]') and
 d not like '%test%';
 
-EXPLAIN format = brief SELECT /*+ use_index_merge(t1, mvi4) */ * from t1 where
+explain format='plan_tree' SELECT /*+ use_index_merge(t1, mvi4) */ * from t1 where
 c = 1 and
 json_contains(j, '[4,5]') and
 d not like '%test%';
@@ -511,14 +511,14 @@ create table t (a int, b int, c int, d int,
 index iab(a,b),
 index iac(a,c),
 index iad(a,d));
-explain format = brief select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or c = 3 or d = 4);
+explain format='plan_tree' select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or c = 3 or d = 4);
 
 drop table if exists t;
 create table t(a int, b int, c int, d int,
 index iab(b,a),
 index iac(c,a,d),
 index iad(a,d));
-explain format = brief select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or (c = 3 and d = 4) or d = 5);
+explain format='plan_tree' select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or (c = 3 and d = 4) or d = 5);
 
 # Test MV index OR IndexMerge can satisfy Sort property when there are multiple indexes to choose from
 drop table if exists t;
@@ -527,10 +527,10 @@ key mvi1((cast(j1 as unsigned array)), a),
 key mvi2((cast(j1 as unsigned array)), b),
 key mvi3((cast(j2 as unsigned array)), a),
 key mvi4((cast(j2 as unsigned array)), b) );
-explain format = brief select * from t where 1 member of (j1) or 2 member of (j2) order by a;
-explain format = brief select * from t where 1 member of (j1) or 2 member of (j2) order by b;
-explain format = brief select * from t where json_overlaps(j1, '[1,3,5]') or 2 member of (j2) order by a desc limit 10;
-explain format = brief select * from t where 1 member of (j1) or json_contains(j2, '[5]') order by b limit 10000;
+explain format='plan_tree' select * from t where 1 member of (j1) or 2 member of (j2) order by a;
+explain format='plan_tree' select * from t where 1 member of (j1) or 2 member of (j2) order by b;
+explain format='plan_tree' select * from t where json_overlaps(j1, '[1,3,5]') or 2 member of (j2) order by a desc limit 10;
+explain format='plan_tree' select * from t where 1 member of (j1) or json_contains(j2, '[5]') order by b limit 10000;
 
 INSERT INTO t VALUES (2, 2, 2, '[1,2,3]', '[4,5,6]');
 INSERT INTO t VALUES (5, 1, 5, '[]', '[2]');
@@ -559,12 +559,12 @@ key idx1(a, b, e),
 key mvi2(b, (cast(j2 as unsigned array)), e),
 key idx2(d, e, c) );
 
-explain format = brief select /*+ use_index_merge(t) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t) */ * from t where
 a = 5 and
 (1 member of (j1) or b = 3 or b = 4 and json_overlaps(j2, '[3,4,5]') or d = 10)
 order by e;
 
-explain format = brief select /*+ use_index_merge(t) */ * from t where
+explain format='plan_tree' select /*+ use_index_merge(t) */ * from t where
 a = 5 and
 (1 member of (j1) or b = 3 or b = 4 and json_overlaps(j2, '[3,4,5]') or d = 10)
 order by e desc limit 10;

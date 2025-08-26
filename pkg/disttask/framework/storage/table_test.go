@@ -15,6 +15,7 @@
 package storage_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
@@ -84,12 +86,20 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, task3, 1)
 	require.Equal(t, task, task3[0])
+	tasksBase3, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Len(t, tasksBase3, 1)
+	require.EqualValues(t, &task3[0].TaskBase, tasksBase3[0])
 
 	task4, err := gm.GetTasksInStates(ctx, proto.TaskStatePending, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task4, 1)
 	require.Equal(t, task, task4[0])
 	require.GreaterOrEqual(t, task4[0].StateUpdateTime, task.StateUpdateTime)
+	tasksBase4, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending, proto.TaskStateRunning)
+	require.NoError(t, err)
+	require.Len(t, tasksBase4, 1)
+	require.EqualValues(t, &task4[0].TaskBase, tasksBase4[0])
 
 	err = gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil)
 	require.NoError(t, err)
@@ -478,7 +488,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
 }
 
-func TestGetUsedSlotsOnNodes(t *testing.T) {
+func TestGetUsedSlotsOnNodesAndBusyNodes(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-1", []byte(""), proto.SubtaskStateRunning, "test", 12)
@@ -486,6 +496,8 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 	testutil.InsertSubtask(t, sm, 2, proto.StepOne, "tidb-2", []byte(""), proto.SubtaskStatePending, "test", 8)
 	testutil.InsertSubtask(t, sm, 3, proto.StepOne, "tidb-3", []byte(""), proto.SubtaskStatePending, "test", 8)
 	testutil.InsertSubtask(t, sm, 4, proto.StepOne, "tidb-3", []byte(""), proto.SubtaskStateFailed, "test", 8)
+	testutil.InsertSubtask(t, sm, 5, proto.StepOne, "tidb-4", []byte(""), proto.SubtaskStateFailed, "test", 8)
+
 	slotsOnNodes, err := sm.GetUsedSlotsOnNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, map[string]int{
@@ -493,6 +505,13 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 		"tidb-2": 20,
 		"tidb-3": 8,
 	}, slotsOnNodes)
+
+	busyNodes, err := sm.GetBusyNodes(ctx)
+	require.NoError(t, err)
+	slices.SortFunc(busyNodes, func(a, b schstatus.Node) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	require.EqualValues(t, []schstatus.Node{{ID: "tidb-1"}, {ID: "tidb-2"}, {ID: "tidb-3"}}, busyNodes)
 }
 
 func TestGetActiveSubtasks(t *testing.T) {
@@ -829,6 +848,22 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4001", Role: "", CPUCount: 8},
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
+	require.NoError(t, sm.InitMeta(ctx, ":4001", "background"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
+	require.NoError(t, sm.InitMeta(ctx, ":4003", ""))
+	cpuCount, err = sm.GetCPUCountOfNode(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 100, cpuCount)
+	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "")
+	require.NoError(t, err)
+	require.Equal(t, 8, cpuCount)
+	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "background")
+	require.NoError(t, err)
+	require.Equal(t, 100, cpuCount)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
@@ -903,6 +938,9 @@ func TestTaskHistoryTable(t *testing.T) {
 	tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(tasks))
+	taskBases, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.EqualValues(t, []*proto.TaskBase{&tasks[0].TaskBase, &tasks[1].TaskBase}, taskBases)
 	testutil.InsertSubtask(t, gm, tasks[0].ID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
 	testutil.InsertSubtask(t, gm, tasks[1].ID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
 	oldTasks := tasks

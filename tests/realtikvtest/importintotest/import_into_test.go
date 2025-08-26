@@ -331,6 +331,22 @@ func (s *mockGCSSuite) TestInputNull() {
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 def 11", "2 test2 22"}...))
 }
 
+func (s *mockGCSSuite) TestOnUpdateColumn() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-on-update",
+			Name:       "on-update.tsv",
+		},
+		Content: []byte("1,2025-08-22 02:35:00"),
+	})
+	s.prepareAndUseDB("load_data")
+	s.tk.MustExec("drop table if exists t;")
+	s.tk.MustExec("create table t(id int, c1 datetime on update CURRENT_TIMESTAMP)")
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-on-update/on-update.tsv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustQuery(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{"1 2025-08-22 02:35:00"}...))
+}
+
 func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-multi-load", Name: "skip-rows-1.csv"},

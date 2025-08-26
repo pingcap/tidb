@@ -273,7 +273,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 // planSkipGetTsoFromPD identifies the plans which don't need get newest ts from PD.
 func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
-	case *plannercore.PointGetPlan:
+	case *physicalop.PointGetPlan:
 		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)
 	case base.PhysicalPlan:
 		if len(v.Children()) == 0 {
