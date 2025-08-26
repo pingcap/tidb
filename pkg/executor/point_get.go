@@ -433,7 +433,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
-	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, 0, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
@@ -726,15 +726,15 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 
 // DecodeRowValToChunk decodes row value into chunk checking row format used.
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
-	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
+	handle kv.Handle, rowVal []byte, commitTS uint64, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
-		return rd.DecodeToChunk(rowVal, handle, chk)
+		return rd.DecodeToChunk(rowVal, commitTS, handle, chk)
 	}
-	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
+	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, commitTS, chk)
 }
 
 func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
-	rowVal []byte, chk *chunk.Chunk) error {
+	rowVal []byte, commitTS uint64, chk *chunk.Chunk) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
 	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)
 	colID2CutPos := make(map[int64]int, schema.Len())
@@ -752,6 +752,10 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	}
 	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
 	for i, col := range schema.Columns {
+		if col.ID == model.ExtraRowCommitTsID {
+			continue
+		}
+
 		// fill the virtual column value after row calculation
 		if col.VirtualExpr != nil {
 			chk.AppendNull(i)

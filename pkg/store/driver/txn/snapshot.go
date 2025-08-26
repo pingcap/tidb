@@ -16,6 +16,7 @@ package txn
 
 import (
 	"context"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"time"
 	"unsafe"
 
@@ -43,7 +44,7 @@ func NewSnapshot(snapshot *txnsnapshot.KVSnapshot) kv.Snapshot {
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
-func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]tikvstore.ValueItem, error) {
 	if s.interceptor != nil {
 		return s.interceptor.OnBatchGet(ctx, NewSnapshot(s.KVSnapshot), keys)
 	}

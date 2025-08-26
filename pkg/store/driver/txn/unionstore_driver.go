@@ -144,7 +144,7 @@ func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 	return data, derr.ToTiDBErr(err)
 }
 
-func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string]tikvstore.ValueItem, error) {
 	data, err := m.MemBuffer.BatchGet(ctx, keys)
 	return data, derr.ToTiDBErr(err)
 }

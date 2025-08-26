@@ -19,7 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestInsertIgnore(t *testing.T) {
@@ -545,4 +548,140 @@ func TestPessimisticDeleteYourWrites(t *testing.T) {
 	wg.Wait()
 	session2.MustExec("commit;")
 	session2.MustQuery("select * from x").Check(testkit.Rows("1 2"))
+}
+
+func TestActive2Active(t *testing.T) {
+	mustParseUint64 := func(s any) uint64 {
+		val, err := strconv.ParseUint(fmt.Sprintf("%v", s), 10, 64)
+		require.NoError(t, err)
+		return val
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_table_active_active='ON'")
+	tk.MustExec("create table t(id int primary key, v int)")
+
+	// show create table should hide `_tidb_commit_ts` and `_tidb_origin_ts`
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `v` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// insert without columns
+	tk.MustExec("insert into t values(1, 10)")
+
+	// select should hide `_tidb_commit_ts` and `_tidb_origin_ts`
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+
+	// commit ts should be reasonable
+	commitTS1 := mustParseUint64(tk.MustQuery("select _tidb_commit_ts from t where id = 1").Rows()[0][0])
+	require.InDelta(t, oracle.GetTimeFromTS(commitTS1).UnixMilli(), time.Now().UnixMilli(), 100)
+
+	// insert with visible columns only, _tidb_origin_ts should be NULL by default
+	tk.MustExec("insert into t(id, v) values(2, 20)")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id=2").Check(testkit.Rows("2 20 <nil>"))
+
+	// insert with explicit _tidb_origin_ts
+	originTS3 := commitTS1 + 1
+	tk.MustExec("insert into t(id, v, _tidb_origin_ts) values(3, 30, ?)", originTS3)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 3").Check(testkit.Rows(fmt.Sprintf("3 30 %d", originTS3)))
+
+	// range scan
+	r := tk.MustQuery("select _tidb_commit_ts, _tidb_origin_ts, v, id from t order by id")
+	r.CheckAt([]int{1, 2, 3}, [][]any{
+		{"<nil>", "10", "1"},
+		{"<nil>", "20", "2"},
+		{fmt.Sprintf("%d", originTS3), "30", "3"},
+	})
+	require.Equal(t, commitTS1, mustParseUint64(r.Rows()[0][0]))
+	commitTS2 := mustParseUint64(r.Rows()[1][0])
+	require.Greater(t, commitTS2, commitTS1)
+	commitTS3 := mustParseUint64(r.Rows()[2][0])
+	require.Greater(t, commitTS3, commitTS2)
+
+	// more complex query
+	tk.MustQuery("select id, v, _tidb_commit_ts + 1, ifnull(_tidb_origin_ts, 1024) from t where id >= 2 and _tidb_commit_ts > 1000 order by id").Check(testkit.Rows(
+		fmt.Sprintf("2 20 %d 1024", commitTS2+1),
+		fmt.Sprintf("3 30 %d %d", commitTS3+1, originTS3),
+	))
+
+	// batch point get
+	tk.MustQuery("select id, v, _tidb_commit_ts, _tidb_origin_ts from t where id in (1, 3) order by id").Check(testkit.Rows(
+		fmt.Sprintf("1 10 %d <nil>", commitTS1),
+		fmt.Sprintf("3 30 %d %d", commitTS3, originTS3),
+	))
+
+	// update without set _tidb_origin_ts will set _tidb_origin_ts to NULL
+	tk.MustExec("update t set v = v + 1 where id = 3")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 3").Check(testkit.Rows("3 31 <nil>"))
+	originTS3 = 0
+
+	// explicit set _tidb_origin_ts in update
+	originTS1 := commitTS1 + 2
+	tk.MustExec("update t set _tidb_origin_ts = ? where id = 1", originTS1)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows(fmt.Sprintf("1 10 %d", originTS1)))
+
+	// set _tidb_origin_ts when _tidb_origin_ts not NULL
+	originTS1 = originTS1 * 2
+	tk.MustExec("update t set _tidb_origin_ts = ? where id = 1", originTS1)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows(fmt.Sprintf("1 10 %d", originTS1)))
+
+	// UPDATE should fail for _tidb_origin_ts too large
+	err := tk.ExecToErr("update t set v=v+1 where id = 1")
+	require.ErrorContains(t, err, "interval more than 1 second")
+
+	// DELETE should also fail for _tidb_origin_ts too large
+	err = tk.ExecToErr("delete from t where id = 1")
+	require.ErrorContains(t, err, "interval more than 1 second")
+
+	// UPDATE _tidb_origin_ts should always be allowed
+	err = tk.ExecToErr("update t set _tidb_origin_ts = ? where id = 1", commitTS3+(500<<18))
+
+	// UPDATE should be allowed now
+	tk.MustExec("update t set v=v+1 where id = 1")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows("1 11 <nil>"))
+
+	// INSERT .. ON DUPLICATE KEY UPDATE .. (_tidb_origin_ts is NULL, replace)
+	commitTS1 = mustParseUint64(tk.MustQuery("select _tidb_commit_ts from t where id = 1").Rows()[0][0])
+	require.Greater(t, commitTS1, commitTS3)
+	originTS1 = commitTS1 + 1
+	tk.MustExec("insert into t(id, v, _tidb_origin_ts) values(1, 100, ?) on duplicate key update "+
+		"v = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), v, values(v)), "+
+		"_tidb_origin_ts = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), _tidb_origin_ts, values(_tidb_origin_ts))",
+		originTS1,
+	)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows(fmt.Sprintf("1 100 %d", originTS1)))
+
+	// INSERT .. ON DUPLICATE KEY UPDATE .. (_tidb_origin_ts not NULL, replace)
+	originTS1++
+	tk.MustExec("insert into t(id, v, _tidb_origin_ts) values(1, 1000, ?) on duplicate key update "+
+		"v = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), v, values(v)), "+
+		"_tidb_origin_ts = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), _tidb_origin_ts, values(_tidb_origin_ts))",
+		originTS1,
+	)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows(fmt.Sprintf("1 1000 %d", originTS1)))
+
+	// INSERT .. ON DUPLICATE KEY UPDATE .. (_tidb_origin_ts not NULL, skip)
+	tk.MustExec("insert into t(id, v, _tidb_origin_ts) values(1, 10000, ?) on duplicate key update "+
+		"v = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), v, values(v)), "+
+		"_tidb_origin_ts = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), _tidb_origin_ts, values(_tidb_origin_ts))",
+		originTS1-1,
+	)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows(fmt.Sprintf("1 1000 %d", originTS1)))
+
+	// INSERT .. ON DUPLICATE KEY UPDATE .. (_tidb_origin_ts is NULL, skip)
+	tk.MustExec("update t set v=1024 where id=1")
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows("1 1024 <nil>"))
+	oldCommitTS1 := commitTS1
+	commitTS1 = mustParseUint64(tk.MustQuery("select _tidb_commit_ts from t where id = 1").Rows()[0][0])
+	require.Greater(t, commitTS1, oldCommitTS1)
+	tk.MustExec("insert into t(id, v, _tidb_origin_ts) values(1, 10000, ?) on duplicate key update "+
+		"v = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), v, values(v)), "+
+		"_tidb_origin_ts = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), _tidb_origin_ts, values(_tidb_origin_ts))",
+		commitTS1-1,
+	)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows("1 1024 <nil>"))
 }

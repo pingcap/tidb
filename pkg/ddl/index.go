@@ -2252,9 +2252,14 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), uniqueBatchKeys)
+	batchGetVals, err := txn.BatchGet(context.Background(), uniqueBatchKeys)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	batchVals := make(map[string][]byte, len(batchGetVals))
+	for k, v := range batchGetVals {
+		batchVals[k] = v.Value
 	}
 
 	// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.

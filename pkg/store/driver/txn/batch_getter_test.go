@@ -15,6 +15,7 @@ package txn
 
 import (
 	"context"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"testing"
 	"unsafe"
 
@@ -75,7 +76,7 @@ func (s *mockBatchGetterStore) Get(_ context.Context, k kv.Key) ([]byte, error) 
 	return nil, kv.ErrNotExist
 }
 
-func (s *mockBatchGetterStore) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (s *mockBatchGetterStore) BatchGet(ctx context.Context, keys []kv.Key) (map[string]tikvstore.ValueItem, error) {
 	m := make(map[string][]byte)
 	for _, k := range keys {
 		v, err := s.Get(ctx, k)
@@ -111,7 +112,7 @@ type mockBufferBatchGetterStore struct {
 	*mockBatchGetterStore
 }
 
-func (s *mockBufferBatchGetterStore) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+func (s *mockBufferBatchGetterStore) BatchGet(ctx context.Context, keys [][]byte) (map[string]tikvstore.ValueItem, error) {
 	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
 	return s.mockBatchGetterStore.BatchGet(ctx, kvKeys)
 }

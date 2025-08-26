@@ -1814,26 +1814,26 @@ func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 }
 
 // Get implements the MVCCStore interface.
-func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]byte, error) {
+func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]byte, uint64, error) {
 	if reqCtx.isSnapshotIsolation() {
 		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if len(lockPairs) != 0 {
-			return getValueFromLock(lockPairs[0].lock), nil
+			return getValueFromLock(lockPairs[0].lock), 0, nil
 		}
 	} else if reqCtx.isRcCheckTSIsolationLevel() {
 		err := store.CheckKeysLockForRcCheckTS(version, reqCtx.rpcCtx.ResolvedLocks, key)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
-	val, err := reqCtx.getDBReader().Get(key, version)
+	val, commitTS, err := reqCtx.getDBReader().Get(key, version)
 	if val == nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return safeCopy(val), err
+	return safeCopy(val), commitTS, err
 }
 
 // BatchGet implements the MVCCStore interface.
@@ -1868,12 +1868,13 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 	} else {
 		remain = keys
 	}
-	batchGetFunc := func(key, value []byte, err error) {
+	batchGetFunc := func(key, value []byte, commitTS uint64, err error) {
 		if len(value) != 0 {
 			pairs = append(pairs, &kvrpcpb.KvPair{
-				Key:   safeCopy(key),
-				Value: safeCopy(value),
-				Error: convertToKeyError(err),
+				Key:      safeCopy(key),
+				Value:    safeCopy(value),
+				CommitTs: commitTS,
+				Error:    convertToKeyError(err),
 			})
 		}
 	}
@@ -1927,7 +1928,7 @@ type kvScanProcessor struct {
 	scanCnt    uint32
 }
 
-func (p *kvScanProcessor) Process(key, value []byte) (err error) {
+func (p *kvScanProcessor) Process(key, value []byte, commitTS uint64) (err error) {
 	if p.sampleStep > 0 {
 		p.scanCnt++
 		if (p.scanCnt-1)%p.sampleStep != 0 {

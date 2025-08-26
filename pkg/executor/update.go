@@ -481,6 +481,12 @@ func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmod
 
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
+	for i, col := range cols {
+		if col != nil && col.SysReserved && col.Name.L == mmodel.ExtraOriginTsName.L {
+			newRowData[i] = types.Datum{}
+		}
+	}
+
 	for _, assign := range e.OrderedList {
 		var colInfo *mmodel.ColumnInfo
 		if cols[assign.Col.Index] != nil {
@@ -514,6 +520,11 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
+	for i, col := range cols {
+		if col != nil && col.SysReserved && col.Name.L == mmodel.ExtraOriginTsName.L {
+			newRowData[i] = types.Datum{}
+		}
+	}
 	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
 		tblIdx := e.assignFlag[assign.Col.Index]
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {

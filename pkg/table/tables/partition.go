@@ -19,6 +19,7 @@ import (
 	"context"
 	stderr "errors"
 	"fmt"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"hash/crc32"
 	"slices"
 	"sort"
@@ -2035,7 +2036,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		return finishFunc(err, nil)
 	}
 
-	var found map[string][]byte
+	var found map[string]tikvstore.ValueItem
 	var newFromKey, newToKey kv.Key
 
 	keys := make([]kv.Key, 0, 2)
@@ -2076,12 +2077,12 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		if len(newFromKey) > 0 {
 			if val, ok := found[string(newFromKey)]; ok {
-				newFromVal = val
+				newFromVal = val.Value
 			}
 		}
 		if len(newToKey) > 0 {
 			if val, ok := found[string(newToKey)]; ok {
-				newToVal = val
+				newToVal = val.Value
 			}
 		}
 	}

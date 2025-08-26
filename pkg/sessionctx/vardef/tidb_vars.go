@@ -1273,6 +1273,9 @@ const (
 	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBEnableTableActiveActive indicates whether to enable the active-active feature for a table.
+	TiDBEnableTableActiveActive = "tidb_enable_table_active_active"
 )
 
 // TiDB intentional limits, can be raised in the future.

@@ -574,6 +574,17 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+func (ds *DataSource) NewExtraCommitTsHandleSchemaCol() *expression.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(mysql.NotNullFlag | mysql.UnsignedFlag)
+	return &expression.Column{
+		RetType:  tp,
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraRowCommitTsID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraRowCommitTsID),
+	}
+}
+
 func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) {
 	if len(ds.PushedDownConds) < 1 {
 		return

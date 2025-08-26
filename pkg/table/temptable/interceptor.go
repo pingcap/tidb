@@ -17,6 +17,7 @@ package temptable
 import (
 	"bytes"
 	"context"
+	kv2 "github.com/tikv/client-go/v2/kv"
 	"maps"
 	"math"
 
@@ -87,7 +88,7 @@ func getSessionKey(ctx context.Context, tblInfo *model.TableInfo, sessionData kv
 }
 
 // OnBatchGet intercepts BatchGet operation for Snapshot
-func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key) (map[string][]byte, error) {
+func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key) (map[string]kv2.ValueItem, error) {
 	keys, result, err := i.batchGetTemporaryTableKeys(ctx, keys)
 	if err != nil {
 		return nil, err
@@ -106,12 +107,12 @@ func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap
 	}
 
 	if result == nil {
-		result = make(map[string][]byte)
+		result = make(map[string]kv2.ValueItem)
 	}
 	return result, nil
 }
 
-func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx context.Context, keys []kv.Key) (snapKeys []kv.Key, result map[string][]byte, err error) {
+func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx context.Context, keys []kv.Key) (snapKeys []kv.Key, result map[string]kv2.ValueItem, err error) {
 	for _, k := range keys {
 		tblID, ok := getKeyAccessedTableID(k)
 		if !ok {
@@ -135,10 +136,10 @@ func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx conte
 		}
 
 		if result == nil {
-			result = make(map[string][]byte)
+			result = make(map[string]kv2.ValueItem)
 		}
 
-		result[string(k)] = val
+		result[string(k)] = kv2.ValueItem{Value: val}
 	}
 
 	return snapKeys, result, err

@@ -33,6 +33,7 @@ func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild
 		metabuild.WithShardRowIDBits(sessVars.ShardRowIDBits),
 		metabuild.WithPreSplitRegions(sessVars.PreSplitRegions),
 		metabuild.WithInfoSchema(sctx.GetLatestInfoSchema()),
+		metabuild.WithEnableActiveActive(sctx.GetSessionVars().EnableTableActiveActive),
 	}
 
 	if len(otherOpts) > 0 {

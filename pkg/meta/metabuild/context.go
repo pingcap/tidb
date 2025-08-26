@@ -98,6 +98,12 @@ func WithInfoSchema(schema infoschemactx.MetaOnlyInfoSchema) Option {
 	})
 }
 
+func WithEnableActiveActive(enable bool) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.enableTableActiveActive = enable
+	})
+}
+
 // Context is used to build meta like `TableInfo`, `IndexInfo`, etc...
 type Context struct {
 	exprCtx                        exprctx.ExprContext
@@ -108,6 +114,7 @@ type Context struct {
 	preSplitRegions                uint64
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
+	enableTableActiveActive        bool
 }
 
 // NewContext creates a new context for meta-building.
@@ -202,4 +209,8 @@ func (ctx *Context) SuppressTooLongIndexErr() bool {
 // If the second return value is false, it means that we do not need to check the constraints referred to other tables.
 func (ctx *Context) GetInfoSchema() (infoschemactx.MetaOnlyInfoSchema, bool) {
 	return ctx.is, ctx.is != nil
+}
+
+func (ctx *Context) EnableTableActiveActive() bool {
+	return ctx.enableTableActiveActive
 }

@@ -536,8 +536,8 @@ func (m *dupeDetector) saveIndexHandles(ctx context.Context, handles pendingInde
 	for i, rawHandle := range handles.rawHandles {
 		rawValue, ok := batchGetMap[string(hack.String(rawHandle))]
 		if ok {
-			rawRows[i] = rawValue
-			handles.dataConflictInfos[i].Row = m.decoder.DecodeRawRowDataAsStr(handles.handles[i], rawValue)
+			rawRows[i] = rawValue.Value
+			handles.dataConflictInfos[i].Row = m.decoder.DecodeRawRowDataAsStr(handles.handles[i], rawValue.Value)
 		} else {
 			m.logger.Warn("can not found row data corresponding to the handle", zap.String("category", "detect-dupe"),
 				logutil.Key("rawHandle", rawHandle))

@@ -1733,6 +1733,10 @@ func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 			continue
 		}
 
+		if col.ID == model.ExtraRowCommitTsID {
+			return false
+		}
+
 		// Only handle tables that all columns are public.
 		if col.State != model.StatePublic {
 			return false

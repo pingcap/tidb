@@ -185,7 +185,7 @@ func (txn *tikvTxn) IterReverse(k kv.Key, lowerBound kv.Key) (iter kv.Iterator, 
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 // Do not use len(value) == 0 or value == nil to represent non-exist.
 // If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string]tikvstore.ValueItem, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "tikvTxn.BatchGet")
 	defer r.End()
 	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
@@ -314,6 +314,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
 	case kv.PrewriteEncounterLockPolicy:
 		txn.KVTxn.SetPrewriteEncounterLockPolicy(val.(transaction.PrewriteEncounterLockPolicy))
+	case kv.SetMinCommitTS:
+		txn.KVTxn.SetMinCommitTS(val.(uint64))
 	}
 }
 

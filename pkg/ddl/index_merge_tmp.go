@@ -44,9 +44,14 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), w.originIdxKeys)
+	batchGetVals, err := txn.BatchGet(context.Background(), w.originIdxKeys)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	batchVals := make(map[string][]byte, len(batchGetVals))
+	for k, v := range batchGetVals {
+		batchVals[k] = v.Value
 	}
 
 	for i, key := range w.originIdxKeys {

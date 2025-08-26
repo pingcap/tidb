@@ -3578,7 +3578,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraRowCommitTsID && !col.SysReserved {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -4674,7 +4674,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	allPaths := make([]*util.AccessPath, len(possiblePaths))
 	copy(allPaths, possiblePaths)
 
-	countCnt := len(columns) + 1 // +1 for an extra handle column
+	countCnt := len(columns) + 2 // +2 for an extra handle column and commit_ts column
 	ds := logicalop.DataSource{
 		DBName:                 dbName,
 		TableAsName:            asName,
@@ -4708,11 +4708,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
-			UniqueID: sessionVars.AllocPlanColumnID(),
-			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
-			OrigName: names[i].String(),
-			IsHidden: col.Hidden,
+			UniqueID:    sessionVars.AllocPlanColumnID(),
+			ID:          col.ID,
+			RetType:     col.FieldType.Clone(),
+			OrigName:    names[i].String(),
+			IsHidden:    col.Hidden,
+			SysReserved: col.SysReserved,
 		}
 		if col.IsPKHandleColumn(tableInfo) {
 			handleCols = util.NewIntHandleCols(newCol)
@@ -4720,6 +4721,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
+
+	commitTsCol := ds.NewExtraCommitTsHandleSchemaCol()
+	ds.Columns = append(ds.Columns, model.NewExtraCommitTsColInfo())
+	schema.Append(commitTsCol)
+	names = append(names, &types.FieldName{
+		DBName:      dbName,
+		TblName:     tableInfo.Name,
+		ColName:     model.ExtraCommitTsName,
+		OrigColName: model.ExtraCommitTsName,
+	})
+	ds.TblCols = append(ds.TblCols, commitTsCol)
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
 	if handleCols == nil {

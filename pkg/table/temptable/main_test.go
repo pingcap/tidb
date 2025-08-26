@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/goleak"
 )
 
@@ -179,7 +180,7 @@ func (r *mockedRetriever) Get(ctx context.Context, k kv.Key) (val []byte, err er
 	return
 }
 
-func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key) (data map[string][]byte, err error) {
+func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key) (data map[string]tikvstore.ValueItem, err error) {
 	r.checkMethodInvokeAllowed("BatchGet")
 	if err = r.getMethodErr("BatchGet"); err == nil {
 		data = make(map[string][]byte)

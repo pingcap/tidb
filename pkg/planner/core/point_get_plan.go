@@ -1675,7 +1675,7 @@ func buildSchemaFromFields(
 				return nil, nil
 			}
 			col := findCol(tbl, colNameExpr.Name)
-			if col == nil {
+			if col == nil || col.ID == model.ExtraRowCommitTsID {
 				return nil, nil
 			}
 			asName := colNameExpr.Name.Name
@@ -2207,6 +2207,11 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 	if colName.Name.L == model.ExtraHandleName.L && !tbl.PKIsHandle {
 		colInfo := model.NewExtraHandleColInfo()
 		colInfo.Offset = len(tbl.Columns) - 1
+		return colInfo
+	}
+	if colName.Name.L == model.ExtraCommitTsName.L {
+		colInfo := model.NewExtraCommitTsColInfo()
+		colInfo.Offset = len(tbl.Columns)
 		return colInfo
 	}
 	for _, col := range tbl.Columns {

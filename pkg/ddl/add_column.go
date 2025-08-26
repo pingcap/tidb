@@ -334,6 +334,11 @@ func buildColumnAndConstraint(
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
+	if col.Name.L == model.ExtraOriginTsName.L {
+		col.SysReserved = true
+	}
+
 	return col, cts, nil
 }
 

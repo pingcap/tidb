@@ -145,6 +145,11 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, strin
 			col.ColumnInfo = model.NewExtraHandleColInfo()
 			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
+		} else if name == model.ExtraCommitTsName.L {
+			col := &Column{}
+			col.ColumnInfo = model.NewExtraCommitTsColInfo()
+			col.ColumnInfo.Offset = len(cols)
+			rcols = append(rcols, col)
 		} else {
 			return nil, name
 		}
@@ -164,6 +169,11 @@ func FindColumns(cols []*Column, names []string, pkIsHandle bool) (foundCols []*
 		} else if name == model.ExtraHandleName.L && !pkIsHandle {
 			col := &Column{}
 			col.ColumnInfo = model.NewExtraHandleColInfo()
+			col.ColumnInfo.Offset = len(cols)
+			rcols = append(rcols, col)
+		} else if name == model.ExtraCommitTsName.L {
+			col := &Column{}
+			col.ColumnInfo = model.NewExtraCommitTsColInfo()
 			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
 		} else {

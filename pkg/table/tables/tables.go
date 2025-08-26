@@ -472,6 +472,14 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		} else {
 			value = newData[col.Offset]
 		}
+
+		if col.SysReserved && col.Name == model.ExtraOriginTsName {
+			oldVal := oldData[col.Offset]
+			if !oldVal.IsNull() && value.IsNull() {
+				txn.SetOption(kv.SetMinCommitTS, oldVal.GetUint64())
+			}
+		}
+
 		if !t.canSkip(col, &value) {
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
@@ -1116,6 +1124,16 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
+	}
+
+	for _, col := range t.Columns {
+		if col.SysReserved && col.State == model.StatePublic && col.Name == model.ExtraOriginTsName {
+			value := r[col.Offset]
+			if !value.IsNull() {
+				txn.SetOption(kv.SetMinCommitTS, value.GetUint64())
+			}
+			break
 		}
 	}
 
