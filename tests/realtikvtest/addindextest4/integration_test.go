@@ -59,7 +59,7 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 		runDMLBeforeMerge := false
 
 		var hexKey string
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionBeforeScanV2", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAddIndexScan", func() {
 			if runDMLBeforeScan {
 				return
 			}
@@ -80,7 +80,7 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 			rs = tk1.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
 			t.Log("after second insertion", rs[0][0].(string))
 		})
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
 			if runDMLBeforeMerge {
 				return
 			}

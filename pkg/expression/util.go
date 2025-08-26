@@ -553,6 +553,13 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
+					// If the newArg is a ScalarFunction(cast), BuildCastFunctionWithCheck will modify the newArg.RetType,
+					// So we need to deep copy RetType.
+					// TODO: Expression interface needs a deep copy method.
+					if newArgFunc, ok := newArg.(*ScalarFunction); ok {
+						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
+						newArg = newArgFunc
+					}
 					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
 					terror.Log(err)
 				} else {
@@ -801,14 +808,17 @@ var logicalOps = map[string]struct{}{
 	ast.EQ:                 {},
 	ast.NE:                 {},
 	ast.UnaryNot:           {},
+	ast.Like:               {},
 	ast.LogicAnd:           {},
 	ast.LogicOr:            {},
 	ast.LogicXor:           {},
 	ast.In:                 {},
 	ast.IsNull:             {},
-	ast.IsTruthWithoutNull: {},
 	ast.IsFalsity:          {},
-	ast.Like:               {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsTruthWithNull:    {},
+	ast.NullEQ:             {},
+	ast.Regexp:             {},
 }
 
 var oppositeOp = map[string]string{

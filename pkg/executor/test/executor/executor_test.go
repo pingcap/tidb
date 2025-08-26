@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -728,8 +729,8 @@ func TestPrevStmtDesensitization(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec(fmt.Sprintf("set @@session.%v=1", vardef.TiDBRedactLog))
-	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", vardef.TiDBRedactLog))
+	tk.MustExec(fmt.Sprintf("set @@global.%v=1", vardef.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@global.%v=0", vardef.TiDBRedactLog))
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
@@ -781,7 +782,7 @@ func TestOOMActionPriority(t *testing.T) {
 func TestUnreasonablyClose(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -793,18 +794,18 @@ func TestUnreasonablyClose(t *testing.T) {
 		&physicalop.PhysicalMergeJoin{},
 		&physicalop.PhysicalIndexJoin{},
 		&physicalop.PhysicalIndexHashJoin{},
-		&plannercore.PhysicalTableReader{},
-		&plannercore.PhysicalIndexReader{},
-		&plannercore.PhysicalIndexLookUpReader{},
-		&plannercore.PhysicalIndexMergeReader{},
-		&plannercore.PhysicalApply{},
+		&physicalop.PhysicalTableReader{},
+		&physicalop.PhysicalIndexReader{},
+		&physicalop.PhysicalIndexLookUpReader{},
+		&physicalop.PhysicalIndexMergeReader{},
+		&physicalop.PhysicalApply{},
 		&physicalop.PhysicalHashAgg{},
-		&plannercore.PhysicalStreamAgg{},
+		&physicalop.PhysicalStreamAgg{},
 		&physicalop.PhysicalLimit{},
 		&physicalop.PhysicalSort{},
 		&physicalop.PhysicalTopN{},
-		&plannercore.PhysicalCTE{},
-		&plannercore.PhysicalCTETable{},
+		&physicalop.PhysicalCTE{},
+		&physicalop.PhysicalCTETable{},
 		&physicalop.PhysicalMaxOneRow{},
 		&physicalop.PhysicalProjection{},
 		&physicalop.PhysicalSelection{},
@@ -870,7 +871,7 @@ func TestUnreasonablyClose(t *testing.T) {
 				}
 				require.True(t, found, fmt.Sprintf("case: %v sql: %s operator %v is not registered in opsNeedsCoveredMask", i, tc, reflect.TypeOf(ch)))
 				switch x := ch.(type) {
-				case *plannercore.PhysicalCTE:
+				case *physicalop.PhysicalCTE:
 					newChild = append(newChild, x.RecurPlan)
 					newChild = append(newChild, x.SeedPlan)
 					hasCTE = true
@@ -920,7 +921,7 @@ func TestUnreasonablyClose(t *testing.T) {
 func TestTwiceCloseUnionExec(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2003,9 +2004,10 @@ func TestLowResolutionTSORead(t *testing.T) {
 	defer func() {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
 	}()
-	err = tk.ExecToErr("select * from low_resolution_tso where a = 1 for update")
-	require.Error(t, err)
-	err = tk.ExecToErr("select * from low_resolution_tso for update")
+	tk.MustQuery("select * from low_resolution_tso where a = 1 for update")
+	tk.MustQuery("select * from low_resolution_tso for update")
+
+	err = tk.ExecToErr("update low_resolution_tso set a = 3")
 	require.Error(t, err)
 }
 

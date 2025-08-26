@@ -29,10 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -74,7 +74,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				sql: "select * from t where c>1",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					switch pp := p.(type) {
-					case *plannercore.PhysicalTableReader:
+					case *physicalop.PhysicalTableReader:
 						stats := pp.StatsInfo().HistColl
 						require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[1].ID))
 						require.Greater(t, countFullStats(stats, tableInfo.Columns[2].ID), 0)
@@ -107,7 +107,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					pp, ok := p.(*physicalop.PhysicalProjection)
 					require.True(t, ok)
-					pa, ok := pp.Children()[0].(*plannercore.PhysicalApply)
+					pa, ok := pp.Children()[0].(*physicalop.PhysicalApply)
 					require.True(t, ok)
 					left := pa.PhysicalHashJoin.Children()[0]
 					right := pa.PhysicalHashJoin.Children()[0]
@@ -120,7 +120,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[0].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[0].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -130,7 +130,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -140,7 +140,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -150,7 +150,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -160,7 +160,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
+					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -168,11 +168,11 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // recursive CTE
 				sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					pc, ok := p.(*plannercore.PhysicalCTE)
+					pc, ok := p.(*physicalop.PhysicalCTE)
 					require.True(t, ok)
 					pp, ok := pc.SeedPlan.(*physicalop.PhysicalProjection)
 					require.True(t, ok)
-					reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
+					reader, ok := pp.Children()[0].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},
@@ -180,9 +180,9 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // check idx(b)
 				sql: "select * from t USE INDEX(idx) where b >= 10",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
+					pr, ok := p.(*physicalop.PhysicalIndexLookUpReader)
 					require.True(t, ok)
-					pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+					pis, ok := pr.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 					require.True(t, ok)
 					require.True(t, pis.StatsInfo().HistColl.GetIdx(1).IsEssentialStatsLoaded())
 				},
@@ -327,7 +327,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		plan, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.NoError(t, err) // not fail sql for timeout when pseudo=true
 		switch pp := plan.(type) {
-		case *plannercore.PhysicalTableReader:
+		case *physicalop.PhysicalTableReader:
 			stats := pp.StatsInfo().HistColl
 			require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[0].ID))
 			require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
@@ -420,7 +420,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			}
 
 			// call the function
-			res := plannercore.CollectDependingVirtualCols(tblID2Tbl, neededItems)
+			res := rule.CollectDependingVirtualCols(tblID2Tbl, neededItems)
 
 			// record and check the output
 			cols := make([]string, 0, len(res))

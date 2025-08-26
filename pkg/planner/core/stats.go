@@ -59,13 +59,6 @@ func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, _ bool, err error) {
 	ts := lp.(*logicalop.LogicalTableScan)
 	initStats(ts.Source)
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	exprCtx := ts.SCtx().GetExprCtx()
-	for i, expr := range ts.AccessConds {
-		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
-		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
-	}
 	ts.SetStats(deriveStatsByFilter(ts.Source, ts.AccessConds, nil))
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	// TODO: support clustered index.
@@ -90,10 +83,6 @@ func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, _
 func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, bool, error) {
 	is := lp.(*logicalop.LogicalIndexScan)
 	initStats(is.Source)
-	exprCtx := is.SCtx().GetExprCtx()
-	for i, expr := range is.AccessConds {
-		is.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
-	}
 	is.SetStats(deriveStatsByFilter(is.Source, is.AccessConds, nil))
 	if len(is.AccessConds) == 0 {
 		is.Ranges = ranger.FullRange()
@@ -131,8 +120,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
 	exprCtx := ds.SCtx().GetExprCtx()
 	for i, expr := range ds.PushedDownConds {
-		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
-		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
+		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
 	hasFullMatch := false
 	maxEqCount := 0
@@ -189,7 +177,8 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
-	path.CorrCountAfterAccess = 0
+	path.MinCountAfterAccess = 0
+	path.MaxCountAfterAccess = 0
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
@@ -433,10 +422,12 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, path.CorrCountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
-	if path.CorrCountAfterAccess == 0 {
-		path.CorrCountAfterAccess = path.CountAfterAccess
+	indexCols := path.IdxCols
+	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
+		indexCols = indexCols[0:len(path.Index.Columns)]
 	}
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
+	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
 	return err
 }
 

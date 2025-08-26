@@ -103,72 +103,23 @@ func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
 	return
 }
 
-// resolveIndicesForVirtualColumn resolves dependent columns's indices for virtual columns.
-func resolveIndicesForVirtualColumn(result []*expression.Column, schema *expression.Schema) error {
-	for _, col := range result {
-		if col.VirtualExpr != nil {
-			newExpr, err := col.VirtualExpr.ResolveIndices(schema)
-			if err != nil {
-				return err
-			}
-			col.VirtualExpr = newExpr
-		}
-	}
-	return nil
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalTableReader) ResolveIndices() error {
-	err := resolveIndicesForVirtualColumn(p.Schema().Columns, p.Schema())
+// resolveIndices4PhysicalIndexLookUpReader implements Plan interface.
+func resolveIndices4PhysicalIndexLookUpReader(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalIndexLookUpReader)
+	err = physicalop.ResolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}
-	return p.tablePlan.ResolveIndices()
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexReader) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
+	err = p.TablePlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
-	err = p.indexPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	for i, col := range p.OutputColumns {
-		newCol, err := col.ResolveIndices(p.indexPlan.Schema())
-		if err != nil {
-			// Check if there is duplicate virtual expression column matched.
-			sctx := p.SCtx()
-			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx().GetEvalCtx(), p.indexPlan.Schema())
-			if isOK {
-				p.OutputColumns[i] = newExprCol.(*expression.Column)
-				continue
-			}
-			return err
-		}
-		p.OutputColumns[i] = newCol.(*expression.Column)
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	err = p.tablePlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	err = p.indexPlan.ResolveIndices()
+	err = p.IndexPlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
 	if p.ExtraHandleCol != nil {
-		newCol, err := p.ExtraHandleCol.ResolveIndices(p.tablePlan.Schema())
+		newCol, err := p.ExtraHandleCol.ResolveIndices(p.TablePlan.Schema())
 		if err != nil {
 			return err
 		}
@@ -182,33 +133,6 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 		p.CommonHandleCols[i] = newCol.(*expression.Column)
 	}
 	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	if p.tablePlan != nil {
-		err = p.tablePlan.ResolveIndices()
-		if err != nil {
-			return err
-		}
-	}
-	for i := range p.partialPlans {
-		err = p.partialPlans[i].ResolveIndices()
-		if err != nil {
-			return err
-		}
-	}
-	if p.HandleCols != nil && p.KeepOrder {
-		p.HandleCols, err = p.HandleCols.ResolveIndices(p.Schema())
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // resolveIndices4PhysicalSelection implements Plan interface.
@@ -253,42 +177,6 @@ func (p *PhysicalExchangeSender) ResolveIndicesItselfWithSchema(inputSchema *exp
 // ResolveIndices implements Plan interface.
 func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 	err = p.BasePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	return p.ResolveIndicesItself()
-}
-
-// ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
-	// for version 1
-	for _, gs := range p.GroupingSets {
-		for _, groupingExprs := range gs {
-			for k, groupingExpr := range groupingExprs {
-				gExpr, err := groupingExpr.ResolveIndices(p.Children()[0].Schema())
-				if err != nil {
-					return err
-				}
-				groupingExprs[k] = gExpr
-			}
-		}
-	}
-	// for version 2
-	for i, oneLevel := range p.LevelExprs {
-		for j, expr := range oneLevel {
-			// expr in expand level-projections only contains column ref and literal constant projection.
-			p.LevelExprs[i][j], err = expr.ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalExpand) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -393,49 +281,6 @@ func resolveIndices4PhysicalLimit(pp base.PhysicalPlan) (err error) {
 	}
 	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
 		return err
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalApply) ResolveIndices() (err error) {
-	err = p.PhysicalHashJoin.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	// p.OuterSchema may have duplicated CorrelatedColumns,
-	// we deduplicate it here.
-	dedupCols := make(map[int64]*expression.CorrelatedColumn, len(p.OuterSchema))
-	for _, col := range p.OuterSchema {
-		dedupCols[col.UniqueID] = col
-	}
-	p.OuterSchema = make([]*expression.CorrelatedColumn, 0, len(dedupCols))
-	for _, col := range dedupCols {
-		newCol, err := col.Column.ResolveIndices(p.Children()[0].Schema())
-		if err != nil {
-			return err
-		}
-		col.Column = *newCol.(*expression.Column)
-		p.OuterSchema = append(p.OuterSchema, col)
-	}
-	// Resolve index for equal conditions again, because apply is different from
-	// hash join on the fact that equal conditions are evaluated against the join result,
-	// so columns from equal conditions come from merged schema of children, instead of
-	// single child's schema.
-	joinedSchema := expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema())
-	for i, cond := range p.PhysicalHashJoin.EqualConditions {
-		newSf, err := cond.ResolveIndices(joinedSchema)
-		if err != nil {
-			return err
-		}
-		p.PhysicalHashJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
-	}
-	for i, cond := range p.PhysicalHashJoin.NAEqualConditions {
-		newSf, err := cond.ResolveIndices(joinedSchema)
-		if err != nil {
-			return err
-		}
-		p.PhysicalHashJoin.NAEqualConditions[i] = newSf.(*expression.ScalarFunction)
 	}
 	return
 }

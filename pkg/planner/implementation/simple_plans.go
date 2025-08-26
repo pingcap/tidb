@@ -15,7 +15,6 @@
 package implementation
 
 import (
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
@@ -213,7 +212,7 @@ type ApplyImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *ApplyImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	apply := impl.plan.(*plannercore.PhysicalApply)
+	apply := impl.plan.(*physicalop.PhysicalApply)
 	impl.cost = apply.GetCost(
 		children[0].GetPlan().StatsInfo().RowCount,
 		children[1].GetPlan().StatsInfo().RowCount,
@@ -233,7 +232,7 @@ func (impl *ApplyImpl) GetCostLimit(costLimit float64, children ...memo.Implemen
 	// we haven't implement the rightChild, we cannot calculate the `selfCost`.
 	// So we just use (costLimit - leftCost)/leftCount here.
 	leftCount, leftCost := children[0].GetPlan().StatsInfo().RowCount, children[0].GetCost()
-	apply := impl.plan.(*plannercore.PhysicalApply)
+	apply := impl.plan.(*physicalop.PhysicalApply)
 	if len(apply.LeftConditions) > 0 {
 		leftCount *= cost.SelectionFactor
 	}
@@ -241,7 +240,7 @@ func (impl *ApplyImpl) GetCostLimit(costLimit float64, children ...memo.Implemen
 }
 
 // NewApplyImpl creates a new ApplyImpl.
-func NewApplyImpl(apply *plannercore.PhysicalApply) *ApplyImpl {
+func NewApplyImpl(apply *physicalop.PhysicalApply) *ApplyImpl {
 	return &ApplyImpl{baseImpl{plan: apply}}
 }
 

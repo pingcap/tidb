@@ -68,7 +68,7 @@ func canProjectionBeEliminatedStrict(p *physicalop.PhysicalProjection) bool {
 			}
 		}
 	}
-	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
+	if physicalAgg, ok := p.Children()[0].(*physicalop.PhysicalStreamAgg); ok {
 		if physicalAgg.MppRunMode == physicalop.Mpp1Phase || physicalAgg.MppRunMode == physicalop.Mpp2Phase || physicalAgg.MppRunMode == physicalop.MppScalar {
 			if physicalAgg.IsFinalAgg() {
 				return false
@@ -101,10 +101,10 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 	}
 
 	// eliminate projection in a coprocessor task
-	tableReader, isTableReader := p.(*PhysicalTableReader)
+	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
-		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
-		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		tableReader.TablePlan = eliminatePhysicalProjection(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenPushDownPlan(tableReader.TablePlan)
 		return p
 	}
 
