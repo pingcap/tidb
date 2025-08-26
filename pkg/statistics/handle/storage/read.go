@@ -532,8 +532,8 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 
 	if needsCopy {
 		if len(rows) == 0 {
-			// Only metadata update needed - use cheap shallow copy
-			table = table.ShallowCopy()
+			// Only metadata update needed - use cheap metadata-only copy
+			table = table.ShallowCopy(statistics.CopyMetaOnly)
 		} else {
 			// Histogram modifications needed - use full copy
 			table = table.Copy()
@@ -778,7 +778,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		)
 		return nil
 	}
-	statsTbl = statsTbl.CopyForColumnMapUpdate()
+	statsTbl = statsTbl.ShallowCopy(statistics.CopyWithColumns)
 	if colHist.StatsAvailable() {
 		if fullLoad {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
@@ -891,7 +891,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		)
 		return nil
 	}
-	tbl = tbl.CopyForIndexMapUpdate()
+	tbl = tbl.ShallowCopy(statistics.CopyWithIndices)
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)

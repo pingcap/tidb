@@ -188,7 +188,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if !ok {
 				continue
 			}
-			table = table.Copy()
 		}
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
@@ -395,7 +394,6 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			if !ok {
 				continue
 			}
-			table = table.Copy()
 		}
 		idx := table.GetIdx(row.GetInt64(1))
 		if idx == nil || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
@@ -568,7 +566,6 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			if !ok {
 				continue
 			}
-			table = table.Copy()
 		}
 		var lower, upper types.Datum
 		var hist *statistics.Histogram

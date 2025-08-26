@@ -41,6 +41,20 @@ const (
 	PseudoRowCount = 10000
 )
 
+// CopyMode controls what gets copied in ShallowCopy
+type CopyMode uint8
+
+const (
+	// CopyMetaOnly creates a copy sharing all maps - only metadata is copied (default, cheapest)
+	CopyMetaOnly CopyMode = iota
+	// CopyWithColumns clones the columns map but shares indices map
+	CopyWithColumns
+	// CopyWithIndices clones the indices map but shares columns map
+	CopyWithIndices
+	// CopyWithBothMaps clones both columns and indices maps
+	CopyWithBothMaps
+)
+
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
 // Exported for testing.
 var AutoAnalyzeMinCnt int64 = 1000
@@ -638,61 +652,45 @@ func (t *Table) Copy() *Table {
 	return nt
 }
 
-// ShallowCopy copies the current table.
+// ShallowCopy copies the current table with specified copy mode.
 // It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
-// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
-func (t *Table) ShallowCopy() *Table {
-	newHistColl := HistColl{
-		PhysicalID:    t.PhysicalID,
-		RealtimeCount: t.RealtimeCount,
-		columns:       t.columns,
-		indices:       t.indices,
-		Pseudo:        t.Pseudo,
-		ModifyCount:   t.ModifyCount,
-		StatsVer:      t.StatsVer,
-	}
-	nt := &Table{
-		HistColl:              newHistColl,
-		Version:               t.Version,
-		TblInfoUpdateTS:       t.TblInfoUpdateTS,
-		ExtendedStats:         t.ExtendedStats,
-		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
-		LastAnalyzeVersion:    t.LastAnalyzeVersion,
-		LastStatsHistVersion:  t.LastStatsHistVersion,
-	}
-	return nt
-}
+// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not deep copied.
+//
+// Use copyMode to control which maps get cloned vs shared:
+//
+// CopyMetaOnly: Only copy table metadata (counts, versions, etc.), share all maps.
+// CopyWithColumns: Clone columns map but share indices map and clone existence map.
+// CopyWithIndices: Clone indices map but share columns map and clone existence map.
+// CopyWithBothMaps: Clone both columns and indices maps and clone existence map.
+func (t *Table) ShallowCopy(copyMode CopyMode) *Table {
+	var columns map[int64]*Column
+	var indices map[int64]*Index
+	var existenceMap *ColAndIdxExistenceMap
 
-// CopyForColumnMapUpdate creates a copy optimized for column updates.
-func (t *Table) CopyForColumnMapUpdate() *Table {
-	newHistColl := HistColl{
-		PhysicalID:    t.PhysicalID,
-		RealtimeCount: t.RealtimeCount,
-		columns:       maps.Clone(t.columns),
-		indices:       t.indices,
-		Pseudo:        t.Pseudo,
-		ModifyCount:   t.ModifyCount,
-		StatsVer:      t.StatsVer,
+	switch copyMode {
+	case CopyMetaOnly:
+		columns = t.columns
+		indices = t.indices
+		existenceMap = t.ColAndIdxExistenceMap
+	case CopyWithColumns:
+		columns = maps.Clone(t.columns)
+		indices = t.indices
+		existenceMap = t.ColAndIdxExistenceMap.Clone()
+	case CopyWithIndices:
+		columns = t.columns
+		indices = maps.Clone(t.indices)
+		existenceMap = t.ColAndIdxExistenceMap.Clone()
+	case CopyWithBothMaps:
+		columns = maps.Clone(t.columns)
+		indices = maps.Clone(t.indices)
+		existenceMap = t.ColAndIdxExistenceMap.Clone()
 	}
-	nt := &Table{
-		HistColl:              newHistColl,
-		Version:               t.Version,
-		TblInfoUpdateTS:       t.TblInfoUpdateTS,
-		ExtendedStats:         t.ExtendedStats,
-		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
-		LastAnalyzeVersion:    t.LastAnalyzeVersion,
-		LastStatsHistVersion:  t.LastStatsHistVersion,
-	}
-	return nt
-}
 
-// CopyForIndexMapUpdate creates a copy optimized for index updates.
-func (t *Table) CopyForIndexMapUpdate() *Table {
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
 		RealtimeCount: t.RealtimeCount,
-		columns:       t.columns,
-		indices:       maps.Clone(t.indices),
+		columns:       columns,
+		indices:       indices,
 		Pseudo:        t.Pseudo,
 		ModifyCount:   t.ModifyCount,
 		StatsVer:      t.StatsVer,
@@ -702,30 +700,7 @@ func (t *Table) CopyForIndexMapUpdate() *Table {
 		Version:               t.Version,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
 		ExtendedStats:         t.ExtendedStats,
-		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
-		LastAnalyzeVersion:    t.LastAnalyzeVersion,
-		LastStatsHistVersion:  t.LastStatsHistVersion,
-	}
-	return nt
-}
-
-// CopyForMapsUpdate creates a copy for both col and index map updates.
-func (t *Table) CopyForMapsUpdate() *Table {
-	newHistColl := HistColl{
-		PhysicalID:    t.PhysicalID,
-		RealtimeCount: t.RealtimeCount,
-		columns:       maps.Clone(t.columns),
-		indices:       maps.Clone(t.indices),
-		Pseudo:        t.Pseudo,
-		ModifyCount:   t.ModifyCount,
-		StatsVer:      t.StatsVer,
-	}
-	nt := &Table{
-		HistColl:              newHistColl,
-		Version:               t.Version,
-		TblInfoUpdateTS:       t.TblInfoUpdateTS,
-		ExtendedStats:         t.ExtendedStats,
-		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
+		ColAndIdxExistenceMap: existenceMap,
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
 		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
