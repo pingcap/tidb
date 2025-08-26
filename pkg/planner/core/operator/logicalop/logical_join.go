@@ -1092,18 +1092,26 @@ func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bo
 	if len(colset) == 1 {
 		return true
 	}
+
 	for _, schema := range p.allDataSouceSchema {
 		inTheSameSchema := true
+		// if we find a column in the table, the other is not in the same table.
+		// They are impossible in the same table. we can directly return.
+		findedSchema := false
 		for _, unique := range colset {
 			if !slices.ContainsFunc(schema.Columns, func(c *expression.Column) bool {
 				return c.UniqueID == unique
 			}) {
 				inTheSameSchema = false
 				break
+			} else {
+				findedSchema = true
 			}
 		}
 		if inTheSameSchema {
 			return true
+		} else if findedSchema {
+			return false
 		}
 	}
 	return false
