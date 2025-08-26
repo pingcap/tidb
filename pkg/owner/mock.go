@@ -192,6 +192,10 @@ func (m *mockManager) BreakCampaignLoop() {
 	m.Close()
 }
 
+func (m *mockManager) ForceOwnerSwitch(_ context.Context) error {
+	return nil
+}
+
 func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
 	checkIsOwner := func(m *ownerManager, checkTrue bool) error {
 		// 5s
