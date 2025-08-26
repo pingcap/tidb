@@ -614,13 +614,9 @@ func (e *LoadDataController) checkFieldParams() error {
 
 func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
 	var threadCnt int
-	if kerneltype.IsNextGen() {
-		threadCnt = scheduler.CalcConcurrencyByDataSize(p.TotalFileSize, targetNodeCPUCnt)
-	} else {
-		threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
-		if p.DataSourceType == DataSourceTypeQuery {
-			threadCnt = 2
-		}
+	threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+	if p.DataSourceType == DataSourceTypeQuery {
+		threadCnt = 2
 	}
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
@@ -1313,6 +1309,18 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
+
+	if kerneltype.IsNextGen() {
+		targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+		if err != nil {
+			return err
+		}
+		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
+		e.logger.Info("set import thread count for nextgen kernel",
+			zap.Int("thread count", e.ThreadCnt),
+			zap.Int("target node cpu count", targetNodeCPUCnt),
+			zap.Int64("total file size", totalSize))
+	}
 	return nil
 }
 
