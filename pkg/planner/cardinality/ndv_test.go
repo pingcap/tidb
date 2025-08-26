@@ -127,21 +127,21 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 	}
 
 	// Test 1: Individual columns should return their own NDV (context doesn't matter for single columns)
-	ndv, matchedLen := EstimateColsNDVWithMatchedLen(nil, []*expression.Column{colA}, schema, statsInfo)
+	ndv, matchedLen := cardinality.EstimateColsNDVWithMatchedLen(nil, []*expression.Column{colA}, schema, statsInfo)
 	require.Equal(t, 1000.0, ndv)
 	require.Equal(t, 1, matchedLen)
 
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(nil, []*expression.Column{colB}, schema, statsInfo)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(nil, []*expression.Column{colB}, schema, statsInfo)
 	require.Equal(t, 500.0, ndv)
 	require.Equal(t, 1, matchedLen)
 
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(nil, []*expression.Column{colC}, schema, statsInfo)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(nil, []*expression.Column{colC}, schema, statsInfo)
 	require.Equal(t, 10.0, ndv)
 	require.Equal(t, 1, matchedLen)
 
 	// Test 2: Exact GroupNDV match should return exact NDV (context doesn't matter for exact matches)
 	targetCols := []*expression.Column{colA, colB, colC}
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(nil, targetCols, schema, statsInfo)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(nil, targetCols, schema, statsInfo)
 	require.Equal(t, 5000.0, ndv)
 	require.Equal(t, 3, matchedLen)
 
@@ -150,14 +150,14 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 
 	// Test with variable disabled (skewRatio = 0) - should use conservative estimate
 	mockCtxDisabled := createMockPlanContext(0.0)
-	ndvDisabled, matchedLen := EstimateColsNDVWithMatchedLen(mockCtxDisabled, targetCols, schema, statsInfo)
+	ndvDisabled, matchedLen := cardinality.EstimateColsNDVWithMatchedLen(mockCtxDisabled, targetCols, schema, statsInfo)
 	expectedConservative := 1000.0 // max(1000, 500) - conservative approach
 	require.InDelta(t, expectedConservative, ndvDisabled, 0.1)
 	require.Equal(t, 1, matchedLen)
 
 	// Test with variable enabled (skewRatio = 1.0) - should use exponential backoff
 	mockCtxEnabled := createMockPlanContext(1.0)
-	ndvEnabled, matchedLen := EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfo)
+	ndvEnabled, matchedLen := cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfo)
 	expectedExponential := 1000 * math.Sqrt(500) // ~22360.7 - exponential backoff
 	require.InDelta(t, expectedExponential, ndvEnabled, 0.1)
 	require.Equal(t, 1, matchedLen)
@@ -168,7 +168,7 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 
 	// Test with variable partially enabled (skewRatio = 0.5) - should blend
 	mockCtxBlended := createMockPlanContext(0.5)
-	ndvBlended, _ := EstimateColsNDVWithMatchedLen(mockCtxBlended, targetCols, schema, statsInfo)
+	ndvBlended, _ := cardinality.EstimateColsNDVWithMatchedLen(mockCtxBlended, targetCols, schema, statsInfo)
 	expectedBlended := expectedConservative + (expectedExponential-expectedConservative)*0.5
 	require.InDelta(t, expectedBlended, ndvBlended, 0.1)
 	require.Greater(t, ndvBlended, ndvDisabled)
@@ -176,13 +176,13 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 
 	// Test additional column combinations with exponential backoff enabled
 	targetCols = []*expression.Column{colA, colC}
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfo)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfo)
 	expectedAC := 1000 * math.Sqrt(10)
 	require.InDelta(t, expectedAC, ndv, 0.1)
 	require.Equal(t, 1, matchedLen)
 
 	targetCols = []*expression.Column{colB, colC}
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfo)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfo)
 	expectedBC := 500 * math.Sqrt(10)
 	require.InDelta(t, expectedBC, ndv, 0.1)
 	require.Equal(t, 1, matchedLen)
@@ -200,20 +200,20 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 
 	// Test different 2-column combinations without GroupNDVs (with exponential backoff enabled)
 	targetCols = []*expression.Column{colA, colB}
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfoNoGroup)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfoNoGroup)
 	expectedABNoGroup := 1000 * math.Sqrt(500) // Same as with GroupNDVs since no exact match
 	require.InDelta(t, expectedABNoGroup, ndv, 0.1)
 	require.Equal(t, 1, matchedLen)
 
 	targetCols = []*expression.Column{colA, colC}
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfoNoGroup)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfoNoGroup)
 	expectedACNoGroup := 1000 * math.Sqrt(10)
 	require.InDelta(t, expectedACNoGroup, ndv, 0.1)
 	require.Equal(t, 1, matchedLen)
 
 	// Test 3-column combination without GroupNDVs
 	targetCols = []*expression.Column{colA, colB, colC}
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfoNoGroup)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, targetCols, schema, statsInfoNoGroup)
 	// NDVs sorted descending: [1000, 500, 10]
 	expectedABCNoGroup := 1000 * math.Sqrt(500) * math.Sqrt(math.Sqrt(10))
 	require.InDelta(t, expectedABCNoGroup, ndv, 0.1)
@@ -221,13 +221,13 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 
 	// Test empty columns - should return 1.0 and not record the opt variable
 	var emptyTargetCols []*expression.Column
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, emptyTargetCols, schema, statsInfoNoGroup)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, emptyTargetCols, schema, statsInfoNoGroup)
 	require.Equal(t, 1.0, ndv)
 	require.Equal(t, 1, matchedLen)
 
 	// Test single column - should use conservative estimate only (no exponential backoff)
 	singleTargetCol := []*expression.Column{colA}
-	ndv, matchedLen = EstimateColsNDVWithMatchedLen(mockCtxEnabled, singleTargetCol, schema, statsInfoNoGroup)
+	ndv, matchedLen = cardinality.EstimateColsNDVWithMatchedLen(mockCtxEnabled, singleTargetCol, schema, statsInfoNoGroup)
 	require.Equal(t, 1000.0, ndv) // Should be exactly colA's NDV
 	require.Equal(t, 1, matchedLen)
 }
