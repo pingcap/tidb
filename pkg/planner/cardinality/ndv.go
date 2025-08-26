@@ -16,8 +16,10 @@ package cardinality
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -81,34 +83,132 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 
 // EstimateColsNDVWithMatchedLen returns the NDV of a couple of columns.
 // If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
-// Otherwise, we simply return the max NDV among the columns, which is a lower bound.
-func EstimateColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
-	ndv := 1.0
-	if groupNDV := profile.GetGroupNDV4Cols(cols); groupNDV != nil {
-		return math.Max(groupNDV.NDV, ndv), len(groupNDV.Cols)
+// This method is primarily used by join operations.
+func EstimateColsNDVWithMatchedLen(sctx planctx.PlanContext, cols []*expression.Column, schema *expression.Schema,
+	profile *property.StatsInfo) (float64, int) {
+	// Early return for empty columns - no NDV estimation needed
+	if len(cols) == 0 {
+		return 1.0, 1
 	}
+
+	// First try exact match from existing GroupNDVs
+	if groupNDV := profile.GetGroupNDV4Cols(cols); groupNDV != nil {
+		exact := math.Max(groupNDV.NDV, 1.0)
+		return exact, len(groupNDV.Cols)
+	}
+
+	conservativeNDV := estimateNaiveNDV(cols, schema, profile)
+
+	// For single column, conservative and exponential are the same - return early
+	if len(cols) == 1 {
+		return conservativeNDV, 1
+	}
+
+	// Multi-column case: calculate exponential estimate
+	exponentialNDV := estimateNDVWithExponentialBackoff(cols, schema, profile)
+
+	// Check if risk-based estimation is enabled
+	if sctx != nil {
+		skewRatio := sctx.GetSessionVars().RiskGroupNDVSkewRatio
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskGroupNDVSkewRatio)
+		if skewRatio > 0 {
+			// Use risk-based blending between conservative and exponential
+			blendedNDV := calculateGroupNDVWithSkewRatio(conservativeNDV, exponentialNDV, skewRatio)
+			return blendedNDV, 1
+		}
+	}
+
+	// Default behavior: return conservative estimate only (production mode)
+	return conservativeNDV, 1
+}
+
+// estimateNaiveNDV implements the original max NDV approach.
+func estimateNaiveNDV(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+	if profile == nil || len(cols) == 0 {
+		return 1.0
+	}
+
+	maxNDV := 1.0
+	indices := schema.ColumnsIndices(cols)
+	if indices == nil {
+		return 1.0
+	}
+
+	for _, idx := range indices {
+		col := schema.Columns[idx]
+		if colNDV, exists := profile.ColNDVs[col.UniqueID]; exists && colNDV > 0 {
+			maxNDV = math.Max(maxNDV, colNDV)
+		}
+	}
+
+	return maxNDV
+}
+
+// estimateNDVWithExponentialBackoff applies exponential backoff estimation to NDV calculation.
+func estimateNDVWithExponentialBackoff(
+	cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+	defaultNdv := 1.0
+	if profile == nil || len(cols) == 0 {
+		return defaultNdv
+	}
+
+	// Collect individual column NDVs
+	singleColumnNDVs := make([]float64, 0, len(cols))
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return ndv, 1
+		return defaultNdv
 	}
+
 	for _, idx := range indices {
-		// It is a very naive estimation.
 		col := schema.Columns[idx]
-		ndv = math.Max(ndv, profile.ColNDVs[col.UniqueID])
+		if colNDV, exists := profile.ColNDVs[col.UniqueID]; exists && colNDV > 0 {
+			singleColumnNDVs = append(singleColumnNDVs, colNDV)
+		}
 	}
-	return ndv, 1
+
+	if len(singleColumnNDVs) == 0 {
+		return defaultNdv
+	}
+
+	// Sort NDVs in descending order (highest NDV first for exponential backoff)
+	slices.Sort(singleColumnNDVs)
+	slices.Reverse(singleColumnNDVs)
+
+	// Calculate bounds
+	lowerBound := max(singleColumnNDVs[0], defaultNdv) // At least max individual column NDV
+	upperBound := profile.RowCount
+	// In case RowCount is not accurate, we fall back to naive approach
+	if upperBound <= lowerBound {
+		return lowerBound
+	}
+
+	// Apply exponential backoff directly to NDV values
+	resultNDV := ApplyExponentialBackoff(singleColumnNDVs, lowerBound, upperBound)
+
+	return resultNDV
+}
+
+// calculateGroupNDVWithSkewRatio calculates group NDV estimate using skew ratio.
+// The ratio controls how much to trust exponential backoff vs. conservative estimate:
+// 0.0 = fully conservative estimate
+// 0.1 = mostly conservative with 10% exponential influence
+// 0.5 = balanced between conservative and exponential
+// 1.0 = fully trust exponential backoff
+func calculateGroupNDVWithSkewRatio(conservativeNDV, exponentialNDV, skewRatio float64) float64 {
+	return conservativeNDV + (exponentialNDV-conservativeNDV)*skewRatio
 }
 
 // EstimateColsDNVWithMatchedLenFromUniqueIDs is similar to EstimateColsDNVWithMatchedLen, but it receives UniqueIDs instead of Columns.
-func EstimateColsDNVWithMatchedLenFromUniqueIDs(ids []int64, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
+func EstimateColsDNVWithMatchedLenFromUniqueIDs(sctx planctx.PlanContext, ids []int64, schema *expression.Schema,
+	profile *property.StatsInfo) (float64, int) {
 	cols := make([]*expression.Column, 0, len(ids))
 	for _, id := range ids {
 		cols = append(cols, &expression.Column{
 			UniqueID: id,
 		})
 	}
-	return EstimateColsNDVWithMatchedLen(cols, schema, profile)
+	return EstimateColsNDVWithMatchedLen(sctx, cols, schema, profile)
 }
 
 // ScaleNDV scales the original NDV based on the selectivity of the rows.

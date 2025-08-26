@@ -2050,6 +2050,10 @@ var defaultSysVars = []*SysVar{
 		s.RiskRangeSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskRangeSkewRatio)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskGroupNDVSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskGroupNDVSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.RiskGroupNDVSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskGroupNDVSkewRatio)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCPUFactor, Value: strconv.FormatFloat(vardef.DefOptCPUFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.cpuFactor = tidbOptFloat64(val, vardef.DefOptCPUFactor)
 		return nil

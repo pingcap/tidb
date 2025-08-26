@@ -1675,7 +1675,7 @@ func scaleStats4GroupingSets(p *physicalop.PhysicalHashAgg, groupingSets express
 		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
 		groupingSetCols := groupingSet.ExtractCols()
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
-		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(p.SCtx(), groupingSetCols, childSchema, childStats)
 		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
@@ -1702,7 +1702,8 @@ func scaleStats4GroupingSets(p *physicalop.PhysicalHashAgg, groupingSets express
 					// when meet an id in grouping sets, skip it (cause its null) and append the rest ids to count the incrementNDV.
 					beforeLen := len(intersectionIDs)
 					intersectionIDs = append(intersectionIDs, oneGNDV.Cols[i:]...)
-					incrementNDV, _ := cardinality.EstimateColsDNVWithMatchedLenFromUniqueIDs(intersectionIDs, childSchema, childStats)
+					incrementNDV, _ := cardinality.EstimateColsDNVWithMatchedLenFromUniqueIDs(
+						p.SCtx(), intersectionIDs, childSchema, childStats)
 					newGNDV += incrementNDV
 					// restore the before intersectionIDs slice.
 					intersectionIDs = intersectionIDs[:beforeLen]
@@ -2236,7 +2237,7 @@ func accumulateNetSeekCost4MPP(p base.PhysicalPlan) (cost float64) {
 
 func tryExpandVirtualColumn(p base.PhysicalPlan) {
 	if ts, ok := p.(*physicalop.PhysicalTableScan); ok {
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
+		ts.Columns = physicalop.ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		return
 	}
 	for _, child := range p.Children() {

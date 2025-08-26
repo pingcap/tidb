@@ -199,9 +199,9 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildTrace(v)
 	case *plannercore.Explain:
 		return b.buildExplain(v)
-	case *plannercore.PointGetPlan:
+	case *physicalop.PointGetPlan:
 		return b.buildPointGet(v)
-	case *plannercore.BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		return b.buildBatchPointGet(v)
 	case *plannercore.Insert:
 		return b.buildInsert(v)
@@ -5516,7 +5516,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
 }
 
-func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) exec.Executor {
+func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan) exec.Executor {
 	var err error
 	if err = b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err

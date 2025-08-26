@@ -333,6 +333,12 @@ const (
 	// TiDBOptRiskScaleNDVSkewRatio controls the NDV estimation risk strategy for scaling NDV estimation.
 	TiDBOptRiskScaleNDVSkewRatio = "tidb_opt_scale_ndv_skew_ratio"
 
+	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for multi-column operations
+	// including GROUP BY, JOIN, and DISTINCT operations.
+	// When 0: uses conservative estimate (max of individual column NDVs, production default)
+	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
+	TiDBOptRiskGroupNDVSkewRatio = "tidb_opt_group_ndv_skew_ratio"
+
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// TiDBOptCopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -1341,6 +1347,7 @@ const (
 	DefOptRiskEqSkewRatio                   = 0.0
 	DefOptRiskRangeSkewRatio                = 0.0
 	DefOptRiskScaleNDVSkewRatio             = 1.0
+	DefOptRiskGroupNDVSkewRatio             = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0
