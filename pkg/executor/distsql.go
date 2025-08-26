@@ -310,15 +310,23 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild GroupedRanges if it was originally set
-		if len(is.GroupByColIdxs) > 0 {
-			e.GroupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
-		}
+		e.GroupedRanges = rebuildGroupedRanges(e.ranges, is.GroupByColIdxs)
 	}
 
-	// Ensure e.partRangeMap and GroupedRanges don't appear at the same time
-	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.GroupedRanges) > 0), "partRangeMap and GroupedRanges should not appear together")
+	// Validate that partRangeMap and GroupedRanges don't appear together
+	validateGroupedRangesAndPartitions(e.partRangeMap, e.GroupedRanges)
 
 	// Build kvRanges considering both partitions and GroupedRanges
+	kvRanges, err := e.buildKVRangesForIndexReader()
+	if err != nil {
+		return err
+	}
+
+	return e.open(ctx, kvRanges)
+}
+
+// buildKVRangesForIndexReader builds kvRanges for IndexReaderExecutor considering both partitions and GroupedRanges.
+func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, error) {
 	var kvRanges []kv.KeyRange
 
 	if len(e.partitions) > 0 {
@@ -329,7 +337,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 				for _, groupRanges := range e.GroupedRanges {
 					kvRange, err := e.buildKeyRanges(e.dctx, groupRanges, p.GetPhysicalID())
 					if err != nil {
-						return err
+						return nil, err
 					}
 					kvRanges = append(kvRanges, kvRange...)
 				}
@@ -341,7 +349,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 				// Each partition forms a separate kvRange group
 				kvRange, err := e.buildKeyRanges(e.dctx, partRange, p.GetPhysicalID())
 				if err != nil {
-					return err
+					return nil, err
 				}
 				kvRanges = append(kvRanges, kvRange...)
 			}
@@ -353,20 +361,21 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			for _, groupRanges := range e.GroupedRanges {
 				kvRange, err := e.buildKeyRanges(e.dctx, groupRanges, e.physicalTableID)
 				if err != nil {
-					return err
+					return nil, err
 				}
 				kvRanges = append(kvRanges, kvRange...)
 			}
 		} else {
 			// Single kvRange group
+			var err error
 			kvRanges, err = e.buildKeyRanges(e.dctx, e.ranges, e.physicalTableID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	return e.open(ctx, kvRanges)
+	return kvRanges, nil
 }
 
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
@@ -420,8 +429,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	})
 
 	// Determine if we need merge sort
-	needMergeSort := (len(e.byItems) > 0 && len(e.partitions) > 1) ||
-		(len(e.GroupedRanges) > 0 && len(kvRanges) > 1)
+	needMergeSort := shouldUseMergeSort(e.byItems, e.partitions, e.GroupedRanges, len(kvRanges))
 
 	if !needMergeSort {
 		// Use single SelectResult when no merge sort is needed
@@ -594,9 +602,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild GroupedRanges if it was originally set
-		if len(is.GroupByColIdxs) > 0 {
-			e.GroupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
-		}
+		e.GroupedRanges = rebuildGroupedRanges(e.ranges, is.GroupByColIdxs)
 	}
 
 	if e.memTracker != nil {
@@ -627,12 +633,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			physicalID := p.GetPhysicalID()
 			if len(e.GroupedRanges) > 0 {
 				for _, groupRanges := range e.GroupedRanges {
-					var kvRange *kv.KeyRanges
-					if e.index.ID == -1 {
-						kvRange, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, groupRanges)
-					} else {
-						kvRange, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, groupRanges, e.memTracker, nil)
-					}
+					kvRange, err := buildKVRangeForIndexLookup(dctx, physicalID, e.index.ID, groupRanges, e.memTracker)
 					if err != nil {
 						return err
 					}
@@ -648,11 +649,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 				ranges = e.partitionRangeMap[physicalID]
 			}
 			var kvRange *kv.KeyRanges
-			if e.index.ID == -1 {
-				kvRange, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, ranges)
-			} else {
-				kvRange, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, ranges, e.memTracker, nil)
-			}
+			kvRange, err = buildKVRangeForIndexLookup(dctx, physicalID, e.index.ID, ranges, e.memTracker)
 			if err != nil {
 				return err
 			}
@@ -663,12 +660,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.GroupedRanges))
 			for _, groupRanges := range e.GroupedRanges {
 				physicalID := getPhysicalTableID(e.table)
-				var kvRanges *kv.KeyRanges
-				if e.index.ID == -1 {
-					kvRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, groupRanges)
-				} else {
-					kvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, groupRanges, e.memTracker, nil)
-				}
+				kvRanges, err := buildKVRangeForIndexLookup(dctx, physicalID, e.index.ID, groupRanges, e.memTracker)
 				if err != nil {
 					return err
 				}
@@ -677,11 +669,9 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			return nil
 		}
 		physicalID := getPhysicalTableID(e.table)
-		var kvRanges *kv.KeyRanges
-		if e.index.ID == -1 {
-			kvRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, e.ranges)
-		} else {
-			kvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, e.ranges, e.memTracker, nil)
+		kvRanges, err := buildKVRangeForIndexLookup(dctx, physicalID, e.index.ID, e.ranges, e.memTracker)
+		if err != nil {
+			return err
 		}
 		e.kvRanges = kvRanges.FirstPartitionRange()
 	}
@@ -885,7 +875,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			results = append(results, result)
 		}
-		if (len(results) > 1 && len(e.byItems) != 0) || (len(e.GroupedRanges) > 0 && len(results) > 1) {
+		if shouldUseMergeSort(e.byItems, nil, e.GroupedRanges, len(results)) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
@@ -1760,4 +1750,34 @@ func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 		planIDs = append(planIDs, p.ID())
 	}
 	return planIDs
+}
+
+// rebuildGroupedRanges rebuilds GroupedRanges after rebuilding ranges for correlated columns.
+func rebuildGroupedRanges(ranges []*ranger.Range, groupByColIdxs []int) map[string][]*ranger.Range {
+	if len(groupByColIdxs) == 0 {
+		return nil
+	}
+	return plannercore.GroupRangesByCols(ranges, groupByColIdxs)
+}
+
+// shouldUseMergeSort determines if merge sort is needed based on byItems, partitions, and GroupedRanges.
+func shouldUseMergeSort(byItems []*plannerutil.ByItems, partitions []table.PhysicalTable, groupedRanges map[string][]*ranger.Range, kvRangesCount int) bool {
+	// Use merge sort if:
+	// 1. byItems is present and there are multiple partitions, OR
+	// 2. GroupedRanges is present and there are multiple kvRanges
+	return (len(byItems) > 0 && len(partitions) > 1) ||
+		(len(groupedRanges) > 0 && kvRangesCount > 1)
+}
+
+// validateGroupedRangesAndPartitions ensures GroupedRanges and partRangeMap don't appear together.
+func validateGroupedRangesAndPartitions(partRangeMap map[int64][]*ranger.Range, groupedRanges map[string][]*ranger.Range) {
+	intest.Assert(!(len(partRangeMap) > 0 && len(groupedRanges) > 0), "partRangeMap and GroupedRanges should not appear together")
+}
+
+// buildKVRangeForIndexLookup builds KV ranges for index or common handle.
+func buildKVRangeForIndexLookup(dctx *distsqlctx.DistSQLContext, physicalID int64, indexID int64, ranges []*ranger.Range, memTracker *memory.Tracker) (*kv.KeyRanges, error) {
+	if indexID == -1 {
+		return distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, ranges)
+	}
+	return distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, indexID, ranges, memTracker, nil)
 }

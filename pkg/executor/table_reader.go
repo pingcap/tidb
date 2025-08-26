@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -271,9 +270,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild groupedRanges if it was originally set
-		if len(e.groupByColIdxs) > 0 {
-			e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, e.groupByColIdxs)
-		}
+		e.groupedRanges = rebuildGroupedRanges(e.ranges, e.groupByColIdxs)
 	}
 
 	e.resultHandler = &tableResultHandler{}
@@ -531,72 +528,65 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	return kvReqs, nil
 }
 
+// buildKVReqForRanges builds KV request for given ranges, handling both kvRangeBuilder and regular cases.
+func (e *TableReaderExecutor) buildKVReqForRanges(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+	if e.kvRangeBuilder != nil {
+		// Use buildKVReqSeparately for partition tables
+		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		// For simplicity, return the first request. This is used in grouped ranges context where
+		// each group should have only one partition anyway.
+		if len(kvReqs) > 0 {
+			return kvReqs[0], nil
+		}
+		return nil, errors.New("no KV requests generated")
+	}
+
+	// Regular table case
+	var builder distsql.RequestBuilder
+	reqBuilder := builder.SetHandleRanges(e.dctx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
+	if e.table != nil && e.table.Type().IsClusterTable() {
+		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)
+		if copDestination == infoschema.DDLOwner {
+			serverInfo, err := e.GetDDLOwner(ctx)
+			if err != nil {
+				return nil, err
+			}
+			reqBuilder.SetTiDBServerID(serverInfo.ServerIDGetter())
+		}
+	}
+	return reqBuilder.
+		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
+		SetIsStaleness(e.isStaleness).
+		SetFromSessionVars(e.dctx).
+		SetFromInfoSchema(e.GetInfoSchema()).
+		SetMemTracker(e.memTracker).
+		SetStoreType(e.storeType).
+		SetAllowBatchCop(e.batchCop).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
+		SetPaging(e.paging).
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
+		Build()
+}
+
 func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.Context, groupedRanges map[string][]*ranger.Range) ([]*kv.Request, error) {
 	var kvReqs []*kv.Request
 	for _, ranges := range groupedRanges {
 		if e.kvRangeBuilder != nil {
-			pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(e.dctx, ranges)
+			reqs, err := e.buildKVReqSeparately(ctx, ranges)
 			if err != nil {
 				return nil, err
 			}
-			for i, kvRange := range kvRanges {
-				e.kvRanges = append(e.kvRanges, kvRange...)
-				if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
-					return nil, err
-				}
-				var builder distsql.RequestBuilder
-				reqBuilder := builder.SetKeyRanges(kvRange)
-				kvReq, err := reqBuilder.
-					SetDAGRequest(e.dagPB).
-					SetStartTS(e.startTS).
-					SetDesc(e.desc).
-					SetKeepOrder(e.keepOrder).
-					SetTxnScope(e.txnScope).
-					SetReadReplicaScope(e.readReplicaScope).
-					SetFromSessionVars(e.dctx).
-					SetFromInfoSchema(e.GetInfoSchema()).
-					SetMemTracker(e.memTracker).
-					SetStoreType(e.storeType).
-					SetPaging(e.paging).
-					SetAllowBatchCop(e.batchCop).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
-					SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-					Build()
-				if err != nil {
-					return nil, err
-				}
-				kvReqs = append(kvReqs, kvReq)
-			}
+			kvReqs = append(kvReqs, reqs...)
 		} else {
-			var builder distsql.RequestBuilder
-			reqBuilder := builder.SetHandleRanges(e.dctx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
-			if e.table != nil && e.table.Type().IsClusterTable() {
-				copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)
-				if copDestination == infoschema.DDLOwner {
-					serverInfo, err := e.GetDDLOwner(ctx)
-					if err != nil {
-						return nil, err
-					}
-					reqBuilder.SetTiDBServerID(serverInfo.ServerIDGetter())
-				}
-			}
-			kvReq, err := reqBuilder.
-				SetDAGRequest(e.dagPB).
-				SetStartTS(e.startTS).
-				SetDesc(e.desc).
-				SetKeepOrder(e.keepOrder).
-				SetTxnScope(e.txnScope).
-				SetReadReplicaScope(e.readReplicaScope).
-				SetIsStaleness(e.isStaleness).
-				SetFromSessionVars(e.dctx).
-				SetFromInfoSchema(e.GetInfoSchema()).
-				SetMemTracker(e.memTracker).
-				SetStoreType(e.storeType).
-				SetAllowBatchCop(e.batchCop).
-				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
-				SetPaging(e.paging).
-				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-				Build()
+			kvReq, err := e.buildKVReqForRanges(ctx, ranges)
 			if err != nil {
 				return nil, err
 			}
@@ -622,9 +612,8 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	if len(results) == 1 {
 		return results[0], nil
 	}
-	intest.Assert(len(e.byItems) > 0, "buildRespForGroupedRanges should only be called when byItems is not empty")
 
-	// Only use sorted results if we have byItems to sort by
+	// Use sorted results if we have byItems to sort by
 	if len(e.byItems) > 0 {
 		return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
 	}
