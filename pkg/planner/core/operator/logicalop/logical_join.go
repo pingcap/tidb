@@ -1089,6 +1089,9 @@ func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bo
 	colset := slices.Collect(
 		maps.Keys(expression.ExtractColumnsMapFromExpressions(nil, cond)),
 	)
+	if len(colset) == 1 {
+		return true
+	}
 	for _, schema := range p.allDataSouceSchema {
 		inTheSameSchema := true
 		for _, unique := range colset {
