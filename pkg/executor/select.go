@@ -104,9 +104,6 @@ var (
 	_ dataSourceExecutor = &IndexReaderExecutor{}
 	_ dataSourceExecutor = &IndexLookUpExecutor{}
 	_ dataSourceExecutor = &IndexMergeReaderExecutor{}
-
-	// CheckTableFastBucketSize is the bucket size of fast check table.
-	CheckTableFastBucketSize = atomic.Int64{}
 )
 
 // dataSourceExecutor is a table DataSource converted Executor.
@@ -148,9 +145,6 @@ func init() {
 
 	schematracker.ConstructResultOfShowCreateDatabase = ConstructResultOfShowCreateDatabase
 	schematracker.ConstructResultOfShowCreateTable = ConstructResultOfShowCreateTable
-
-	// CheckTableFastBucketSize is used to set the fast analyze bucket size for check table.
-	CheckTableFastBucketSize.Store(1024)
 }
 
 // Start the backend components

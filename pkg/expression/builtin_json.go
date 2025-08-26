@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -94,6 +95,9 @@ var (
 	_ builtinFunc = &builtinJSONValidStringSig{}
 	_ builtinFunc = &builtinJSONValidOthersSig{}
 )
+
+// JSONCRC32Mod is the modulus used in JSON_SUM_CRC32 to avoid result overflow.
+const JSONCRC32Mod = 1024
 
 type jsonTypeFunctionClass struct {
 	baseFunctionClass
@@ -218,22 +222,87 @@ func (c *jsonSumCRC32FunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("calculating json_sum_crc32 on array of char/binary BLOBs with unspecified length")
 	}
 
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, types.NewFieldType(mysql.TypeLonglong))
 	if err != nil {
 		return nil, err
 	}
-	sig = &builtinJSONSumCRC32Sig{bf}
+	sig = &builtinJSONSumCRC32Sig{bf, c.tp.ArrayType()}
 	return sig, nil
 }
 
+// builtinJSONSumCRC32Sig is the signature for JSON_SUM_CRC32, which is used in internal SQL only.
 type builtinJSONSumCRC32Sig struct {
 	baseBuiltinFunc
+
+	arrayTp *types.FieldType
 }
 
 func (b *builtinJSONSumCRC32Sig) Clone() builtinFunc {
-	newSig := &builtinJSONSumCRC32Sig{}
+	newSig := &builtinJSONSumCRC32Sig{arrayTp: b.arrayTp}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+// part of the logic is copied from builtinCastXXXAsStringFunctionSig
+func convertJSON2String(evalType types.EvalType) func(*stmtctx.StatementContext, types.BinaryJSON, *types.FieldType) (string, error) {
+	switch evalType {
+	case types.ETString:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
+			if item.TypeCode != types.JSONTypeCodeString {
+				return "", ErrInvalidJSONForFuncIndex
+			}
+			return types.ProduceStrWithSpecifiedTp(string(item.GetString()), tp, sc.TypeCtx(), false)
+		}
+	case types.ETInt:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
+			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+				return "", ErrInvalidJSONForFuncIndex
+			}
+			jsonToInt, err := types.ConvertJSONToInt(sc.TypeCtx(), item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+			err = sc.HandleError(err)
+			return strconv.Itoa(int(jsonToInt)), err
+		}
+	case types.ETReal:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
+			if item.TypeCode != types.JSONTypeCodeFloat64 && item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+				return "", ErrInvalidJSONForFuncIndex
+			}
+			digit := 64
+			if tp.GetType() == mysql.TypeFloat {
+				digit = 32
+			}
+			val, err := types.ConvertJSONToFloat(sc.TypeCtx(), item)
+			if err != nil {
+				return "", err
+			}
+			return strconv.FormatFloat(val, 'f', -1, digit), nil
+		}
+	case types.ETDatetime:
+		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
+			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
+				return "", ErrInvalidJSONForFuncIndex
+			}
+			res := item.GetTimeWithFsp(tp.GetDecimal())
+			res.SetType(tp.GetType())
+			if tp.GetType() == mysql.TypeDate {
+				// Truncate hh:mm:ss part if the type is Date.
+				res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+			}
+			res.SetFsp(tp.GetDecimal())
+			return res.String(), nil
+		}
+	case types.ETDuration:
+		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (string, error) {
+			if item.TypeCode != types.JSONTypeCodeDuration {
+				return "", ErrInvalidJSONForFuncIndex
+			}
+			dur := item.GetDuration()
+			dur.Fsp = tp.GetDecimal()
+			return dur.String(), nil
+		}
+	default:
+		return nil
+	}
 }
 
 func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
@@ -246,24 +315,30 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 		return 0, false, ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
 	}
 
-	ft := b.tp.ArrayType()
-	f := convertJSON2Tp(ft.EvalType())
+	ft := b.arrayTp
+	f := convertJSON2String(ft.EvalType())
 	if f == nil {
 		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
 	}
 
-	var sum int64
+	// Deduplicate items since duplicated values should only generate one index entry.
+	s := make(map[int64]struct{}, val.GetElemCount())
 	for i := range val.GetElemCount() {
-		item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
+		// Convert to string before calculation, to mimic the logic of builtinCRC32.
+		str, err := f(fakeSctx, val.ArrayGetElem(i), ft)
 		if err != nil {
 			if ErrInvalidJSONForFuncIndex.Equal(err) {
 				err = errors.Errorf("Invalid JSON value for CAST to type %s", ft.CompactStr())
 			}
 			return 0, false, err
 		}
-		sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
+		s[int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", str)))] = struct{}{}
 	}
 
+	var sum int64
+	for k := range s {
+		sum += k % JSONCRC32Mod
+	}
 	return sum, false, err
 }
 
