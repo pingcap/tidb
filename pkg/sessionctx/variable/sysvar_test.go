@@ -1900,7 +1900,7 @@ func TestTiDBOptSelectivityFactor(t *testing.T) {
 	// set invalid value
 	err = mock.SetGlobalSysVar(ctx, vardef.TiDBOptSelectivityFactor, "1.1")
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(vardef.TiDBOptSelectivityFactor)
+	_, err = mock.GetGlobalSysVar(vardef.TiDBOptSelectivityFactor)
 	require.NoError(t, err)
 	warn := vars.StmtCtx.GetWarnings()[0].Err
 	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
