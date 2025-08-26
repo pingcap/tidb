@@ -88,7 +88,9 @@ func TestIssue54812(t *testing.T) {
 		vals = append(vals, fmt.Sprintf("(%d, 1)", i))
 	}
 	tk.MustExec(`insert into t values ` + strings.Join(vals, ","))
-	tk.MustExec(`insert into t values ` + strings.Repeat("(100, 2), ", 999) + "(100, 2)")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(`insert into t values ` + strings.Repeat("(100, 2), ", 99) + "(100, 2)")
+	}
 	tk.MustExec("analyze table t")
 	tk.MustExec(`set @@tidb_stats_load_sync_wait=100`)
 	tk.MustQuery(`explain format='brief' select distinct(a) from t where b=1`).Check(testkit.Rows(
