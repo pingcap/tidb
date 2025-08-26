@@ -1112,16 +1112,9 @@ func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bo
 // getAllDataSourceSchema is to get all datasource's schema
 func getAllDataSourceSchema(plan base.LogicalPlan) []*expression.Schema {
 	switch p := plan.(type) {
-	case *LogicalAggregation:
+	case *DataSource, *LogicalAggregation:
 		// Because sometimes we put the output of the aggregation into the schema,
 		// we can consider it as a new table.
-		result := make([]*expression.Schema, 0, len(p.Children())+1)
-		for _, child := range p.Children() {
-			result = append(result, getAllDataSourceSchema(child)...)
-		}
-		result = append(result, p.Schema())
-		return result
-	case *DataSource:
 		return []*expression.Schema{p.Schema()}
 	default:
 		result := make([]*expression.Schema, 0, len(p.Children()))
