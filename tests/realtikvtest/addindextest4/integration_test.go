@@ -16,13 +16,16 @@ package addindextest_test
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -98,4 +101,44 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 		tk.MustExec(createIndexes[i])
 		tk.MustExec("admin check table t;")
 	}
+}
+
+func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set global tidb_enable_dist_task = 0")
+	ingest.ForceSyncFlagForTest.Store(true)
+
+	tk.Session().Close()
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint primary key, b bigint)")
+	for i := 0; i < 20000; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+
+	// Fire once: make the subtask fail AFTER checkpoint is updated, so DXF restarts it.
+	testfailpoint.Enable(t,
+		"github.com/pingcap/tidb/pkg/ddl/ingest/ddlIngestFailOnceAfterCheckpointUpdated",
+		"1*return")
+	defer testfailpoint.Disable(t,
+		"github.com/pingcap/tidb/pkg/ddl/ingest/ddlIngestFailOnceAfterCheckpointUpdated")
+
+	tk.MustExec("alter table t add unique index idx_b(b)")
+
+	tblCntStr := tk.MustQuery("select count(*) from t").Rows()[0][0].(string)
+	idxCntStr := tk.MustQuery("select count(*) from t use index(idx_b)").Rows()[0][0].(string)
+	tblCnt, err := strconv.Atoi(tblCntStr)
+	require.NoError(t, err)
+	idxCnt, err := strconv.Atoi(idxCntStr)
+	require.NoError(t, err)
+	require.Equal(t, tblCnt, idxCnt)
+
+	tk.MustExec("admin check table t")
 }
