@@ -1133,6 +1133,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// EnableNoDecorrelate enables the NO_DECORRELATE hint globally or at session level.
+	EnableNoDecorrelate bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 

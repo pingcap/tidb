@@ -2356,6 +2356,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePipelinedWindowExec = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableNoDecorrelate, Value: BoolToOnOff(vardef.DefEnableNoDecorrelate), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNoDecorrelate = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil
