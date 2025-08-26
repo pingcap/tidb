@@ -590,7 +590,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		moveChangingColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
 		moveOldColumnInfo(tblInfo, oldCol)
 		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
-		tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
 		updateModifyingCols(oldCol, changingCol)
 
 		job.SchemaState = model.StatePublic
