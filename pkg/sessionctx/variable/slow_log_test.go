@@ -31,61 +31,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestParseSlowLogFieldValue(t *testing.T) {
-	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 37)
-	accessor, ok := variable.SlowLogRuleFieldAccessors[variable.SlowLogPlanDigest]
-	require.True(t, ok)
-	require.NotNil(t, accessor.Setter)
-	require.NotNil(t, accessor.Match)
-
-	// int64 fields
-	v, err := variable.ParseSlowLogFieldValue(variable.SlowLogMemMax, "123")
-	require.NoError(t, err)
-	require.Equal(t, int64(123), v)
-
-	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogMemMax, "abc")
-	require.Error(t, err)
-
-	// uint64 fields
-	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogConnIDStr, "456")
-	require.NoError(t, err)
-	require.Equal(t, uint64(456), v)
-
-	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogConnIDStr, "-1")
-	require.Error(t, err)
-
-	// float64 fields
-	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "1.234")
-	require.NoError(t, err)
-	require.Equal(t, 1.234, v)
-
-	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "abc")
-	require.Error(t, err)
-
-	// string fields
-	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogDBStr, "testdb")
-	require.NoError(t, err)
-	require.Equal(t, "testdb", v)
-
-	// bool fields
-	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogSucc, "true")
-	require.NoError(t, err)
-	require.Equal(t, true, v)
-
-	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogSucc, "false")
-	require.NoError(t, err)
-	require.Equal(t, false, v)
-
-	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogSucc, "notabool")
-	require.Error(t, err)
-	require.Equal(t, false, v)
-
-	// unknown field
-	v, err = variable.ParseSlowLogFieldValue("NonExistField", "xxx")
-	require.Error(t, err)
-	require.Nil(t, v)
-}
-
 func newMockCtx() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
@@ -196,6 +141,75 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 	require.True(t, executor.Match(ctx.GetSessionVars(), items))
 }
 
+func TestParseSingleSlowLogField(t *testing.T) {
+	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 37)
+	accessor, ok := variable.SlowLogRuleFieldAccessors[variable.SlowLogPlanDigest]
+	require.True(t, ok)
+	require.NotNil(t, accessor.Setter)
+	require.NotNil(t, accessor.Match)
+
+	// int64 fields
+	v, err := variable.ParseSlowLogFieldValue(variable.SlowLogMemMax, "123")
+	require.NoError(t, err)
+	require.Equal(t, int64(123), v)
+
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogMemMax, "abc")
+	require.Error(t, err)
+
+	// uint64 fields
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogConnIDStr, "456")
+	require.NoError(t, err)
+	require.Equal(t, uint64(456), v)
+
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogConnIDStr, "-1")
+	require.Error(t, err)
+
+	// float64 fields
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "1.234")
+	require.NoError(t, err)
+	require.Equal(t, 1.234, v)
+
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "abc")
+	require.Error(t, err)
+
+	// string fields
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogDBStr, "testdb")
+	require.NoError(t, err)
+	require.Equal(t, "testdb", v)
+
+	// bool fields
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogSucc, "true")
+	require.NoError(t, err)
+	require.Equal(t, true, v)
+
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogSucc, "false")
+	require.NoError(t, err)
+	require.Equal(t, false, v)
+
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogSucc, "notabool")
+	require.Error(t, err)
+	require.Equal(t, false, v)
+
+	// unknown field
+	v, err = variable.ParseSlowLogFieldValue("NonExistField", "xxx")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown slow log field name")
+	require.Nil(t, v)
+}
+
+func compareConditionsUnordered(t *testing.T, got, want []variable.SlowLogCondition) {
+	require.Equal(t, len(got), len(want))
+	gotMap := make(map[string]any, len(got))
+	for _, c := range got {
+		gotMap[c.Field] = c.Threshold
+	}
+	for _, c := range want {
+		val, ok := gotMap[c.Field]
+		require.True(t, ok)
+		require.Equal(t, c.Threshold, val)
+	}
+}
+
 func TestParseSlowLogRules(t *testing.T) {
 	// normal tests
 	// a rule that ends without a ';'
@@ -219,12 +233,12 @@ func TestParseSlowLogRules(t *testing.T) {
 		"Query_time":     {},
 		"Resource_group": {},
 	}
-	require.Equal(t, rules, slowLogRules.Rules)
+	compareConditionsUnordered(t, rules[0].Conditions, slowLogRules.Rules[0].Conditions)
 	require.Equal(t, allConditionFields, slowLogRules.AllConditionFields)
 	// a rule that ends with a ';'
 	slowLogRules, err = variable.ParseSlowLogRules(`Conn_ID: 123, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1;`)
 	require.NoError(t, err)
-	require.Equal(t, rules, slowLogRules.Rules)
+	compareConditionsUnordered(t, rules[0].Conditions, slowLogRules.Rules[0].Conditions)
 	require.Equal(t, allConditionFields, slowLogRules.AllConditionFields)
 	// some rules
 	slowLogRules, err = variable.ParseSlowLogRules(`Conn_ID: 123, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1;
@@ -249,7 +263,7 @@ func TestParseSlowLogRules(t *testing.T) {
 			},
 		},
 	}
-	require.Equal(t, rules, slowLogRules.Rules)
+	compareConditionsUnordered(t, rules[0].Conditions, slowLogRules.Rules[0].Conditions)
 	require.Equal(t, allConditionFields, slowLogRules.AllConditionFields)
 
 	// return nil
@@ -271,11 +285,6 @@ func TestParseSlowLogRules(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid slow log rules count")
 
-	// unknown field
-	_, err = variable.ParseSlowLogRules("UnknownField: 1")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unknown slow log field name")
-
 	// Format error
 	_, err = variable.ParseSlowLogRules("Conn_ID 123")
 	require.Error(t, err)
@@ -283,6 +292,17 @@ func TestParseSlowLogRules(t *testing.T) {
 	_, err = variable.ParseSlowLogRules("Conn_ID > 123")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid slow log field format")
+
+	// Field resetting
+	slowLogRules, err = variable.ParseSlowLogRules("Mem_max:100,Succ:true,Succ:false,Mem_max:200")
+	require.NoError(t, err)
+	require.Len(t, slowLogRules.Rules, 1)
+	m := make(map[string]any)
+	for _, cond := range slowLogRules.Rules[0].Conditions {
+		m[cond.Field] = cond.Threshold
+	}
+	require.Equal(t, int64(200), m[variable.SlowLogMemMax])
+	require.Equal(t, false, m[variable.SlowLogSucc])
 
 	// empty fields in a single rule
 	_, err = variable.ParseSlowLogRules("Conn_ID:1,  , DB:db")

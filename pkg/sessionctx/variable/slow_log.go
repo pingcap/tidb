@@ -887,11 +887,7 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 		}
 
 		fields := strings.Split(rule, ",")
-		if len(fields) == 0 {
-			continue
-		}
-
-		slowLogRule := SlowLogRule{Conditions: make([]SlowLogCondition, 0, len(fields))}
+		fieldMap := make(map[string]any, len(fields))
 		for _, field := range fields {
 			kv := strings.Split(field, ":")
 			if len(kv) != 2 {
@@ -902,8 +898,12 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 			value := strings.TrimSpace(kv[1])
 			fieldValue, err := ParseSlowLogFieldValue(fieldName, strings.Trim(value, "\"'"))
 			if err != nil {
-				return nil, errors.Errorf("invalid slow log value format:%s, err:%s", fieldValue, err)
+				return nil, errors.Errorf("invalid slow log format, value:%s, err:%s", value, err)
 			}
+			fieldMap[fieldName] = fieldValue
+		}
+		slowLogRule := SlowLogRule{Conditions: make([]SlowLogCondition, 0, len(fieldMap))}
+		for fieldName, fieldValue := range fieldMap {
 			slowLogRule.Conditions = append(slowLogRule.Conditions, SlowLogCondition{
 				Field:     fieldName,
 				Threshold: fieldValue,
