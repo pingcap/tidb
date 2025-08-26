@@ -28,6 +28,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -1319,7 +1320,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			zap.Int("thread count", e.ThreadCnt),
 			zap.Int("max node count", e.MaxNodeCnt),
 			zap.Int("target node cpu count", targetNodeCPUCnt),
-			zap.Int64("total file size", totalSize))
+			zap.String("total file size", units.BytesSize(float64(totalSize))))
 	}
 	return nil
 }
