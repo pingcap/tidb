@@ -274,6 +274,7 @@ type reorgBackfillTask struct {
 	endKey   kv.Key
 	jobID    int64
 	priority int
+	regionID uint64
 }
 
 func (r *reorgBackfillTask) getJobID() int64 {
@@ -535,7 +536,7 @@ func loadTableRanges(
 
 		ranges = make([]kv.KeyRange, 0, len(rs))
 		for _, r := range rs {
-			ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
+			ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey(), RegionID: r.GetID()})
 		}
 		err = validateAndFillRanges(ranges, startKey, endKey)
 		if err != nil {
@@ -648,6 +649,7 @@ func getBatchTasks(
 			priority:      reorgInfo.Priority,
 			startKey:      startKey,
 			endKey:        endKey,
+			regionID:      r.RegionID,
 		}
 		batchTasks = append(batchTasks, task)
 	}
