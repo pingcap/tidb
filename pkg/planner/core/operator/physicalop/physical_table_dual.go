@@ -75,6 +75,7 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 	return str.String()
 }
 
+// CloneForPlanCache implements the base.Plan interface.
 func (p *PhysicalTableDual) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTableDual)
 	*cloned = *p
