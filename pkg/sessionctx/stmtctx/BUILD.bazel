@@ -12,6 +12,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/resourcegroup",

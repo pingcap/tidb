@@ -168,7 +168,7 @@ func (b *PBPlanBuilder) pbToProjection(e *tipb.Executor) (base.PhysicalPlan, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := PhysicalProjection{
+	p := physicalop.PhysicalProjection{
 		Exprs: exprs,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -216,16 +216,15 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.Physic
 		return nil, errors.Trace(err)
 	}
 	schema := b.buildAggSchema(aggFuncs, groupBys)
-	baseAgg := basePhysicalAgg{
+	baseAgg := physicalop.BasePhysicalAgg{
 		AggFuncs:     aggFuncs,
 		GroupByItems: groupBys,
 	}
-	baseAgg.SetSchema(schema)
 	var partialAgg base.PhysicalPlan
 	if isStreamAgg {
-		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForStream(b.sctx, &property.StatsInfo{}, 0, schema, &property.PhysicalProperty{})
 	} else {
-		partialAgg = baseAgg.initForHash(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForHash(b.sctx, &property.StatsInfo{}, 0, schema, &property.PhysicalProperty{})
 	}
 	return partialAgg, nil
 }
@@ -324,9 +323,9 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		// Set the expression column unique ID.
 		// Since the expression is build from PB, It has not set the expression column ID yet.
 		schemaCols := memTable.Schema().Columns
-		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
-		for i := range cols {
-			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
+		cols := expression.ExtractAllColumnsFromExpressions(predicates, nil)
+		for _, col := range cols {
+			col.UniqueID = schemaCols[col.Index].UniqueID
 		}
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.Schema(), names, predicates)
 		return predicates, memTable

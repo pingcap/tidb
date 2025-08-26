@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -115,6 +116,9 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks scheduled has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
+	// execIDs is the currently eligible execution node IDs for this task, we
+	// consider the current number of nodes and the limitation of the task, such
+	// as max node count of the task, when calculate it.
 	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, nextStep proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnDone is called when task is done, either finished successfully or failed
@@ -155,6 +159,15 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
+	Store          kv.Storage
+}
+
+// NewParamForTest creates a new Param for test.
+func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
+	return Param{
+		taskMgr: taskMgr,
+		Store:   store,
+	}
 }
 
 // GetNodeResource returns the node resource.

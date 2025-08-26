@@ -2242,6 +2242,19 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 func (n *ImportIntoStmt) SecureText() string {
 	redactedStmt := *n
 	redactedStmt.Path = RedactURL(n.Path)
+	redactedStmt.Options = make([]*LoadDataOpt, 0, len(n.Options))
+	for _, opt := range n.Options {
+		outOpt := opt
+		ln := strings.ToLower(opt.Name)
+		if ln == CloudStorageURI {
+			redactedStr := RedactURL(opt.Value.(ValueExpr).GetString())
+			outOpt = &LoadDataOpt{
+				Name:  opt.Name,
+				Value: NewValueExpr(redactedStr, "", ""),
+			}
+		}
+		redactedStmt.Options = append(redactedStmt.Options, outOpt)
+	}
 	var sb strings.Builder
 	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	return sb.String()
@@ -3048,12 +3061,14 @@ const (
 	ShowSessionStates
 	ShowCreateResourceGroup
 	ShowImportJobs
+	ShowImportGroups
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
 	ShowDistributions
-	ShowPlanForSQL
 	ShowDistributionJobs
+	// showTpCount is the count of all kinds of `SHOW` statements.
+	showTpCount
 )
 
 const (
@@ -3102,8 +3117,9 @@ type ShowStmt struct {
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
+	ShowGroupKey string // Used for `SHOW IMPORT GROUP <GROUP_KEY>` syntax
+
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
-	SQLOrDigest string // Used for `SHOW PLAN FOR ...` syntax
 
 	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
@@ -3324,6 +3340,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
+	case ShowImportGroups:
+		if n.ShowGroupKey != "" {
+			ctx.WriteKeyWord("IMPORT GROUP ")
+			ctx.WriteString(n.ShowGroupKey)
+		} else {
+			ctx.WriteKeyWord("IMPORT GROUPS")
+			restoreShowLikeOrWhereOpt()
+		}
 	case ShowDistributionJobs:
 		if n.DistributionJobID != nil {
 			ctx.WriteKeyWord("DISTRIBUTION JOB ")
@@ -3454,9 +3478,6 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SESSION_STATES")
 		case ShowReplicaStatus:
 			ctx.WriteKeyWord("REPLICA STATUS")
-		case ShowPlanForSQL:
-			ctx.WriteKeyWord("PLAN FOR ")
-			ctx.WriteString(n.SQLOrDigest)
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}
