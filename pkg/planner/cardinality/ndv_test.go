@@ -91,8 +91,14 @@ func TestIssue54812(t *testing.T) {
 	tk.MustExec(`insert into t values ` + strings.Repeat("(100, 2), ", 999) + "(100, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustExec(`set @@tidb_stats_load_sync_wait=100`)
-	aggEstRows := tk.MustQuery(`explain select distinct(a) from t where b=1`).Rows()[0][1].(string)
-	require.Equal(t, "65.23", aggEstRows)
+	tk.MustQuery(`explain format='brief' select distinct(a) from t where b=1`).Check(testkit.Rows(
+		`HashAgg 65.23 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a`,
+		`└─TableReader 65.23 root  data:HashAgg`,
+		`  └─HashAgg 65.23 cop[tikv]  group by:test.t.a, `,
+		`    └─Selection 100.00 cop[tikv]  eq(test.t.b, 1)`,
+		`      └─TableFullScan 1100.00 cop[tikv] table:t keep order:false`))
+	//aggEstRows := tk.MustQuery(`explain select distinct(a) from t where b=1`).Rows()[0][1].(string)
+	//require.Equal(t, "65.23", aggEstRows)
 }
 
 // createMockPlanContext creates a mock plan context with specified skew ratio
