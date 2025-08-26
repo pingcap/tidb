@@ -413,8 +413,7 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 			return v, nil
 		}
 		return v * 5, nil
-	case vardef.TiDBOptOrderingIdxSelRatio, vardef.TiDBOptRiskEqSkewRatio, vardef.TiDBOptRiskRangeSkewRatio, 
-        vardef.TiDBOptRiskGroupNDVSkewRatio, vardef.TiDBOptSelectivityFactor: // range [0, 1], "<=0" means disable
+	case vardef.TiDBOptOrderingIdxSelRatio, vardef.TiDBOptRiskEqSkewRatio, vardef.TiDBOptRiskRangeSkewRatio, vardef.TiDBOptRiskGroupNDVSkewRatio, vardef.TiDBOptSelectivityFactor: // range [0, 1], "<=0" means disable
 		v := varVal.(float64)
 		if v <= 0 {
 			return 0.1, nil
