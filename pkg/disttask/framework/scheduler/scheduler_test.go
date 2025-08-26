@@ -489,17 +489,13 @@ func TestManagerScheduleLoop(t *testing.T) {
 		}
 		require.Eventually(t, func() bool {
 			taskKeys := getRunningTaskKeys()
-			return err == nil && len(taskKeys) == 4 &&
-				taskKeys[0] == "key/0" && taskKeys[1] == "key/1" &&
-				taskKeys[2] == "key/3" && taskKeys[3] == "key/4"
+			return slices.Equal(taskKeys, []string{"key/0", "key/1", "key/3", "key/4"})
 		}, time.Second*10, time.Millisecond*100)
 		// finish the first task, task 'key/5' can be scheduled now
 		waitChannels["key/0"] <- struct{}{}
 		require.Eventually(t, func() bool {
 			taskKeys := getRunningTaskKeys()
-			return err == nil && len(taskKeys) == 4 &&
-				taskKeys[0] == "key/1" && taskKeys[1] == "key/3" &&
-				taskKeys[2] == "key/4" && taskKeys[3] == "key/5"
+			return slices.Equal(taskKeys, []string{"key/1", "key/3", "key/4", "key/5"})
 		}, time.Second*10, time.Millisecond*100)
 		// finish the second task, task 'key/2' can be scheduled now
 		// note, we don't preempt task 'key/3'/'key/4'/'key/5' even if 'key/2' reserves
@@ -508,9 +504,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 		waitChannels["key/1"] <- struct{}{}
 		require.Eventually(t, func() bool {
 			taskKeys := getRunningTaskKeys()
-			return err == nil && len(taskKeys) == 4 &&
-				taskKeys[0] == "key/2" && taskKeys[1] == "key/3" &&
-				taskKeys[2] == "key/4" && taskKeys[3] == "key/5"
+			return slices.Equal(taskKeys, []string{"key/2", "key/3", "key/4", "key/5"})
 		}, time.Second*10, time.Millisecond*100)
 		// close others
 		for i := 2; i < len(concurrencies); i++ {
@@ -518,7 +512,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 		}
 		require.Eventually(t, func() bool {
 			taskKeys := getRunningTaskKeys()
-			return err == nil && len(taskKeys) == 0
+			return len(taskKeys) == 0
 		}, time.Second*10, time.Millisecond*100)
 	})
 
@@ -534,7 +528,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 		// will scale node resource to meet the requirement.
 		require.Eventually(t, func() bool {
 			taskKeys := getRunningTaskKeys()
-			return err == nil && slices.Equal(taskKeys, []string{"key/0", "key/1", "key/2", "key/3", "key/4", "key/5"})
+			return slices.Equal(taskKeys, []string{"key/0", "key/1", "key/2", "key/3", "key/4", "key/5"})
 		}, time.Second*10, time.Millisecond*100)
 		status, err2 := handle.GetScheduleStatus(ctx)
 		require.NoError(t, err2)
@@ -546,7 +540,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 		}
 		require.Eventually(t, func() bool {
 			taskKeys := getRunningTaskKeys()
-			return err == nil && len(taskKeys) == 0
+			return len(taskKeys) == 0
 		}, time.Second*10, time.Millisecond*100)
 	})
 }
