@@ -21,6 +21,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
