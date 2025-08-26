@@ -251,12 +251,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			appendRemoveSelectionTraceStep(apply, sel, opt)
 			return s.optimize(ctx, p, opt, groupByColumn)
 		} else if m, ok := innerPlan.(*logicalop.LogicalMaxOneRow); ok {
-			if m.Children()[0].MaxOneRow() {
-				innerPlan = m.Children()[0]
-				apply.SetChildren(outerPlan, innerPlan)
-				appendRemoveMaxOneRowTraceStep(m, opt)
-				return s.optimize(ctx, p, opt, groupByColumn)
-			}
+			goto NoOptimize
 		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
