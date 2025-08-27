@@ -303,6 +303,9 @@ type PlanBuilder struct {
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
 
+	// noDecorrelate indicates whether decorrelation should be disabled for correlated aggregates in subqueries
+	noDecorrelate bool
+
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
@@ -462,6 +465,7 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.is = is
 	b.hintProcessor = processor
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
+	b.noDecorrelate = sctx.GetSessionVars().EnableNoDecorrelate
 	if savedBlockNames == nil {
 		return b, nil
 	}
@@ -494,6 +498,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.noDecorrelate = false
 
 	// Add more fields if they are safe to be reused.
 

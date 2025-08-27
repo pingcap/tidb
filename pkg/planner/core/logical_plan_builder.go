@@ -1992,7 +1992,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	// Check if referenced columns of expressions in ORDER BY whole match some fields in DISTINCT,
 	// both original expression and alias can be referenced.
 	// e.g.
-	// select distinct a from t order by sin(a);                            ✔
+	// select distinct sin(a) from t order by a;                            ✔
 	// select distinct a, b from t order by a+b;                            ✔
 	// select distinct count(a), sum(a) from t group by b order by sum(a);  ✔
 	cols := expression.ExtractColumns(expr)
@@ -2546,6 +2546,10 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 			corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 			cols = append(cols, expression.ExtractColumns(expr)...)
 		}
+		// If decorrelation is disabled, don't extract correlated aggregates
+		if b.noDecorrelate && len(corCols) > 0 {
+			continue
+		}
 		if len(corCols) > 0 && len(cols) == 0 {
 			outer = append(outer, agg)
 		}
@@ -2610,6 +2614,9 @@ type correlatedAggregateResolver struct {
 
 	// correlatedAggFuncs stores aggregate functions which belong to outer query
 	correlatedAggFuncs []*ast.AggregateFuncExpr
+
+	// noDecorrelate indicates whether decorrelation should be disabled for this resolver
+	noDecorrelate bool
 }
 
 // Enter implements Visitor interface.
@@ -2746,7 +2753,7 @@ func (r *correlatedAggregateResolver) collectFromGroupBy(p base.LogicalPlan, gro
 	r.b.curClause = groupByClause
 	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, aggList)
 	if err != nil {
-		return nil
+		return err
 	}
 	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
 	return nil
@@ -2784,9 +2791,10 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 // in the outer query from all the sub-queries inside SELECT fields.
 func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan) (map[*ast.AggregateFuncExpr]int, error) {
 	resolver := &correlatedAggregateResolver{
-		ctx:       ctx,
-		b:         b,
-		outerPlan: p,
+		ctx:           ctx,
+		b:             b,
+		outerPlan:     p,
+		noDecorrelate: b.noDecorrelate,
 	}
 	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
@@ -5823,11 +5831,11 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	newList = make([]*expression.Assignment, 0, p.Schema().Len())
 	tblDbMap := make(map[string]string, len(tableList))
 	for _, tbl := range tableList {
-		tblW := b.resolveCtx.GetTableName(tbl)
-		if isCTE(tblW) {
+		tnW := b.resolveCtx.GetTableName(tbl)
+		if isCTE(tnW) {
 			continue
 		}
-		tblDbMap[tbl.Name.L] = tblW.DBInfo.Name.L
+		tblDbMap[tbl.Name.L] = tnW.DBInfo.Name.L
 	}
 
 	allAssignments := append(list, virtualAssignments...)
@@ -6370,17 +6378,6 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		}
 		numRows, _, _ := getUintFromNode(b.ctx.GetExprCtx(), boundClause.Expr, false)
 		bound.Num = numRows
-		return bound, nil
-	}
-
-	bound.CalcFuncs = make([]expression.Expression, len(orderByItems))
-	bound.CmpFuncs = make([]expression.CompareFunc, len(orderByItems))
-	if bound.Type == ast.CurrentRow {
-		for i, item := range orderByItems {
-			col := item.Col
-			bound.CalcFuncs[i] = col
-			bound.CmpFuncs[i] = expression.GetCmpFunction(b.ctx.GetExprCtx(), col, col)
-		}
 		return bound, nil
 	}
 
