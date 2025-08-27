@@ -340,6 +340,8 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().RiskEqSkewRatio = state.varValues[i].(float64)
 		case vardef.TiDBOptRiskGroupNDVSkewRatio:
 			sctx.GetSessionVars().RiskGroupNDVSkewRatio = state.varValues[i].(float64)
+		case vardef.TiDBOptRiskRangeSkewRatio:
+			sctx.GetSessionVars().RiskRangeSkewRatio = state.varValues[i].(float64)
 		case vardef.TiDBOptPreferRangeScan:
 			sctx.GetSessionVars().SetAllowPreferRangeScan(state.varValues[i].(bool))
 		case vardef.TiDBOptSelectivityFactor:
@@ -411,7 +413,7 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 			return v, nil
 		}
 		return v * 5, nil
-	case vardef.TiDBOptOrderingIdxSelRatio, vardef.TiDBOptRiskEqSkewRatio, vardef.TiDBOptRiskGroupNDVSkewRatio, vardef.TiDBOptSelectivityFactor: // range [0, 1], "<=0" means disable
+	case vardef.TiDBOptOrderingIdxSelRatio, vardef.TiDBOptRiskEqSkewRatio, vardef.TiDBOptRiskRangeSkewRatio, vardef.TiDBOptRiskGroupNDVSkewRatio, vardef.TiDBOptSelectivityFactor: // range [0, 1], "<=0" means disable
 		v := varVal.(float64)
 		if v <= 0 {
 			return 0.1, nil
@@ -493,12 +495,14 @@ func getStartState(vars []string, fixes []uint64) (*state, error) {
 			s.varValues = append(s.varValues, vardef.DefTiDBOptOrderingIdxSelRatio)
 		case vardef.TiDBOptRiskEqSkewRatio:
 			s.varValues = append(s.varValues, vardef.DefOptRiskEqSkewRatio)
+		case vardef.TiDBOptRiskRangeSkewRatio:
+			s.varValues = append(s.varValues, vardef.DefOptRiskRangeSkewRatio)
 		case vardef.TiDBOptRiskGroupNDVSkewRatio:
 			s.varValues = append(s.varValues, vardef.DefOptRiskGroupNDVSkewRatio)
 		case vardef.TiDBOptPreferRangeScan:
 			s.varValues = append(s.varValues, vardef.DefOptPreferRangeScan)
 		case vardef.TiDBOptSelectivityFactor:
-			s.varValues = append(s.varValues, vardef.TiDBOptSelectivityFactor)
+			s.varValues = append(s.varValues, vardef.DefOptSelectivityFactor)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}
