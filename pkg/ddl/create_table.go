@@ -897,7 +897,7 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 		tbInfo.PreSplitRegions = ctx.GetPreSplitRegions()
 	}
 
-	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+	if err = handleTableOptions(ctx, s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1002,8 +1002,11 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 }
 
 // handleTableOptions updates tableInfo according to table options.
-func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
-	var ttlOptionsHandled bool
+func handleTableOptions(ctx *metabuild.Context, options []*ast.TableOption, tbInfo *model.TableInfo) error {
+	var (
+		ttlOptionsHandled         bool
+		autoIDCacheOptionsHandled bool
+	)
 
 	engineAttribute, hasEngineAttribute, engineAttributeErr := GetEngineAttributeFromStorageClassTableOptions(options)
 	if engineAttributeErr != nil {
@@ -1015,6 +1018,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionAutoIdCache:
+			autoIDCacheOptionsHandled = true
 			if op.UintValue > uint64(math.MaxInt64) {
 				// TODO: Refine this error.
 				return errors.New("table option auto_id_cache overflows int64")
@@ -1079,6 +1083,10 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			return errors.Trace(err)
 		}
 	}
+	if !autoIDCacheOptionsHandled {
+		tbInfo.AutoIDCache = int64(ctx.GetTiDBDefaultAutoIDCache())
+	}
+
 	shardingBits := shardingBits(tbInfo)
 	if tbInfo.PreSplitRegions > shardingBits {
 		tbInfo.PreSplitRegions = shardingBits
