@@ -532,11 +532,11 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 
 	if needsCopy {
 		if len(rows) == 0 {
-			// Only metadata update needed - use cheap metadata-only copy
-			table = table.ShallowCopy(statistics.CopyMetaOnly)
+			// Only metadata update needed - use metadata-only copy
+			table = table.CopyAs(statistics.MetaOnly)
 		} else {
-			// Histogram modifications needed - use full copy
-			table = table.Copy()
+			// Indexes and Columns map potentially get updated
+			table = table.CopyAs(statistics.BothMapsWritable)
 		}
 	}
 
@@ -584,7 +584,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 	}
 	table.ColAndIdxExistenceMap.SetChecked()
-	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
+	return ExtendedStatsFromStorage(sctx, table.CopyAs(statistics.ExtendedStatsWritable), tableID, loadAll)
 }
 
 // LoadHistogram will load histogram from storage.
@@ -714,7 +714,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
 			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
-			statsTbl = statsTbl.Copy()
+			statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 			statsTbl.SetCol(col.ID, fakeCol)
 			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 				Updated: []*statistics.Table{statsTbl},
@@ -778,7 +778,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		)
 		return nil
 	}
-	statsTbl = statsTbl.ShallowCopy(statistics.CopyWithColumns)
+	statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 	if colHist.StatsAvailable() {
 		if fullLoad {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
@@ -891,7 +891,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		)
 		return nil
 	}
-	tbl = tbl.ShallowCopy(statistics.CopyWithIndices)
+	tbl = tbl.CopyAs(statistics.IndexMapWritable)
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)

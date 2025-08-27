@@ -588,7 +588,7 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 	}
 	var tableCopied bool
 	if !tbl.ColAndIdxExistenceMap.Checked() {
-		tbl = tbl.ShallowCopy(statistics.CopyWithBothMaps)
+		tbl = tbl.CopyAs(statistics.BothMapsWritable)
 		tableCopied = true
 		for _, col := range tbl.HistColl.GetColSlice() {
 			if tblInfo.FindColumnByID(col.ID) == nil {
@@ -610,7 +610,7 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 			return false
 		}
 		if !tableCopied {
-			tbl = tbl.ShallowCopy(statistics.CopyWithColumns)
+			tbl = tbl.CopyAs(statistics.ColumnMapWritable)
 		}
 		tbl.SetCol(item.ID, colHist)
 
@@ -632,7 +632,7 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 			return true
 		}
 		if !tableCopied {
-			tbl = tbl.ShallowCopy(statistics.CopyWithIndices)
+			tbl = tbl.CopyAs(statistics.IndexMapWritable)
 		}
 		tbl.SetIdx(item.ID, idxHist)
 		// If the index is analyzed we refresh the map for the possible change.

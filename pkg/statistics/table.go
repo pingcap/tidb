@@ -41,18 +41,27 @@ const (
 	PseudoRowCount = 10000
 )
 
-// CopyMode controls what gets copied in ShallowCopy
-type CopyMode uint8
+// CopyIntent specifies what data structures are safe to modify in the copied table.
+type CopyIntent uint8
 
 const (
-	// CopyMetaOnly creates a copy sharing all maps - only metadata is copied (default, cheapest)
-	CopyMetaOnly CopyMode = iota
-	// CopyWithColumns clones the columns map but shares indices map
-	CopyWithColumns
-	// CopyWithIndices clones the indices map but shares columns map
-	CopyWithIndices
-	// CopyWithBothMaps clones both columns and indices maps
-	CopyWithBothMaps
+	// MetaOnly shares all maps - only table metadata is safe to modify
+	MetaOnly CopyIntent = iota
+
+	// ColumnMapWritable clones columns map - safe to add/remove columns
+	ColumnMapWritable
+
+	// IndexMapWritable clones indices map - safe to add/remove indices
+	IndexMapWritable
+
+	// BothMapsWritable clones both maps - safe to add/remove columns and indices
+	BothMapsWritable
+
+	// ExtendedStatsWritable shares all maps - safe to modify ExtendedStats field
+	ExtendedStatsWritable
+
+	// AllDataWritable deep copies everything - safe to modify all data including histograms
+	AllDataWritable
 )
 
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
@@ -613,77 +622,63 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 	return tMemUsage
 }
 
-// Copy creates a full deep copy of the current table.
-// This is the most expensive copy operation as it deep copies all histograms, sketches, and statistics data.
-func (t *Table) Copy() *Table {
-	newHistColl := HistColl{
-		PhysicalID:    t.PhysicalID,
-		RealtimeCount: t.RealtimeCount,
-		columns:       make(map[int64]*Column, len(t.columns)),
-		indices:       make(map[int64]*Index, len(t.indices)),
-		Pseudo:        t.Pseudo,
-		ModifyCount:   t.ModifyCount,
-		StatsVer:      t.StatsVer,
-	}
-	for id, col := range t.columns {
-		newHistColl.columns[id] = col.Copy()
-	}
-	for id, idx := range t.indices {
-		newHistColl.indices[id] = idx.Copy()
-	}
-	nt := &Table{
-		HistColl:             newHistColl,
-		Version:              t.Version,
-		TblInfoUpdateTS:      t.TblInfoUpdateTS,
-		LastAnalyzeVersion:   t.LastAnalyzeVersion,
-		LastStatsHistVersion: t.LastStatsHistVersion,
-	}
-	if t.ExtendedStats != nil {
-		newExtStatsColl := &ExtendedStatsColl{
-			Stats:             make(map[string]*ExtendedStatsItem),
-			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
-		}
-		maps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
-		nt.ExtendedStats = newExtStatsColl
-	}
-	if t.ColAndIdxExistenceMap != nil {
-		nt.ColAndIdxExistenceMap = t.ColAndIdxExistenceMap.Clone()
-	}
-	return nt
-}
-
-// ShallowCopy copies the current table with specified copy mode.
-// It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
-// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not deep copied.
+// CopyAs creates a copy of the table with the specified writability intent.
 //
-// Use copyMode to control which maps get cloned vs shared:
+// PERFORMANCE NOTE: Choose the most minimal intent for your use case. Copying is heavily
+// used at scale and unnecessary cloning causes significant memory pressure. Only use
+// AllDataWritable when you truly need to modify histogram data.
 //
-// CopyMetaOnly: Only copy table metadata (counts, versions, etc.), share all maps.
-// CopyWithColumns: Clone columns map but share indices map and clone existence map.
-// CopyWithIndices: Clone indices map but share columns map and clone existence map.
-// CopyWithBothMaps: Clone both columns and indices maps and clone existence map.
-func (t *Table) ShallowCopy(copyMode CopyMode) *Table {
+// MetaOnly: Shares all maps, only metadata modifications are safe
+// ColumnMapWritable: Clones columns map, safe to add/remove columns
+// IndexMapWritable: Clones indices map, safe to add/remove indices
+// BothMapsWritable: Clones both maps - safe to add/remove columns and indices
+// ExtendedStatsWritable: Shares all maps, safe to modify ExtendedStats field
+// AllDataWritable: Deep copies everything, safe to modify all data including histograms
+func (t *Table) CopyAs(intent CopyIntent) *Table {
 	var columns map[int64]*Column
 	var indices map[int64]*Index
 	var existenceMap *ColAndIdxExistenceMap
 
-	switch copyMode {
-	case CopyMetaOnly:
+	switch intent {
+	case MetaOnly:
 		columns = t.columns
 		indices = t.indices
 		existenceMap = t.ColAndIdxExistenceMap
-	case CopyWithColumns:
+	case ColumnMapWritable:
 		columns = maps.Clone(t.columns)
 		indices = t.indices
-		existenceMap = t.ColAndIdxExistenceMap.Clone()
-	case CopyWithIndices:
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case IndexMapWritable:
 		columns = t.columns
 		indices = maps.Clone(t.indices)
-		existenceMap = t.ColAndIdxExistenceMap.Clone()
-	case CopyWithBothMaps:
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case BothMapsWritable:
 		columns = maps.Clone(t.columns)
 		indices = maps.Clone(t.indices)
-		existenceMap = t.ColAndIdxExistenceMap.Clone()
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case ExtendedStatsWritable:
+		columns = t.columns
+		indices = t.indices
+		existenceMap = t.ColAndIdxExistenceMap
+	case AllDataWritable:
+		// For deep copy, create new maps and deep copy all content
+		columns = make(map[int64]*Column, len(t.columns))
+		for id, col := range t.columns {
+			columns[id] = col.Copy()
+		}
+		indices = make(map[int64]*Index, len(t.indices))
+		for id, idx := range t.indices {
+			indices[id] = idx.Copy()
+		}
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
 	}
 
 	newHistColl := HistColl{
@@ -699,11 +694,23 @@ func (t *Table) ShallowCopy(copyMode CopyMode) *Table {
 		HistColl:              newHistColl,
 		Version:               t.Version,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
-		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: existenceMap,
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
 		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
+
+	// Handle ExtendedStats for deep copy vs shallow copy
+	if (intent == AllDataWritable || intent == ExtendedStatsWritable) && t.ExtendedStats != nil {
+		newExtStatsColl := &ExtendedStatsColl{
+			Stats:             make(map[string]*ExtendedStatsItem),
+			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
+		}
+		maps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
+		nt.ExtendedStats = newExtStatsColl
+	} else {
+		nt.ExtendedStats = t.ExtendedStats
+	}
+
 	return nt
 }
 
