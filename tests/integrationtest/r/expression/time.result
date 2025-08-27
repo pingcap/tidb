@@ -104,14 +104,14 @@ explain format = 'plan_tree' select * from t where b = (select max(b) from t);
 id	task	access object	operator info
 TableReader	root		data:Selection
 └─Selection	cop[tikv]		eq(expression__time.t.b, 2019-04-29 11:56:12<-(ScalarQueryCol#6))
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-ScalarSubQuery	N/A	root		Output: ScalarQueryCol#6
-└─MaxOneRow	1.00	root		
-  └─StreamAgg	1.00	root		funcs:max(expression__time.t.b)->Column#5
-    └─TopN	1.00	root		expression__time.t.b:desc, offset:0, count:1
-      └─TableReader	1.00	root		data:TopN
-        └─TopN	1.00	cop[tikv]		expression__time.t.b:desc, offset:0, count:1
-          └─Selection	9990.00	cop[tikv]		not(isnull(expression__time.t.b))
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#6
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:max(expression__time.t.b)->Column#5
+    └─TopN	root		expression__time.t.b:desc, offset:0, count:1
+      └─TableReader	root		data:TopN
+        └─TopN	cop[tikv]		expression__time.t.b:desc, offset:0, count:1
+          └─Selection	cop[tikv]		not(isnull(expression__time.t.b))
             └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where b = (select max(b) from t);
 a	b

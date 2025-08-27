@@ -55,14 +55,14 @@ Sort	root		index_merge.t1.c1
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
   └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5<-(ScalarQueryCol#10))))
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-ScalarSubQuery	N/A	root		Output: ScalarQueryCol#10
-└─MaxOneRow	1.00	root		
-  └─StreamAgg	1.00	root		funcs:max(index_merge.t1.c3)->Column#9
-    └─TopN	1.00	root		index_merge.t1.c3:desc, offset:0, count:1
-      └─TableReader	1.00	root		data:TopN
-        └─TopN	1.00	cop[tikv]		index_merge.t1.c3:desc, offset:0, count:1
-          └─Selection	9990.00	cop[tikv]		not(isnull(index_merge.t1.c3))
-            └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#10
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:max(index_merge.t1.c3)->Column#9
+    └─TopN	root		index_merge.t1.c3:desc, offset:0, count:1
+      └─TableReader	root		data:TopN
+        └─TopN	cop[tikv]		index_merge.t1.c3:desc, offset:0, count:1
+          └─Selection	cop[tikv]		not(isnull(index_merge.t1.c3))
+            └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select max(c3) from t1) order by 1;
 c1	c2	c3
 1	1	1
@@ -119,12 +119,12 @@ Sort	root		index_merge.t1.c1
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
   └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5<-(ScalarQueryCol#20))))
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-ScalarSubQuery	N/A	root		Output: ScalarQueryCol#20
-└─MaxOneRow	1.00	root		
-  └─StreamAgg	1.00	root		funcs:count(Column#17)->Column#9
-    └─IndexReader	1.00	root		index:StreamAgg
-      └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#17
-        └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#20
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:count(Column#17)->Column#9
+    └─IndexReader	root		index:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:count(1)->Column#17
+        └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
 c1	c2	c3
 1	1	1
@@ -212,12 +212,12 @@ Sort	root		index_merge.t1.c1
       ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
       ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
       └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
-ScalarSubQuery	N/A	root		Output: ScalarQueryCol#25
-└─MaxOneRow	1.00	root		
-  └─StreamAgg	1.00	root		funcs:sum(Column#24)->Column#22
-    └─IndexReader	1.00	root		index:StreamAgg
-      └─StreamAgg	1.00	cop[tikv]		funcs:sum(index_merge.t2.c2)->Column#24
-        └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c2(c2)	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#25
+└─MaxOneRow	root		
+  └─StreamAgg	root		funcs:sum(Column#24)->Column#22
+    └─IndexReader	root		index:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:sum(index_merge.t2.c2)->Column#24
+        └─IndexFullScan	cop[tikv]	table:t2, index:c2(c2)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 c1	(select sum(c2) from t2)
 1	15

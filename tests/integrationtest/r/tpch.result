@@ -746,20 +746,20 @@ value desc;
 id	task	access object	operator info
 Projection	root		tpch50.partsupp.ps_partkey, Column#35->Column#59
 └─TableDual	root		rows:0
-ScalarSubQuery	N/A	root		Output: ScalarQueryCol#57
-└─MaxOneRow	1.00	root		
-  └─Projection	1.00	root		mul(Column#53, 0.0001000000)->Column#54
-    └─HashAgg	1.00	root		funcs:sum(Column#56)->Column#53
-      └─Projection	1604370.43	root		mul(tpch50.partsupp.ps_supplycost, cast(tpch50.partsupp.ps_availqty, decimal(10,0) BINARY))->Column#56
-        └─HashJoin	1604370.43	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
-          ├─HashJoin(Build)	19999.44	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-          │ ├─TableReader(Build)	1.00	root		data:Selection
-          │ │ └─Selection	1.00	cop[tikv]		eq(tpch50.nation.n_name, "MOZAMBIQUE")
-          │ │   └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
-          │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
-          │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
-          └─TableReader(Probe)	40000000.00	root		data:TableFullScan
-            └─TableFullScan	40000000.00	cop[tikv]	table:partsupp	keep order:false
+ScalarSubQuery	root		Output: ScalarQueryCol#57
+└─MaxOneRow	root		
+  └─Projection	root		mul(Column#53, 0.0001000000)->Column#54
+    └─HashAgg	root		funcs:sum(Column#56)->Column#53
+      └─Projection	root		mul(tpch50.partsupp.ps_supplycost, cast(tpch50.partsupp.ps_availqty, decimal(10,0) BINARY))->Column#56
+        └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
+          ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
+          │ ├─TableReader(Build)	root		data:Selection
+          │ │ └─Selection	cop[tikv]		eq(tpch50.nation.n_name, "MOZAMBIQUE")
+          │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
+          │ └─TableReader(Probe)	root		data:TableFullScan
+          │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
+          └─TableReader(Probe)	root		data:TableFullScan
+            └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
 /*
 Q12 Shipping Modes and Order Priority Query
 This query determines whether selecting less expensive modes of shipping is negatively affecting the critical-priority
@@ -1330,10 +1330,10 @@ Sort	root		Column#32
   └─HashAgg	root		group by:Column#37, funcs:count(1)->Column#33, funcs:sum(Column#36)->Column#34, funcs:firstrow(Column#37)->Column#32
     └─Projection	root		tpch50.customer.c_acctbal->Column#36, substring(tpch50.customer.c_phone, 1, 2)->Column#37
       └─TableDual	root		rows:0
-ScalarSubQuery	N/A	root		Output: ScalarQueryCol#22
-└─MaxOneRow	1.00	root		
-  └─HashAgg	1.00	root		funcs:avg(Column#18, Column#19)->Column#17
-    └─TableReader	1.00	root		data:HashAgg
-      └─HashAgg	1.00	cop[tikv]		funcs:count(tpch50.customer.c_acctbal)->Column#18, funcs:sum(tpch50.customer.c_acctbal)->Column#19
-        └─Selection	5442207.29	cop[tikv]		gt(tpch50.customer.c_acctbal, 0.00), in(substring(tpch50.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
-          └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+ScalarSubQuery	root		Output: ScalarQueryCol#22
+└─MaxOneRow	root		
+  └─HashAgg	root		funcs:avg(Column#18, Column#19)->Column#17
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		funcs:count(tpch50.customer.c_acctbal)->Column#18, funcs:sum(tpch50.customer.c_acctbal)->Column#19
+        └─Selection	cop[tikv]		gt(tpch50.customer.c_acctbal, 0.00), in(substring(tpch50.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
+          └─TableFullScan	cop[tikv]	table:customer	keep order:false
