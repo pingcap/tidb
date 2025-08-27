@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -29,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -57,6 +60,10 @@ func createFailDBSuiteWithLease(t *testing.T, lease time.Duration) (s *failedSui
 			s.cluster = c
 		}),
 	)
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+		kvstore.SetSystemStorage(s.store)
+	}
 	require.NoError(t, err)
 	vardef.SetSchemaLease(lease)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -211,6 +218,9 @@ func TestAddIndexFailed(t *testing.T) {
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	if kerneltype.IsNextGen() {
+		tableStart = s.store.GetCodec().EncodeKey(tableStart)
+	}
 	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	tk.MustExec("alter table t add index idx_b(b)")

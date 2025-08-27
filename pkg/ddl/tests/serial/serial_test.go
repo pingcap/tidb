@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -1237,6 +1238,9 @@ func TestGetReverseKey(t *testing.T) {
 	require.NoError(t, err)
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 4)
 
 	tk.MustQuery("select * from test_get order by a").Check(testkit.Rows("-9223372036854775808 -9223372036854775808",
