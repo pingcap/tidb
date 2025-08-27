@@ -98,6 +98,7 @@ func (k Key) String() string {
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
+	RegionID uint64
 }
 
 // KeyRangeSliceMemUsage return the memory usage of []KeyRange
