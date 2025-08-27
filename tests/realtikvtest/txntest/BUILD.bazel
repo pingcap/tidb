@@ -12,6 +12,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -20,6 +21,7 @@ go_test(
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/parser",
+        "//pkg/session",
         "//pkg/session/txninfo",
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/staleread",

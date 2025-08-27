@@ -1880,3 +1880,28 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestTiDBOptSelectivityFactor(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.8, val)
+
+	// set valid value
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBOptSelectivityFactor, "0.7"))
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.7, val)
+
+	// set invalid value
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBOptSelectivityFactor, "1.1")
+	require.NoError(t, err)
+	_, err = mock.GetGlobalSysVar(vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
+}

@@ -160,6 +160,14 @@ func init() {
 	// for table reader
 	utilfuncp.GetPlanCostVer14PhysicalTableReader = getPlanCostVer14PhysicalTableReader
 	utilfuncp.GetPlanCostVer24PhysicalTableReader = getPlanCostVer24PhysicalTableReader
+	// for physical point get
+	utilfuncp.GetCost4PointGetPlan = getCost4PointGetPlan
+	utilfuncp.GetPlanCostVer14PointGetPlan = getPlanCostVer14PointGetPlan
+	utilfuncp.GetPlanCostVer24PointGetPlan = getPlanCostVer24PointGetPlan
+	// for physical batch point get
+	utilfuncp.GetCost4BatchPointGetPlan = getCost4BatchPointGetPlan
+	utilfuncp.GetPlanCostVer14BatchPointGetPlan = getPlanCostVer14BatchPointGetPlan
+	utilfuncp.GetPlanCostVer24BatchPointGetPlan = getPlanCostVer24BatchPointGetPlan
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
