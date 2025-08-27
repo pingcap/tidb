@@ -151,8 +151,8 @@ type LogicalJoin struct {
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
 
-	// allDataSouceSchema is used to identify the table where the column is located during constant propagation.
-	allDataSouceSchema []*expression.Schema
+	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
+	allJoinLeaf []*expression.Schema
 }
 
 // Init initializes LogicalJoin.
@@ -211,7 +211,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
-	p.allDataSouceSchema = getAllDataSourceSchema(p)
+	p.allJoinLeaf = getAllJoinLeaf(p)
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
@@ -1086,7 +1086,7 @@ func (p *LogicalJoin) AppendJoinConds(eq []*expression.ScalarFunction, left, rig
 	p.OtherConditions = append(other, p.OtherConditions...)
 }
 
-func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bool {
+func (p *LogicalJoin) isAllUniqueIDInTheSameLeaf(cond expression.Expression) bool {
 	colset := slices.Collect(
 		maps.Keys(expression.ExtractColumnsMapFromExpressions(nil, cond)),
 	)
@@ -1094,7 +1094,7 @@ func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bo
 		return true
 	}
 
-	for _, schema := range p.allDataSouceSchema {
+	for _, schema := range p.allJoinLeaf {
 		inTheSameSchema := true
 		// if we find a column in the table, the other is not in the same table.
 		// They are impossible in the same table. we can directly return.
@@ -1117,17 +1117,17 @@ func (p *LogicalJoin) isAllUniqueIDInTheSameTable(cond expression.Expression) bo
 	return false
 }
 
-// getAllDataSourceSchema is to get all datasource's schema
-func getAllDataSourceSchema(plan base.LogicalPlan) []*expression.Schema {
+// getAllJoinLeaf is to get all datasource's schema
+func getAllJoinLeaf(plan base.LogicalPlan) []*expression.Schema {
 	switch p := plan.(type) {
-	case *DataSource, *LogicalAggregation:
+	case *DataSource, *LogicalAggregation, *LogicalProjection:
 		// Because sometimes we put the output of the aggregation into the schema,
 		// we can consider it as a new table.
 		return []*expression.Schema{p.Schema()}
 	default:
 		result := make([]*expression.Schema, 0, len(p.Children()))
 		for _, child := range p.Children() {
-			result = append(result, getAllDataSourceSchema(child)...)
+			result = append(result, getAllJoinLeaf(child)...)
 		}
 		return result
 	}
@@ -1353,14 +1353,14 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 	// When the expression is a left/right condition, we want it to filter more of the underlying data.
 	if len(leftCond) > 0 {
 		// If this expression's columns is in the same table. We will push it down.
-		if canLeftPushDown && p.isAllUniqueIDInTheSameTable(cond) {
+		if canLeftPushDown && p.isAllUniqueIDInTheSameLeaf(cond) {
 			return true
 		}
 		return false
 	}
 	if len(rightCond) > 0 {
 		// If this expression's columns is in the same table. We will push it down.
-		if canRightPushDown && p.isAllUniqueIDInTheSameTable(cond) {
+		if canRightPushDown && p.isAllUniqueIDInTheSameLeaf(cond) {
 			return true
 		}
 		return false
