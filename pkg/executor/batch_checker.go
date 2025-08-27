@@ -294,13 +294,17 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	}
 
 	if len(oldValues) == 0 {
-		return nil, 0, errors.New("not exists")
+		return nil, 0, kv.ErrNotExist
 	}
 
 	var oldValue tikvstore.ValueItem
 	for _, v := range oldValues {
 		oldValue = v
 		break
+	}
+
+	if len(oldValue.Value) == 0 {
+		return nil, 0, kv.ErrNotExist
 	}
 
 	cols := t.WritableCols()

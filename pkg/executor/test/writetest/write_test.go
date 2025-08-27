@@ -603,7 +603,7 @@ func TestActive2Active(t *testing.T) {
 	require.Greater(t, commitTS3, commitTS2)
 
 	// more complex query
-	tk.MustQuery("select id, v, _tidb_commit_ts + 1, ifnull(_tidb_origin_ts, 1024) from t where id >= 2 and _tidb_commit_ts > 1000 order by id").Check(testkit.Rows(
+	tk.MustQuery("select id, v, `_tidb_commit_ts` + 1, ifnull(_tidb_origin_ts, 1024) from t where id >= 2 and _tidb_commit_ts > 1000 order by id").Check(testkit.Rows(
 		fmt.Sprintf("2 20 %d 1024", commitTS2+1),
 		fmt.Sprintf("3 30 %d %d", commitTS3+1, originTS3),
 	))
@@ -684,4 +684,24 @@ func TestActive2Active(t *testing.T) {
 		commitTS1-1,
 	)
 	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 1").Check(testkit.Rows("1 1024 <nil>"))
+
+	// INSERT .. ON DUPLICATE KEY UPDATE ... (previous record not exists)
+	originTS4 := commitTS1
+	tk.MustExec("insert into t(id, v, _tidb_origin_ts) values(4, 345, ?) on duplicate key update "+
+		"v = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), v, values(v)), "+
+		"_tidb_origin_ts = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), _tidb_origin_ts, values(_tidb_origin_ts))",
+		originTS4,
+	)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 4").Check(testkit.Rows(fmt.Sprintf("4 345 %d", originTS4)))
+
+	// INSERT .. ON DUPLICATE KEY UPDATE ... (previous record deleted)
+	tk.MustExec("delete from t where id = 4")
+	tk.MustQuery("select * from t where id = 4").Check(testkit.Rows())
+	originTS4 = commitTS1 + 10
+	tk.MustExec("insert into t(id, v, _tidb_origin_ts) values(4, 789, ?) on duplicate key update "+
+		"v = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), v, values(v)), "+
+		"_tidb_origin_ts = if(ifnull(_tidb_origin_ts, _tidb_commit_ts) > values(_tidb_origin_ts), _tidb_origin_ts, values(_tidb_origin_ts))",
+		originTS4,
+	)
+	tk.MustQuery("select id, v, _tidb_origin_ts from t where id = 4").Check(testkit.Rows(fmt.Sprintf("4 789 %d", originTS4)))
 }
