@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -125,19 +124,6 @@ func (txn *LazyTxn) countHint() int {
 	return txn.Transaction.GetMemBuffer().Len() - txn.initCnt
 }
 
-func (txn *LazyTxn) recordTableDirtyContent() {
-	if txn.mu.TxnInfo.TableDirtyContent == nil {
-		txn.mu.TxnInfo.TableDirtyContent = map[int64]struct{}{}
-	}
-	buf := txn.Transaction.GetMemBuffer()
-	buf.InspectStage(txn.stagingHandle, func(k kv.Key, _ kv.KeyFlags, _ []byte) {
-		tid := tablecodec.DecodeTableID(k)
-		if tid > 0 {
-			txn.mu.TxnInfo.TableDirtyContent[tid] = struct{}{}
-		}
-	})
-}
-
 func (txn *LazyTxn) flushStmtBuf() {
 	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return
@@ -200,7 +186,6 @@ func (txn *LazyTxn) resetTxnInfo(
 
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
-	txn.mu.TxnInfo.TableDirtyContent = nil
 }
 
 // Size implements the MemBuffer interface.
@@ -739,14 +724,11 @@ func (s *session) HasDirtyContent(tid int64) bool {
 	if s.txn.Transaction == nil || s.txn.Transaction.IsPipelined() {
 		return false
 	}
-	if s.txn.mu.TxnInfo.TableDirtyContent != nil {
-		_, exist := s.txn.mu.TxnInfo.TableDirtyContent[tid]
+	if txnCtx := s.sessionVars.TxnCtx; txnCtx != nil && txnCtx.TableDeltaMap != nil {
+		_, exist := txnCtx.TableDeltaMap[tid]
 		return exist
 	}
-	seekKey := tablecodec.EncodeTablePrefix(tid)
-	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
-	terror.Log(err)
-	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
+	return false
 }
 
 // StmtCommit implements the sessionctx.Context interface.
@@ -762,10 +744,6 @@ func (s *session) StmtCommit(ctx context.Context) {
 	}
 
 	st := &s.txn
-	if s.sessionVars.InTxn() {
-		// only record when in txn, it is no need for autocommit=1.
-		st.recordTableDirtyContent()
-	}
 	st.flushStmtBuf()
 }
 
