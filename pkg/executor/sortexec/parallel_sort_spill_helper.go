@@ -197,6 +197,7 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	p.tmpSpillChunk.Reset()
 	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
+	isInDiskAppended := false
 
 	spilledRowChannel := make(chan chunk.Row, 10000)
 	errChannel := make(chan error, 1)
@@ -204,7 +205,13 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	// We must wait the finish of the following goroutine,
 	// or we will exit `spillImpl` function in advance and
 	// this will cause data race.
-	defer channel.Clear(spilledRowChannel)
+	defer func() {
+		if !isInDiskAppended && inDisk.NumRows() > 0 {
+			p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
+			isInDiskAppended = true
+		}
+		channel.Clear(spilledRowChannel)
+	}()
 
 	wg := &util.WaitGroupWrapper{}
 	wg.RunWithRecover(
@@ -260,6 +267,7 @@ OuterLoop:
 
 				if inDisk.NumRows() > 0 {
 					p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
+					isInDiskAppended = true
 					p.releaseMemory()
 				}
 				break OuterLoop
