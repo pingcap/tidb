@@ -1336,7 +1336,13 @@ func (p *LogicalJoin) isVaildConstantPropagationExpressionForRightOuterJoin(expr
 // Some expressions are not suitable for constant propagation. After constant propagation,
 // these expressions will only become a projection, increasing the computational load without
 // being able to filter data directly from the data source.
-func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expression, deriveLeft, deriveRight, canLeft, canRight bool) bool {
+//
+// `deriveLeft` and `driveRight` are used in conjunction with `extractOnCondition`.
+//
+// `canLeftPushDown` and `canRightPushDown` are used to mark that for some joins,
+// the left or right condition will not be pushed down. For these conditions that cannot be pushed down,
+// we can reject the new expressions from constant propagation.
+func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expression, deriveLeft, deriveRight, canLeftPushDown, canRightPushDown bool) bool {
 	_, leftCond, rightCond, otherCond := p.extractOnCondition([]expression.Expression{cond}, deriveLeft, deriveRight)
 	if len(otherCond) > 0 {
 		// a new expression which is created by constant propagation, is a other condtion, we don't put it
@@ -1347,14 +1353,14 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 	// When the expression is a left/right condition, we want it to filter more of the underlying data.
 	if len(leftCond) > 0 {
 		// If this expression's columns is in the same table. We will push it down.
-		if canLeft && p.isAllUniqueIDInTheSameTable(cond) {
+		if canLeftPushDown && p.isAllUniqueIDInTheSameTable(cond) {
 			return true
 		}
 		return false
 	}
 	if len(rightCond) > 0 {
 		// If this expression's columns is in the same table. We will push it down.
-		if canRight && p.isAllUniqueIDInTheSameTable(cond) {
+		if canRightPushDown && p.isAllUniqueIDInTheSameTable(cond) {
 			return true
 		}
 		return false
