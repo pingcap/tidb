@@ -194,9 +194,10 @@ func NewModifyColumnEvent(
 func (s *SchemaChangeEvent) GetModifyColumnInfo() (
 	newTableInfo *model.TableInfo,
 	modifiedColumns []*model.ColumnInfo,
+	analyzed bool,
 ) {
 	intest.Assert(s.inner.Tp == model.ActionModifyColumn)
-	return s.inner.TableInfo, s.inner.Columns
+	return s.inner.TableInfo, s.inner.Columns, s.inner.Analyzed
 }
 
 // NewAddPartitionEvent creates a SchemaChangeEvent whose type is
