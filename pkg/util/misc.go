@@ -123,7 +123,6 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
 	if intest.InTest {
 		if strings.Contains(fmt.Sprintf("%v", r), "assert failed") {
-			time.Sleep(100 * time.Minute)
 			panic(r)
 		}
 	}

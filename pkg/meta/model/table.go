@@ -396,13 +396,6 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return
 	}
-	dependence := make(map[int64]int64) // column ID -> column ID
-	for _, col := range t.Columns {
-		if col.ChangeStateInfo != nil {
-			depColOffset := col.ChangeStateInfo.DependencyColumnOffset
-			dependence[col.ID] = t.Columns[depColOffset].ID
-		}
-	}
 
 	// Update column offsets.
 	updatedOffsets := make(map[int]int)
@@ -437,12 +430,9 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	// Reconstruct the dependency column offsets.
 	for _, col := range t.Columns {
 		if col.ChangeStateInfo != nil {
-			depColID := dependence[col.ID]
-			for i, c := range t.Columns {
-				if c.ID == depColID {
-					col.ChangeStateInfo.DependencyColumnOffset = i
-					break
-				}
+			newOffset, ok := updatedOffsets[col.ChangeStateInfo.DependencyColumnOffset]
+			if ok {
+				col.ChangeStateInfo.DependencyColumnOffset = newOffset
 			}
 		}
 	}

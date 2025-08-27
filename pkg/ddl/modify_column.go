@@ -430,27 +430,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
-func printTableInfo(tblInfo *model.TableInfo) {
-	for _, col := range tblInfo.Columns {
-		logutil.DDLLogger().Info("column",
-			zap.Int64("id", col.ID),
-			zap.String("name", col.Name.O),
-			zap.Stringer("state", col.State),
-			zap.Any("changingState", col.ChangeStateInfo),
-		)
-	}
-
-	for _, idx := range tblInfo.Indices {
-		idxCols := make([]string, 0, len(idx.Columns))
-		for _, idxCol := range idx.Columns {
-			idxCols = append(idxCols, idxCol.Name.O)
-		}
-
-		logutil.DDLLogger().Info("index", zap.Int64("id", idx.ID),
-			zap.String("name", idx.Name.O), zap.Strings("idxCols", idxCols), zap.Stringer("state", idx.State))
-	}
-}
-
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -459,9 +438,6 @@ func (w *worker) doModifyColumnTypeWithData(
 	changingCol, oldCol *model.ColumnInfo,
 	args *model.ModifyColumnArgs,
 ) (ver int64, _ error) {
-	printTableInfo(tblInfo)
-	logutil.DDLLogger().Info("doModifyColumnTypeWithData", zap.Int64("jobID", job.ID))
-	defer printTableInfo(tblInfo)
 	colName, pos := args.Column.Name, args.Position
 
 	var err error
