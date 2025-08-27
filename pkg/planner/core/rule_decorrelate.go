@@ -251,18 +251,14 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			appendRemoveSelectionTraceStep(apply, sel, opt)
 			return s.optimize(ctx, p, opt, groupByColumn)
 		} else if m, ok := innerPlan.(*logicalop.LogicalMaxOneRow); ok {
-			goto NoOptimize
-		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
-			// After the column pruning, some expressions in the projection operator may be pruned.
-			// In this situation, we can decorrelate the apply operator.
-			allConst := len(proj.Exprs) > 0
-			for _, expr := range proj.Exprs {
-				if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
-					allConst = false
-					break
-				}
+			if m.Children()[0].MaxOneRow() {
+				innerPlan = m.Children()[0]
+				apply.SetChildren(outerPlan, innerPlan)
+				appendRemoveMaxOneRowTraceStep(m, opt)
+				return s.optimize(ctx, p, opt, groupByColumn)
 			}
-			if allConst && apply.JoinType == logicalop.LeftOuterJoin {
+		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
+			if apply.JoinType == logicalop.LeftOuterJoin {
 				// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
 				//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
 				//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
