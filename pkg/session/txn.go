@@ -725,8 +725,8 @@ func (s *session) HasDirtyContent(tid int64) bool {
 		return false
 	}
 	if txnCtx := s.sessionVars.TxnCtx; txnCtx != nil && txnCtx.TableDeltaMap != nil {
-		_, exist := txnCtx.TableDeltaMap[tid]
-		return exist
+		item := txnCtx.TableDeltaMap[tid]
+		return item.Count > 0
 	}
 	return false
 }
