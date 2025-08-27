@@ -139,7 +139,11 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 			if !ok {
 				continue
 			}
-			table = table.CopyAs(statistics.MetaOnly)
+			// optimization: doesn't need to copy and can do in place changes since
+			// 1. initStatsHistograms4ChunkLite is a single thread populating entries in a local cache, and later the
+			// cache will be called h.Replace(cache) to be the global cache
+			// 2. following logic only modifies ColAndIdxExistenceMap, so it won't impact the cache memory cost
+			// calculation
 		}
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
@@ -396,8 +400,7 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			if !ok {
 				continue
 			}
-			// existing idx is modified so if using shallow copy the modified idx is shared and will mess up the cache
-			// cost calculation
+			// existing idx histogram is modified have to use deep copy
 			table = table.CopyAs(statistics.AllDataWritable)
 		}
 		idx := table.GetIdx(row.GetInt64(1))
@@ -571,8 +574,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			if !ok {
 				continue
 			}
-			// existing idx is modified so if using shallow copy the modified idx is shared and will mess up the cache
-			// cost calculation
+			// existing idx histogram is modified have to use deep copy
 			table = table.CopyAs(statistics.AllDataWritable)
 		}
 		var lower, upper types.Datum

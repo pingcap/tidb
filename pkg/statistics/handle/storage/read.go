@@ -532,10 +532,10 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 
 	if needsCopy {
 		if len(rows) == 0 {
-			// Only metadata update needed - use metadata-only copy
+			// Only metadata update needed
 			table = table.CopyAs(statistics.MetaOnly)
 		} else {
-			// Indexes and Columns map potentially get updated
+			// Indexes and Columns maps potentially get updated
 			table = table.CopyAs(statistics.BothMapsWritable)
 		}
 	}
