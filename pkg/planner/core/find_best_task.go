@@ -2429,7 +2429,7 @@ func pkCoveringColumn(ds *logicalop.DataSource, column *expression.Column, ignor
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
-	return coveredByClusteredIndex, true
+	return coveredByClusteredIndex, coveredByClusteredIndex
 }
 
 func isIndexCoveringColumns(ds *logicalop.DataSource, columns, indexColumns []*expression.Column, idxColLens []int) bool {

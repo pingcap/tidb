@@ -4080,11 +4080,17 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, err := builder.ConstructDAGReq(b.ctx, v.IndexPlans, kv.TiKV)
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	indexPlans := v.IndexPlans
+	storeType := kv.TiKV
+	if is.Index.IsFulltextIndexOnTiCI() {
+		indexPlans = []base.PhysicalPlan{v.IndexPlans[len(v.IndexPlans)-1]}
+		storeType = kv.TiFlash
+	}
+	dagReq, err := builder.ConstructDAGReq(b.ctx, indexPlans, storeType)
 	if err != nil {
 		return nil, err
 	}
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	tbl, _ := b.is.TableByID(context.Background(), is.Table.ID)
 	isPartition, physicalTableID := is.IsPartition()
 	if isPartition {
@@ -4209,7 +4215,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 // buildIndexReq is designed to create a DAG for index request.
 // If len(ByItems) != 0 means index request should return related columns
 // to sort result rows in TiDB side for partition tables.
-func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
+func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans ...base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, idxScan.StoreType)
 	if err != nil {
@@ -4257,7 +4263,15 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		handleLen = 1
 	}
-	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
+	var (
+		indexReq *tipb.DAGRequest
+		err      error
+	)
+	if !is.Index.IsFulltextIndexOnTiCI() {
+		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans...)
+	} else {
+		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans[len(v.IndexPlans)-1])
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4307,8 +4321,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
-		storeType:                  v.IndexStoreType,
-		batchCop:                   v.ReadReqType == plannercore.BatchCop,
 	}
 
 	if v.ExtraHandleCol != nil {
@@ -4402,7 +4414,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		var err error
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
+			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i]...)
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 			if is.Index.Global {
