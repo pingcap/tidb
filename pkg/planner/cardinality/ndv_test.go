@@ -29,7 +29,7 @@ import (
 )
 
 func TestScaleNDV(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_opt_scale_ndv_skew_ratio = 0`)
 	type TestCase struct {
