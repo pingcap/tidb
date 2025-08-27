@@ -103,7 +103,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 	var finishedSubtasks int
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(be *local.Backend) {
 		finishedSubtasks++
-		// require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
+		require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
 	})
 	var modified atomic.Bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
