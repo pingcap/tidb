@@ -123,7 +123,9 @@ func onAlterResourceGroup(jobCtx *jobContext, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	err = infosync.ModifyResourceGroup(context.TODO(), protoGroup)
+	ctx, cancel := context.WithTimeout(jobCtx.stepCtx, defaultInfosyncTimeout)
+	defer cancel()
+	err = infosync.ModifyResourceGroup(ctx, protoGroup)
 	if err != nil {
 		logutil.DDLLogger().Warn("update resource group failed", zap.Error(err))
 		job.State = model.JobStateCancelled
@@ -166,7 +168,9 @@ func onDropResourceGroup(jobCtx *jobContext, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = infosync.DeleteResourceGroup(context.TODO(), groupInfo.Name.L)
+		ctx, cancel := context.WithTimeout(jobCtx.stepCtx, defaultInfosyncTimeout)
+		defer cancel()
+		err = infosync.DeleteResourceGroup(ctx, groupInfo.Name.L)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
