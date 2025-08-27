@@ -657,6 +657,9 @@ func TestInstancePlanCacheWithDualTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 
+	// Explicitly disable instance plan cache first
+	tk.MustExec(`set global tidb_enable_instance_plan_cache = 0`)
+
 	// First test: without instance plan cache enabled
 	tk.MustExec(`prepare stmt from 'select 1 from dual'`)
 	tk.MustExec(`execute stmt`)
@@ -673,9 +676,9 @@ func TestInstancePlanCacheWithDualTable(t *testing.T) {
 	tk.MustExec(`execute stmt`)
 	tk.MustExec(`execute stmt`)
 
-	// Should still hit plan cache, but currently fails
+	// Should still hit plan cache with instance plan cache enabled
 	result = tk.MustQuery(`select @@last_plan_from_cache`)
-	result.Check(testkit.Rows("1")) // This assertion will fail due to the bug
+	result.Check(testkit.Rows("1"))
 
 	// Clean up
 	tk.MustExec(`set global tidb_enable_instance_plan_cache = 0`)
