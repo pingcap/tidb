@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -1199,6 +1200,19 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 
 func bootstrapSchemas(store kv.Storage) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	if _, ok := store.(schematracker.StorageDDLInjector); ok {
+		s, err := createSession(store)
+		if err != nil {
+			return err
+		}
+		for _, db := range systemDatabases {
+			mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
+		}
+		for _, tbl := range tablesInSystemDatabase {
+			mustExecute(s, tbl.SQL)
+		}
+	}
+
 	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		currVer, err := m.GetNextGenBootTableVersion()
