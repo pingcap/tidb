@@ -282,7 +282,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 					// Because this expr may invalidate the semantics of LeftOuterJoin.
 					// TODO we should use null-reject attr to decide in a more accurate way.
 					cols := expression.ExtractColumns(expr)
-					if outerPlan.Schema().ColumnIndices(cols) != nil {
+					if outerPlan.Schema().ColumnsIndices(cols) != nil {
 						goto NoOptimize
 					}
 				}
