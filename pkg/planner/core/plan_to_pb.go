@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -410,6 +411,16 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 	tableColumns := p.Table.Cols()
 	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraHandleID {
+			if store == kv.TiFlash && p.Table.PKIsHandle {
+				// For tici, we need to find int pk from table columns.
+				for _, tblCol := range tableColumns {
+					if mysql.HasPriKeyFlag(tblCol.GetFlag()) {
+						columns = append(columns, tblCol)
+						break
+					}
+				}
+				continue
+			}
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
