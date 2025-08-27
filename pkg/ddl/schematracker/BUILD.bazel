@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/schematracker",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/schemaver",
         "//pkg/ddl/serverstate",
@@ -20,6 +21,7 @@ go_library(
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/owner",
+        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
