@@ -195,8 +195,27 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	return err
 }
 
+// adjustCountAfterAccess adjusts the CountAfterAccess when it's less than the estimated table row count.
+func adjustCountAfterAccess(ds *logicalop.DataSource, path *util.AccessPath) {
+	// If the `CountAfterAccess` is less than `stats.RowCount`, it means that paths were estimated using
+	// different assumptions regarding individual or compound selectivity estimates.
+	// We prefer the `stats.RowCount` to provide consistency in estimation across all paths.
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	if (path.CountAfterAccess + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
+		// Store the MinCountAfterAccess "before" adjusting the "CountAfterAccess". This can be used to differentiate
+		// the "Min" estimate for each index/inthandle path when CountAfterAccess has been equalized.
+		if path.MinCountAfterAccess > 0 {
+			path.MinCountAfterAccess = min(path.MinCountAfterAccess, path.CountAfterAccess)
+		} else {
+			path.MinCountAfterAccess = path.CountAfterAccess
+		}
+		path.CountAfterAccess = min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+		// Ensure MaxCountAfterAccess is updated to reflect that "after" result
+		path.MaxCountAfterAccess = max(path.CountAfterAccess, path.MaxCountAfterAccess)
+	}
+}
+
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
-// conds is the conditions used to generate the DetachRangeResult for path.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -225,17 +244,9 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 	var indexFilters []expression.Expression
 	indexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
 	path.IndexFilters = append(path.IndexFilters, indexFilters...)
-	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
-	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		if path.MinCountAfterAccess > 0 {
-			path.MinCountAfterAccess = min(path.MinCountAfterAccess, path.CountAfterAccess)
-		} else {
-			path.MinCountAfterAccess = path.CountAfterAccess
-		}
-		path.CountAfterAccess = min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
-		path.MaxCountAfterAccess = max(path.CountAfterAccess, path.MaxCountAfterAccess)
+	if !isIm {
+		// Check if we need to apply a lower bound to CountAfterAccess
+		adjustCountAfterAccess(ds, path)
 	}
 	if path.IndexFilters != nil {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
@@ -331,17 +342,9 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		return err
 	}
 	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
-	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
-	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		if path.MinCountAfterAccess > 0 {
-			path.MinCountAfterAccess = min(path.MinCountAfterAccess, path.CountAfterAccess)
-		} else {
-			path.MinCountAfterAccess = path.CountAfterAccess
-		}
-		path.CountAfterAccess = min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
-		path.MaxCountAfterAccess = max(path.CountAfterAccess, path.MaxCountAfterAccess)
+	if !isIm {
+		// Check if we need to apply a lower bound to CountAfterAccess
+		adjustCountAfterAccess(ds, path)
 	}
 	return err
 }
@@ -376,17 +379,9 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 			}
 		}
 	}
-	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
-	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
-	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		if path.MinCountAfterAccess > 0 {
-			path.MinCountAfterAccess = min(path.MinCountAfterAccess, path.CountAfterAccess)
-		} else {
-			path.MinCountAfterAccess = path.CountAfterAccess
-		}
-		path.CountAfterAccess = min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
-		path.MaxCountAfterAccess = max(path.CountAfterAccess, path.MaxCountAfterAccess)
+	if !isIm {
+		// Check if we need to apply a lower bound to CountAfterAccess
+		adjustCountAfterAccess(ds, path)
 	}
 	return nil
 }
