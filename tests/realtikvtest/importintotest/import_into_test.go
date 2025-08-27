@@ -1358,22 +1358,21 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	})
 	s.prepareAndUseDB("import_into")
 	s.tk.MustExec("create table t (a int, b int);")
-
 	testCases := []struct {
 		tblName    string
-		size       int
+		size       int64
 		threadCnt  int
 		maxNodeCnt int
 	}{
 		{tblName: "t1", size: 15 * units.GiB, threadCnt: 1, maxNodeCnt: 1},
 		{tblName: "t2", size: 100 * units.GiB, threadCnt: 4, maxNodeCnt: 1},
 		{tblName: "t3", size: 150 * units.GiB, threadCnt: 6, maxNodeCnt: 1},
+		{tblName: "t4", size: 40 * units.TiB, threadCnt: 16, maxNodeCnt: 16},
 	}
 	for _, tc := range testCases {
 		s.tk.MustExec("create table import_into." + tc.tblName + " (a int, b int);")
-		testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/mockImportDataSize", func(totalSize, targetNodeCPUCnt *int) {
+		testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/mockImportDataSize", func(totalSize *int64) {
 			*totalSize = tc.size
-			*targetNodeCPUCnt = 32
 		})
 		sql := fmt.Sprintf(`IMPORT INTO import_into.%s FROM 'gs://mock-datasize-test/t.csv?endpoint=%s'`, tc.tblName, gcsEndpoint)
 		s.tk.MustQuery(sql)
@@ -1386,7 +1385,7 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 		s.tk.MustQuery(`
 		with
 		global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history order by end_time desc limit 1)
-		select max_node_cnt from global_tasks
+		select max_node_count from global_tasks
 		`).Check(testkit.Rows(fmt.Sprintf("%d", tc.maxNodeCnt)))
 	}
 }
