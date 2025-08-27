@@ -87,6 +87,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
 	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_cloud_storage_uri=''")
 		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 16")
 		t.Cleanup(func() {
 			tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
