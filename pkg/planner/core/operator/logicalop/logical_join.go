@@ -214,7 +214,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	p.allDataSouceSchema = getAllDataSourceSchema(p)
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		predicates = p.joinPropConst(predicates)
+		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
 		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, false, nil)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -235,7 +235,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
 		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, nil)
-		predicates = p.joinPropConst(predicates)
+		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForRightOuterJoin)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -276,7 +276,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = p.joinPropConst(predicates)
+		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
 		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true,
 			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
@@ -1318,12 +1318,17 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 
 // This function is only used with inner join and semi join.
 func (p *LogicalJoin) isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin(expr expression.Expression) bool {
-	return p.isVaildConstantPropagationExpression(expr, true, true)
+	return p.isVaildConstantPropagationExpression(expr, true, true, true, true)
 }
 
-// This function is only used in LogicalJoin.joinPropConst.
-func (p *LogicalJoin) isVaildConstantPropagationExpressionForJoinPropConst(expr expression.Expression) bool {
-	return p.isVaildConstantPropagationExpression(expr, false, false)
+// This function is only used in LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, AntiSemiJoin
+func (p *LogicalJoin) isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin(expr expression.Expression) bool {
+	return p.isVaildConstantPropagationExpression(expr, false, false, false, true)
+}
+
+// This function is only used in RightOuterJoin
+func (p *LogicalJoin) isVaildConstantPropagationExpressionForRightOuterJoin(expr expression.Expression) bool {
+	return p.isVaildConstantPropagationExpression(expr, false, false, true, false)
 }
 
 // isVaildConstantPropagationExpression is to judge whether the expression is created by PropagationContant is vaild.
@@ -1331,7 +1336,7 @@ func (p *LogicalJoin) isVaildConstantPropagationExpressionForJoinPropConst(expr 
 // Some expressions are not suitable for constant propagation. After constant propagation,
 // these expressions will only become a projection, increasing the computational load without
 // being able to filter data directly from the data source.
-func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expression, deriveLeft bool, deriveRight bool) bool {
+func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expression, deriveLeft, deriveRight, canLeft, canRight bool) bool {
 	_, leftCond, rightCond, otherCond := p.extractOnCondition([]expression.Expression{cond}, deriveLeft, deriveRight)
 	if len(otherCond) > 0 {
 		// a new expression which is created by constant propagation, is a other condtion, we don't put it
@@ -1340,9 +1345,16 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 	}
 	intest.Assert(len(leftCond) == 0 || len(rightCond) == 0, "An expression cannot be both a left and a right condition at the same time.")
 	// When the expression is a left/right condition, we want it to filter more of the underlying data.
-	if len(leftCond) > 0 || len(rightCond) > 0 {
+	if len(leftCond) > 0 {
 		// If this expression's columns is in the same table. We will push it down.
-		if p.isAllUniqueIDInTheSameTable(cond) {
+		if canLeft && p.isAllUniqueIDInTheSameTable(cond) {
+			return true
+		}
+		return false
+	}
+	if len(rightCond) > 0 {
+		// If this expression's columns is in the same table. We will push it down.
+		if canRight && p.isAllUniqueIDInTheSameTable(cond) {
 			return true
 		}
 		return false
@@ -1766,7 +1778,7 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 }
 
 // joinPropConst propagates constant equal and column equal conditions over outer join or anti semi join.
-func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expression.Expression {
+func (p *LogicalJoin) joinPropConst(predicates []expression.Expression, vaildExprFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
 	children := p.Children()
 	innerTable := children[1]
 	outerTable := children[0]
@@ -1790,7 +1802,7 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expres
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
 	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema,
-		innerTableSchema, nullSensitive, p.isVaildConstantPropagationExpressionForJoinPropConst)
+		innerTableSchema, nullSensitive, vaildExprFunc)
 	p.AttachOnConds(joinConds)
 	return predicates
 }
