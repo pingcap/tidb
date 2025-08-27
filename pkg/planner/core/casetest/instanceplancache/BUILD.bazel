@@ -11,7 +11,11 @@ go_test(
         "others_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 18,
+=======
+    shard_count = 43,
+>>>>>>> 5a9d82532dc (planner: implement func CloneForPlanCache() for PhysicalTableDual (#63198))
     deps = [
         "//pkg/parser/auth",
         "//pkg/testkit",
