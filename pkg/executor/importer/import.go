@@ -1310,15 +1310,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.TotalFileSize = totalSize
 
 	if kerneltype.IsNextGen() {
-		failpoint.Inject("mockImportDataSize", func(val failpoint.Value) {
-			if v, ok := val.(int); ok {
-				totalSize = int64(v)
-			}
-		})
 		targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
 		if err != nil {
 			return err
 		}
+		failpoint.InjectCall("mockImportDataSize", &totalSize, &targetNodeCPUCnt)
 		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
 		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
 		e.logger.Info("set import thread count for nextgen kernel",
