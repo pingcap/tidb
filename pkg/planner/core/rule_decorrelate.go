@@ -259,12 +259,33 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
 			if apply.JoinType == logicalop.LeftOuterJoin {
-				// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
-				//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
-				//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
-				// We disable the decorrelation directly for now.
-				// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
-				goto NoOptimize
+				// After the column pruning, some expressions in the projection operator may be pruned.
+				// In this situation, we can decorrelate the apply operator.
+				allConst := len(proj.Exprs) > 0
+				for _, expr := range proj.Exprs {
+					if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
+						allConst = false
+						break
+					}
+				}
+				if allConst {
+					// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
+					//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
+					//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
+					// We disable the decorrelation directly for now.
+					// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
+					goto NoOptimize
+				}
+
+				for _, expr := range proj.Exprs {
+					// If this expr's inputs are all from outerPlan, skip decorrelate.
+					// Because this expr may invalidate the semantics of LeftOuterJoin.
+					// TODO we should use null-reject attr to decide in a more accurate way.
+					cols := expression.ExtractColumns(expr)
+					if outerPlan.Schema().ColumnIndices(cols) != nil {
+						goto NoOptimize
+					}
+				}
 			}
 
 			// step1: substitute the all the schema with new expressions (including correlated column maybe, but it doesn't affect the collation infer inside)
