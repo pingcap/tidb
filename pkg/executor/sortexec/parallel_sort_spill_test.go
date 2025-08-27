@@ -15,15 +15,17 @@
 package sortexec_test
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -84,10 +86,8 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -116,14 +116,10 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -152,8 +148,7 @@ func TestIssue59655(t *testing.T) {
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/Issue59655", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/Issue59655")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/Issue59655", `return(true)`)
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -176,8 +171,7 @@ func TestIssue63216(t *testing.T) {
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/Issue63216", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/Issue63216")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/Issue63216", `return(true)`)
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -190,11 +184,14 @@ func TestIssue63216(t *testing.T) {
 	exe := buildSortExec(sortCase, dataSource)
 	failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 
+	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
+
 	fileNum := 0
 	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		log.Info(fmt.Sprintf("name: %s", d.Name()))
 		if !d.IsDir() {
 			fileNum++
 		}
@@ -202,5 +199,5 @@ func TestIssue63216(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, fileNum, 1)
+	require.Equal(t, 1, fileNum)
 }
