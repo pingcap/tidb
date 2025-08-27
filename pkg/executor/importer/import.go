@@ -1310,6 +1310,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.TotalFileSize = totalSize
 
 	if kerneltype.IsNextGen() {
+		failpoint.Inject("mockImportDataSize", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				totalSize = int64(v)
+			}
+		})
 		targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
 		if err != nil {
 			return err

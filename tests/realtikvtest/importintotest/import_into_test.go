@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
@@ -1340,6 +1341,45 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 	// it should success even if the parent table is empty
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
+	if kerneltype.IsClassic() {
+		s.T().Skip("max node and thread auto calculation is not supported in classic")
+	}
+	content := []byte(`1,1
+	2,2`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "mock-datasize-test",
+			Name:       "t.csv",
+		},
+		Content: content,
+	})
+	s.prepareAndUseDB("import_into")
+	s.tk.MustExec("create table t (a int, b int);")
+
+	testCases := []struct {
+		tblName   string
+		size      int
+		threadCnt int
+	}{
+		{tblName: "t1", size: 15 * units.GiB, threadCnt: 1},
+		{tblName: "t2", size: 100 * units.GiB, threadCnt: 4},
+		{tblName: "t3", size: 150 * units.GiB, threadCnt: 6},
+	}
+	for _, tc := range testCases {
+		s.tk.MustExec("create table import_into." + tc.tblName + " (a int, b int);")
+		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/mockImportDataSize", fmt.Sprintf(`return(%d)`, tc.size))
+		sql := fmt.Sprintf(`IMPORT INTO import_into.%s FROM 'gs://mock-datasize-test/t.csv?endpoint=%s'`, tc.tblName, gcsEndpoint)
+		s.tk.MustQuery(sql)
+		s.tk.MustQuery("SELECT * FROM import_into." + tc.tblName + ";").Check(testkit.Rows("1 1", "2 2"))
+		s.tk.MustQuery(`
+		with 
+		all_subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history order by end_time desc limit 1)
+		select concurrency from all_subtasks
+	`).Check(testkit.Rows(fmt.Sprintf("%d", tc.threadCnt)))
+	}
 }
 
 func (s *mockGCSSuite) TestTableMode() {

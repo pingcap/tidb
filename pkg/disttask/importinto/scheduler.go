@@ -358,7 +358,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if err := json.Unmarshal(taskMeta.TaskResult, &importResult); err != nil {
 			return nil, errors.Trace(err)
 		}
-		logger.Info("move to post-process step ", zap.Any("result", importResult))
+		logger.Info("move to post-process step", zap.Any("result", importResult))
 	case proto.StepDone:
 		return nil, nil
 	default:
