@@ -153,6 +153,11 @@ func (ctx *Context) GetDefaultCollationForUTF8MB4() string {
 	return ctx.exprCtx.GetDefaultCollationForUTF8MB4()
 }
 
+// GetTiDBDefaultAutoIDCache returns the value of the 'tidb_auto_id_cache' system variable.
+func (ctx *Context) GetTiDBDefaultAutoIDCache() int {
+	return ctx.exprCtx.GetTiDBDefaultAutoIDCache()
+}
+
 // GetSQLMode returns the SQL mode.
 func (ctx *Context) GetSQLMode() mysql.SQLMode {
 	return ctx.exprCtx.GetEvalCtx().SQLMode()
