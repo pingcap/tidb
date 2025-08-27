@@ -26,6 +26,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -271,6 +272,7 @@ type objStoreRegionJobWorker struct {
 	ingestCli      ingestcli.Client
 	writeBatchSize int64
 	bufPool        *membuf.Pool
+	collector      execute.Collector
 }
 
 func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
@@ -334,6 +336,11 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 			if err := writeCli.Write(in); err != nil {
 				return nil, errors.Trace(err)
 			}
+
+			if w.collector != nil {
+				w.collector.Add(size, int64(len(pairs)))
+			}
+
 			totalCount += int64(len(pairs))
 			totalSize += size
 			size = 0

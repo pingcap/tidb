@@ -4,12 +4,12 @@ SELECT * FROM t1 JOIN (SELECT ((v0.c0) LIKE (((v0.c0) + (v0.c0)))) AS col_0 FROM
 c0	col_0
 show warnings;
 Level	Code	Message
-EXPLAIN FORMAT='brief' SELECT * FROM t1 JOIN (SELECT ((v0.c0) LIKE (((v0.c0) + (v0.c0)))) AS col_0 FROM v0) as subQuery1 ON (subQuery1.col_0);
-id	estRows	task	access object	operator info
-HashJoin	53253333.33	root		CARTESIAN inner join
-├─Projection(Build)	5325.33	root		like(<nil>, cast(plus(cast(<nil>, double BINARY), cast(<nil>, double BINARY)), var_string(370)), 92)->Column#6
-│ └─TableReader	5325.33	root		data:Selection
-│   └─Selection	5325.33	cop[tikv]		like(NULL, cast(plus(cast(NULL, double BINARY), cast(NULL, double BINARY)), var_string(370)), 92), null_rejected.t1.c0
-│     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN FORMAT='plan_tree' SELECT * FROM t1 JOIN (SELECT ((v0.c0) LIKE (((v0.c0) + (v0.c0)))) AS col_0 FROM v0) as subQuery1 ON (subQuery1.col_0);
+id	task	access object	operator info
+HashJoin	root		CARTESIAN inner join
+├─Projection(Build)	root		like(<nil>, cast(plus(cast(<nil>, double BINARY), cast(<nil>, double BINARY)), var_string(370)), 92)->Column#6
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		like(NULL, cast(plus(cast(NULL, double BINARY), cast(NULL, double BINARY)), var_string(370)), 92), null_rejected.t1.c0
+│     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
