@@ -284,7 +284,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	extraParams proto.ExtraParams,
 	meta []byte,
 ) (taskID int64, err error) {
-	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNodeByRole(ctx, se, "", true)
 	if err != nil {
 		return 0, err
 	}
@@ -420,6 +420,29 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 
 	for _, r := range rs {
 		task = append(task, Row2Task(r))
+	}
+	return task, nil
+}
+
+// GetTaskBasesInStates gets the task bases in the states(order by priority asc, create_time acs, id asc).
+func (mgr *TaskManager) GetTaskBasesInStates(ctx context.Context, states ...any) (task []*proto.TaskBase, err error) {
+	if len(states) == 0 {
+		return task, nil
+	}
+
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"select "+basicTaskColumns+" from mysql.tidb_global_task t "+
+			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
+			" order by priority asc, create_time asc, id asc", states...)
+	if err != nil {
+		return task, err
+	}
+
+	for _, r := range rs {
+		task = append(task, row2TaskBasic(r))
 	}
 	return task, nil
 }
@@ -1026,7 +1049,7 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNodeByRole(ctx, se, "", true)
 	if err != nil {
 		return err
 	}

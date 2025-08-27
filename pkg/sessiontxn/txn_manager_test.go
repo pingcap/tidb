@@ -458,7 +458,7 @@ func TestSnapshotInterceptor(t *testing.T) {
 
 	initTxnFuncs := []func() error{
 		func() error {
-			err := tk.Session().PrepareTxnCtx(context.TODO())
+			err := tk.Session().PrepareTxnCtx(context.TODO(), nil)
 			if err == nil {
 				err = sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup()
 			}

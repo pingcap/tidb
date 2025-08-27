@@ -59,7 +59,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalWindow{}
 	_ base.PhysicalPlan = &physicalop.PhysicalShuffle{}
 	_ base.PhysicalPlan = &physicalop.PhysicalShuffleReceiverStub{}
-	_ base.PhysicalPlan = &BatchPointGetPlan{}
+	_ base.PhysicalPlan = &physicalop.BatchPointGetPlan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableSample{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSequence{}
 
@@ -67,7 +67,7 @@ var (
 	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexHashJoin{}
-	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalIndexMergeJoin{}
 )
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
@@ -100,7 +100,7 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 // the `_tidb_rowid` in different partitions can have the same value.
 func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
 	// Not adding the ExtraPhysTblID if already exists
-	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+	if model.FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
 		return columns, schema, false
 	}
 	columns = append(columns, model.NewExtraPhysTblIDColInfo())
@@ -112,61 +112,6 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 	return columns, schema, true
 }
 
-// ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
-func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
-	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
-	copyColumn := make([]*model.ColumnInfo, 0, len(columns))
-	copyColumn = append(copyColumn, columns...)
-
-	oldNumColumns := len(schema.Columns)
-	numExtraColumns := 0
-	ordinaryColumnExists := false
-	for i := oldNumColumns - 1; i >= 0; i-- {
-		cid := schema.Columns[i].ID
-		// Move extra columns to the end.
-		// ExtraRowChecksumID is ignored here since it's treated as an ordinary column.
-		// https://github.com/pingcap/tidb/blob/3c407312a986327bc4876920e70fdd6841b8365f/pkg/util/rowcodec/decoder.go#L206-L222
-		if cid != model.ExtraHandleID && cid != model.ExtraPhysTblID {
-			ordinaryColumnExists = true
-			break
-		}
-		numExtraColumns++
-	}
-	if ordinaryColumnExists && numExtraColumns > 0 {
-		extraColumns := make([]*expression.Column, numExtraColumns)
-		copy(extraColumns, schema.Columns[oldNumColumns-numExtraColumns:])
-		schema.Columns = schema.Columns[:oldNumColumns-numExtraColumns]
-
-		extraColumnModels := make([]*model.ColumnInfo, numExtraColumns)
-		copy(extraColumnModels, copyColumn[len(copyColumn)-numExtraColumns:])
-		copyColumn = copyColumn[:len(copyColumn)-numExtraColumns]
-
-		copyColumn = expandVirtualColumn(schema, copyColumn, colsInfo)
-		schema.Columns = append(schema.Columns, extraColumns...)
-		copyColumn = append(copyColumn, extraColumnModels...)
-		return copyColumn
-	}
-	return expandVirtualColumn(schema, copyColumn, colsInfo)
-}
-
-func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnInfo, colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
-	schemaColumns := schema.Columns
-	for _, col := range schemaColumns {
-		if col.VirtualExpr == nil {
-			continue
-		}
-
-		baseCols := expression.ExtractDependentColumns(col.VirtualExpr)
-		for _, baseCol := range baseCols {
-			if !schema.Contains(baseCol) {
-				schema.Columns = append(schema.Columns, baseCol)
-				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
-			}
-		}
-	}
-	return copyColumn
-}
-
 // PhysicalJoin provides some common methods for join operators.
 // Note that PhysicalApply is deliberately excluded from this interface.
 type PhysicalJoin interface {
@@ -174,34 +119,6 @@ type PhysicalJoin interface {
 	PhysicalJoinImplement()
 	GetInnerChildIdx() int
 	GetJoinType() logicalop.JoinType
-}
-
-// PhysicalIndexMergeJoin represents the plan of index look up merge join.
-type PhysicalIndexMergeJoin struct {
-	physicalop.PhysicalIndexJoin
-
-	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
-	KeyOff2KeyOffOrderByIdx []int
-	// CompareFuncs store the compare functions for outer join keys and inner join key.
-	CompareFuncs []expression.CompareFunc
-	// OuterCompareFuncs store the compare functions for outer join keys and outer join
-	// keys, it's for outer rows sort's convenience.
-	OuterCompareFuncs []expression.CompareFunc
-	// NeedOuterSort means whether outer rows should be sorted to build range.
-	NeedOuterSort bool
-	// Desc means whether inner child keep desc order.
-	Desc bool
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexMergeJoin
-func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
-		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
-	return
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.

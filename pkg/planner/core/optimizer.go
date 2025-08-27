@@ -959,7 +959,7 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
 	case *physicalop.PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
-		*PhysicalIndexMergeJoin:
+		*physicalop.PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
@@ -1202,8 +1202,8 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
 func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
-	var pointGet *PointGetPlan
-	var batchPointGet *BatchPointGetPlan
+	var pointGet *physicalop.PointGetPlan
+	var batchPointGet *physicalop.BatchPointGetPlan
 	var physLock *physicalop.PhysicalLock
 	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
@@ -1211,9 +1211,9 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 			return false
 		}
 		switch x := p.(type) {
-		case *PointGetPlan:
+		case *physicalop.PointGetPlan:
 			pointGet = x
-		case *BatchPointGetPlan:
+		case *physicalop.BatchPointGetPlan:
 			batchPointGet = x
 		case *physicalop.PhysicalLock:
 			physLock = x
@@ -1230,15 +1230,14 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 	}
 	if physLock != nil {
 		lock, waitTime := getLockWaitTime(sctx, physLock.Lock)
-		if !lock {
-			return p
-		}
-		if pointGet != nil {
-			pointGet.Lock = lock
-			pointGet.LockWaitTime = waitTime
-		} else {
-			batchPointGet.Lock = lock
-			batchPointGet.LockWaitTime = waitTime
+		if lock {
+			if pointGet != nil {
+				pointGet.Lock = lock
+				pointGet.LockWaitTime = waitTime
+			} else {
+				batchPointGet.Lock = lock
+				batchPointGet.LockWaitTime = waitTime
+			}
 		}
 	}
 	return transformPhysicalPlan(p, func(p base.PhysicalPlan) base.PhysicalPlan {
@@ -1299,7 +1298,7 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 	}
 	switch plan.(type) {
 	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
-		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader, *PointGetPlan:
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader, *physicalop.PointGetPlan:
 		if existsOverlongType(plan.Schema()) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true
