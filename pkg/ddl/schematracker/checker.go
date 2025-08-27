@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -66,12 +68,24 @@ type Checker struct {
 
 // NewChecker creates a Checker.
 func NewChecker(realDDL ddl.DDL, realExecutor ddl.Executor, infoCache *infoschema.InfoCache) *Checker {
-	return &Checker{
+	tracker := NewSchemaTracker(2)
+	checker := &Checker{
 		realDDL:      realDDL,
 		realExecutor: realExecutor,
 		infoCache:    infoCache,
-		tracker:      NewSchemaTracker(2),
+		tracker:      tracker,
 	}
+	if kerneltype.IsNextGen() {
+		// Prepare the system tables for schema tracker,
+		// because system tables are created trhough meta kv instead of SQL during bootstrap.
+		p := parser.New()
+		var stmts []ast.StmtNode
+		stmts, _, _ = p.ParseSQL("CREATE DATABASE IF NOT EXISTS mysql;")
+		tracker.CreateSchema(nil, stmts[0].(*ast.CreateDatabaseStmt))
+		stmts, _, _ = p.ParseSQL("CREATE DATABASE IF NOT EXISTS sys;")
+		tracker.CreateSchema(nil, stmts[0].(*ast.CreateDatabaseStmt))
+	}
+	return checker
 }
 
 // Disable turns off check.

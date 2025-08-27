@@ -52,11 +52,7 @@ func TestInitDefaultOptions(t *testing.T) {
 		DataSourceType: DataSourceTypeQuery,
 	}
 	plan.initDefaultOptions(context.Background(), 10, nil)
-	if kerneltype.IsNextGen() {
-		require.Equal(t, 4, plan.ThreadCnt)
-	} else {
-		require.Equal(t, 2, plan.ThreadCnt)
-	}
+	require.Equal(t, 2, plan.ThreadCnt)
 
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
@@ -68,11 +64,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan.initDefaultOptions(context.Background(), 1, nil)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
-	if kerneltype.IsNextGen() {
-		require.Equal(t, 4, plan.ThreadCnt)
-	} else {
-		require.Equal(t, 1, plan.ThreadCnt)
-	}
+	require.Equal(t, 1, plan.ThreadCnt)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
@@ -88,11 +80,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
-	if kerneltype.IsNextGen() {
-		require.Equal(t, 4, plan.ThreadCnt)
-	} else {
-		require.Equal(t, 5, plan.ThreadCnt)
-	}
+	require.Equal(t, 5, plan.ThreadCnt)
 }
 
 // for negative case see TestImportIntoOptionsNegativeCase
