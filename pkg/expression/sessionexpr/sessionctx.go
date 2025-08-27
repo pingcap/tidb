@@ -73,6 +73,12 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 	return ctx.sctx.GetSessionVars().DefaultCollationForUTF8MB4
 }
 
+// GetTiDBDefaultAutoIDCache returns the value of the 'tidb_auto_id_cache' system variable.
+func (ctx *ExprContext) GetTiDBDefaultAutoIDCache() int {
+	defaultAutoIDCache, _ := ctx.sctx.GetSessionVars().GetSystemVar(vardef.TiDBDefaultAutoIDCache)
+	return variable.TidbOptInt(defaultAutoIDCache, vardef.DefTiDBAutoIDCache)
+}
+
 // GetBlockEncryptionMode returns the variable block_encryption_mode
 func (ctx *ExprContext) GetBlockEncryptionMode() string {
 	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)

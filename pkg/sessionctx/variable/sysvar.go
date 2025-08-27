@@ -3633,6 +3633,18 @@ var defaultSysVars = []*SysVar{
 			return vardef.AdvancerCheckPointLagLimit.Load().String(), nil
 		},
 	},
+	{
+		Scope:    vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:     vardef.TiDBDefaultAutoIDCache,
+		Value:    strconv.Itoa(vardef.DefTiDBAutoIDCache),
+		Type:     vardef.TypeInt,
+		MinValue: 0,
+		MaxValue: math.MaxInt32,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.TiDBDefaultAutoIDCache = tidbOptPositiveInt32(s, vardef.DefTiDBAutoIDCache)
+			return nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
