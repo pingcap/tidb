@@ -20,13 +20,31 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
+func TestSlotManagerReserveNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("this test is for nextgen kernel only")
+	}
+	sm := newSlotManager()
+	sm.updateCapacity(16)
+	// no node
+	// this case will return false in classic kernel, but in nextgen kernel, we
+	// will not reserve slots, and always return true.
+	nodeID, ok := sm.canReserve(&proto.TaskBase{Concurrency: 1})
+	require.True(t, ok)
+	require.Equal(t, "", nodeID)
+}
+
 func TestSlotManagerReserve(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in nextgen kernel, we will start scheduler without reserving slots, as cluster controller will scale nodes on demand")
+	}
 	sm := newSlotManager()
 	sm.updateCapacity(16)
 	// no node
