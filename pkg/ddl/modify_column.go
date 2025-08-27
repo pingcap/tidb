@@ -665,7 +665,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)
 			}, false)
-		return w.updateCurrentElement(jobCtx, tbl, reorgInfo)
+		return w.updateCurrentElement(jobCtx, tbl, reorgInfo, rh)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {

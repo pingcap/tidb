@@ -1116,6 +1116,10 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 	return removeDDLReorgHandle(r.s, job, elements)
 }
 
+func (r *reorgHandler) ResetCheckpoint(job *model.Job) error {
+	return removeDDLReorgCheckpoint(r.s, job)
+}
+
 // cleanupDDLReorgHandles removes the job reorganization related handles.
 func cleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {

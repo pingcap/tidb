@@ -2654,6 +2654,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	if mInfo := reorgInfo.Job.MultiSchemaInfo; mInfo != nil {
 		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
 	}
+	if reorgInfo.Job.Type == model.ActionModifyColumn {
+		taskKey = fmt.Sprintf("%s/%d", taskKey, reorgInfo.currElement.ID)
+	}
 
 	// For resuming add index task.
 	// Need to fetch task by taskKey in tidb_global_task and tidb_global_task_history tables.

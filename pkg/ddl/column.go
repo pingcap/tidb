@@ -568,6 +568,7 @@ func (w *worker) updateCurrentElement(
 	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
+	rh *reorgHandler,
 ) error {
 	ctx := jobCtx.stepCtx
 	failpoint.Inject("mockInfiniteReorgLogic", func() {
@@ -644,6 +645,16 @@ func (w *worker) updateCurrentElement(
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if err = prepareForAddNextIndex(reorgInfo, rh); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func prepareForAddNextIndex(reorgInfo *reorgInfo, rh *reorgHandler) error {
+	if reorgInfo.ReorgMeta.IsFastReorg && !reorgInfo.ReorgMeta.IsDistReorg {
+		return rh.ResetCheckpoint(reorgInfo.Job)
 	}
 	return nil
 }
