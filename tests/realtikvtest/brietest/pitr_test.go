@@ -143,7 +143,6 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 		if !t.Failed() {
 			log.Info("[TEST.LogBackupKit] success", zap.String("case", t.Name()), zap.Stringer("takes", time.Since(begin)))
 		}
-		log.Info("[TEST.LogBackupKit] fail", zap.String("case", t.Name()), zap.Stringer("takes", time.Since(begin)))
 	})
 	return &LogBackupKit{
 		tk:      tk,
