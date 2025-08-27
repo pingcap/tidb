@@ -21,35 +21,35 @@ INSERT INTO t (a, b, c) VALUES
 (4, 3, 15);
 
 select a, b, avg(c) from t group by a, b, c having
-(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3);
+(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3) order by a, b;
 
 explain format='plan_tree' select a, b, avg(c) from t group by a, b, c having
-(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3);
+(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3) order by a, b;
 
 select a, b, avg(c) from t group by a, b, c having
-(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3);
+(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3) order by a, b;
 
 explain format='plan_tree' select a, b, avg(c) from t group by a, b, c having
-(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3);
+(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3) order by a, b;
 
 select a, b, avg(c) from t group by a, b, c having
-(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3);
+(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3) order by a, b;
 
 explain format='plan_tree' select a, b, avg(c) from t group by a, b, c having
-(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3);
+(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3) order by a, b;
 
 select a, b, avg(c) from t group by a, b, c having
-(a > 1 or avg(c) > 1) and (a < 3);
+(a > 1 or avg(c) > 1) and (a < 3) order by a, b;
 
 explain format='plan_tree' select a, b, avg(c) from t group by a, b, c having
-(a > 1 or avg(c) > 1) and (a < 3);
+(a > 1 or avg(c) > 1) and (a < 3) order by a, b;
 
 select a, b, avg(c) from t group by a, b, c having
-(a > 1 and avg(c) > 1) or (a < 3);
+(a > 1 and avg(c) > 1) or (a < 3) order by a, b;
 
 explain format='plan_tree' select a, b, avg(c) from t group by a, b, c having
 
-(a > 1 and avg(c) > 1) or (a < 3);
+(a > 1 and avg(c) > 1) or (a < 3) order by a, b;
 
 drop table t;
 CREATE TABLE t (
