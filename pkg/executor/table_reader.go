@@ -530,20 +530,6 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 
 // buildKVReqForRanges builds KV request for given ranges, handling both kvRangeBuilder and regular cases.
 func (e *TableReaderExecutor) buildKVReqForRanges(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
-	if e.kvRangeBuilder != nil {
-		// Use buildKVReqSeparately for partition tables
-		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
-		if err != nil {
-			return nil, err
-		}
-		// For simplicity, return the first request. This is used in grouped ranges context where
-		// each group should have only one partition anyway.
-		if len(kvReqs) > 0 {
-			return kvReqs[0], nil
-		}
-		return nil, errors.New("no KV requests generated")
-	}
-
 	// Regular table case
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRanges(e.dctx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
