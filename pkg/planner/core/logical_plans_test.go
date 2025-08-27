@@ -1966,11 +1966,11 @@ func TestSkylinePruning(t *testing.T) {
 			result: "f_g", // Keep f_g only, since (f, g) is unique and has more columns than f alone
 		},
 		{
-			sql:    "select * from t where c_str = 'a' and d_str = 'b' and e_str = 'c'",
+			sql:    "select * from t where e_str = 'a' and d_str = 'b' and c_str = 'c'",
 			result: "c_d_e_str,e_d_c_str_prefix", // TODO: Refine skyline pruning for string prefix indexes
 		},
 		{
-			sql:    "select * from t where c_str = 'a' and d_str = 'b' and e_str = '1234567890a'",
+			sql:    "select * from t where e_str = 'a' and d_str = 'b' and c_str = '1234567890a'",
 			result: "c_d_e_str,e_d_c_str_prefix", // TODO: Refine skyline pruning for string prefix indexes
 		},
 		{
