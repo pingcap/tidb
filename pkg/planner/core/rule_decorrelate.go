@@ -258,9 +258,9 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				return s.optimize(ctx, p, opt, groupByColumn)
 			}
 		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
+			// After the column pruning, some expressions in the projection operator may be pruned.
+			// In this situation, we can decorrelate the apply operator.
 			if apply.JoinType == logicalop.LeftOuterJoin {
-				// After the column pruning, some expressions in the projection operator may be pruned.
-				// In this situation, we can decorrelate the apply operator.
 				allConst := len(proj.Exprs) > 0
 				for _, expr := range proj.Exprs {
 					if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
@@ -280,7 +280,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				for _, expr := range proj.Exprs {
 					// If this expr's inputs are all from outerPlan, skip decorrelate.
 					// Because this expr may invalidate the semantics of LeftOuterJoin.
-					// TODO we should use null-reject attr to decide in a more accurate way.
+					// TODO: we should use null-reject attr to decide in a more accurate way.
 					cols := expression.ExtractColumns(expr)
 					if outerPlan.Schema().ColumnsIndices(cols) != nil {
 						goto NoOptimize
