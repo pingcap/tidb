@@ -1265,15 +1265,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 }
 
 func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64) bool {
-	// Check if NO_DECORRELATE hint is explicitly specified
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 
-	if len(corCols) > 0 {
-		// If no explicit hint, check if the session variable is enabled
-		if !noDecorrelate {
-			noDecorrelate = planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelate
-		}
-	} else if noDecorrelate {
+	if noDecorrelate && len(corCols) == 0 {
 		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 		noDecorrelate = false
@@ -1293,6 +1287,10 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	np = planCtx.builder.buildMaxOneRow(np)
 	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags)
+	if !noDecorrelate && len(correlatedColumn) > 0 {
+		// If no explicit hint, check if the session variable is enabled
+		noDecorrelate = planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelate
+	}
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, logicalop.LeftOuterJoin, noDecorrelate)
