@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -417,7 +418,7 @@ func createMockStore(t *testing.T) (store kv.Storage) {
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
 	var err error
-	store, err = mockstore.NewMockStore()
+	store, err = teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)

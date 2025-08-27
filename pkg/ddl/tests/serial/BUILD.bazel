@@ -28,6 +28,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/testkit",
