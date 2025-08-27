@@ -901,14 +901,19 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 			taskDone   bool
 		)
 		if w.oldColInfo.Name.L == "random" {
+			t := time.Now()
 			rowRecords, nextKey, taskDone, err = w.getMockRowRecord(handleRange)
-			logutil.DDLLogger().Info("use MockRowRecord", zap.Int("len", len(rowRecords)))
+			logutil.DDLLogger().Info("use MockRowRecord",
+				zap.Duration("takeTime", time.Since(t)),
+				zap.Int("len", len(rowRecords)))
 		} else {
+			t := time.Now()
 			rowRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
 			//if len(rowRecords) > 0 {
 			//	fmt.Println("fetchRowColVals", rowRecords[0].key, rowRecords[0].vals)
 			//}
 			logutil.DDLLogger().Info("fetchRowColVals",
+				zap.Duration("takeTime", time.Since(t)),
 				zap.Bool("taskDone", taskDone),
 				zap.Int("len", len(rowRecords)))
 		}
