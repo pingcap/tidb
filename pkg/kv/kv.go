@@ -361,7 +361,7 @@ const (
 	// used to read memory data from other instances to have a global view of the
 	// data, such as for information_schema.cluster_slow_query.
 	TiDB
-	// TICI means the type of store engine is TiCI, the search engine.
+	// TiCI means the type of store engine is TiCI, the search engine.
 	TiCI
 	// UnSpecified means the store engine type is unknown
 	UnSpecified = 255

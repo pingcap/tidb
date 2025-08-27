@@ -2012,7 +2012,7 @@ func (do *Domain) loadStatsWorker() {
 		case <-loadTicker.C:
 			err = statsHandle.Update(ctx, do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Warn("update stats info failed", zap.String("error", fmt.Sprintf("%+v", err)))
+				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
