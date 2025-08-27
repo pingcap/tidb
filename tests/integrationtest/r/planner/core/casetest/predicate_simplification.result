@@ -825,3 +825,8 @@ id	estRows	task	access object	operator info
 TableReader	17.99	root		data:Selection
 └─Selection	17.99	cop[tikv]		or(and(eq(planner__core__casetest__predicate_simplification.t.a, 1), eq(cast(planner__core__casetest__predicate_simplification.t.b, double BINARY), 2)), eq(planner__core__casetest__predicate_simplification.t.a, 3))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select * from t where a = 1 or a = 2 or a = 3 or a in (4,5,6);
+id	estRows	task	access object	operator info
+TableReader	60.00	root		data:Selection
+└─Selection	60.00	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t.a, 1), eq(planner__core__casetest__predicate_simplification.t.a, 2)), or(eq(planner__core__casetest__predicate_simplification.t.a, 3), in(planner__core__casetest__predicate_simplification.t.a, 4, 5, 6)))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

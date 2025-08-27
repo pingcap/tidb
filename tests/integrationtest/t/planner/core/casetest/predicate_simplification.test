@@ -420,3 +420,6 @@ explain format=brief select * from t where a or 1;
 
 # OR with nested AND
 explain format=brief select * from t where (a = 1 and b = 2) or a = 3;
+
+# OR and in list together. Not covered yet.
+explain format=brief select * from t where a = 1 or a = 2 or a = 3 or a in (4,5,6);

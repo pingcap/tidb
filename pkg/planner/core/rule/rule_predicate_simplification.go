@@ -169,7 +169,7 @@ func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, 
 	return p.PredicateSimplification(opt), planChanged, nil
 }
 
-const maxInListToExpand = 1000
+const maxInListToExpand = 50
 
 // inListToOrList rewrites a predicate of the form
 //
@@ -185,6 +185,29 @@ const maxInListToExpand = 1000
 //   - All list items are constant expressions
 //
 // Otherwise, it returns the original expression.
+
+// Objective of this function:
+//
+// 1. Ensure that all simplification rules apply uniformly to both OR-lists
+//    and IN-lists by normalizing IN into OR form first.
+//
+// 2. Avoid regressions caused by rewriting OR into IN too early. For example:
+//      SELECT 1 FROM t1 JOIN t2 ON a1 = a2
+//      WHERE (a1 = 1 OR a1 = 2 OR a1 = 3) AND a2 > 2
+//
+//    → rewritten early as:
+//      SELECT 1 FROM t1 JOIN t2 ON a1 = a2
+//      WHERE a1 IN (1,2,3) AND a2 > 2
+//
+//    → after constant propagation, this becomes:
+//      SELECT 1 FROM t1 JOIN t2 ON a1 = a2
+//      WHERE a1 IN (1,2,3) AND a2 > 2 AND a1 > 2 AND a2 IN (1,2,3)
+//
+//    When the second round of predicate simplification is called,
+//    pruneEmptyORBranches cannot simplify this form any further.
+//    If the predicate had remained in IN-list form, it could have been reduced
+//    to just "a1 = 3" and "a2 = 3".
+
 func inListToOrList(ctx base.PlanContext, expr expression.Expression) expression.Expression {
 	sf, ok := expr.(*expression.ScalarFunction)
 	if !ok || sf.FuncName.L != ast.In {
