@@ -2291,7 +2291,7 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		tablePlan = physicalop.PhysicalSelection{Conditions: ts.FilterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*rowCount), ds.QueryBlockOffset())
+		tablePlan = physicalop.PhysicalSelection{Conditions: ts.FilterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), selectivity*rowCount), ds.QueryBlockOffset())
 		tablePlan.SetChildren(ts)
 		return tablePlan
 	}
@@ -2357,7 +2357,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 	if err != nil {
 		return nil, nil, false, err
 	}
-	ts.SetStats(ds.TableStats.ScaleByExpectCnt(totalRowCount))
+	ts.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), totalRowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(ts.PhysicalTableID) != nil {
 		ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
@@ -2377,7 +2377,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
 			}
-			sel := physicalop.PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*totalRowCount), ts.QueryBlockOffset())
+			sel := physicalop.PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), selectivity*totalRowCount), ts.QueryBlockOffset())
 			sel.SetChildren(ts)
 			currentTopPlan = sel
 		}
@@ -2648,7 +2648,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	// prop.IsSortItemEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of AddPushedDownSelection.
-	finalStats := ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt)
+	finalStats := ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt)
 	if err = addPushedDownSelection4PhysicalIndexScan(is, cop, ds, path, finalStats); err != nil {
 		return base.InvalidTask, err
 	}
@@ -2687,7 +2687,7 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
 		}
 		count := is.StatsInfo().RowCount * selectivity
-		stats := p.TableStats.ScaleByExpectCnt(count)
+		stats := p.TableStats.ScaleByExpectCnt(p.SCtx().GetSessionVars(), count)
 		indexSel := physicalop.PhysicalSelection{Conditions: indexConds}.Init(is.SCtx(), stats, is.QueryBlockOffset())
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
@@ -2701,7 +2701,7 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
 			}
-			tableSel.SetStats(copTask.Plan().StatsInfo().Scale(selectivity))
+			tableSel.SetStats(copTask.Plan().StatsInfo().Scale(is.SCtx().GetSessionVars(), selectivity))
 		}
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
@@ -2865,7 +2865,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.OutputNames(),
 		}
-		mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.AstIndexHints)
+		mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
 		var task base.Task = mppTask
 		if !mppTask.Invalid() {
 			if prop.TaskTp == property.MppTaskType && len(mppTask.rootTaskConds) > 0 {
@@ -2912,7 +2912,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.ByItems = byItems
 		}
 	}
-	addPushedDownSelection4PhysicalTableScan(ts, copTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.AstIndexHints)
+	addPushedDownSelection4PhysicalTableScan(ts, copTask, ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
 	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
 		return base.InvalidTask, nil
 	}
@@ -2971,7 +2971,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	}
 	pointGetPlan.SetSchema(ds.Schema().Clone())
 	pointGetPlan.SetOutputNames(ds.OutputNames())
-	pointGetPlan = pointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
+	pointGetPlan = pointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.QueryBlockOffset())
 	if ds.PartitionDefIdx != nil {
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
@@ -2997,7 +2997,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		if len(candidate.path.TableFilters) > 0 {
 			sel := physicalop.PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
-			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
+			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.QueryBlockOffset())
 			sel.SetChildren(pointGetPlan)
 			rTsk.SetPlan(sel)
 		}
@@ -3015,7 +3015,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sel := physicalop.PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
-			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
+			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.QueryBlockOffset())
 			sel.SetChildren(pointGetPlan)
 			rTsk.SetPlan(sel)
 		}
@@ -3070,10 +3070,10 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
-			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
 			sel := physicalop.PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
-			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
+			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.QueryBlockOffset())
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.SetPlan(sel)
 		}
@@ -3095,16 +3095,16 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
-			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
 			sel := physicalop.PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
-			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
+			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.QueryBlockOffset())
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.SetPlan(sel)
 		}
 	}
 	if rTsk.GetPlan() == nil {
-		tmpP := batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+		tmpP := batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
 		rTsk.SetPlan(tmpP)
 	}
 
@@ -3149,7 +3149,7 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
 			}
-			sel.SetStats(ts.StatsInfo().Scale(selectivity))
+			sel.SetStats(ts.StatsInfo().Scale(ts.SCtx().GetSessionVars(), selectivity))
 		}
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
