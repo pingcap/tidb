@@ -459,6 +459,9 @@ func constructIndexJoin(
 	compareFilters *ColWithCmpFuncManager,
 	extractOtherEQ bool,
 ) []base.PhysicalPlan {
+	if innerTask.Invalid() {
+		return nil
+	}
 	if ranges == nil {
 		ranges = ranger.Ranges{} // empty range
 	}
@@ -481,9 +484,18 @@ func constructIndexJoin(
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
-	if prop.ExpectedCnt < p.StatsInfo().RowCount {
-		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-		chReqProps[outerIdx].ExpectedCnt = p.Children()[outerIdx].StatsInfo().RowCount * expCntScale
+	orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
+	// Record the variable usage for explain explore.
+	outerRowCount := p.Children()[outerIdx].StatsInfo().RowCount
+	estimatedRowCount := p.StatsInfo().RowCount
+	if (prop.ExpectedCnt < estimatedRowCount) ||
+		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
+		// Apply the orderRatio to recognize that a large outer table scan may
+		// read additional rows before the inner table reaches the limit values
+		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
+		expCntScale := prop.ExpectedCnt / estimatedRowCount
+		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
+		chReqProps[outerIdx].ExpectedCnt = expectedCnt
 	}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
@@ -1359,6 +1371,17 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 		return constructIndexJoinInnerSideTask(result, prop, wrapper.zippedChildren, false)
 	}
 
+	numAgg := 0
+	for _, child := range wrapper.zippedChildren {
+		if _, ok := child.(*logicalop.LogicalAggregation); ok {
+			numAgg++
+		}
+	}
+	if numAgg > 1 {
+		// can't support this case now, see #61669.
+		return base.InvalidTask
+	}
+
 	// Try stream aggregation first.
 	// We will choose the stream aggregation if the following conditions are met:
 	// 1. Force hint stream agg by /*+ stream_agg() */
@@ -1399,6 +1422,12 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 	// build physical agg and attach to task
 	var aggTask base.Task
 	// build stream agg and change ds keep order to true
+	stats := la.StatsInfo()
+	if dsCopTask.indexPlan != nil {
+		stats = stats.ScaleByExpectCnt(dsCopTask.indexPlan.StatsInfo().RowCount)
+	} else if dsCopTask.tablePlan != nil {
+		stats = stats.ScaleByExpectCnt(dsCopTask.tablePlan.StatsInfo().RowCount)
+	}
 	if preferStream {
 		newGbyItems := make([]expression.Expression, len(la.GroupByItems))
 		copy(newGbyItems, la.GroupByItems)
@@ -1416,17 +1445,49 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 			if physicalIndexScan == nil && len(dsCopTask.indexPlan.Children()) == 1 {
 				physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
 			}
+			// The double read case should change the table plan together if we want to build stream agg,
+			// so it need to find out the table scan
+			// Try to get the physical table scan from dsCopTask.tablePlan
+			// now, we only support the pattern tablescan and tablescan+selection
+			var physicalTableScan *PhysicalTableScan
+			if dsCopTask.tablePlan != nil {
+				physicalTableScan, _ = dsCopTask.tablePlan.(*PhysicalTableScan)
+				if physicalTableScan == nil && len(dsCopTask.tablePlan.Children()) == 1 {
+					physicalTableScan, _ = dsCopTask.tablePlan.Children()[0].(*PhysicalTableScan)
+				}
+				// We may not be able to build stream agg, break here and directly build hash agg
+				if physicalTableScan == nil {
+					goto buildHashAgg
+				}
+			}
 			if physicalIndexScan != nil {
 				physicalIndexScan.KeepOrder = true
 				dsCopTask.keepOrder = true
+				// Fix issue #60297, if index lookup(double read) as build side and table key is not common handle(row_id),
+				// we need to reset extraHandleCol and needExtraProj.
+				// The reason why the reset cop task needs to be specially modified here is that:
+				// The cop task has been constructed in the previous logic,
+				// but it was not possible to determine whether the stream agg was needed (that is, whether keep order was true).
+				// Therefore, when updating the keep order, the relevant properties in the cop task need to be modified at the same time.
+				// The following code is copied from the logic when keep order is true in function constructDS2IndexScanTask.
+				if dsCopTask.tablePlan != nil && physicalTableScan != nil && !ds.TableInfo.IsCommonHandle {
+					var needExtraProj bool
+					dsCopTask.extraHandleCol, needExtraProj = physicalTableScan.appendExtraHandleCol(ds)
+					dsCopTask.needExtraProj = dsCopTask.needExtraProj || needExtraProj
+				}
+				if dsCopTask.needExtraProj {
+					dsCopTask.originSchema = ds.Schema()
+				}
+				streamAgg.SetStats(stats)
 				aggTask = streamAgg.Attach2Task(dsCopTask)
 			}
 		}
 	}
 
+buildHashAgg:
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
-		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), prop)
+		physicalHashAgg := NewPhysicalHashAgg(la, stats, prop)
 		physicalHashAgg.SetSchema(la.Schema().Clone())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
 	}

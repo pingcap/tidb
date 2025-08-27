@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -87,6 +88,8 @@ const (
 	// MaxCommentLength is exported for testing.
 	MaxCommentLength = 1024
 )
+
+var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
@@ -994,6 +997,8 @@ SwitchIndexState:
 		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
+			// Increase telemetryAddIndexIngestUsage
+			telemetryAddIndexIngestUsage.Inc()
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
@@ -1375,6 +1380,7 @@ func doReorgWorkForCreateIndex(
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
 		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
@@ -1518,7 +1524,7 @@ func runReorgJobAndHandleErr(
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (addIndexErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, tbl.Meta(), func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, allIndexInfos[0].Name)
@@ -2165,7 +2171,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
@@ -2174,6 +2180,7 @@ func writeChunkToLocal(
 	errCtx errctx.Context,
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
+	tblInfo *model.TableInfo,
 ) (int, kv.Handle, error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
@@ -2230,8 +2237,9 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKVToLocal(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
+				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
 				return 0, nil, errors.Trace(err)
 			}
 		}
@@ -2252,7 +2260,7 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
+func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
 	index table.Index,
@@ -2287,7 +2295,7 @@ func writeOneKVToLocal(
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
 // Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillData will add w.batchCnt indices once, default value of w.batchCnt is 128.
-func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -2392,6 +2400,11 @@ func (w *worker) addPhysicalTableIndex(
 		return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
 	logutil.DDLLogger().Info("start to add table index", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
+	m := metrics.RegisterLightningCommonMetricsForDDL(reorgInfo.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, m)
+	defer func() {
+		metrics.UnregisterLightningCommonMetricsForDDL(reorgInfo.ID, m)
+	}()
 	return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }
 
@@ -2410,6 +2423,11 @@ func (w *worker) addTableIndex(
 			}
 			//nolint:forcetypeassert
 			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+			if reorgInfo.ReorgMeta.UseCloudStorage {
+				// When adding unique index by global sort, it detects duplicate keys in each step.
+				// A duplicate key must be detected before, so we can skip the check bellow.
+				return nil
+			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, discovery)
 		}
 	}
@@ -2471,7 +2489,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
 				bc, err = ingest.LitBackCtxMgr.Register(
-					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS, 0)
+					ctx, reorgInfo.Job, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS, 0)
 				if err != nil {
 					return err
 				}
@@ -2519,6 +2537,7 @@ func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgIn
 		// It's possible that the task state is succeed but the ddl job is paused.
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
+			w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
@@ -2956,7 +2975,7 @@ func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	}, nil
 }
 
-func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {

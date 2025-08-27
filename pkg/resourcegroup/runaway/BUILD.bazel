@@ -27,6 +27,7 @@ go_library(
         "//pkg/util/generic",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
+        "@com_github_gogo_protobuf//proto",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -43,8 +44,14 @@ go_library(
 go_test(
     name = "runaway_test",
     timeout = "short",
-    srcs = ["record_test.go"],
+    srcs = [
+        "checker_test.go",
+        "record_test.go",
+    ],
     embed = [":runaway"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//assert"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_tikv_client_go_v2//util",
+    ],
 )

@@ -1021,6 +1021,25 @@ type SessionVars struct {
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
 
+	// Optimizer cost model factors for each physical operator
+	IndexScanCostFactor        float64
+	IndexReaderCostFactor      float64
+	TableReaderCostFactor      float64
+	TableFullScanCostFactor    float64
+	TableRangeScanCostFactor   float64
+	TableRowIDScanCostFactor   float64
+	TableTiFlashScanCostFactor float64
+	IndexLookupCostFactor      float64
+	IndexMergeCostFactor       float64
+	SortCostFactor             float64
+	TopNCostFactor             float64
+	LimitCostFactor            float64
+	StreamAggCostFactor        float64
+	HashAggCostFactor          float64
+	MergeJoinCostFactor        float64
+	HashJoinCostFactor         float64
+	IndexJoinCostFactor        float64
+
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
 
@@ -2104,7 +2123,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    DefTiDBRetryLimit,
@@ -2128,6 +2147,23 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		concurrencyFactor:             DefOptConcurrencyFactor,
 		enableForceInlineCTE:          DefOptForceInlineCTE,
 		EnableVectorizedExpression:    DefEnableVectorizedExpression,
+		IndexScanCostFactor:           DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:         DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:         DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:       DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:      DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:      DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:    DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:         DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:          DefOptIndexMergeCostFactor,
+		SortCostFactor:                DefOptSortCostFactor,
+		TopNCostFactor:                DefOptTopNCostFactor,
+		LimitCostFactor:               DefOptLimitCostFactor,
+		StreamAggCostFactor:           DefOptStreamAggCostFactor,
+		HashAggCostFactor:             DefOptHashAggCostFactor,
+		MergeJoinCostFactor:           DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:            DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
@@ -2189,7 +2225,13 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
+		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		CostModelVersion:              DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
+		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
 	}
+	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
@@ -2238,6 +2280,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker.IsRootTrackerOfSess = true
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
+	vars.LoadBindingTimeout = DefTiDBLoadBindingTimeout
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {

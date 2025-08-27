@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//pkg/meta/model",
         "//pkg/sessionctx",
-        "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",

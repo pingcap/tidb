@@ -27,6 +27,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -291,6 +292,11 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 	executorID := ""
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
+
+		telemetry.CurrentTiflashTableScanCount.Inc()
+		if *(tsExec.IsFastScan) {
+			telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
+		}
 	}
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
@@ -298,6 +304,10 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 
 func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBContext) (*tipb.Executor, error) {
 	ptsExec := tables.BuildPartitionTableScanFromInfos(p.Table, p.Columns, ctx.TiFlashFastScan)
+	telemetry.CurrentTiflashTableScanCount.Inc()
+	if *(ptsExec.IsFastScan) {
+		telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
+	}
 
 	if len(p.LateMaterializationFilterCondition) > 0 {
 		client := ctx.GetClient()

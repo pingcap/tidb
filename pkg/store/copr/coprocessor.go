@@ -942,8 +942,6 @@ func (sender *copIteratorTaskSender) run(connID uint64, checker resourcegroup.Ru
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
 	for {
 		select {
 		case resp, ok = <-respCh:
@@ -962,17 +960,6 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		case <-it.finishCh:
 			exit = true
 			return
-		case <-ticker.C:
-			killed := atomic.LoadUint32(it.vars.Killed)
-			if killed != 0 {
-				logutil.Logger(ctx).Info(
-					"a killed signal is received",
-					zap.Uint32("signal", killed),
-				)
-				resp = &copResponse{err: derr.ErrQueryInterrupted}
-				ok = true
-				return
-			}
 		case <-ctx.Done():
 			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
@@ -1275,7 +1262,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	} else if worker.req.IsStaleness {
 		req.EnableStaleWithMixedReplicaRead()
 	}
-	staleRead := req.GetStaleRead()
 	ops := make([]tikv.StoreSelectorOption, 0, 2)
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
@@ -1312,15 +1298,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
 
-	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-	isInternal := util.IsRequestSourceInternal(&task.requestSource)
-	scope := metrics.LblGeneral
-	if isInternal {
-		scope = metrics.LblInternal
-	}
-	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead), scope).Observe(costTime.Seconds())
 	if copResp != nil {
-		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
+		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data) / 1024))
 	}
 
 	var remains []*copTask

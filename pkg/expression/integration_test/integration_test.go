@@ -1696,7 +1696,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	// CastTimeAsString pushed to TiKV but CastTimeAsDuration not pushed
 	rows = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE CAST(b AS CHAR) = '10:00:00';").Rows()
 	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(cast(test.t.b, var_string(5)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "eq(cast(test.t.b, var_string(10)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
 
 	rows = tk.MustQuery("explain format = 'brief' select * from test.t where hour(b) > 10").Rows()
 	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))

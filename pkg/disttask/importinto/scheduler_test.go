@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -133,6 +134,11 @@ func (s *importIntoSuite) TestGetNextStep() {
 func (s *importIntoSuite) TestGetStepOfEncode() {
 	s.Equal(proto.ImportStepImport, getStepOfEncode(false))
 	s.Equal(proto.ImportStepEncodeAndSort, getStepOfEncode(true))
+}
+
+func (s *importIntoSuite) TestIsRetryable() {
+	ext := &ImportSchedulerExt{}
+	require.True(s.T(), ext.IsRetryableErr(drivererr.ErrRegionUnavailable))
 }
 
 func TestIsImporting2TiKV(t *testing.T) {

@@ -97,12 +97,9 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
-		if tblInfo.Partition != nil {
-			return generatePartitionPlan(tblInfo)
-		}
-		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
+		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergePlan(taskHandle, task, logger)
+		return generateMergePlan(taskHandle, task, len(execIDs), logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
@@ -212,52 +209,54 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 	return tblInfo, nil
 }
 
-func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error) {
-	defs := tblInfo.Partition.Definitions
-	physicalIDs := make([]int64, len(defs))
-	for i := range defs {
-		physicalIDs[i] = defs[i].ID
-	}
-
-	subTaskMetas := make([][]byte, 0, len(physicalIDs))
-	for _, physicalID := range physicalIDs {
-		subTaskMeta := &BackfillSubTaskMeta{
-			PhysicalTableID: physicalID,
-		}
-
-		metaBytes, err := json.Marshal(subTaskMeta)
-		if err != nil {
-			return nil, err
-		}
-
-		subTaskMetas = append(subTaskMetas, metaBytes)
-	}
-	return subTaskMetas, nil
-}
-
 const (
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
 )
 
-func generateNonPartitionPlan(
+func generateReadIndexPlan(
 	ctx context.Context,
 	d *ddl,
 	tblInfo *model.TableInfo,
 	job *model.Job,
 	useCloud bool,
-	instanceCnt int,
+	nodeCnt int,
+	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
+	if tblInfo.Partition == nil {
+		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
+	}
+	defs := tblInfo.Partition.Definitions
+	for _, def := range defs {
+		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
+		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, nodeCnt, logger)
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, partMeta...)
+	}
+	return metas, nil
+}
+
+func generatePlanForPhysicalTable(
+	ctx context.Context,
+	d *ddl,
+	tbl table.PhysicalTable,
+	job *model.Job,
+	useCloud bool,
+	nodeCnt int,
+	logger *zap.Logger,
+) (metas [][]byte, err error) {
 	ver, err := getValidCurrentVersion(d.store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl, ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
@@ -271,7 +270,6 @@ func generateNonPartitionPlan(
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := d.store.(helper.Storage).GetRegionCache()
 		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-
 		if err != nil {
 			return false, err
 		}
@@ -294,7 +292,13 @@ func generateNonPartitionPlan(
 			return true, nil
 		}
 
-		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
+		logger.Info("calculate region batch",
+			zap.Int("totalRegionCnt", len(recordRegionMetas)),
+			zap.Int("regionBatch", regionBatch),
+			zap.Int("instanceCnt", nodeCnt),
+			zap.Bool("useCloud", useCloud),
+		)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			end := i + regionBatch
@@ -303,8 +307,9 @@ func generateNonPartitionPlan(
 			}
 			batch := recordRegionMetas[i:end]
 			subTaskMeta := &BackfillSubTaskMeta{
-				RowStart: batch[0].StartKey(),
-				RowEnd:   batch[len(batch)-1].EndKey(),
+				PhysicalTableID: tbl.GetPhysicalID(),
+				RowStart:        batch[0].StartKey(),
+				RowEnd:          batch[len(batch)-1].EndKey(),
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
@@ -330,12 +335,12 @@ func generateNonPartitionPlan(
 }
 
 // CalculateRegionBatch is exported for test.
-func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+func CalculateRegionBatch(totalRegionCnt int, nodeCnt int, useLocalDisk bool) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})
 	var regionBatch int
-	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
+	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
 	if useLocalDisk {
 		regionBatch = avgTasksPerInstance
 	} else {
@@ -503,6 +508,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 func generateMergePlan(
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	nodeCnt int,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
@@ -561,15 +567,13 @@ func generateMergePlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
-		start := 0
-		step := external.MergeSortFileCountStep
-		for start < len(dataFiles) {
-			end := start + step
-			if end > len(dataFiles) {
-				end = len(dataFiles)
-			}
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, task.Concurrency)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, files := range dataFilesGroup {
 			m := &BackfillSubTaskMeta{
-				DataFiles: dataFiles[start:end],
+				DataFiles: files,
 				EleIDs:    eleID,
 			}
 			metaBytes, err := json.Marshal(m)
@@ -577,8 +581,6 @@ func generateMergePlan(
 				return nil, err
 			}
 			metaArr = append(metaArr, metaBytes)
-
-			start = end
 		}
 	}
 	return metaArr, nil

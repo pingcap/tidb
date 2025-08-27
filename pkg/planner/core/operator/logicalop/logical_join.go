@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -282,8 +283,14 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	leftCond = expression.RemoveDupExprs(leftCond)
 	rightCond = expression.RemoveDupExprs(rightCond)
-	leftRet, lCh := p.Children()[0].PredicatePushDown(leftCond, opt)
-	rightRet, rCh := p.Children()[1].PredicatePushDown(rightCond, opt)
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	children := p.Children()
+	rightChild := children[1]
+	leftChild := children[0]
+	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
+	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
+	leftRet, lCh := leftChild.PredicatePushDown(leftCond, opt)
+	rightRet, rCh := rightChild.PredicatePushDown(rightCond, opt)
 	addSelection(p, lCh, leftRet, 0, opt)
 	addSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
@@ -748,7 +755,9 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 
 // ExtractFDForInnerJoin extracts FD for inner join.
 func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
-	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
+	children := p.Children()
+	rightFD := children[1].ExtractFD()
+	leftFD := children[0].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 
@@ -1060,23 +1069,22 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	rChild := p.Children()[1]
 	lSchema := lChild.Schema()
 	rSchema := rChild.Schema()
+	var lFullSchema, rFullSchema *expression.Schema
 	// parentused col = t2.a
 	// leftChild schema = t1.a(t2.a) + and others
 	// rightChild schema = t3 related + and others
 	if join, ok := lChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			lSchema = join.FullSchema
-		}
+		lFullSchema = join.FullSchema
 	}
 	if join, ok := rChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			rSchema = join.FullSchema
-		}
+		rFullSchema = join.FullSchema
 	}
 	for _, col := range parentUsedCols {
-		if lSchema != nil && lSchema.Contains(col) {
+		if (lSchema != nil && lSchema.Contains(col)) ||
+			(lFullSchema != nil && lFullSchema.Contains(col)) {
 			leftCols = append(leftCols, col)
-		} else if rSchema != nil && rSchema.Contains(col) {
+		} else if (rSchema != nil && rSchema.Contains(col)) ||
+			(rFullSchema != nil && rFullSchema.Contains(col)) {
 			rightCols = append(rightCols, col)
 		}
 	}
@@ -1645,7 +1653,10 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.RightConditions = nil
 	p.OtherConditions = nil
 	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
-	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
+	exprCtx := p.SCtx().GetExprCtx()
+	outerTableSchema := outerTable.Schema()
+	innerTableSchema := innerTable.Schema()
+	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
 }

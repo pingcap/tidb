@@ -87,7 +87,7 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	if err != nil {
 		return err
 	}
-	p.allocedFrom = alloced
+	p.allocedFrom = alloced + 1
 	return nil
 }
 

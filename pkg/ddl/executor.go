@@ -1117,7 +1117,9 @@ func (e *executor) createTableWithInfoJob(
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemas,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+		SessionVars:         make(map[string]string),
 	}
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1149,13 +1151,14 @@ func (e *executor) createTableWithInfoPost(
 	ctx sessionctx.Context,
 	tbInfo *model.TableInfo,
 	schemaID int64,
+	scatterScope string,
 ) error {
 	var err error
 	var partitions []model.PartitionDefinition
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
 		partitions = pi.Definitions
 	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions)
+	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterScope)
 	if tbInfo.AutoIncID > 1 {
 		// Default tableAutoIncID base is 0.
 		// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1210,7 +1213,11 @@ func (e *executor) CreateTableWithInfo(
 			err = nil
 		}
 	} else {
-		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID)
+		var scatterScope string
+		if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
+		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope)
 	}
 
 	return errors.Trace(err)
@@ -1234,7 +1241,9 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 
 	var err error
 
@@ -1300,9 +1309,12 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		}
 		return errors.Trace(err)
 	}
-
+	var scatterScope string
+	if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
 	for _, tblArgs := range args.Tables {
-		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID); err != nil {
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1365,7 +1377,8 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
-func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition) {
+func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
+	failpoint.InjectCall("preSplitAndScatter", scatterScope)
 	if tbInfo.TempTableType != model.TempTableNone {
 		return
 	}
@@ -1373,16 +1386,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
-	var (
-		preSplit     func()
-		scatterScope string
-	)
-	val, ok := ctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
-	if !ok {
-		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
-	} else {
-		scatterScope = val
-	}
+	var preSplit func()
 	if len(parts) > 0 {
 		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterScope) }
 	} else {
@@ -2275,7 +2279,9 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
@@ -2786,7 +2792,9 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
@@ -2963,6 +2971,8 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
+		source.PKIsHandle != target.PKIsHandle ||
+		source.IsCommonHandle != target.IsCommonHandle ||
 		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
@@ -4280,7 +4290,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
 	}
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
@@ -4846,6 +4858,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if len(indexName.L) == 0 {
+		// It means that there is already an index exists with same name
+		return nil
 	}
 
 	tblInfo := t.Meta()
@@ -6871,4 +6887,15 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
 	}
+}
+
+func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
+	var scatterScope string
+	val, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
+	if !ok {
+		logutil.DDLLogger().Info("won't scatter region since system variable didn't set")
+	} else {
+		scatterScope = val
+	}
+	return scatterScope
 }

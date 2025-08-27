@@ -725,3 +725,107 @@ func TestIssue55808(t *testing.T) {
 	err := tk.ExecToErr("alter table t add index idx(a);")
 	require.ErrorContains(t, err, "injected error")
 }
+
+func TestAddIndexBackfillLostTempIndexValues(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	tk.MustExec("create table t(id int primary key, b int not null default 0);")
+	tk.MustExec("insert into t values (1, 0);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	ddl.MockDMLExecutionBeforeScan = func() {
+		_, err := tk1.Exec("insert into t values (2, 0);")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("delete from t where id = 1;")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("insert into t values (3, 0);")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("delete from t where id = 2;")
+		assert.NoError(t, err)
+	}
+
+	ingest.MockDMLExecutionStateBeforeImport = func() {
+		_, err := tk1.Exec("insert into t(id) values (4);")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("delete from t where id = 3;")
+		assert.NoError(t, err)
+	}
+	var rows [][]any
+	ddl.MockDMLExecutionStateBeforeMerge = func() {
+		rows = tk1.MustQuery("select * from t use index();").Rows()
+		_, err := tk1.Exec("insert into t values (3, 0);")
+		assert.NoError(t, err)
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionBeforeScan", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "1*return"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionBeforeScan"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
+	})
+
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '0' for key 't.idx'")
+	require.Len(t, rows, 1)
+	require.Equal(t, rows[0][0].(string), "4")
+
+	tk.MustExec("admin check table t;")
+}
+
+func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	var runInsert bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		if t.Failed() || runInsert {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			for i := range 4 {
+				_, err := tk1.Exec("insert into t values (?, ?);", i, i)
+				assert.NoError(t, err)
+			}
+			runInsert = true
+		}
+	})
+
+	var runUpdate bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", func() {
+		if t.Failed() || runUpdate {
+			return
+		}
+		for i := range 4 {
+			_, err := tk1.Exec("update t set b = b+10 where a = ?;", i)
+			assert.NoError(t, err)
+		}
+		runUpdate = true
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0 10", "1 11", "2 12", "3 13"))
+}

@@ -370,8 +370,16 @@ func (d *sqlDigester) reduceLit(currTok *token, redact string, forBinding bool, 
 		return
 	}
 
-	// Aggressive reduce lists.
+	// "_charset ?, _charset ?," => "..."
 	last4 := d.tokens.back(4)
+	if toPop := d.isGenericListWithCharset(last4); toPop != 0 {
+		d.tokens.popBack(toPop)
+		currTok.tok = genericSymbolList
+		currTok.lit = "..."
+		return
+	}
+
+	// Aggressive reduce lists.
 	if d.isGenericLists(last4) {
 		d.tokens.popBack(4)
 		currTok.tok = genericSymbolList
@@ -547,6 +555,27 @@ func (d *sqlDigester) isGenericList(last2 []token) (generic bool) {
 	default:
 	}
 	return
+}
+
+func (d *sqlDigester) isGenericListWithCharset(last []token) int {
+	if len(last) < 3 {
+		return 0
+	}
+	toPop := 0
+	if len(last) >= 4 {
+		// elminate the first _charset
+		if last[0].tok == underscoreCS {
+			toPop = 1
+		}
+		last = last[1:]
+	}
+	if last[2].tok != underscoreCS {
+		return 0
+	}
+	if !d.isGenericList(last[:2]) {
+		return 0
+	}
+	return toPop + 3
 }
 
 func (d *sqlDigester) isOrderOrGroupBy() (orderOrGroupBy bool) {

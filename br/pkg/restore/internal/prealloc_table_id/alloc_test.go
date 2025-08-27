@@ -3,12 +3,17 @@
 package prealloctableid_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,16 +43,16 @@ func TestAllocator(t *testing.T) {
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7},
 			hasAllocatedTo:        6,
-			successfullyAllocated: []int64{6, 7},
+			successfullyAllocated: []int64{7},
 			shouldAllocatedTo:     8,
-			msg:                   "ID:[6,8)",
+			msg:                   "ID:[7,8)",
 		},
 		{
 			tableIDs:              []int64{4, 6, 9, 2},
 			hasAllocatedTo:        1,
 			successfullyAllocated: []int64{2, 4, 6, 9},
 			shouldAllocatedTo:     10,
-			msg:                   "ID:[1,10)",
+			msg:                   "ID:[2,10)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 3, 4},
@@ -61,17 +66,17 @@ func TestAllocator(t *testing.T) {
 			hasAllocatedTo:        3,
 			successfullyAllocated: []int64{5, 6},
 			shouldAllocatedTo:     7,
-			msg:                   "ID:[3,7)",
+			msg:                   "ID:[4,7)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7},
 			hasAllocatedTo:        6,
-			successfullyAllocated: []int64{6, 7},
+			successfullyAllocated: []int64{7},
 			shouldAllocatedTo:     13,
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-			msg: "ID:[6,13)",
+			msg: "ID:[7,13)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7, 13},
@@ -81,7 +86,7 @@ func TestAllocator(t *testing.T) {
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-			msg: "ID:[9,14)",
+			msg: "ID:[10,14)",
 		},
 	}
 
@@ -122,4 +127,42 @@ func TestAllocator(t *testing.T) {
 			run(t, c)
 		})
 	}
+}
+
+func TestAllocatorBound(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("CREATE TABLE test.t1 (id int);")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	currentGlobalID := int64(0)
+	err := kv.RunInNewTxn(ctx, s.Mock.Store(), true, func(_ context.Context, txn kv.Transaction) (err error) {
+		allocator := meta.NewMutator(txn)
+		currentGlobalID, err = allocator.GetGlobalID()
+		return err
+	})
+	require.NoError(t, err)
+	rows := tk.MustQuery("ADMIN SHOW DDL JOBS WHERE JOB_ID = ?", currentGlobalID).Rows()
+	// The current global ID is used, so it cannot use anymore.
+	require.Len(t, rows, 1)
+	tableInfos := []*metautil.Table{
+		{Info: &model.TableInfo{ID: currentGlobalID}},
+		{Info: &model.TableInfo{ID: currentGlobalID + 2}},
+		{Info: &model.TableInfo{ID: currentGlobalID + 4}},
+	}
+	ids := prealloctableid.New(tableInfos)
+	lastGlobalID := currentGlobalID
+	err = kv.RunInNewTxn(ctx, s.Mock.Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		allocator := meta.NewMutator(txn)
+		if err := ids.Alloc(allocator); err != nil {
+			return err
+		}
+		currentGlobalID, err = allocator.GetGlobalID()
+		return err
+	})
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("ID:[%d,%d)", lastGlobalID+1, currentGlobalID), ids.String())
+	require.False(t, ids.Prealloced(tableInfos[0].Info.ID))
+	require.True(t, ids.Prealloced(tableInfos[1].Info.ID))
+	require.True(t, ids.Prealloced(tableInfos[2].Info.ID))
+	require.True(t, ids.Prealloced(currentGlobalID-1))
 }

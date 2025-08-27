@@ -156,15 +156,17 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	warnings      contextutil.WarnHandlerExt
-	loc           *time.Location
-	exprCtx       exprctx.BuildContext
-	tblCtx        table.MutateContext
-	schemaName    string
-	table         table.Table
-	batchCnt      int
-	jobContext    *ReorgContext
-	metricCounter prometheus.Counter
+	warnings   contextutil.WarnHandlerExt
+	loc        *time.Location
+	exprCtx    exprctx.BuildContext
+	tblCtx     table.MutateContext
+	schemaName string
+	table      table.Table
+	batchCnt   int
+	jobContext *ReorgContext
+
+	metricCounter   prometheus.Counter
+	conflictCounter prometheus.Counter
 }
 
 func newBackfillCtx(id int, rInfo *reorgInfo,
@@ -213,17 +215,20 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 
 	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
-		id:            id,
-		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
-		warnings:      warnHandler,
-		exprCtx:       exprCtx,
-		tblCtx:        tblCtx,
-		loc:           exprCtx.GetEvalCtx().Location(),
-		schemaName:    schemaName,
-		table:         tbl,
-		batchCnt:      batchCnt,
-		jobContext:    jobCtx,
-		metricCounter: metrics.GetBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		id:         id,
+		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
+		warnings:   warnHandler,
+		exprCtx:    exprCtx,
+		tblCtx:     tblCtx,
+		loc:        exprCtx.GetEvalCtx().Location(),
+		schemaName: schemaName,
+		table:      tbl,
+		batchCnt:   batchCnt,
+		jobContext: jobCtx,
+		metricCounter: metrics.GetBackfillTotalByLabel(
+			label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		conflictCounter: metrics.GetBackfillTotalByLabel(
+			fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
 }
 
@@ -248,7 +253,7 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 }
 
 type backfiller interface {
-	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
+	BackfillData(ctx context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
 	GetCtx() *backfillCtx
 	String() string
@@ -360,7 +365,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(handleRange)
+		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -394,6 +399,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
+	failpoint.InjectCall("afterHandleBackfillTask", task.jobID)
+
 	logutil.DDLLogger().Info("backfill worker finish task",
 		zap.Stringer("worker", w), zap.Stringer("task", task),
 		zap.Int("added count", result.addedCount),
@@ -484,6 +491,7 @@ func loadTableRanges(
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
+	splitKeys []kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
 	if len(startKey) == 0 && len(endKey) == 0 {
@@ -510,7 +518,11 @@ func loadTableRanges(
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
 	var ranges []kv.KeyRange
-	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+	maxRetryTimes := util.DefaultMaxRetries
+	failpoint.Inject("loadTableRangesNoRetry", func() {
+		maxRetryTimes = 1
+	})
+	err := util.RunWithRetry(maxRetryTimes, util.RetryInterval, func() (bool, error) {
 		logutil.DDLLogger().Info("load table ranges from PD",
 			zap.Int64("physicalTableID", t.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startKey)),
@@ -538,6 +550,7 @@ func loadTableRanges(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ranges = splitRangesByKeys(ranges, splitKeys)
 	logutil.DDLLogger().Info("load table ranges from PD done",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
@@ -547,7 +560,41 @@ func loadTableRanges(
 	return ranges, nil
 }
 
+// splitRangesByKeys splits the ranges into more ranges by given split keys.
+// The split keys should be ordered.
+func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
+	if len(splitKeys) == 0 {
+		return ranges
+	}
+	ret := make([]kv.KeyRange, 0, len(ranges)+len(splitKeys))
+	for _, r := range ranges {
+		start := r.StartKey
+		finishOneRange := false
+		for !finishOneRange {
+			if len(splitKeys) == 0 {
+				break
+			}
+			split := splitKeys[0]
+			switch {
+			case split.Cmp(start) <= 0:
+				splitKeys = splitKeys[1:]
+			case split.Cmp(r.EndKey) < 0:
+				splitKeys = splitKeys[1:]
+				ret = append(ret, kv.KeyRange{StartKey: start, EndKey: split})
+				start = split
+			default:
+				finishOneRange = true
+			}
+		}
+		ret = append(ret, kv.KeyRange{StartKey: start, EndKey: r.EndKey})
+	}
+	return ret
+}
+
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	failpoint.Inject("validateAndFillRangesErr", func() {
+		failpoint.Return(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("mock"))
+	})
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
@@ -558,6 +605,10 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			s := r.StartKey
 			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
 				ranges[i].StartKey = startKey
+			} else if bytes.Compare(s, startKey) > 0 {
+				errMsg := fmt.Sprintf("get empty range at the beginning of ranges, expected %s, but got %s",
+					hex.EncodeToString(startKey), hex.EncodeToString(s))
+				return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 			}
 		}
 		if i == len(ranges)-1 {
@@ -565,12 +616,15 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
 				ranges[i].EndKey = endKey
 			}
+			// We don't need to check the end key because a limit may set before scanning regions.
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
-			return errors.Errorf("get empty start/end key in the middle of ranges")
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("get empty start/end key in the middle of ranges")
 		}
 		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
-			return errors.Errorf("ranges are not continuous")
+			errMsg := fmt.Sprintf("ranges are not continuous, last end key %s, next start key %s",
+				hex.EncodeToString(ranges[i-1].EndKey), hex.EncodeToString(ranges[i].StartKey))
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 	}
 	return nil
@@ -741,7 +795,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS, 0)
+		ctx, job, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -848,6 +902,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			failpoint.InjectCall("onUpdateJobParam")
 			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
@@ -881,15 +936,13 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	var wg util.WaitGroupWrapper
 	adjustCtx, cancel := context.WithCancel(ctx)
 	if job != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.RunWithLog(func() {
 			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
-		}()
+		})
 	}
 
 	err = pipe.Close()
-
+	failpoint.InjectCall("afterPipeLineClose")
 	cancel()
 	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
@@ -985,6 +1038,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		return errors.Trace(err)
 	}
 
+	var splitKeys []kv.Key
+	if reorgInfo.mergingTmpIdx {
+		splitKeys = getSplitKeysForTempIndexRanges(t.GetPhysicalID(), reorgInfo.elements)
+	}
+
 	// process result goroutine
 	eg.Go(func() error {
 		totalAddedCount := reorgInfo.Job.GetRowCount()
@@ -1020,7 +1078,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				} else {
 					totalAddedCount += int64(result.addedCount)
 				}
-				dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalAddedCount)
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 
@@ -1038,12 +1095,13 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	})
 
 	// generate task goroutine
+	doneCh := make(chan struct{})
 	eg.Go(func() error {
 		// we will modify the startKey in this goroutine, so copy them to avoid race.
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, backfillTaskChanSize)
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, splitKeys, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
@@ -1069,17 +1127,21 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		}
 
 		scheduler.close(false)
+		close(doneCh)
 		return nil
 	})
 
 	// update the worker cnt goroutine
-	go func() {
+	eg.Go(func() error {
 		ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
 		defer ticker.Stop()
+	outer:
 		for {
 			select {
-			case <-ctx.Done():
-				return
+			case <-egCtx.Done():
+				return egCtx.Err()
+			case <-doneCh:
+				break outer
 			case <-ticker.C:
 				currentWorkerCnt := scheduler.currentWorkerSize()
 				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
@@ -1095,7 +1157,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				}
 			}
 		}
-	}()
+		return nil
+	})
 
 	return eg.Wait()
 }

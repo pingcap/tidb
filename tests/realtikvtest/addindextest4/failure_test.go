@@ -33,6 +33,7 @@ import (
 )
 
 func TestAddIndexIngestRecoverPartition(t *testing.T) {
+	t.Skip("the test is too hacky, use another way to test")
 	partCnt := 0
 	block := make(chan struct{})
 	ExecuteBlocks(t, func() {

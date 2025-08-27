@@ -79,7 +79,7 @@ func (s *Schema) Clone() *Schema {
 		keys = append(keys, key.Clone())
 	}
 	schema := NewSchema(cols...)
-	schema.SetUniqueKeys(keys)
+	schema.SetKeys(keys)
 	return schema
 }
 
@@ -195,9 +195,14 @@ func (s *Schema) Append(col ...*Column) {
 	s.Columns = append(s.Columns, col...)
 }
 
+// SetKeys will set the value of Schema.Keys.
+func (s *Schema) SetKeys(keys []KeyInfo) {
+	s.Keys = keys
+}
+
 // SetUniqueKeys will set the value of Schema.Keys.
 func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
-	s.Keys = keys
+	s.UniqueKeys = keys
 }
 
 // ColumnsIndices will return a slice which contains the position of each column in schema.

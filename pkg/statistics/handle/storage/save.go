@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
@@ -94,7 +93,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
 			if err != nil {
 				return
 			}
@@ -102,7 +101,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				lastAnalyzePos = upperBound.GetBytes()
 			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetLower(j))
 			if err != nil {
 				return
 			}
@@ -243,7 +242,6 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 		}
 		statsVer = version
 	}
-	cache.TableRowStatsCache.Invalidate(tableID)
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
@@ -352,7 +350,6 @@ func SaveColOrIdxStatsToStorage(
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
-		cache.TableRowStatsCache.Invalidate(tableID)
 	} else {
 		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?", version, version, tableID)
 	}
@@ -419,7 +416,6 @@ func SaveMetaToStorage(
 		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	}
 	statsVer = version
-	cache.TableRowStatsCache.Invalidate(tableID)
 	return
 }
 
@@ -558,4 +554,11 @@ func InsertTableStats2KV(
 		}
 	}
 	return startTS, nil
+}
+
+// convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundToBlob(ctx types.Context, d types.Datum) (types.Datum, error) {
+	return d.ConvertTo(ctx, types.NewFieldType(mysql.TypeBlob))
 }

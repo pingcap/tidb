@@ -250,6 +250,48 @@ func (a *recordSet) GetExecutor4Test() any {
 	return a.executor
 }
 
+// TelemetryInfo records some telemetry information during execution.
+type TelemetryInfo struct {
+	UseNonRecursive       bool
+	UseRecursive          bool
+	UseMultiSchemaChange  bool
+	UseExchangePartition  bool
+	UseFlashbackToCluster bool
+	PartitionTelemetry    *PartitionTelemetryInfo
+	AccountLockTelemetry  *AccountLockTelemetryInfo
+	UseIndexMerge         bool
+	UseTableLookUp        atomic.Bool
+}
+
+// PartitionTelemetryInfo records table partition telemetry information during execution.
+type PartitionTelemetryInfo struct {
+	UseTablePartition                bool
+	UseTablePartitionList            bool
+	UseTablePartitionRange           bool
+	UseTablePartitionHash            bool
+	UseTablePartitionRangeColumns    bool
+	UseTablePartitionRangeColumnsGt1 bool
+	UseTablePartitionRangeColumnsGt2 bool
+	UseTablePartitionRangeColumnsGt3 bool
+	UseTablePartitionListColumns     bool
+	TablePartitionMaxPartitionsNum   uint64
+	UseCreateIntervalPartition       bool
+	UseAddIntervalPartition          bool
+	UseDropIntervalPartition         bool
+	UseCompactTablePartition         bool
+	UseReorganizePartition           bool
+}
+
+// AccountLockTelemetryInfo records account lock/unlock information during execution
+type AccountLockTelemetryInfo struct {
+	// The number of CREATE/ALTER USER statements that lock the user
+	LockUser int64
+	// The number of CREATE/ALTER USER statements that unlock the user
+	UnlockUser int64
+	// The number of CREATE/ALTER USER statements
+	CreateOrAlterUser int64
+}
+
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
@@ -286,6 +328,7 @@ type ExecStmt struct {
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.PlanCacheStmt
+	Ti          *TelemetryInfo
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -335,7 +378,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if executor == nil {
-		b := newExecutorBuilder(a.Ctx, a.InfoSchema)
+		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
 		executor = b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -555,12 +598,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			return nil, err
 		}
 		if len(switchGroupName) > 0 {
-			group, err := rm.ResourceGroupCtl.GetResourceGroup(switchGroupName)
-			if err != nil || group == nil {
-				logutil.BgLogger().Debug("invalid switch resource group", zap.String("switch-group-name", switchGroupName), zap.Error(err))
-			} else {
-				stmtCtx.ResourceGroupName = switchGroupName
-			}
+			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -1223,7 +1261,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

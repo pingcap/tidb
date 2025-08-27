@@ -15,10 +15,14 @@
 package ingest
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/pingcap/errors"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
@@ -41,4 +45,15 @@ func TryConvertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo
 		return originErr
 	}
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
+}
+
+// CheckIngestLeakageForTest is only used in test.
+func CheckIngestLeakageForTest(exitCode int) {
+	if exitCode == 0 {
+		if registeredJob := metrics.GetRegisteredJob(); len(registeredJob) > 0 {
+			fmt.Fprintf(os.Stderr, "add index metrics leakage: %v\n", registeredJob)
+			os.Exit(1)
+		}
+	}
+	os.Exit(exitCode)
 }

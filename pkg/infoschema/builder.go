@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -693,7 +694,16 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 
-	b.infoSchema.addReferredForeignKeys(dbInfo.Name, tblInfo)
+	allIndexPublic := true
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			allIndexPublic = false
+			break
+		}
+	}
+	if allIndexPublic {
+		metrics.DDLResetTempIndexWrite(tblInfo.ID)
+	}
 
 	if !b.enableV2 {
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
@@ -898,7 +908,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
-	b.initMisc(dbInfos, policies, resourceGroups)
+	b.initMisc(policies, resourceGroups)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
@@ -965,8 +975,8 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
-			b.infoData.byID.Set(item)
-			b.infoData.byName.Set(item)
+			btreeSet(&b.infoData.byID, &item)
+			btreeSet(&b.infoData.byName, &item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
@@ -988,6 +998,7 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
+		b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
 		b.infoData.add(tableItem{
 			dbName:        di.Name,
 			dbID:          di.ID,
@@ -998,6 +1009,8 @@ func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model
 	} else {
 		sortedTbls := b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)]
 		b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)] = append(sortedTbls, tbl)
+		// Maintain foreign key reference information.
+		b.infoSchema.addReferredForeignKeys(di.Name, tblInfo)
 	}
 }
 

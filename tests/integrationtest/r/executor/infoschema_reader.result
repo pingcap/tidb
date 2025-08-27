@@ -445,3 +445,121 @@ alter table t add index idx_t (c(16));
 select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
 SUB_PART
 16
+select table_name from information_schema.columns where table_name = 'a' and table_name = 'b';
+table_name
+select table_name from information_schema.columns where table_schema = 'a' and table_schema = 'b';
+table_name
+select table_name from information_schema.tables where table_name = 'a' and table_name = 'b';
+table_name
+select table_name from information_schema.tables where table_schema = 'a' and table_schema = 'b';
+table_name
+select table_name from information_schema.partitions where table_name = 'a' and table_name = 'b';
+table_name
+select table_name from information_schema.partitions where table_schema = 'a' and table_schema = 'b';
+table_name
+select table_name from information_schema.statistics where table_name = 'a' and table_name = 'b';
+table_name
+select table_name from information_schema.statistics where table_schema = 'a' and table_schema = 'b';
+table_name
+select table_name from information_schema.referential_constraints where table_name = 'a' and table_name = 'b';
+table_name
+select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';
+table_name
+drop database if exists test1;
+create database test1;
+use test1;
+create table t10(id int);
+create table t11 like t10;
+create table t12 like t10;
+create table t13 like t10;
+create table t14 like t10;
+create table t15 like t10;
+create table t16 like t10;
+create table t17 like t10;
+create table t18 like t10;
+create table t19 like t10;
+drop database if exists test2;
+create database test2;
+use test2;
+create table t20(id int);
+create table t21 like t20;
+create table t22 like t20;
+create table t23 like t20;
+create table t24 like t20;
+create table t25 like t20;
+create table t26 like t20;
+create table t27 like t20;
+create table t28 like t20;
+create table t29 like t20;
+SELECT table_schema, table_name,data_length FROM information_schema.TABLES
+WHERE (TABLE_NAME IN ('t10','t11','t12','t13','t14','t15','t16','t17','t18','t19','t20','t21','t22','t23','t24','t25','t26','t27','t28','t29'));
+table_schema	table_name	data_length
+test1	t10	0
+test1	t11	0
+test1	t12	0
+test1	t13	0
+test1	t14	0
+test1	t15	0
+test1	t16	0
+test1	t17	0
+test1	t18	0
+test1	t19	0
+test2	t20	0
+test2	t21	0
+test2	t22	0
+test2	t23	0
+test2	t24	0
+test2	t25	0
+test2	t26	0
+test2	t27	0
+test2	t28	0
+test2	t29	0
+drop database test1;
+drop database test2;
+drop database if exists executor__infoschema_reader_2;
+create database executor__infoschema_reader_2;
+use executor__infoschema_reader_2;
+create table t1 (a int);
+create table t2 (a int);
+create table t3 (a int);
+insert into t1 values (1);
+insert into t2 values (1), (2);
+insert into t3 values (1), (2), (3);
+analyze table t1;
+analyze table t2;
+analyze table t3;
+select TABLE_NAME, TABLE_ROWS from information_schema.tables where table_schema = 'executor__infoschema_reader_2';
+TABLE_NAME	TABLE_ROWS
+t1	1
+t2	2
+t3	3
+drop table t1;
+drop table t2;
+drop table t3;
+create table pt1 (a int primary key, b int) partition by hash (a) partitions 4;
+create table pt2 (a int primary key, b int) partition by hash (a) partitions 4;
+create table pt3 (a int primary key, b int) partition by hash (a) partitions 4;
+insert into pt1 values (1, 1);
+insert into pt2 values (1, 1), (2, 2);
+insert into pt3 values (1, 1), (2, 2), (3, 3);
+analyze table pt1;
+analyze table pt2;
+analyze table pt3;
+select TABLE_NAME, TABLE_ROWS from information_schema.partitions where table_schema = 'executor__infoschema_reader_2';
+TABLE_NAME	TABLE_ROWS
+pt1	0
+pt1	1
+pt1	0
+pt1	0
+pt2	0
+pt2	1
+pt2	1
+pt2	0
+pt3	0
+pt3	1
+pt3	1
+pt3	1
+drop table pt1;
+drop table pt2;
+drop table pt3;
+use executor__infoschema_reader;

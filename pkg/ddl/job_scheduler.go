@@ -537,6 +537,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
 		eventPublishStore:    s.eventPublishStore,
+		sysTblMgr:            s.sysTblMgr,
 
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(

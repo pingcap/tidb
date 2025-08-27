@@ -48,6 +48,8 @@ const (
 	// MaxResolveLocksbackupOffSleep is the maximum sleep time for resolving locks.
 	// 10 minutes for every round.
 	MaxResolveLocksbackupOffSleepMs = 600000
+
+	IncompleteRangesUpdateInterval = time.Second * 15
 )
 
 // ClientMgr manages connections needed by backup.
@@ -69,6 +71,13 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+const (
+	// UnitRange represents the progress updated counter when a range finished.
+	UnitRange ProgressUnit = "range"
+	// UnitRegion represents the progress updated counter when a region finished.
+	UnitRegion ProgressUnit = "region"
+)
+
 type MainBackupLoop struct {
 	BackupSender
 
@@ -82,7 +91,7 @@ type MainBackupLoop struct {
 	ReplicaReadLabel   map[string]string
 	StateNotifier      chan BackupRetryPolicy
 
-	ProgressCallBack        func()
+	ProgressCallBack        func(ProgressUnit)
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
 }
 
@@ -176,6 +185,9 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	round := uint64(0)
 	// reset grpc connection every round except key_locked error.
 	reset := true
+	// update incompleteRanges to advance the progress and the request.
+	incompleteRangesUpdateTicker := time.NewTicker(IncompleteRangesUpdateInterval)
+	defer incompleteRangesUpdateTicker.Stop()
 mainLoop:
 	for {
 		round += 1
@@ -211,8 +223,7 @@ mainLoop:
 			mainCancel()
 			return ctx.Err()
 		default:
-			iter := loop.GlobalProgressTree.Iter()
-			inCompleteRanges = iter.GetIncompleteRanges()
+			inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
 			if len(inCompleteRanges) == 0 {
 				// all range backuped
 				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
@@ -259,6 +270,7 @@ mainLoop:
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+		incompleteRangesUpdateTicker.Reset(IncompleteRangesUpdateInterval)
 	handleLoop:
 		for {
 			select {
@@ -266,6 +278,13 @@ mainLoop:
 				handleCancel()
 				mainCancel()
 				return ctx.Err()
+			case <-incompleteRangesUpdateTicker.C:
+				startUpdate := time.Now()
+				inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
+				loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
+				elapsed := time.Since(startUpdate)
+				log.Info("update the incomplete ranges", zap.Duration("take", elapsed))
+				incompleteRangesUpdateTicker.Reset(max(5*elapsed, IncompleteRangesUpdateInterval))
 			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {
 					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
@@ -352,7 +371,7 @@ mainLoop:
 				if lock != nil {
 					allTxnLocks = append(allTxnLocks, lock)
 				}
-				loop.ProgressCallBack()
+				loop.ProgressCallBack(UnitRegion)
 			}
 		}
 	}
@@ -562,7 +581,7 @@ func (bc *Client) StartCheckpointRunner(
 	backupTS uint64,
 	ranges []rtree.Range,
 	safePointID string,
-	progressCallBack func(),
+	progressCallBack func(ProgressUnit),
 ) (err error) {
 	if bc.checkpointMeta == nil {
 		bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{
@@ -603,13 +622,12 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	if bc.checkpointMeta != nil && len(bc.checkpointMeta.CheckpointDataMap) > 0 {
 		rangeTree, exists := bc.checkpointMeta.CheckpointDataMap[groupKey]
 		if exists {
-			incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
 			delete(bc.checkpointMeta.CheckpointDataMap, groupKey)
 			return &rtree.ProgressRange{
-				Res:        rangeTree,
-				Incomplete: incomplete,
-				Origin:     r,
-				GroupKey:   groupKey,
+				Res:      rangeTree,
+				Origin:   r,
+				GroupKey: groupKey,
+				Complete: false,
 			}
 		}
 	}
@@ -617,17 +635,15 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
 	return &rtree.ProgressRange{
-		Res: rtree.NewRangeTree(),
-		Incomplete: []rtree.Range{
-			r,
-		},
+		Res:      rtree.NewRangeTree(),
 		Origin:   r,
 		GroupKey: groupKey,
+		Complete: false,
 	}
 }
 
 // LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func()) (map[string]rtree.RangeTree, error) {
+func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func(ProgressUnit)) (map[string]rtree.RangeTree, error) {
 	rangeDataMap := make(map[string]rtree.RangeTree)
 
 	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) {
@@ -637,7 +653,7 @@ func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack fun
 			rangeDataMap[groupKey] = rangeTree
 		}
 		rangeTree.Put(rg.StartKey, rg.EndKey, rg.Files)
-		progressCallBack()
+		progressCallBack(UnitRegion)
 	})
 
 	// we should adjust start-time of the summary to `pastDureTime` earlier
@@ -1082,7 +1098,7 @@ func (bc *Client) BackupRanges(
 	concurrency uint,
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
-	progressCallBack func(),
+	progressCallBack func(ProgressUnit),
 ) error {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
@@ -1101,6 +1117,7 @@ func (bc *Client) BackupRanges(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	globalProgressTree.SetCallBack(func() { progressCallBack(UnitRange) })
 
 	stateNotifier := make(chan BackupRetryPolicy)
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())

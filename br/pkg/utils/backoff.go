@@ -52,6 +52,10 @@ const (
 	ChecksumMaxWaitInterval = 30 * time.Second
 
 	gRPC_Cancel = "the client connection is closing"
+
+	rawClientMaxAttempts  = 5
+	rawClientDelayTime    = 500 * time.Millisecond
+	rawClientMaxDelayTime = 5 * time.Second
 )
 
 // At least, there are two possible cancel() call,
@@ -328,4 +332,36 @@ func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
 
 func (bo *DiskCheckBackoffer) Attempt() int {
 	return bo.attempt
+}
+
+type RawClientBackoffStrategy struct {
+	Attempts    int
+	BaseBackoff time.Duration
+	MaxBackoff  time.Duration
+}
+
+func NewRawClientBackoffStrategy() Backoffer {
+	return &RawClientBackoffStrategy{
+		Attempts:    rawClientMaxAttempts,
+		BaseBackoff: rawClientDelayTime,
+		MaxBackoff:  rawClientMaxDelayTime,
+	}
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *RawClientBackoffStrategy) NextBackoff(error) time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	if b.BaseBackoff > b.MaxBackoff {
+		b.BaseBackoff = b.MaxBackoff
+	}
+	return bo
+}
+
+func (b *RawClientBackoffStrategy) Attempt() int {
+	return b.Attempts
 }

@@ -5,6 +5,7 @@ go_test(
     timeout = "long",
     srcs = [
         "failure_test.go",
+        "integration_test.go",
         "main_test.go",
     ],
     flaky = True,
@@ -14,8 +15,10 @@ go_test(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
 )
