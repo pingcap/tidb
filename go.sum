@@ -1423,6 +1423,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20250826095011-74a61e6043d9 h1:3xjtwUJzfStXDFcG2iRBrxhHwYXnkz7Z0LDxqj48tmw=
 github.com/lcwangchao/client-go/v2 v2.0.0-alpha.0.20250826095011-74a61e6043d9/go.mod h1:6d7AtJCLANwLc+cSkjYeSrcGoSJhqTtdGNXP1IDPP88=
+github.com/lcwangchao/kvproto v0.0.0-20250826071843-9bf0d97f5c21 h1:s8HplBYe/tDkLmgjJ0uFD4yKJ8edKQoG9+X228R5QRI=
+github.com/lcwangchao/kvproto v0.0.0-20250826071843-9bf0d97f5c21/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/ldez/exptostd v0.4.4 h1:58AtQjnLcT/tI5W/1KU7xE/O7zW9RAWB6c/ScQAnfus=
 github.com/ldez/exptostd v0.4.4/go.mod h1:QfdzPw6oHjFVdNV7ILoPu5sw3OZ3OG1JS0I5JN3J4Js=
 github.com/ldez/grignotin v0.9.0 h1:MgOEmjZIVNn6p5wPaGp/0OKWyvq42KnzAt/DAb8O4Ow=
