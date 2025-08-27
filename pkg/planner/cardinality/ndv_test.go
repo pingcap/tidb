@@ -56,7 +56,7 @@ func TestScaleNDV(t *testing.T) {
 }
 
 func TestOptScaleNDVSkewRatioSetVar(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, key(a), key(b));`)
