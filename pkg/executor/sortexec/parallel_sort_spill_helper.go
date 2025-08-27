@@ -280,6 +280,8 @@ OuterLoop:
 			if err != nil {
 				break
 			}
+
+			injectPanicForIssue63216()
 		}
 	}
 

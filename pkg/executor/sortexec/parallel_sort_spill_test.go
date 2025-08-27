@@ -15,9 +15,12 @@
 package sortexec_test
 
 import (
+	"io/fs"
+	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -166,4 +169,38 @@ func TestIssue59655(t *testing.T) {
 		failpointNoMemoryDataTest(t, nil, sortCase, dataSource)
 		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}
+}
+
+func TestIssue63216(t *testing.T) {
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/Issue63216", `return(true)`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/Issue63216")
+
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
+	failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
+
+	fileNum := 0
+	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			fileNum++
+		}
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, fileNum, 1)
 }
