@@ -1582,7 +1582,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 			pkLength = len(pkIdx.Columns)
 		}
 		return len(tableScan.Ranges[0].LowVal) == pkLength
-	case *PointGetPlan:
+	case *physicalop.PointGetPlan:
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!

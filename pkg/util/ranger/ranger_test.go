@@ -1707,7 +1707,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		selection, ok := p.(*plannercore.Update).SelectPlan.(*physicalop.PhysicalSelection)
 		require.True(t, ok)
-		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
+		_, ok = selection.Children()[0].(*physicalop.PointGetPlan)
 		require.True(t, ok)
 	})
 

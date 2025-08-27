@@ -100,10 +100,10 @@ dayname("1962-03-01")^7
 drop table if exists t;
 create table t (a bigint primary key, b timestamp);
 insert into t values (1, "2019-04-29 11:56:12");
-explain format = 'brief' select * from t where b = (select max(b) from t);
-id	estRows	task	access object	operator info
-TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		eq(expression__time.t.b, 2019-04-29 11:56:12<-(ScalarQueryCol#6))
+explain format = 'plan_tree' select * from t where b = (select max(b) from t);
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(expression__time.t.b, 2019-04-29 11:56:12<-(ScalarQueryCol#6))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 ScalarSubQuery	N/A	root		Output: ScalarQueryCol#6
 └─MaxOneRow	1.00	root		
@@ -112,7 +112,7 @@ ScalarSubQuery	N/A	root		Output: ScalarQueryCol#6
       └─TableReader	1.00	root		data:TopN
         └─TopN	1.00	cop[tikv]		expression__time.t.b:desc, offset:0, count:1
           └─Selection	9990.00	cop[tikv]		not(isnull(expression__time.t.b))
-            └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+            └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where b = (select max(b) from t);
 a	b
 1	2019-04-29 11:56:12

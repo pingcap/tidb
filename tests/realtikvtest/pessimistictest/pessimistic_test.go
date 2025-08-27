@@ -2497,7 +2497,7 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	require.Regexp(t, ".*SelectLock.*", explain)
 	rows = tk.MustQuery("explain update t set i = -i where i = -1").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
-	require.Regexp(t, ".*handle:-1, lock.*", explain)
+	require.Regexpf(t, ".*handle:-1, lock.*", explain, "rows: %v", rows)
 	rows = tk.MustQuery("explain update t set i = -i where i in (-1, 1)").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
 	require.Regexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
