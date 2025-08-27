@@ -2399,37 +2399,47 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 }
 
 func indexCoveringColumn(ds *logicalop.DataSource, column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	coveredByPK, coveredByClusteredIndex := pkCoveringColumn(ds, column, ignoreLen)
+	pkCoveringState := pkCoveringColumn(ds, column, ignoreLen)
 	// Original int pk can always cover the column.
-	if coveredByPK && !coveredByClusteredIndex {
+	if pkCoveringState == stateCoveredByIntPK {
 		return true
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
-	if !coveredByPlainIndex && !coveredByClusteredIndex {
+	if !coveredByPlainIndex && pkCoveringState != stateCoveredByClusterPK {
 		return false
 	}
 	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 		column.GetType(evalCtx).EvalType() == types.ETString &&
 		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
-	if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
+	if !coveredByPlainIndex && pkCoveringState == stateCoveredByClusterPK && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
 		return false
 	}
 	return true
 }
 
+type pkCoverState uint8
+
+const (
+	stateNotCoveredByPK pkCoverState = iota
+	stateCoveredByIntPK
+	stateCoveredByClusterPK
+)
+
 // pkCoveringColumn checks if the column is covered by the primary key or extra handle columns.
-// The second return value indicates if the column is covered by the clustered index.
-func pkCoveringColumn(ds *logicalop.DataSource, column *expression.Column, ignoreLen bool) (bool, bool) {
+func pkCoveringColumn(ds *logicalop.DataSource, column *expression.Column, ignoreLen bool) pkCoverState {
 	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
-		return true, false
+		return stateCoveredByIntPK
 	}
 	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
-		return true, false
+		return stateCoveredByIntPK
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
-	return coveredByClusteredIndex, coveredByClusteredIndex
+	if coveredByClusteredIndex {
+		return stateCoveredByClusterPK
+	}
+	return stateNotCoveredByPK
 }
 
 func isIndexCoveringColumns(ds *logicalop.DataSource, columns, indexColumns []*expression.Column, idxColLens []int) bool {
@@ -2443,7 +2453,7 @@ func isIndexCoveringColumns(ds *logicalop.DataSource, columns, indexColumns []*e
 
 func isPKCoveringColumns(ds *logicalop.DataSource, columns []*expression.Column) bool {
 	for _, col := range columns {
-		if coveredByPK, _ := pkCoveringColumn(ds, col, false); !coveredByPK {
+		if pkCoveringState := pkCoveringColumn(ds, col, false); pkCoveringState == stateNotCoveredByPK {
 			return false
 		}
 	}

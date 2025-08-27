@@ -246,7 +246,7 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	if !checkVectorAggPushDown(ctx, aggFunc) {
 		return false
 	}
-	ret := true
+	var ret bool
 	switch storeType {
 	case kv.TiFlash:
 		ret = CheckAggPushFlash(ctx, aggFunc)
