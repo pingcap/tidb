@@ -2753,7 +2753,7 @@ func (r *correlatedAggregateResolver) collectFromGroupBy(p base.LogicalPlan, gro
 	r.b.curClause = groupByClause
 	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, aggList)
 	if err != nil {
-		return err
+		return nil
 	}
 	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
 	return nil
@@ -5831,11 +5831,11 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	newList = make([]*expression.Assignment, 0, p.Schema().Len())
 	tblDbMap := make(map[string]string, len(tableList))
 	for _, tbl := range tableList {
-		tnW := b.resolveCtx.GetTableName(tbl)
-		if isCTE(tnW) {
+		tblW := b.resolveCtx.GetTableName(tbl)
+		if isCTE(tblW) {
 			continue
 		}
-		tblDbMap[tbl.Name.L] = tnW.DBInfo.Name.L
+		tblDbMap[tbl.Name.L] = tblW.DBInfo.Name.L
 	}
 
 	allAssignments := append(list, virtualAssignments...)
@@ -6378,6 +6378,17 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		}
 		numRows, _, _ := getUintFromNode(b.ctx.GetExprCtx(), boundClause.Expr, false)
 		bound.Num = numRows
+		return bound, nil
+	}
+
+	bound.CalcFuncs = make([]expression.Expression, len(orderByItems))
+	bound.CmpFuncs = make([]expression.CompareFunc, len(orderByItems))
+	if bound.Type == ast.CurrentRow {
+		for i, item := range orderByItems {
+			col := item.Col
+			bound.CalcFuncs[i] = col
+			bound.CmpFuncs[i] = expression.GetCmpFunction(b.ctx.GetExprCtx(), col, col)
+		}
 		return bound, nil
 	}
 
