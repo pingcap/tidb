@@ -139,6 +139,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 			if !ok {
 				continue
 			}
+			table = table.ShallowCopy(statistics.CopyWithBothMaps)
 		}
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
@@ -188,6 +189,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if !ok {
 				continue
 			}
+			table = table.ShallowCopy(statistics.CopyWithBothMaps)
 		}
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
@@ -394,6 +396,9 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			if !ok {
 				continue
 			}
+			// existing idx is modified so if using shallow copy the modified idx is shared and will mess up the cache
+			// cost calculation
+			table = table.Copy()
 		}
 		idx := table.GetIdx(row.GetInt64(1))
 		if idx == nil || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
@@ -566,6 +571,9 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			if !ok {
 				continue
 			}
+			// existing idx is modified so if using shallow copy the modified idx is shared and will mess up the cache
+			// cost calculation
+			table = table.Copy()
 		}
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
