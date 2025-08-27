@@ -1268,24 +1268,17 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64, subqueryPlan base.LogicalPlan) bool {
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 
-	if noDecorrelate && len(corCols) == 0 {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
-
-	// If decorrelation is allowed, check if correlation columns are index-covered
-	if !noDecorrelate && len(corCols) > 0 {
-		// Check session variable
-		noDecorrelate = planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelate
-
-		// If still allowed, check index coverage
-		if !noDecorrelate && subqueryPlan != nil {
-			tableInfo := getTableInfoFromPlan(subqueryPlan)
-			if tableInfo != nil && !canEfficientlyEvaluateCorrelation(corCols, tableInfo) {
-				// Disable decorrelation if correlation columns are not index-covered
-				noDecorrelate = true
-			}
+	if noDecorrelate {
+		if len(corCols) == 0 {
+			planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+				"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
+			noDecorrelate = false
+		}
+	} else if len(corCols) > 0 && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelate && subqueryPlan != nil {
+		tableInfo := getTableInfoFromPlan(subqueryPlan)
+		if tableInfo != nil && canEfficientlyEvaluateCorrelation(corCols, tableInfo) {
+			// Only enable decorrelation by the session variable if correlation columns are index-covered
+			noDecorrelate = true
 		}
 	}
 
@@ -1298,23 +1291,7 @@ func getTableInfoFromPlan(p base.LogicalPlan) *model.TableInfo {
 	switch v := p.(type) {
 	case *logicalop.DataSource:
 		return v.TableInfo
-	case *logicalop.LogicalProjection:
-		if len(v.Children()) > 0 {
-			return getTableInfoFromPlan(v.Children()[0])
-		}
-	case *logicalop.LogicalSelection:
-		if len(v.Children()) > 0 {
-			return getTableInfoFromPlan(v.Children()[0])
-		}
-	case *logicalop.LogicalAggregation:
-		if len(v.Children()) > 0 {
-			return getTableInfoFromPlan(v.Children()[0])
-		}
-	case *logicalop.LogicalSort:
-		if len(v.Children()) > 0 {
-			return getTableInfoFromPlan(v.Children()[0])
-		}
-	case *logicalop.LogicalLimit:
+	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation, *logicalop.LogicalSort, *logicalop.LogicalLimit, *logicalop.LogicalMaxOneRow:
 		if len(v.Children()) > 0 {
 			return getTableInfoFromPlan(v.Children()[0])
 		}
