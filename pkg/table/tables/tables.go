@@ -1199,7 +1199,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
-		if v.Meta().IsColumnarIndex() {
+		if v.Meta().IsColumnarIndex() || v.Meta().IsFulltextIndexOnTiCI() {
 			continue
 		}
 		var vals []types.Datum
