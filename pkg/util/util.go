@@ -162,7 +162,7 @@ func GenLogFields(costTime time.Duration, info *sessmgr.ProcessInfo, needTruncat
 	if memTracker := info.MemTracker; memTracker != nil {
 		s := fmt.Sprintf("max %d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))
 		if info.StmtCtx.MemTracker != nil {
-			if dur := info.StmtCtx.MemTracker.MemArbitrationTime(); dur > 0 {
+			if dur := info.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
 				s += fmt.Sprintf(", arbitration_time %ss", strconv.FormatFloat(dur.Seconds(), 'f', -1, 64)) // mem quota arbitration time of current SQL
 			}
 			if ts, sz := info.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {

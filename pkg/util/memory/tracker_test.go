@@ -666,7 +666,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, t1.MemArbitrator == nil)
 		m := GlobalMemArbitrator()
 		// init mem arbitrator for the session tracker
-		t1.InitMemArbitrator(m, 1<<30, nil, ("test sql 1"), ArbitrationPriorityHigh, false, 1+byteSizeKB)
+		require.True(t,
+			t1.InitMemArbitrator(m, 1<<30, nil, ("test sql 1"), ArbitrationPriorityHigh, false, 1+byteSizeKB))
 		require.True(t, t1.MemArbitrator != nil)
 		require.True(t, t1.MemArbitrator.MemArbitrator == m)
 		require.True(t, t1.MemArbitrator.budget.useBig.Load())
@@ -734,7 +735,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			require.True(t, execMetrics.Task.SuccByPriority == NumByPriority{})
 		}
 
-		require.True(t, t1.MemArbitrationTime() > 0)
+		require.True(t, t1.MemArbitration() > 0)
 		t1.Detach()
 		require.True(t, RemovePoolFromGlobalMemArbitrator(t1.MemArbitrator.uid))
 		require.False(t, m.RemoveRootPoolByID(t1.MemArbitrator.uid))
@@ -742,7 +743,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, m.digestProfileCache.num.Load() == 1)
 
 		tx := newRootTracker(uid)
-		tx.InitMemArbitrator(m, 0, nil, "test sql x", ArbitrationPriorityHigh, false, 0)
+		require.True(t,
+			tx.InitMemArbitrator(m, 0, nil, "test sql x", ArbitrationPriorityHigh, false, 0))
 		require.False(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
 		require.True(t, tx.MemArbitrator.ctx.PrevMaxMem == 0)
@@ -771,7 +773,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 		oriMaxMem := tx.MaxConsumed()
 		tx = newRootTracker(720)
-		tx.InitMemArbitrator(m, 0, nil, "test sql x", ArbitrationPriorityHigh, false, 0)
+		require.True(t,
+			tx.InitMemArbitrator(m, 0, nil, "test sql x", ArbitrationPriorityHigh, false, 0))
 		require.True(t, !tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
 		require.True(t, tx.MemArbitrator.ctx.PrevMaxMem == oriMaxMem)
@@ -785,7 +788,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, RemovePoolFromGlobalMemArbitrator(tx.MemArbitrator.uid))
 
 		tx = newRootTracker(727)
-		tx.InitMemArbitrator(m, 0, nil, "test sql 1", ArbitrationPriorityHigh, false, 0)
+		require.True(t,
+			tx.InitMemArbitrator(m, 0, nil, "test sql 1", ArbitrationPriorityHigh, false, 0))
 		require.True(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
 		require.Equal(t, t1.MaxConsumed(), tx.MemArbitrator.ctx.PrevMaxMem)
@@ -818,7 +822,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			uid := uint64(i + 1)
 			trackers[i] = newRootTracker(uid)
 			go func() {
-				trackers[i].InitMemArbitrator(m, 1, trackers[i].Killer, "?", ArbitrationPriority(int(ArbitrationPriorityLow)+i), false, newLimit)
+				require.True(t,
+					trackers[i].InitMemArbitrator(m, 1, trackers[i].Killer, "?", ArbitrationPriority(int(ArbitrationPriorityLow)+i), false, newLimit))
 				trackers[i].Detach()
 				wg.Done()
 			}()
@@ -847,7 +852,8 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		for i := range trackers {
 			uid := uint64(i + 1)
 			trackers[i] = newRootTracker(uid)
-			trackers[i].InitMemArbitrator(m, 1, trackers[i].Killer, "?", ArbitrationPriority(int(ArbitrationPriorityLow)+i), false, 1)
+			require.True(t,
+				trackers[i].InitMemArbitrator(m, 1, trackers[i].Killer, "?", ArbitrationPriority(int(ArbitrationPriorityLow)+i), false, 1))
 		}
 		execMetrics = m.ExecMetrics()
 		for p := range maxArbitrationPriority {
@@ -914,8 +920,10 @@ func TestGlobalMemArbitrator(t *testing.T) {
 
 		t1 := newRootTracker(13)
 		t2 := newRootTracker(17)
-		t2.InitMemArbitrator(GlobalMemArbitrator(), 0, t2.Killer, "?", ArbitrationPriorityMedium, false, m.limit()/2)
-		t1.InitMemArbitrator(GlobalMemArbitrator(), 0, t1.Killer, "?", ArbitrationPriorityMedium, false, 1)
+		require.True(t,
+			t2.InitMemArbitrator(GlobalMemArbitrator(), 0, t2.Killer, "?", ArbitrationPriorityMedium, false, m.limit()/2))
+		require.True(t,
+			t1.InitMemArbitrator(GlobalMemArbitrator(), 0, t1.Killer, "?", ArbitrationPriorityMedium, false, 1))
 		wg := sync.WaitGroup{}
 		wg.Add(1)
 		go func() {
@@ -944,8 +952,10 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		t2 := newRootTracker(23)
 
 		m.restartForTest()
-		t1.InitMemArbitrator(m, 0, t1.Killer, "?", ArbitrationPriorityMedium, false, 0)
-		t2.InitMemArbitrator(m, 0, t2.Killer, "?", ArbitrationPriorityLow, false, 0)
+		require.True(t,
+			t1.InitMemArbitrator(m, 0, t1.Killer, "?", ArbitrationPriorityMedium, false, 0))
+		require.True(t,
+			t2.InitMemArbitrator(m, 0, t2.Killer, "?", ArbitrationPriorityLow, false, 0))
 		t1.Consume(m.limit() / 4)
 		t2.Consume(m.limit() / 2)
 		m.stop()

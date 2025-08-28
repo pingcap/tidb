@@ -399,10 +399,10 @@ var columnFactoryMap = map[string]columnFactory{
 		return record.MaxMem
 	},
 	AvgMemArbitrationStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgSumFloat(record.SumMemArbitrationTime, record.ExecCount)
+		return avgSumFloat(record.SumMemArbitration, record.ExecCount)
 	},
 	MaxMemArbitrationStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.MaxMemArbitrationTime
+		return record.MaxMemArbitration
 	},
 	AvgDiskStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumDisk, record.ExecCount)

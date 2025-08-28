@@ -159,8 +159,8 @@ type StmtRecord struct {
 	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
 
-	SumMemArbitrationTime float64 `json:"sum_mem_arbitration"`
-	MaxMemArbitrationTime float64 `json:"max_mem_arbitration"`
+	SumMemArbitration float64 `json:"sum_mem_arbitration"`
+	MaxMemArbitration float64 `json:"max_mem_arbitration"`
 
 	stmtsummary.StmtNetworkTrafficSummary
 
@@ -402,10 +402,10 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	if info.MemMax > r.MaxMem {
 		r.MaxMem = info.MemMax
 	}
-	memArbitrationTime := info.MemArbitrationTime.Seconds()
-	r.SumMemArbitrationTime += memArbitrationTime
-	if memArbitrationTime > r.MaxMemArbitrationTime {
-		r.MaxMemArbitrationTime = memArbitrationTime
+	memArbitration := info.MemArbitration.Seconds()
+	r.SumMemArbitration += memArbitration
+	if memArbitration > r.MaxMemArbitration {
+		r.MaxMemArbitration = memArbitration
 	}
 	r.SumDisk += info.DiskMax
 	if info.DiskMax > r.MaxDisk {
@@ -714,7 +714,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 		LazyInfo:          &mockLazyInfo{},
 
-		MemArbitrationTime: 22222,
+		MemArbitration: 22222,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo

@@ -1021,8 +1021,8 @@ func (m *memArbitrator) useBigBudget() bool {
 	return m.budget.useBig.Load()
 }
 
-// MemArbitrationTime returns the time cost of memory arbitration in nanoseconds
-func (t *Tracker) MemArbitrationTime() time.Duration {
+// MemArbitration returns the time cost of memory arbitration in nanoseconds
+func (t *Tracker) MemArbitration() time.Duration {
 	if t == nil {
 		return 0
 	}
@@ -1221,7 +1221,7 @@ func (t *Tracker) InitMemArbitrator(
 	waitAverse bool,
 	explicitReserveSize int64,
 ) bool {
-	if t.MemArbitrator != nil || g == nil {
+	if g == nil || t == nil || t.MemArbitrator != nil {
 		return false
 	}
 

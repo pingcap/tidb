@@ -858,7 +858,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, deflt: ""},
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "MEM_ARBITRATION", tp: mysql.TypeDouble, size: 22},
-	{name: "MEM_WAIT_ARBITRATE_START_TIME", tp: mysql.TypeVarchar, size: 32},
+	{name: "MEM_WAIT_ARBITRATE_START", tp: mysql.TypeVarchar, size: 32},
 	{name: "MEM_WAIT_ARBITRATE_BYTES", tp: mysql.TypeLonglong, size: 21},
 	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},

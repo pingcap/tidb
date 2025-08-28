@@ -171,7 +171,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `MEM_ARBITRATION` double DEFAULT NULL,\n" +
-			"  `MEM_WAIT_ARBITRATE_START_TIME` varchar(32) DEFAULT NULL,\n" +
+			"  `MEM_WAIT_ARBITRATE_START` varchar(32) DEFAULT NULL,\n" +
 			"  `MEM_WAIT_ARBITRATE_BYTES` bigint(21) DEFAULT NULL,\n" +
 			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
@@ -197,9 +197,28 @@ func TestSomeTables(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
+	se2, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.SetSession(se2)
+
+	{
+		memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+		defer memory.StopGlobalMemArbitratorForTest()
+		require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
+		memTracker := se2.GetSessionVars().StmtCtx.MemTracker
+		require.True(t,
+			memTracker.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0))
+		memTracker.MemArbitrator.TotalAwaitDurNano.Add(2e9 + 1e8)
+		memTracker.MemArbitrator.AwaitAllocState.Size = 123456789123
+		memTracker.MemArbitrator.AwaitAllocState.StartUtimeNano = 123456789123456
+		require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeDisableName))
+	}
 	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                1,
 		User:              "user-1",
@@ -210,7 +229,7 @@ func TestSomeTables(t *testing.T) {
 		Digest:            "abc1",
 		State:             1,
 		Info:              "do something",
-		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		StmtCtx:           se2.GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg1",
 		SessionAlias:      "alias1",
 	})
@@ -224,7 +243,7 @@ func TestSomeTables(t *testing.T) {
 		Digest:            "abc2",
 		State:             2,
 		Info:              strings.Repeat("x", 101),
-		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		StmtCtx:           se2.GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg2",
 	})
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
@@ -237,18 +256,18 @@ func TestSomeTables(t *testing.T) {
 		Digest:            "abc3",
 		State:             1,
 		Info:              "check port",
-		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		StmtCtx:           se2.GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg3",
 		SessionAlias:      "中文alias",
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 2.1 1970-01-02 18:17:36.789 123456789123 0"+
 				"  rg1 alias1 0 0 0", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 0  rg2  0 0 0",
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 2.1 1970-01-02 18:17:36.789 123456789123 0  rg2  0 0 0",
 				"autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0 0  rg3"+
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 2.1 1970-01-02 18:17:36.789 123456789123 0  rg3"+
 				" 中文alias 0 0 0", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
@@ -286,15 +305,15 @@ func TestSomeTables(t *testing.T) {
 		CurTxnStartTS:     410090409861578752,
 		ResourceGroupName: "rg2",
 		SessionAlias:      "alias3",
-		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		StmtCtx:           se2.GetSessionVars().StmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 <nil> <nil> <nil> 0"+
 				"  rg1  <nil> 0 0", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 0 07-29 03:26"+
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 2.1 1970-01-02 10:17:36.789 123456789123 0 07-29 03:26"+
 				":05.158(410090409861578752) rg2 alias3 0 0 0", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
@@ -309,13 +328,13 @@ func TestSomeTables(t *testing.T) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 0 07-29 03:26"+
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 2.1 1970-01-02 10:17:36.789 123456789123 0 07-29 03:26"+
 				":05.158(410090409861578752) rg2 alias3 0 0 0", "autocommit", strings.Repeat("x",
 				101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 <nil> <nil> <nil> 0"+
 				"  rg1  <nil> 0 0", "in transaction", "<nil>"),
 		))
 }

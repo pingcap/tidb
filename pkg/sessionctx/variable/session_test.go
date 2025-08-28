@@ -223,7 +223,7 @@ func TestSlowLogFormat(t *testing.T) {
 
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
-	memArbitrationTime := time.Duration(54321)
+	memArbitration := time.Duration(54321)
 	resultFields := `# Txn_start_ts: 406649736972468225
 # Keyspace_name: keyspace_a
 # Keyspace_ID: 1
@@ -323,10 +323,10 @@ func TestSlowLogFormat(t *testing.T) {
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
 		RUDetails:         ruDetails,
+		StorageKV:         true,
+		StorageMPP:        false,
 
-		MemArbitrationTime: memArbitrationTime,
-		StorageKV:          true,
-		StorageMPP:         false,
+		MemArbitration: memArbitration,
 	}
 	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
 	logItems.UsedStats.RecordUsedInfo(2, usedStats2)

@@ -97,7 +97,6 @@ func TestParseSlowLogPanic(t *testing.T) {
 # Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03 Cop_proc_addr: 127.0.0.1:20160
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
-# Mem_arbitration: 23333
 # Disk_max: 65536
 # Plan_from_cache: true
 # Plan_from_binding: true
@@ -338,7 +337,6 @@ func TestFixParseSlowLogFile(t *testing.T) {
 # Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8
 # Mem_max: 70724
-# Mem_arbitration: 23333
 select * from t
 # Time: 2019-05-12-11:23:29.614327491 +0800
 # Txn_start_ts: 405888132465033227
@@ -350,7 +348,6 @@ select * from t
 # Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8
 # Mem_max: 70724
-# Mem_arbitration: 23333
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 select * from t;`)
 	scanner := bufio.NewReader(slowLog)

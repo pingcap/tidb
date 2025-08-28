@@ -143,7 +143,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 		if pi.MemTracker != nil {
 			bytesConsumed = pi.MemTracker.BytesConsumed()
 		}
-		if dur := pi.StmtCtx.MemTracker.MemArbitrationTime(); dur > 0 {
+		if dur := pi.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
 			memArbitration = dur.Seconds()
 		}
 		if ts, sz := pi.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {

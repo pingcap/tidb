@@ -680,7 +680,6 @@ func TestSlowQueryOOM(t *testing.T) {
 # Cop_proc_avg: 0 Cop_proc_p90: 0 Cop_proc_max: 0 Cop_proc_addr: store1
 # Cop_wait_avg: 0 Cop_wait_p90: 0 Cop_wait_max: 0 Cop_wait_addr: store1
 # Mem_max: 11372
-# Mem_arbitration: 12345
 # Prepared: true
 # Plan_from_cache: false
 # Plan_from_binding: false

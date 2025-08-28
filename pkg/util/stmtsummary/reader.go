@@ -770,13 +770,13 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssStats.maxMem
 	},
 	MemArbitrationStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumMemArbitrationTime
+		return ssStats.sumMemArbitration
 	},
 	AvgMemArbitrationStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgSumFloat(ssStats.sumMemArbitrationTime, ssStats.execCount)
+		return avgSumFloat(ssStats.sumMemArbitration, ssStats.execCount)
 	},
 	MaxMemArbitrationStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.maxMemArbitrationTime
+		return ssStats.maxMemArbitration
 	},
 	DiskStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.sumDisk

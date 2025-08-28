@@ -271,14 +271,14 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	Warnings          []JSONSQLWarnForSlowLog
 	// resource information
-	ResourceGroupName  string
-	RUDetails          *util.RUDetails
-	MemMax             int64
-	DiskMax            int64
-	MemArbitrationTime time.Duration
-	CPUUsages          ppcpuusage.CPUUsages
-	StorageKV          bool // query read from TiKV
-	StorageMPP         bool // query read from TiFlash
+	ResourceGroupName string
+	RUDetails         *util.RUDetails
+	MemMax            int64
+	DiskMax           int64
+	CPUUsages         ppcpuusage.CPUUsages
+	StorageKV         bool // query read from TiKV
+	StorageMPP        bool // query read from TiFlash
+	MemArbitration    time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -429,8 +429,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.MemMax > 0 {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
-	if logItems.MemArbitrationTime > 0 {
-		writeSlowLogItem(&buf, SlowLogMemArbitration, strconv.FormatFloat(logItems.MemArbitrationTime.Seconds(), 'f', -1, 64))
+	if logItems.MemArbitration > 0 {
+		writeSlowLogItem(&buf, SlowLogMemArbitration, strconv.FormatFloat(logItems.MemArbitration.Seconds(), 'f', -1, 64))
 	}
 	if logItems.DiskMax > 0 {
 		writeSlowLogItem(&buf, SlowLogDiskMax, strconv.FormatInt(logItems.DiskMax, 10))
