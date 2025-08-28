@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -543,6 +545,10 @@ func TestGetTableMVCC(t *testing.T) {
 	}
 
 	hexKey := p2.Key
+	if kerneltype.IsNextGen() {
+		keyPrefix := strings.ToUpper(hex.EncodeToString(ts.store.GetCodec().EncodeKey(nil)))
+		hexKey = strings.TrimPrefix(hexKey, keyPrefix)
+	}
 	resp, err = ts.FetchStatus("/mvcc/hex/" + hexKey)
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
