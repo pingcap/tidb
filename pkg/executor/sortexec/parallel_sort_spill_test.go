@@ -114,6 +114,9 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
+	log.Info("debug ------")
+	checkNoLeakFiles(t)
+
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
@@ -148,6 +151,9 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
+	log.Info("debug ------")
+	checkNoLeakFiles(t)
+
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
@@ -179,6 +185,9 @@ func TestIssue59655(t *testing.T) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	log.Info("debug ------")
+	checkNoLeakFiles(t)
 
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
