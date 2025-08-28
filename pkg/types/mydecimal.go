@@ -1334,19 +1334,26 @@ func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	_, digitsInt := d.removeLeadingZeros()
 	_, digitsFrac := d.removeTrailingZeros()
-	prec := digitsInt + digitsFrac
+
+	// Use resultFrac if it differs from digitsFrac, otherwise use digitsFrac
+	fracToUse := digitsFrac
+	if d.resultFrac != d.digitsFrac {
+		fracToUse = int(d.resultFrac)
+	}
+
+	prec := digitsInt + fracToUse
 	if prec == 0 { // zeroDecimal
 		prec = 1
 	}
-	buf, err := d.ToBin(prec, digitsFrac)
+	buf, err := d.ToBin(prec, fracToUse)
 	if err == ErrTruncated {
-		// This err is caused by shorter digitsFrac;
+		// This err is caused by shorter frac;
 		// After removing the trailing zeros from a Decimal,
-		// so digitsFrac may be less than the real digitsFrac of the Decimal,
+		// so the frac may be less than the real digitsFrac of the Decimal,
 		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
-	buf = append(buf, byte(digitsFrac))
+	buf = append(buf, byte(fracToUse))
 	return buf, err
 }
 
@@ -1533,6 +1540,12 @@ func writeWord(b []byte, word int32, size int) {
 
 // Compare compares one decimal to another, returns -1/0/1.
 func (d *MyDecimal) Compare(to *MyDecimal) int {
+	// Quick early check: if string representations are equal, they're equal
+	// This avoids precision-related comparison issues in doSub
+	if d.String() == to.String() {
+		return 0
+	}
+
 	if d.negative == to.negative {
 		cmp, err := doSub(d, to, nil)
 		terror.Log(errors.Trace(err))
