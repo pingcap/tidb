@@ -1540,12 +1540,6 @@ func writeWord(b []byte, word int32, size int) {
 
 // Compare compares one decimal to another, returns -1/0/1.
 func (d *MyDecimal) Compare(to *MyDecimal) int {
-	// Quick early check: if string representations are equal, they're equal
-	// This avoids precision-related comparison issues in doSub
-	if d.String() == to.String() {
-		return 0
-	}
-
 	if d.negative == to.negative {
 		cmp, err := doSub(d, to, nil)
 		terror.Log(errors.Trace(err))
