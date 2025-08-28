@@ -82,7 +82,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 38,
+=======
+    shard_count = 41,
+>>>>>>> d1311c1931f (stats: optimize stats table copy to save memory (#63004))
     deps = [
         "//pkg/config",
         "//pkg/meta/model",

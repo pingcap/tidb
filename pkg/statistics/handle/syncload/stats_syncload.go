@@ -561,8 +561,10 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 	if !ok {
 		return false
 	}
+	var tableCopied bool
 	if !tbl.ColAndIdxExistenceMap.Checked() {
-		tbl = tbl.Copy()
+		tbl = tbl.CopyAs(statistics.BothMapsWritable)
+		tableCopied = true
 		for _, col := range tbl.HistColl.GetColSlice() {
 			if tblInfo.FindColumnByID(col.ID) == nil {
 				tbl.DelCol(col.ID)
@@ -582,7 +584,9 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		if c != nil && (c.IsFullLoad() || !fullLoaded) {
 			return false
 		}
-		tbl = tbl.Copy()
+		if !tableCopied {
+			tbl = tbl.CopyAs(statistics.ColumnMapWritable)
+		}
 		tbl.SetCol(item.ID, colHist)
 
 		// If the column is analyzed we refresh the map for the possible change.
@@ -602,7 +606,9 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		if index != nil && (index.IsFullLoad() || !fullLoaded) {
 			return true
 		}
-		tbl = tbl.Copy()
+		if !tableCopied {
+			tbl = tbl.CopyAs(statistics.IndexMapWritable)
+		}
 		tbl.SetIdx(item.ID, idxHist)
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
