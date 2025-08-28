@@ -527,5 +527,33 @@ func TestTxnTableDeltaMap(t *testing.T) {
 	require.NotNil(t, txnCtx.TableDeltaMap)
 	require.Equal(t, int64(2), txnCtx.TableDeltaMap[tb1.Meta().ID].Count)
 	require.Equal(t, int64(0), txnCtx.TableDeltaMap[tb2.Meta().ID].Count)
+	require.Equal(t, true, tk.Session().HasDirtyContent(tb1.Meta().ID))
+	require.Equal(t, false, tk.Session().HasDirtyContent(tb2.Meta().ID))
 	tk.MustExec("rollback")
+}
+
+func TestHasDirtyContent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	testcases := []struct {
+		sql      string
+		hasDirty bool
+	}{
+		{"insert into t values (0)", false},
+		{"begin", false},
+		{"insert into t values (1)", true},
+		{"commit", false},
+		{"set @@autocommit=0", false},
+		{"insert into t values (2)", true},
+		{"commit", false},
+	}
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	for _, ca := range testcases {
+		tk.MustExec(ca.sql)
+		require.Equal(t, ca.hasDirty, tk.Session().HasDirtyContent(tb.Meta().ID))
+	}
 }

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -725,10 +724,11 @@ func (s *session) HasDirtyContent(tid int64) bool {
 	if s.txn.Transaction == nil || s.txn.Transaction.IsPipelined() {
 		return false
 	}
-	seekKey := tablecodec.EncodeTablePrefix(tid)
-	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
-	terror.Log(err)
-	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
+	if txnCtx := s.sessionVars.TxnCtx; txnCtx != nil && txnCtx.TableDeltaMap != nil {
+		item := txnCtx.TableDeltaMap[tid]
+		return item.Count > 0
+	}
+	return false
 }
 
 // StmtCommit implements the sessionctx.Context interface.
