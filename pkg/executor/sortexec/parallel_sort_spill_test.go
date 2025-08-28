@@ -81,6 +81,25 @@ func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *so
 	executeInFailpoint(t, exe, hardLimit2, ctx.GetSessionVars().MemTracker)
 }
 
+func checkNoLeakFiles(t *testing.T) {
+	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
+
+	fileNum := 0
+	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		log.Info(fmt.Sprintf("name: %s", d.Name()))
+		if !d.IsDir() {
+			fileNum++
+		}
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, fileNum)
+}
+
 func TestParallelSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
@@ -109,6 +128,8 @@ func TestParallelSortSpillDisk(t *testing.T) {
 		inMemoryThenSpill(t, ctx, nil, sortCase, schema, dataSource)
 		inMemoryThenSpill(t, ctx, exe, sortCase, schema, dataSource)
 	}
+
+	checkNoLeakFiles(t)
 }
 
 func TestParallelSortSpillDiskFailpoint(t *testing.T) {
@@ -141,6 +162,8 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, dataSource)
 		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, dataSource)
 	}
+
+	checkNoLeakFiles(t)
 }
 
 func TestIssue59655(t *testing.T) {
@@ -164,6 +187,8 @@ func TestIssue59655(t *testing.T) {
 		failpointNoMemoryDataTest(t, nil, sortCase, dataSource)
 		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}
+
+	checkNoLeakFiles(t)
 }
 
 func TestIssue63216(t *testing.T) {
@@ -179,25 +204,13 @@ func TestIssue63216(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
+	log.Info("debug ------")
+	checkNoLeakFiles(t)
+
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
 	failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 
-	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
-
-	fileNum := 0
-	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		log.Info(fmt.Sprintf("name: %s", d.Name()))
-		if !d.IsDir() {
-			fileNum++
-		}
-		return nil
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, 1, fileNum)
+	checkNoLeakFiles(t)
 }
