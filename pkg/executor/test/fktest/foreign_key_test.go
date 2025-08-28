@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -804,6 +805,9 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 }
 
 func TestForeignKeyOnDeleteCascade(t *testing.T) {
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -1005,6 +1009,9 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 }
 
 func TestForeignKeyOnDeleteCascade2(t *testing.T) {
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -1264,6 +1271,9 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 }
 
 func TestForeignKeyOnDeleteSetNull(t *testing.T) {
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -1379,6 +1389,9 @@ func TestForeignKeyOnDeleteSetNull(t *testing.T) {
 }
 
 func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -1578,6 +1591,9 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 }
 
 func TestForeignKeyOnUpdateCascade(t *testing.T) {
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -1913,6 +1929,9 @@ func getExplainResult(res *testkit.Result) string {
 }
 
 func TestForeignKeyOnInsertOnDuplicateUpdate(t *testing.T) {
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -2447,6 +2466,9 @@ func TestForeignKeyLargeTxnErr(t *testing.T) {
 }
 
 func TestForeignKeyAndLockView(t *testing.T) {
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -373,7 +374,7 @@ func TestForceLockNonUniqueIndexInDDLMergingTempIndex(t *testing.T) {
 	}{
 		{model.StateWriteReorganization, model.BackfillStateReadyToMerge, true},
 		{model.StateWriteReorganization, model.BackfillStateMerging, true},
-		{model.StatePublic, model.BackfillStateInapplicable, false},
+		{model.StatePublic, model.BackfillStateInapplicable, kerneltype.TestIsNextGen()},
 	}
 
 	mockCtx := mock.NewContext()

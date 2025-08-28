@@ -14,6 +14,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/table/tables",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression",
@@ -77,6 +78,7 @@ go_test(
     flaky = True,
     shard_count = 36,
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/errctx",

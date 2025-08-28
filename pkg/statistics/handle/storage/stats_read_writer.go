@@ -144,6 +144,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
 	var statsVer uint64
 	start := time.Now()
+
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveAnalyzeResultToStorage(sctx, results, analyzeSnapshot)
 		return err

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -268,14 +269,22 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				val = tempVal.Encode(nil)
 				// during some step of add-index, such as in write-reorg state, this
 				// key is THE temp index key.
-				err = txn.GetMemBuffer().Set(key, val)
+				if kerneltype.TestIsNextGen() {
+					err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
+				} else {
+					err = txn.GetMemBuffer().Set(key, val)
+				}
 			} else if c.mayDDLMergingTempIndex() {
 				// Here may have the situation:
 				// DML: Writing the normal index key.
 				// DDL: Writing the same normal index key, but it does not lock primary record.
 				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
 			} else {
-				err = txn.GetMemBuffer().Set(key, val)
+				if kerneltype.TestIsNextGen() {
+					err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
+				} else {
+					err = txn.GetMemBuffer().Set(key, val)
+				}
 			}
 			if err != nil {
 				return nil, err
@@ -500,7 +509,11 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 					// In this case, we should lock the index key in DML to grantee the serialization.
 					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 				} else {
-					err = txn.GetMemBuffer().Delete(key)
+					if kerneltype.TestIsNextGen() {
+						err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+					} else {
+						err = txn.GetMemBuffer().Delete(key)
+					}
 				}
 				if err != nil {
 					return err
