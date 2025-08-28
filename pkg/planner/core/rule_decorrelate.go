@@ -261,30 +261,8 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
 			if apply.JoinType == logicalop.LeftOuterJoin {
-				allConst := len(proj.Exprs) > 0
-				for _, expr := range proj.Exprs {
-					if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
-						allConst = false
-						break
-					}
-				}
-				if allConst {
-					// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
-					//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
-					//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
-					// We disable the decorrelation directly for now.
-					// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
+				if skipDecorrelatForLeftOuter(apply, proj) {
 					goto NoOptimize
-				}
-
-				for _, expr := range proj.Exprs {
-					// If this expr's inputs are all from outerPlan, skip decorrelate.
-					// Because this expr may invalidate the semantics of LeftOuterJoin.
-					// TODO: we should use null-reject attr to decide in a more accurate way.
-					cols := expression.ExtractColumns(expr)
-					if outerPlan.Schema().ColumnsIndices(cols) != nil {
-						goto NoOptimize
-					}
 				}
 			}
 
@@ -641,4 +619,58 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *logicalop.LogicalAp
 		return buffer.String()
 	}
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+}
+
+func skipDecorrelatForLeftOuter(apply *logicalop.LogicalJoin, proj *logicalop.LogicalProjection) bool {
+	allConst := len(proj.Exprs) > 0
+	for _, expr := range proj.Exprs {
+		if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
+			allConst = false
+			break
+		}
+	}
+	if allConst {
+		// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
+		//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
+		//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
+		// We disable the decorrelation directly for now.
+		// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
+		return true
+	}
+
+	projOnlyUseOuter := true
+	for _, expr := range proj.Exprs {
+		// If proj.Exprs are all from outerPlan, skip decorrelate.
+		// Because these exprs may invalidate the semantics of LeftOuterJoin, which output non-null value for not matched row.
+		// example:
+		//    Projection(pulled up from the original Apply)
+		//    |
+		//    Join (LeftOuter)
+		// TODO: we should use null-reject attr to decide if proj.Exprs can be pulled up or not.
+		cols := expression.ExtractColumns(expr)
+		if outerPlan.Schema().ColumnsIndices(cols) != nil {
+			projOnlyUseOuter = false
+			break
+		}
+	}
+
+	if !projOnlyUseOuter {
+		// Selection may filter all rows of inner side.
+		var hasSelection bool
+		findSelection := func() {
+			for _, child := p.Children() {
+				if child.IsSelection() {
+					return true
+				}
+				if (findSelection(child)) {
+					return true
+				}
+			}
+			return false
+		}
+		if hasSelection {
+			return true
+		}
+	}
+	return false
 }
