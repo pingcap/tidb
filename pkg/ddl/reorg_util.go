@@ -87,7 +87,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 
 	if setReorgParam {
-		if kerneltype.IsNextGen() {
+		if kerneltype.IsNextGen() && setDistTaskParam {
 			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)
 			m.SetConcurrency(autoConc)
 		} else {
