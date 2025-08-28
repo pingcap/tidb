@@ -632,7 +632,7 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
-	aggColumns := expression.NewSchema(la.getAggFuncsColsForFirstRow()...)
+	aggFirstRowColumns := expression.NewSchema(la.getAggFuncsColsForFirstRow()...)
 	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
 		subCondsToPush, subRet := la.pushDownDNFPredicates(cond, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
@@ -640,8 +640,11 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 			condsToPush = append(condsToPush, subCondsToPush...)
 		}
 		if len(subRet) > 0 {
+			// If we cannot find columns that can be pushed down in the GROUP BY clause,
+			// we will then look for columns that can be pushed down in the aggregate functions.
+			// Currently, only the first row is supported.
 			for _, s := range subRet {
-				subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
+				subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggFirstRowColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
 				if len(subCondsToPush1) > 0 {
 					condsToPush = append(condsToPush, subCondsToPush1...)
 				}
@@ -707,17 +710,14 @@ func (la *LogicalAggregation) pushDownPredicatesByGroupby(cond *expression.Scala
 // pushDownPredicatesByAggFuncs is only used for firstrow
 func (la *LogicalAggregation) pushDownPredicatesByAggFuncs(cond *expression.ScalarFunction, aggFirstRowColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
 	extractedCols := expression.ExtractColumnsMapFromExpressions(nil, cond)
-	var schemaCol *expression.Column
 	if len(extractedCols) != 1 {
 		ret = append(ret, cond)
 		return condsToPush, ret
 	}
-	for _, col := range extractedCols {
-		schemaCol = aggFirstRowColumns.RetrieveColumn(col)
-		if schemaCol == nil {
-			break
-		}
-	}
+	// `aggFirstRowColumns` are the output columns of the first row function.
+	// We compare the columns in the push-down predicates with the output columns of the first row.
+	// The columns that match are the ones that can be pushed down.
+	schemaCol := aggFirstRowColumns.RetrieveColumn(extractedCols[0])
 	if schemaCol != nil {
 		newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
 		condsToPush = append(condsToPush, newFunc)
