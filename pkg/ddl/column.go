@@ -956,6 +956,11 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
 
+	logutil.DDLLogger().Info("updateColumnWorker BackfillData",
+		zap.Duration("takeTimes", time.Since(oprStartTime)),
+		zap.Int("scanCount", taskCtx.scanCount),
+		zap.Int("addedCount", taskCtx.addedCount),
+	)
 	return
 }
 
