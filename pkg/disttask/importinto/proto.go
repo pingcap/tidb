@@ -35,8 +35,8 @@ type TaskMeta struct {
 	Plan  importer.Plan
 	Stmt  string
 
-	// TaskResult stores the marshalled results
-	TaskResult []byte
+	// Summary is the summary of the whole import task.
+	Summary *importer.Summary
 
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
