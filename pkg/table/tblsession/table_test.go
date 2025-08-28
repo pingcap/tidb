@@ -19,6 +19,7 @@ import (
 
 	_ "github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	_ "github.com/pingcap/tidb/pkg/table/tables"
@@ -91,8 +92,9 @@ func TestSessionMutateContextFields(t *testing.T) {
 	require.True(t, ok)
 	require.Same(t, &sctx.GetSessionVars().StmtCtx.ReservedRowIDAlloc, reserved)
 	// statistics support
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	txnCtx := sctx.GetSessionVars().TxnCtx
-	txnCtx.TableDeltaMap = make(map[int64]variable.TableDelta)
+	txnCtx.TableDeltaMap = make(map[int64]stmtctx.TableDelta)
 	sctx.GetSessionVars().TxnCtx = nil
 	statisticsSupport, ok := ctx.GetStatisticsSupport()
 	require.False(t, ok)
@@ -101,12 +103,18 @@ func TestSessionMutateContextFields(t *testing.T) {
 	statisticsSupport, ok = ctx.GetStatisticsSupport()
 	require.True(t, ok)
 	require.NotNil(t, statisticsSupport)
-	require.Equal(t, 0, len(txnCtx.TableDeltaMap))
+	require.Equal(t, 0, len(stmtCtx.TableDeltaMap))
 	statisticsSupport.UpdatePhysicalTableDelta(
 		12, 1, 2,
 	)
-	require.Equal(t, 1, len(txnCtx.TableDeltaMap))
-	deltaMap := txnCtx.TableDeltaMap[12]
+	require.Equal(t, 1, len(stmtCtx.TableDeltaMap))
+	require.Equal(t, 0, len(txnCtx.TableDeltaMap))
+	deltaMap := stmtCtx.TableDeltaMap[12]
+	require.Equal(t, int64(12), deltaMap.TableID)
+	require.Equal(t, int64(1), deltaMap.Delta)
+	require.Equal(t, int64(2), deltaMap.Count)
+	txnCtx.FlushStmtTableDelta(stmtCtx)
+	deltaMap = txnCtx.TableDeltaMap[12]
 	require.Equal(t, int64(12), deltaMap.TableID)
 	require.Equal(t, int64(1), deltaMap.Delta)
 	require.Equal(t, int64(2), deltaMap.Count)

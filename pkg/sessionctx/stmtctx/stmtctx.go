@@ -486,6 +486,9 @@ type StatementContext struct {
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
+
+	// TableDeltaMap record table modify delta info.
+	TableDeltaMap map[int64]TableDelta
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
@@ -552,6 +555,7 @@ func (sc *StatementContext) Reset() bool {
 		stmtCache:           sc.stmtCache,
 		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
+	clear(sc.TableDeltaMap)
 	sc.mu = sc.mu.reset()
 	sc.affectedRows.Store(0)
 	sc.stmtCache = sc.stmtCache.reset()
@@ -1299,6 +1303,44 @@ func (sc *StatementContext) GetResultRowsCount() (resultRows int64) {
 	return sc.RuntimeStatsColl.GetPlanActRows(planID)
 }
 
+// UpdateDeltaForTable updates the delta info for some table.
+func (sc *StatementContext) UpdateDeltaForTable(
+	physicalTableID int64,
+	delta int64,
+	count int64,
+) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if sc.TableDeltaMap == nil {
+		sc.TableDeltaMap = make(map[int64]TableDelta)
+	}
+	item := sc.TableDeltaMap[physicalTableID]
+	item.Delta += delta
+	item.Count += count
+	item.TableID = physicalTableID
+	sc.TableDeltaMap[physicalTableID] = item
+}
+
+// ConsumeTableDelta consumes table delta info.
+func (sc *StatementContext) ConsumeTableDelta(fn func(tid int64, item TableDelta)) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if sc.TableDeltaMap == nil {
+		return
+	}
+	for id, item := range sc.TableDeltaMap {
+		fn(id, item)
+	}
+	sc.TableDeltaMap = nil
+}
+
+// ResetTableDelta reset table delta info.
+func (sc *StatementContext) ResetTableDelta() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.TableDeltaMap = nil
+}
+
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnAppender) errctx.Context {
 	l := errctx.LevelError
 	if flags := tc.Flags(); flags.IgnoreTruncateErr() {
@@ -1516,4 +1558,22 @@ func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
 		return val.(string)
 	}
 	return ast.GetStmtLabel(node)
+}
+
+// TableDelta stands for the changed count for one table or partition.
+type TableDelta struct {
+	Delta    int64
+	Count    int64
+	InitTime time.Time // InitTime is the time that this delta is generated.
+	TableID  int64
+}
+
+// Clone returns a cloned TableDelta.
+func (td TableDelta) Clone() TableDelta {
+	return TableDelta{
+		Delta:    td.Delta,
+		Count:    td.Count,
+		InitTime: td.InitTime,
+		TableID:  td.TableID,
+	}
 }

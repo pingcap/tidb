@@ -742,6 +742,9 @@ func (s *session) StmtCommit(ctx context.Context) {
 	if err != nil {
 		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtCommit", zap.Error(err))
 	}
+	if s.sessionVars.TxnCtx != nil && s.sessionVars.StmtCtx != nil {
+		s.sessionVars.TxnCtx.FlushStmtTableDelta(s.sessionVars.StmtCtx)
+	}
 
 	st := &s.txn
 	st.flushStmtBuf()
@@ -753,6 +756,9 @@ func (s *session) StmtRollback(ctx context.Context, isForPessimisticRetry bool) 
 	err := txnManager.OnStmtRollback(ctx, isForPessimisticRetry)
 	if err != nil {
 		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
+	}
+	if s.sessionVars.StmtCtx != nil {
+		s.sessionVars.StmtCtx.ResetTableDelta()
 	}
 	s.txn.cleanup()
 }

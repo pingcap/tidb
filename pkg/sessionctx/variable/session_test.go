@@ -350,7 +350,7 @@ func TestIsolationRead(t *testing.T) {
 }
 
 func TestTableDeltaClone(t *testing.T) {
-	td0 := variable.TableDelta{
+	td0 := stmtctx.TableDelta{
 		Delta:    1,
 		Count:    2,
 		InitTime: time.Now(),
@@ -368,7 +368,7 @@ func TestTableDeltaClone(t *testing.T) {
 func TestTransactionContextSavepoint(t *testing.T) {
 	tc := &variable.TransactionContext{
 		TxnCtxNeedToRestore: variable.TxnCtxNeedToRestore{
-			TableDeltaMap: map[int64]variable.TableDelta{
+			TableDeltaMap: map[int64]stmtctx.TableDelta{
 				1: {
 					Delta:    1,
 					Count:    2,
@@ -390,7 +390,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	require.False(t, succ)
 	require.Equal(t, 1, len(tc.Savepoints))
 
-	tc.TableDeltaMap[2] = variable.TableDelta{
+	tc.TableDeltaMap[2] = stmtctx.TableDelta{
 		Delta:    6,
 		Count:    7,
 		InitTime: time.Now(),
@@ -406,7 +406,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	require.Equal(t, 2, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
 	require.Equal(t, "s2", tc.Savepoints[1].Name)
 
-	tc.TableDeltaMap[3] = variable.TableDelta{
+	tc.TableDeltaMap[3] = stmtctx.TableDelta{
 		Delta:    10,
 		Count:    11,
 		InitTime: time.Now(),

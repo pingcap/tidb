@@ -185,7 +185,7 @@ type TxnCtxNeedToRestore struct {
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
 	// It's also used in the statistics updating.
 	// Note: for the partitioned table, it stores all the partition IDs.
-	TableDeltaMap map[int64]TableDelta
+	TableDeltaMap map[int64]stmtctx.TableDelta
 
 	// pessimisticLockCache is the cache for pessimistic locked keys,
 	// The value never changes during the transaction.
@@ -344,23 +344,20 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-// The `cols` argument is used to update the delta size for cols.
-// If `cols` is nil, it means that the delta size for cols is not changed.
-func (tc *TransactionContext) UpdateDeltaForTable(
-	physicalTableID int64,
-	delta int64,
-	count int64,
-) {
+func (tc *TransactionContext) FlushStmtTableDelta(sc *stmtctx.StatementContext) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
-	if tc.TableDeltaMap == nil {
-		tc.TableDeltaMap = make(map[int64]TableDelta)
-	}
-	item := tc.TableDeltaMap[physicalTableID]
-	item.Delta += delta
-	item.Count += count
-	item.TableID = physicalTableID
-	tc.TableDeltaMap[physicalTableID] = item
+
+	sc.ConsumeTableDelta(func(tid int64, delta stmtctx.TableDelta) {
+		if tc.TableDeltaMap == nil {
+			tc.TableDeltaMap = make(map[int64]stmtctx.TableDelta)
+		}
+		item := tc.TableDeltaMap[tid]
+		item.Delta += delta.Delta
+		item.Count += delta.Count
+		item.TableID = tid
+		tc.TableDeltaMap[tid] = item
+	})
 }
 
 // GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
@@ -433,7 +430,7 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 
 // GetCurrentSavepoint gets TransactionContext's savepoint.
 func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
-	tableDeltaMap := make(map[int64]TableDelta, len(tc.TableDeltaMap))
+	tableDeltaMap := make(map[int64]stmtctx.TableDelta, len(tc.TableDeltaMap))
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
 	}
@@ -3011,24 +3008,6 @@ func (s *SessionVars) SetResourceGroupName(groupName string) {
 		metrics.ConnGauge.WithLabelValues(groupName).Inc()
 	}
 	s.ResourceGroupName = groupName
-}
-
-// TableDelta stands for the changed count for one table or partition.
-type TableDelta struct {
-	Delta    int64
-	Count    int64
-	InitTime time.Time // InitTime is the time that this delta is generated.
-	TableID  int64
-}
-
-// Clone returns a cloned TableDelta.
-func (td TableDelta) Clone() TableDelta {
-	return TableDelta{
-		Delta:    td.Delta,
-		Count:    td.Count,
-		InitTime: td.InitTime,
-		TableID:  td.TableID,
-	}
 }
 
 // Concurrency defines concurrency values.
