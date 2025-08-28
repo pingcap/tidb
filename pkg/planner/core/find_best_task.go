@@ -745,7 +745,7 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	index := -1
 	var plan base.PhysicalPlan
 	switch join := pp.(type) {
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
 		plan = join.InnerPlan
 	case *physicalop.PhysicalIndexHashJoin:
@@ -1129,38 +1129,50 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
 	}
+	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
+	// globalResult: comparison result of global index vs local index preference (1=LHS better, -1=RHS better, 0=equal)
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
+	// accessResult: comparison result of access condition coverage (1=LHS better, -1=RHS better, 0=equal)
+	// comparable1: whether the access conditions are comparable between LHS and RHS
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
+	// scanResult: comparison result of index back scan efficiency (1=LHS better, -1=RHS better, 0=equal)
+	// comparable2: whether the index back scan characteristics are comparable between LHS and RHS
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
+	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
-	sum := accessResult + scanResult + matchResult + globalResult
+	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
+	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
+
+	// sum is the aggregate score of various comparison metrics between lhs and rhs. riskResult is excluded
+	// because more work is required.
+	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
+	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
+	// bound was applied, etc.)
+	sum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
+	// TO-DO: Consider a separate set of rules for global indexes.
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
-		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
-			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount &&
-			// if rhs's maxCount hasn't been adjusted or its adjusted max risk is greater than than lhs's regular count, then lhs can win
-			(rhs.path.MaxCountAfterAccess <= rhs.path.CountAfterAccess || lhs.path.CountAfterAccess < rhs.path.MaxCountAfterAccess) {
+		if !lhsPseudo && sum >= 0 &&
+			(eqOrInResult > 0 || (lhs.path.EqOrInCondCount > 0 && lhsEqOrInCount >= rhsEqOrInCount)) {
 			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
-		if !rhsPseudo && globalResult <= 0 && sum <= 0 &&
-			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount &&
-			// if lhs's maxCount hasn't been adjusted or its adjusted max risk is greater than rhs's regular count, then rhs can win
-			(lhs.path.MaxCountAfterAccess <= lhs.path.CountAfterAccess || rhs.path.CountAfterAccess < lhs.path.MaxCountAfterAccess) {
+		if !rhsPseudo && sum <= 0 &&
+			(eqOrInResult < 0 || (rhs.path.EqOrInCondCount > 0 && rhsEqOrInCount >= lhsEqOrInCount)) {
 			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
 		}
 		if preferRange {
 			// keep an index without statistics if that index has more equal/IN predicates, AND:
 			// 1) there are at least 2 equal/INs
 			// 2) OR - it's a full index match for all index predicates
-			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
-				(lhs.path.EqOrInCondCount > 1 || isFullIndexMatch(lhs)) {
+			if lhsPseudo && eqOrInResult > 0 && sum >= 0 &&
+				(lhsEqOrInCount > 1 || isFullIndexMatch(lhs)) {
 				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
-			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 && sum <= 0 &&
-				(rhs.path.EqOrInCondCount > 1 || isFullIndexMatch(rhs)) {
+			if rhsPseudo && eqOrInResult < 0 && sum <= 0 &&
+				(rhsEqOrInCount > 1 || isFullIndexMatch(rhs)) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
 		}
@@ -1190,6 +1202,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// (2): does it require a double scan,
 	// (3): whether or not it matches the physical property,
 	// (4): it's a global index path or not.
+	// (5): whether the path has more equal/IN predicates.
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	if !comparable1 {
@@ -1198,10 +1211,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && sum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && sum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
@@ -1228,7 +1241,35 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 	return lhsPseudo, rhsPseudo
 }
 
+// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
+// and the count for each. For example:
+//
+//	where a=1 and b=1 and c=1 and d=1
+//	lhs == idx(a, b, e) <-- lhsEqOrInCount == 2 (loser)
+//	rhs == idx(d, c, b) <-- rhsEqOrInCount == 3 (winner)
+func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqOrInCount int) {
+	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
+		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
+		return 0, 0, 0
+	}
+	lhsEqOrInCount = lhs.equalPredicateCount()
+	rhsEqOrInCount = rhs.equalPredicateCount()
+	if lhsEqOrInCount > rhsEqOrInCount {
+		return 1, lhsEqOrInCount, rhsEqOrInCount
+	}
+	if lhsEqOrInCount < rhsEqOrInCount {
+		return -1, lhsEqOrInCount, rhsEqOrInCount
+	}
+	// We didn't find a winner, but return both counts for use by the caller
+	return 0, lhsEqOrInCount, rhsEqOrInCount
+}
+
 func isFullIndexMatch(candidate *candidatePath) bool {
+	// Check if the DNF condition is a full match
+	if candidate.hasOnlyEqualPredicatesInDNF() {
+		return true
+	}
+	// Return the non-DNF full index match result
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
@@ -1610,9 +1651,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				isDNFOnlyEquals := c.hasOnlyEqualPredicatesInDNF()
-				if preferMerge || isDNFOnlyEquals || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -1630,18 +1670,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	return candidates
 }
 
-// hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
+// hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form contain at least one equal predicate
 func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
-	// Exit if this isn't a DNF condition or has no access conditions
-	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
-		return false
-	}
-	// If the minimum number of access conditions required for DNF is more than 1, then each OR condition
-	// must have at least 1 equal predicates to satisfy the DNF requirement. Return true.
-	if c.path.MinAccessCondsForDNFCond > 1 {
-		return true
-	}
-
 	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
 	var isEqualPredicateOrOr func(expr expression.Expression) bool
 	isEqualPredicateOrOr = func(expr expression.Expression) bool {
@@ -1682,6 +1712,17 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 		}
 	}
 	return true
+}
+
+func (c *candidatePath) equalPredicateCount() int {
+	// Exit if this isn't a DNF condition or has no access conditions
+	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
+		return c.path.EqOrInCondCount
+	}
+	if c.hasOnlyEqualPredicatesInDNF() {
+		return c.path.MinAccessCondsForDNFCond
+	}
+	return max(0, c.path.MinAccessCondsForDNFCond-1)
 }
 
 func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop *property.PhysicalProperty) string {
@@ -2291,7 +2332,7 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		tablePlan = physicalop.PhysicalSelection{Conditions: ts.FilterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*rowCount), ds.QueryBlockOffset())
+		tablePlan = physicalop.PhysicalSelection{Conditions: ts.FilterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), selectivity*rowCount), ds.QueryBlockOffset())
 		tablePlan.SetChildren(ts)
 		return tablePlan
 	}
@@ -2357,7 +2398,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 	if err != nil {
 		return nil, nil, false, err
 	}
-	ts.SetStats(ds.TableStats.ScaleByExpectCnt(totalRowCount))
+	ts.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), totalRowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(ts.PhysicalTableID) != nil {
 		ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
@@ -2377,7 +2418,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
 			}
-			sel := physicalop.PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*totalRowCount), ts.QueryBlockOffset())
+			sel := physicalop.PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), selectivity*totalRowCount), ts.QueryBlockOffset())
 			sel.SetChildren(ts)
 			currentTopPlan = sel
 		}
@@ -2648,7 +2689,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	// prop.IsSortItemEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of AddPushedDownSelection.
-	finalStats := ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt)
+	finalStats := ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt)
 	if err = addPushedDownSelection4PhysicalIndexScan(is, cop, ds, path, finalStats); err != nil {
 		return base.InvalidTask, err
 	}
@@ -2687,7 +2728,7 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
 		}
 		count := is.StatsInfo().RowCount * selectivity
-		stats := p.TableStats.ScaleByExpectCnt(count)
+		stats := p.TableStats.ScaleByExpectCnt(p.SCtx().GetSessionVars(), count)
 		indexSel := physicalop.PhysicalSelection{Conditions: indexConds}.Init(is.SCtx(), stats, is.QueryBlockOffset())
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
@@ -2701,7 +2742,7 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
 			}
-			tableSel.SetStats(copTask.Plan().StatsInfo().Scale(selectivity))
+			tableSel.SetStats(copTask.Plan().StatsInfo().Scale(is.SCtx().GetSessionVars(), selectivity))
 		}
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
@@ -2865,7 +2906,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.OutputNames(),
 		}
-		mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.AstIndexHints)
+		mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
 		var task base.Task = mppTask
 		if !mppTask.Invalid() {
 			if prop.TaskTp == property.MppTaskType && len(mppTask.rootTaskConds) > 0 {
@@ -2912,7 +2953,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.ByItems = byItems
 		}
 	}
-	addPushedDownSelection4PhysicalTableScan(ts, copTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.AstIndexHints)
+	addPushedDownSelection4PhysicalTableScan(ts, copTask, ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
 	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
 		return base.InvalidTask, nil
 	}
@@ -2962,15 +3003,16 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
-	pointGetPlan := PointGetPlan{
+	pointGetPlan := &physicalop.PointGetPlan{
 		AccessConditions: candidate.path.AccessConds,
-		schema:           ds.Schema().Clone(),
-		dbName:           ds.DBName.L,
+		DBName:           ds.DBName.L,
 		TblInfo:          ds.TableInfo,
-		outputNames:      ds.OutputNames(),
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
-	}.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
+	}
+	pointGetPlan.SetSchema(ds.Schema().Clone())
+	pointGetPlan.SetOutputNames(ds.OutputNames())
+	pointGetPlan = pointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.QueryBlockOffset())
 	if ds.PartitionDefIdx != nil {
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
@@ -2980,7 +3022,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.HandleCols.GetCol(0).RetType.GetFlag())
-		pointGetPlan.accessCols = ds.TblCols
+		pointGetPlan.SetAccessCols(ds.TblCols)
 		found := false
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
@@ -2996,7 +3038,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		if len(candidate.path.TableFilters) > 0 {
 			sel := physicalop.PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
-			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
+			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.QueryBlockOffset())
 			sel.SetChildren(pointGetPlan)
 			rTsk.SetPlan(sel)
 		}
@@ -3006,15 +3048,15 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		if candidate.path.IsSingleScan {
-			pointGetPlan.accessCols = candidate.path.IdxCols
+			pointGetPlan.SetAccessCols(candidate.path.IdxCols)
 		} else {
-			pointGetPlan.accessCols = ds.TblCols
+			pointGetPlan.SetAccessCols(ds.TblCols)
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sel := physicalop.PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
-			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
+			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.QueryBlockOffset())
 			sel.SetChildren(pointGetPlan)
 			rTsk.SetPlan(sel)
 		}
@@ -3033,15 +3075,15 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
-	batchPointGetPlan := &BatchPointGetPlan{
-		ctx:              ds.SCtx(),
-		dbName:           ds.DBName.L,
+	batchPointGetPlan := &physicalop.BatchPointGetPlan{
+		DBName:           ds.DBName.L,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo,
 		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
 		PartitionNames:   ds.PartitionNames,
 	}
+	batchPointGetPlan.SetCtx(ds.SCtx())
 	if ds.PartitionDefIdx != nil {
 		batchPointGetPlan.SinglePartition = true
 		batchPointGetPlan.PartitionIdxs = []int{*ds.PartitionDefIdx}
@@ -3054,7 +3096,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
-		batchPointGetPlan.accessCols = ds.TblCols
+		batchPointGetPlan.SetAccessCols(ds.TblCols)
 		found := false
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.HandleCols.GetCol(0).ID {
@@ -3069,10 +3111,10 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
-			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
 			sel := physicalop.PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
-			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
+			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.QueryBlockOffset())
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.SetPlan(sel)
 		}
@@ -3088,22 +3130,22 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
 		if candidate.path.IsSingleScan {
-			batchPointGetPlan.accessCols = candidate.path.IdxCols
+			batchPointGetPlan.SetAccessCols(candidate.path.IdxCols)
 		} else {
-			batchPointGetPlan.accessCols = ds.TblCols
+			batchPointGetPlan.SetAccessCols(ds.TblCols)
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
-			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
 			sel := physicalop.PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
-			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ds.QueryBlockOffset())
+			}.Init(ds.SCtx(), ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.QueryBlockOffset())
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.SetPlan(sel)
 		}
 	}
 	if rTsk.GetPlan() == nil {
-		tmpP := batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
+		tmpP := batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
 		rTsk.SetPlan(tmpP)
 	}
 
@@ -3148,7 +3190,7 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
 			}
-			sel.SetStats(ts.StatsInfo().Scale(selectivity))
+			sel.SetStats(ts.StatsInfo().Scale(ts.SCtx().GetSessionVars(), selectivity))
 		}
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel

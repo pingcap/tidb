@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -40,8 +41,12 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/atomic"
 )
 
@@ -59,6 +64,27 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		t.Skip("This test is only for nextgen")
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 10})
+	defer cluster.Terminate(t)
+	keyspaceIDs := map[string]uint32{
+		keyspace.System: 1,
+		"ks":            2,
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
+		func(cliP **clientv3.Client, ks string) {
+			id, ok := keyspaceIDs[ks]
+			require.True(t, ok)
+			// one client per ks
+			*cliP = cluster.Client(int(id - 1))
+			// we will close the client.
+			cluster.TakeClient(int(id - 1))
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: id, Name: ks})
+			require.NoError(t, err)
+			etcd.SetEtcdCliByNamespace(*cliP, keyspace.MakeKeyspaceEtcdNamespace(codec))
+		},
+	)
 	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
 	sysKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
 	sysKSTK := testkit.NewTestKit(t, sysKSStore)
@@ -178,7 +204,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
@@ -222,7 +248,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
@@ -289,7 +315,7 @@ func TestShowImportProgress(t *testing.T) {
 		"root", "", &importer.ImportParameters{}, 1000)
 	require.NoError(t, err)
 
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 
 	subtasks := []struct {
@@ -428,7 +454,7 @@ func TestShowImportGroup(t *testing.T) {
 			"root", job.GroupKey, &importer.ImportParameters{}, 1000)
 		require.NoError(t, err)
 
-		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, nil)
+		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 
 		switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
