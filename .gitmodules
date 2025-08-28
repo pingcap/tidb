@@ -1,3 +1,0 @@
-[submodule "tikv-client-go"]
-	path = tikv-client-go
-	url = git@commitment.musta.ch:company/tidb-client-go.git
