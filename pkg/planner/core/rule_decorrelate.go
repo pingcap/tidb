@@ -622,6 +622,7 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *logicalop.LogicalAp
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
+// Return true if we should skip decorrelation for LeftOuterApply + Projection.
 func skipDecorrelatForLeftOuterApply(apply *logicalop.LogicalApply, proj *logicalop.LogicalProjection) bool {
 	allConst := len(proj.Exprs) > 0
 	for _, expr := range proj.Exprs {
