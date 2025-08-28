@@ -810,6 +810,26 @@ func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {
 	tk.MustExec("alter table t1 modify column c2 int, drop column id;")
 }
 
+func TestMultiSchemaChangeDMLUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, d int)")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("insert into t(a, c) values (1, 2), (2, 3), (3, 4), (4, 5)")
+		tk.MustExec("update t set c = 5 where a = 1")
+		tk.MustExec("delete from t")
+	})
+	tk.MustExec("alter table t change column b e int unsigned, change column d f int unsigned")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+
+	tk.MustExec("drop table t")
+}
+
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
