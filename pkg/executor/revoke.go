@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -125,7 +126,8 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	users := userSpecToUserList(e.Users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
 }
 
 // Checks that dynamic privileges are only of global scope.
@@ -192,9 +194,9 @@ func (e *RevokeExec) revokePriv(ctx context.Context, internalSession sessionctx.
 		return e.revokeDBPriv(internalSession, priv, user, host)
 	case ast.GrantLevelTable:
 		if len(priv.Cols) == 0 {
-			return e.revokeTablePriv(ctx, internalSession, priv, user, host)
+			return e.revokeTablePriv(ctx, internalSession, priv, user, host, true)
 		}
-		return e.revokeColumnPriv(ctx, internalSession, priv, user, host)
+		return e.revokeColumnPriv(ctx, internalSession, priv, user, host, true)
 	}
 	return errors.Errorf("Unknown revoke level: %#v", e.Level)
 }
@@ -262,7 +264,9 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	return err
 }
 
-func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+// checkColumnPrivTbl indicates whether we should remove records in mysql.columns_priv if corresponding column privileges exist
+func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem,
+	user, host string, checkColumnPrivTbl bool) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
@@ -274,126 +278,165 @@ func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessio
 	if tbl != nil {
 		tblName = tbl.Meta().Name.O
 	}
-	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
-	isDelRow, err := composeTablePrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tblName)
+
+	// 1. update mysql.tables_priv
+	columnPrivUpdated, err := removePrivFromTablePriv(ctx, internalSession, priv.Priv, host, user, dbName, tblName, checkColumnPrivTbl)
 	if err != nil {
 		return err
 	}
 
-	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user, host, dbName, tblName)
-	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return err
-	}
-
-	if isDelRow {
-		sql.Reset()
-		sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", mysql.SystemDB, mysql.TablePrivTable, user, host, dbName, tblName)
-		_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+	// 2. update mysql.columns_priv to delete all records related to this privilege
+	if checkColumnPrivTbl && columnPrivUpdated {
+		p := &ast.PrivElem{Priv: priv.Priv, Cols: []*ast.ColumnName{}}
+		if err = e.revokeColumnPriv(ctx, internalSession, p, user, host, false); err != nil {
+			return err
+		}
 	}
 	return err
 }
 
-func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
-	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
-	if err != nil {
-		return err
-	}
+// Remove priv from Table_priv and Column_priv in mysql.tables_priv
+// It always removes from Column_priv. If removeTableScopePriv is true, it removes from Table_priv.
+// The return value columnPrivUpdated indicates whether some Column_priv have been updated.
+func removePrivFromTablePriv(ctx context.Context, sctx sessionctx.Context,
+	priv mysql.PrivilegeType, host, user, db, table string, removeTableScopePriv bool) (columnPrivUpdated bool, err error) {
 	sql := new(strings.Builder)
-	for _, c := range priv.Cols {
-		col := table.FindCol(tbl.Cols(), c.Name.L)
-		if col == nil {
-			return errors.Errorf("Unknown column: %s", c)
+	if priv == mysql.AllPriv {
+		if removeTableScopePriv {
+			// Revoke ALL does not revoke the Grant option,
+			// so we only need to check if the user previously had this.
+			sqlescape.MustFormatSQL(sql,
+				"UPDATE %n.%n SET Table_priv = '' WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND find_in_set('Grant', Table_priv) = 0",
+				mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
+			_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+			if err != nil {
+				return
+			}
+			sql.Reset()
+			sqlescape.MustFormatSQL(sql,
+				"UPDATE %n.%n SET Table_priv = 'Grant' WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND find_in_set('Grant', Table_priv) > 0",
+				mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
+			_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+			if err != nil {
+				return
+			}
 		}
 
 		sql.Reset()
-		sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.ColumnPrivTable)
-		isDelRow, err := composeColumnPrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
+		sqlescape.MustFormatSQL(sql,
+			"UPDATE %n.%n SET Column_priv = '' WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?",
+			mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 		if err != nil {
-			return err
+			return
 		}
-		sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", user, host, dbName, tbl.Meta().Name.O, col.Name.O)
+		columnPrivUpdated = sctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	} else {
+		if removeTableScopePriv {
+			s := strings.Join([]string{"UPDATE %n.%n SET Table_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Table_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
+			sqlescape.MustFormatSQL(sql, s,
+				mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
+			_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+			if err != nil {
+				return
+			}
+		}
 
-		_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+		sql.Reset()
+		s := strings.Join([]string{"UPDATE %n.%n SET Column_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Column_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
+		sqlescape.MustFormatSQL(sql, s,
+			mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 		if err != nil {
-			return err
+			return
 		}
+		columnPrivUpdated = sctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	}
 
-		if isDelRow {
-			sql.Reset()
-			sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
-			_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+	sql.Reset()
+	sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Table_priv='' AND Column_priv=''",
+		mysql.SystemDB, mysql.TablePrivTable, user, host, db, table)
+	_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+	return
+}
+
+// remove priv from Column_priv in mysql.columns_priv
+func removePrivFromColumnPriv(ctx context.Context, e sqlexec.SQLExecutor,
+	priv mysql.PrivilegeType, host, user, db, table, col string) (err error) {
+	sql := new(strings.Builder)
+	if priv == mysql.AllPriv {
+		sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET Column_priv = '' WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?",
+			mysql.SystemDB, mysql.ColumnPrivTable, user, host, db, table)
+	} else {
+		s := strings.Join([]string{"UPDATE %n.%n SET Column_priv = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', Column_priv, ','),',", mysql.Priv2SetStr[priv], ",',',')) WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?"}, "")
+		sqlescape.MustFormatSQL(sql, s,
+			mysql.SystemDB, mysql.ColumnPrivTable, user, host, db, table)
+	}
+	if len(col) > 0 {
+		sqlescape.MustFormatSQL(sql, " AND Column_name=%?", col)
+	}
+	_, err = e.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return err
+	}
+	sql.Reset()
+	sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_priv=''",
+		mysql.SystemDB, mysql.ColumnPrivTable, user, host, db, table)
+	_, err = e.ExecuteInternal(ctx, sql.String())
+	return err
+}
+
+// checkTablePrivTbl indicates whether we should check Column_priv in mysql.tables_priv if no corresponding column privileges
+// exists in mysql.columns_priv anymore.
+func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string, checkTablePrivTbl bool) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
+	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+		return err
+	}
+	cols := priv.Cols
+	if len(cols) == 0 && tbl != nil {
+		// It is used by e.revokeTablePriv(), to revoke all columns after revoke the corresponding table privilege.
+		for _, col := range tbl.VisibleCols() {
+			cols = append(cols, &ast.ColumnName{Name: col.Name})
+		}
+	}
+	if len(cols) > 0 {
+		for _, c := range cols {
+			if tbl != nil {
+				if table.FindCol(tbl.Cols(), c.Name.L) == nil {
+					return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.Name.L, tbl.Meta().Name.L)
+				}
+			}
+
+			err = removePrivFromColumnPriv(ctx, internalSession.GetSQLExecutor(), priv.Priv, host, user, dbName, e.Level.TableName, c.Name.O)
 			if err != nil {
 				return err
 			}
-			break
-		}
-		//TODO Optimized for batch, one-shot.
-	}
-	return nil
-}
 
-func privUpdateForRevoke(cur []string, priv mysql.PrivilegeType) ([]string, error) {
-	p, ok := mysql.Priv2SetStr[priv]
-	if !ok {
-		return nil, errors.Errorf("Unknown priv: %v", priv)
-	}
-	cur = deleteFromSet(cur, p)
-	return cur, nil
-}
-
-func composeTablePrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) (bool, error) {
-	var newTablePriv, newColumnPriv []string
-
-	currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
-	if err != nil {
-		return false, err
-	}
-
-	if priv == mysql.AllPriv {
-		// Revoke ALL does not revoke the Grant option,
-		// so we only need to check if the user previously had this.
-		tmp := SetFromString(currTablePriv)
-		for _, p := range tmp {
-			if p == mysql.Priv2SetStr[mysql.GrantPriv] {
-				newTablePriv = []string{mysql.Priv2SetStr[mysql.GrantPriv]}
-			}
+			//TODO Optimized for batch, one-shot.
 		}
 	} else {
-		newTablePriv = SetFromString(currTablePriv)
-		newTablePriv, err = privUpdateForRevoke(newTablePriv, priv)
+		// If the target table is not existent
+		err = removePrivFromColumnPriv(ctx, internalSession.GetSQLExecutor(), priv.Priv, host, user, dbName, e.Level.TableName, "")
 		if err != nil {
-			return false, err
-		}
-
-		newColumnPriv = SetFromString(currColumnPriv)
-		newColumnPriv, err = privUpdateForRevoke(newColumnPriv, priv)
-		if err != nil {
-			return false, err
-		}
-	}
-	sqlescape.MustFormatSQL(sql, `Table_priv=%?, Column_priv=%?, Grantor=%?`, strings.Join(newTablePriv, ","), strings.Join(newColumnPriv, ","), ctx.GetSessionVars().User.String())
-	return len(newTablePriv) == 0, nil
-}
-
-func composeColumnPrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) (bool, error) {
-	var newColumnPriv []string
-
-	if priv != mysql.AllPriv {
-		currColumnPriv, err := getColumnPriv(ctx, name, host, db, tbl, col)
-		if err != nil {
-			return false, err
-		}
-
-		newColumnPriv = SetFromString(currColumnPriv)
-		newColumnPriv, err = privUpdateForRevoke(newColumnPriv, priv)
-		if err != nil {
-			return false, err
+			return err
 		}
 	}
 
-	sqlescape.MustFormatSQL(sql, `Column_priv=%?`, strings.Join(newColumnPriv, ","))
-	return len(newColumnPriv) == 0, nil
+	if checkTablePrivTbl {
+		sql := strings.Join([]string{"SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_priv LIKE '%%", priv.Priv.String(), "%%';"}, "")
+		exists, err := recordExists(internalSession, sql, mysql.SystemDB, mysql.ColumnPrivTable, user, host, e.Level.DBName, e.Level.TableName)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			// We should delete the row in mysql.tables_priv if there is no column privileges left.
+			p := &ast.PrivElem{Priv: priv.Priv}
+			if err = e.revokeTablePriv(ctx, internalSession, p, user, host, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

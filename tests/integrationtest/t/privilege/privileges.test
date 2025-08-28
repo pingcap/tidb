@@ -34,7 +34,7 @@ SELECT * FROM dbnotexists.t1;
 SHOW CREATE TABLE privilege__privileges.t1;
 --error 1142
 SHOW CREATE TABLE dbnotexists.t1;
---error 1142
+--error 1143
 DELETE FROM privilege__privileges.t1 WHERE a=0;
 --error 1142
 DELETE FROM dbnotexists.t1 WHERE a=0;
@@ -224,9 +224,9 @@ create table privilege__privileges.t(id int, v int, primary key(id));
 insert into privilege__privileges.t(id, v) values(1, 1);
 
 connect (tester,localhost,tester,,);
---error ErrTableaccessDenied
+--error ErrColumnaccessDenied
 select * from privilege__privileges.t where id = 1;
---error ErrTableaccessDenied
+--error ErrColumnaccessDenied
 update privilege__privileges.t set v = 2 where id = 1;
 disconnect tester;
 DROP USER 'tester'@'localhost';
@@ -556,7 +556,7 @@ connection tr_insert;
 --error ErrTableaccessDenied
 REPLACE INTO t1 VALUES (1, 2);
 # INSERT ON DUPLICATE requires INSERT + UPDATE privileges, having INSERT alone is insufficient.
---error ErrTableaccessDenied
+--error ErrColumnaccessDenied
 INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5;
 # Plain INSERT should work.
 INSERT INTO t1 VALUES (6, 7);
@@ -898,3 +898,210 @@ with t_f as (
 
 disconnect u53490;
 connection default;
+
+# TestIssue59552
+drop user if exists u1;
+create user u1;
+create role 'aa@bb';
+grant 'aa@bb' to u1;
+show grants for u1;
+drop user u1;
+drop role 'aa@bb';
+
+# Test DEFINER/INVOKER of view
+
+## Case1: test some users lack column-privileges of the internal table
+connection default;
+create user view_definer_u, view_invoker_u1, view_invoker_u2;
+create database test_view_db;
+use test_view_db;
+CREATE TABLE sensitive_data (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    public_col VARCHAR(50),
+    sensitive_col VARCHAR(50)
+);
+INSERT INTO sensitive_data (public_col, sensitive_col) VALUES
+  ('Public Data A', 'Secret A'),
+  ('Public Data B', 'Secret B'),
+  ('Public Data C', 'Secret C');
+GRANT SELECT (id, public_col, sensitive_col) ON test_view_db.sensitive_data TO 'view_definer_u';
+GRANT CREATE VIEW, SHOW VIEW ON test_view_db.* to 'view_definer_u';
+GRANT SELECT (id, public_col) ON test_view_db.sensitive_data TO 'view_invoker_u1';
+SHOW GRANTS FOR view_definer_u;
+SHOW GRANTS FOR view_invoker_u1;
+SHOW GRANTS FOR view_invoker_u2;
+
+connect (view_definer_u, localhost, view_definer_u, , test_view_db);
+CREATE VIEW definer_view AS
+  SELECT id, public_col, sensitive_col
+  FROM sensitive_data;
+
+connection default;
+GRANT SELECT ON test_view_db.definer_view TO 'view_definer_u';
+GRANT SELECT ON test_view_db.definer_view TO 'view_invoker_u1';
+GRANT SELECT ON test_view_db.definer_view TO 'view_invoker_u2';
+
+connection view_definer_u;
+SHOW CREATE VIEW definer_view;
+
+--echo view_definer_u has all required privileges, so view_invoker_u1 and view_invoker_u2 can access all columns.
+connect (view_invoker_u1, localhost, view_invoker_u1, , test_view_db);
+SELECT id, public_col, sensitive_col FROM definer_view;
+connect (view_invoker_u2, localhost, view_invoker_u2, , test_view_db);
+SELECT id, public_col, sensitive_col FROM definer_view;
+
+connection view_definer_u;
+CREATE SQL SECURITY INVOKER VIEW invoker_view AS
+  SELECT id, public_col, sensitive_col
+  FROM sensitive_data;
+
+connection default;
+GRANT SELECT ON test_view_db.invoker_view TO 'view_definer_u';
+GRANT SELECT ON test_view_db.invoker_view TO 'view_invoker_u1';
+GRANT SELECT ON test_view_db.invoker_view TO 'view_invoker_u2';
+--echo revoke one columns privilege, so view_definer_u can not access definer_view;
+REVOKE SELECT(sensitive_col) ON `test_view_db`.`sensitive_data` FROM 'view_definer_u'@'%';
+
+connection view_definer_u;
+SHOW CREATE VIEW invoker_view;
+
+--echo view_invoker_u1 lacks the SELECT privilege of sensitive_col
+connection view_invoker_u1;
+--error 1356
+SELECT id, public_col, sensitive_col FROM invoker_view;
+--error 1356
+SELECT * FROM invoker_view;
+connection default;
+GRANT SELECT(sensitive_col) on test_view_db.sensitive_data to view_invoker_u1;
+connection view_invoker_u1;
+SELECT * FROM invoker_view;
+--error 1356
+SELECT id, public_col, sensitive_col FROM definer_view;
+--error 1356
+SELECT * FROM definer_view;
+
+--echo view_invoker_u2 lacks all columns' SELECT privilege
+connection view_invoker_u2;
+--error 1356
+SELECT id, public_col, sensitive_col FROM invoker_view;
+--error 1356
+SELECT * FROM invoker_view;
+
+connection default;
+GRANT SELECT on test_view_db.sensitive_data to view_invoker_u2;
+connection view_invoker_u2;
+SELECT * FROM invoker_view;
+--error 1356
+SELECT id, public_col, sensitive_col FROM definer_view;
+--error 1356
+SELECT * FROM definer_view;
+
+connection default;
+
+## Case2: test some users lack column-privileges of the view
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_definer_u'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_definer_u'@'%';
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_invoker_u1'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_invoker_u1'@'%';
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_invoker_u2'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_invoker_u2'@'%';
+GRANT SELECT(sensitive_col) ON  `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%';
+REVOKE SELECT(sensitive_col) ON  `test_view_db`.`sensitive_data` FROM 'view_invoker_u1'@'%';
+SHOW GRANTS FOR view_definer_u;
+SHOW GRANTS FOR view_invoker_u1;
+SHOW GRANTS FOR view_invoker_u2;
+
+--echo test view_definer_u
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_definer_u'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_definer_u'@'%';
+connection view_definer_u;
+--error 1142
+SELECT * FROM invoker_view;
+--error 1142
+SELECT * FROM definer_view;
+SELECT id, public_col FROM invoker_view;
+SELECT id, public_col FROM definer_view;
+--error 1143
+SELECT sensitive_col FROM invoker_view;
+--error 1143
+SELECT sensitive_col FROM definer_view;
+
+--echo test view_invoker_u1
+connection default;
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_invoker_u1'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_invoker_u1'@'%'; 
+connection view_invoker_u1;
+--error 1356
+SELECT * FROM invoker_view;
+--error 1142
+SELECT * FROM definer_view;
+--error 1356
+SELECT id, public_col FROM invoker_view;
+SELECT id, public_col FROM definer_view;
+--error 1356
+SELECT sensitive_col FROM invoker_view;
+--error 1143
+SELECT sensitive_col FROM definer_view;
+
+--echo test view_invoker_u2
+connection default;
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_invoker_u2'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_invoker_u2'@'%'; 
+connection view_invoker_u2;
+--error 1142
+SELECT * FROM invoker_view;
+--error 1142
+SELECT * FROM definer_view;
+SELECT id, public_col FROM invoker_view;
+SELECT id, public_col FROM definer_view;
+--error 1143
+SELECT sensitive_col FROM invoker_view;
+--error 1143
+SELECT sensitive_col FROM definer_view;
+
+connection default;
+drop user view_definer_u, view_invoker_u1, view_invoker_u2;
+drop database test_view_db;
+
+
+# Test information_schema.schema_privileges, table_privileges and column_privileges
+create database test_information_schema;
+create table test_information_schema.t (a int, b int);
+
+create user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;
+grant select on test_information_schema.* to test_information_schema_u1;
+grant select on test_information_schema.t to test_information_schema_u2;
+grant select(a) on test_information_schema.t to test_information_schema_u3;
+
+--echo // default user can see all privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+
+--echo // test_information_schema_u1 can only see schema_privileges.
+connect (test_information_schema_u1, localhost, test_information_schema_u1, , );
+connection test_information_schema_u1;
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+disconnect test_information_schema_u1;
+
+--echo // test_information_schema_u2 can only see table_privileges.
+connect (test_information_schema_u2, localhost, test_information_schema_u2, , );
+connection test_information_schema_u2;
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+disconnect test_information_schema_u2;
+
+--echo // test_information_schema_u3 can only see column_privileges.
+connect (test_information_schema_u3, localhost, test_information_schema_u3, , );
+connection test_information_schema_u3;
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+disconnect test_information_schema_u3;
+
+connection default;
+drop database test_information_schema;
+drop user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;

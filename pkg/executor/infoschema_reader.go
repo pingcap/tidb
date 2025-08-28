@@ -231,6 +231,12 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableColumnPrivileges:
+			err = e.setDataFromColumnPrivileges(sctx)
+		case infoschema.TableTablePrivileges:
+			err = e.setDataFromTablePrivileges(sctx)
+		case infoschema.TableSchemaPrivileges:
+			err = e.setDataFromSchemaPrivileges(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3944,6 +3950,51 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	if err != nil {
 		return err
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromColumnPrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchColumnPrivileges(sctx, user)
+	if err != nil {
+		return err
+	}
+
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTablePrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchTablePrivileges(sctx, user)
+	if err != nil {
+		return err
+	}
+
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromSchemaPrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchSchemaPrivileges(sctx, user)
+	if err != nil {
+		return err
+	}
+
 	e.rows = rows
 	return nil
 }

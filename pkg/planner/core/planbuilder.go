@@ -79,9 +79,13 @@ import (
 )
 
 type visitInfo struct {
-	privilege     mysql.PrivilegeType
-	db            string
-	table         string
+	privilege mysql.PrivilegeType
+	// if db is "", it means this is a global-level privilege
+	// if db is not "" and table is "", it means this is a db-level privilege
+	db string
+	// if table is not "" and column is "", it means this is a table-level privilege
+	table string
+	// if column is not "", it means this is a column-level privilege
 	column        string
 	err           error
 	alterWritable bool
@@ -194,6 +198,14 @@ const (
 	handlingScalarSubquery
 )
 
+type checkSelectColumnPrivOption byte
+
+const (
+	noCheckOption checkSelectColumnPrivOption = iota
+	reportColumnErrOption
+	reportTableErrOption
+)
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -209,6 +221,7 @@ type PlanBuilder struct {
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
+	checkColPriv  checkSelectColumnPrivOption
 	tableHintInfo []*hint.PlanHints
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
@@ -299,6 +312,11 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+
+	// SavedViews is a stack that saves all views when traversing the AST. We depend on it to:
+	// 1. know whether the AST node is under a view
+	// 2. report precise error in appendColNamesToVisitInfo.
+	SavedViews []*ast.TableName
 }
 
 type handleColHelper struct {
@@ -3716,7 +3734,13 @@ func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt 
 			}
 			break
 		}
-		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
+		if len(item.Cols) == 0 {
+			vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
+		} else {
+			for _, colName := range item.Cols {
+				vi = appendVisitInfo(vi, item.Priv, dbName, tableName, colName.Name.L, nil)
+			}
+		}
 	}
 
 	for _, priv := range allPrivs {
@@ -3793,7 +3817,13 @@ func collectVisitInfoFromGrantStmt(sctx base.PlanContext, vi []visitInfo, stmt *
 			}
 			break
 		}
-		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", authErr)
+		if len(item.Cols) == 0 {
+			vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", authErr)
+		} else {
+			for _, colName := range item.Cols {
+				vi = appendVisitInfo(vi, item.Priv, dbName, tableName, colName.Name.L, authErr)
+			}
+		}
 	}
 
 	for _, priv := range allPrivs {
@@ -3846,6 +3876,11 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 // resolveGeneratedColumns resolves generated columns with their generation
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
 func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc InsertGeneratedColumns, err error) {
+	originColPriv := b.checkColPriv
+	b.checkColPriv = reportColumnErrOption
+	defer func() {
+		b.checkColPriv = originColPriv
+	}()
 	for _, column := range columns {
 		if !column.IsGenerated() {
 			continue
@@ -3942,29 +3977,35 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
+	// INSERT statement requires `INSERT` column-level privilege.
+	// If a column list is given following the table, these columns' privilge is required.
+	// Otherwise, the privilege of all visiable columns in the table is required.
 	user := b.ctx.GetSessionVars().User
+	checkColumnPriv := len(insert.Columns) != 0
 	var authErr error
-	if user != nil {
-		authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+	if checkColumnPriv {
+		for _, col := range insert.Columns {
+			if user != nil {
+				authErr = plannererrors.ErrColumnaccessDenied.FastGenByArgs("INSERT", user.AuthUsername, user.AuthHostname, col.Name.L, tableInfo.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tnW.DBInfo.Name.L,
+				tableInfo.Name.L, col.Name.L, authErr)
+		}
+	} else {
+		if user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+		}
+		b.visitInfo = appendMultiColumns2VisitInfo(b.visitInfo, mysql.InsertPriv, tnW.DBInfo.Name.L,
+			tableInfo.Name.L, tableInPlan.VisibleCols(), authErr)
 	}
-
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tnW.DBInfo.Name.L,
-		tableInfo.Name.L, "", authErr)
 
 	// `REPLACE INTO` requires both INSERT + DELETE privilege
-	// `ON DUPLICATE KEY UPDATE` requires both INSERT + UPDATE privilege
-	var extraPriv mysql.PrivilegeType
+	authErr = nil
 	if insert.IsReplace {
-		extraPriv = mysql.DeletePriv
-	} else if insert.OnDuplicate != nil {
-		extraPriv = mysql.UpdatePriv
-	}
-	if extraPriv != 0 {
 		if user != nil {
-			cmd := strings.ToUpper(mysql.Priv2Str[extraPriv])
-			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs(cmd, user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, extraPriv, tnW.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tnW.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
 	}
 
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
@@ -3984,7 +4025,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
-		// Branch for `INSERT ... SET ...`.
+		// Branch for `INSERT ... SET ...`, insert.Setlist == true
 		err := b.buildValuesListOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
 		if err != nil {
 			return nil, err
@@ -4000,7 +4041,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	mockTablePlan.SetOutputNames(insertPlan.names4OnDuplicate)
 
-	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
+	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, b, func(node ast.ExprNode) (expression.Expression, error) {
 		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
 	})
 	if err != nil {
@@ -4023,12 +4064,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	return insertPlan, err
 }
 
-func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
+func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, b *PlanBuilder, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
 	onDupColSet := make(map[string]struct{}, len(onDup))
 	colMap := make(map[string]*table.Column, len(p.Table.Cols()))
 	for _, col := range p.Table.Cols() {
 		colMap[col.Name.L] = col
 	}
+	user := b.ctx.GetSessionVars().User
 	for _, assign := range onDup {
 		// Check whether the column to be updated exists in the source table.
 		idx, err := expression.FindFieldName(p.tableColNames, assign.Column)
@@ -4042,6 +4084,14 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		if column.Hidden {
 			return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(column.Name, clauseMsg[fieldList])
 		}
+
+		fieldName := p.tableColNames[idx]
+		var authErr error
+		if user != nil {
+			authErr = plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", user.AuthUsername, user.AuthHostname, fieldName.OrigColName.L, fieldName.OrigTblName.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, fieldName.DBName.L, fieldName.OrigTblName.L, fieldName.OrigColName.L, authErr)
+
 		// Check whether the column to be updated is the generated column.
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
@@ -4139,8 +4189,11 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 		if _, ok := expr.(*ast.SubqueryExpr); ok {
 			usingPlan = logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
+		originColPriv := b.checkColPriv
+		b.checkColPriv = reportColumnErrOption
 		var np base.LogicalPlan
 		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
+		b.checkColPriv = originColPriv
 		if np != nil {
 			if _, ok := np.(*logicalop.LogicalTableDual); !ok {
 				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
@@ -4387,21 +4440,35 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
 		Options:            options,
 	}.Init(b.ctx)
-	user := b.ctx.GetSessionVars().User
-	var insertErr, deleteErr error
-	if user != nil {
-		insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
-		deleteErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
-	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
-	if p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
-	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(ctx, tableInfo.ID)
 	if !ok {
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
+	}
+	user := b.ctx.GetSessionVars().User
+	var insertErr, deleteErr error
+	userName, hostName := auth.GetUserAndHostName(user)
+	// LOAD DATA statement requires `INSERT` column-level privilege.
+	// If a column list is given following the table, these columns' privilge is required.
+	// Otherwise, the privilege of all visiable columns in the table is required.
+	if len(ld.Columns) == 0 {
+		insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", userName, hostName, p.Table.Name.O)
+		b.visitInfo = appendMultiColumns2VisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L,
+			p.Table.Name.L, tableInPlan.VisibleCols(), insertErr)
+	} else {
+		for _, col := range ld.Columns {
+			insertErr = plannererrors.ErrColumnaccessDenied.GenWithStackByArgs("INSERT", userName, hostName, col.Name.O, p.Table.Name.O)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L, p.Table.Name.L, col.Name.L, insertErr)
+		}
+	}
+	for _, colAssign := range ld.ColumnAssignments {
+		insertErr = plannererrors.ErrColumnaccessDenied.GenWithStackByArgs("INSERT", userName, hostName, colAssign.Column.Name.O, p.Table.Name.O)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L, p.Table.Name.L, colAssign.Column.Name.L, insertErr)
+	}
+	if p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		deleteErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", userName, hostName, p.Table.Name.O)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.L, p.Table.Name.L, "", deleteErr)
 	}
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), pmodel.NewCIStr(""), tableInfo)
 	if err != nil {
@@ -5126,6 +5193,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			stmt.AsViewSchema = true
 		}
 
+		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
+			v.Definer = b.ctx.GetSessionVars().User
+		}
 		nodeW := resolve.NewNodeWWithCtx(v.Select, b.resolveCtx)
 		plan, err := b.Build(ctx, nodeW)
 		if err != nil {
@@ -5149,9 +5219,6 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
 			v.ViewName.Name.L, "", authErr)
-		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
-			v.Definer = b.ctx.GetSessionVars().User
-		}
 		if b.ctx.GetSessionVars().User != nil && v.Definer.String() != b.ctx.GetSessionVars().User.String() {
 			err = plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "",

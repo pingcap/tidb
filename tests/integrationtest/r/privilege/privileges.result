@@ -22,7 +22,7 @@ Error 1142 (42000): SHOW command denied to user 'testnotexist'@'localhost' for t
 SHOW CREATE TABLE dbnotexists.t1;
 Error 1142 (42000): SHOW command denied to user 'testnotexist'@'localhost' for table 't1'
 DELETE FROM privilege__privileges.t1 WHERE a=0;
-Error 1142 (42000): SELECT command denied to user 'testnotexist'@'localhost' for table 't1'
+Error 1143 (42000): SELECT command denied to user 'testnotexist'@'localhost' for column 'a' in table 't1'
 DELETE FROM dbnotexists.t1 WHERE a=0;
 Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
 DELETE FROM privilege__privileges.t1;
@@ -166,9 +166,9 @@ create database if not exists privilege__privileges;
 create table privilege__privileges.t(id int, v int, primary key(id));
 insert into privilege__privileges.t(id, v) values(1, 1);
 select * from privilege__privileges.t where id = 1;
-Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
+Error 1143 (42000): SELECT command denied to user 'tester'@'localhost' for column 'id' in table 't'
 update privilege__privileges.t set v = 2 where id = 1;
-Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
+Error 1143 (42000): SELECT command denied to user 'tester'@'localhost' for column 'id' in table 't'
 DROP USER 'tester'@'localhost';
 CREATE DATABASE if not exists privilege__privileges;
 USE privilege__privileges;
@@ -367,7 +367,7 @@ GRANT DELETE ON t1 TO tr_delete;
 REPLACE INTO t1 VALUES (1, 2);
 Error 1142 (42000): DELETE command denied to user 'tr_insert'@'%' for table 't1'
 INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5;
-Error 1142 (42000): UPDATE command denied to user 'tr_insert'@'%' for table 't1'
+Error 1143 (42000): UPDATE command denied to user 'tr_insert'@'%' for column 'b' in table 't1'
 INSERT INTO t1 VALUES (6, 7);
 REPLACE INTO t1 VALUES (8, 9);
 Error 1142 (42000): INSERT command denied to user 'tr_delete'@'%' for table 't1'
@@ -663,3 +663,226 @@ update privilege__privileges.tt1 inner join t_f
 set t_f.fullname=t_f.fullname
 where tt1.id=t_f.id;
 Error 1288 (HY000): The target table t_f of the UPDATE is not updatable
+drop user if exists u1;
+create user u1;
+create role 'aa@bb';
+grant 'aa@bb' to u1;
+show grants for u1;
+Grants for u1@%
+GRANT USAGE ON *.* TO 'u1'@'%'
+GRANT 'aa@bb'@'%' TO 'u1'@'%'
+drop user u1;
+drop role 'aa@bb';
+create user view_definer_u, view_invoker_u1, view_invoker_u2;
+create database test_view_db;
+use test_view_db;
+CREATE TABLE sensitive_data (
+id INT PRIMARY KEY AUTO_INCREMENT,
+public_col VARCHAR(50),
+sensitive_col VARCHAR(50)
+);
+INSERT INTO sensitive_data (public_col, sensitive_col) VALUES
+('Public Data A', 'Secret A'),
+('Public Data B', 'Secret B'),
+('Public Data C', 'Secret C');
+GRANT SELECT (id, public_col, sensitive_col) ON test_view_db.sensitive_data TO 'view_definer_u';
+GRANT CREATE VIEW, SHOW VIEW ON test_view_db.* to 'view_definer_u';
+GRANT SELECT (id, public_col) ON test_view_db.sensitive_data TO 'view_invoker_u1';
+SHOW GRANTS FOR view_definer_u;
+Grants for view_definer_u@%
+GRANT USAGE ON *.* TO 'view_definer_u'@'%'
+GRANT CREATE VIEW,SHOW VIEW ON `test_view_db`.* TO 'view_definer_u'@'%'
+GRANT SELECT(id, public_col, sensitive_col) ON `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%'
+SHOW GRANTS FOR view_invoker_u1;
+Grants for view_invoker_u1@%
+GRANT USAGE ON *.* TO 'view_invoker_u1'@'%'
+GRANT SELECT(id, public_col) ON `test_view_db`.`sensitive_data` TO 'view_invoker_u1'@'%'
+SHOW GRANTS FOR view_invoker_u2;
+Grants for view_invoker_u2@%
+GRANT USAGE ON *.* TO 'view_invoker_u2'@'%'
+CREATE VIEW definer_view AS
+SELECT id, public_col, sensitive_col
+FROM sensitive_data;
+GRANT SELECT ON test_view_db.definer_view TO 'view_definer_u';
+GRANT SELECT ON test_view_db.definer_view TO 'view_invoker_u1';
+GRANT SELECT ON test_view_db.definer_view TO 'view_invoker_u2';
+SHOW CREATE VIEW definer_view;
+View	Create View	character_set_client	collation_connection
+definer_view	CREATE ALGORITHM=UNDEFINED DEFINER=`view_definer_u`@`%` SQL SECURITY DEFINER VIEW `definer_view` (`id`, `public_col`, `sensitive_col`) AS SELECT `id` AS `id`,`public_col` AS `public_col`,`sensitive_col` AS `sensitive_col` FROM `test_view_db`.`sensitive_data`	utf8mb4	utf8mb4_general_ci
+view_definer_u has all required privileges, so view_invoker_u1 and view_invoker_u2 can access all columns.
+SELECT id, public_col, sensitive_col FROM definer_view;
+id	public_col	sensitive_col
+1	Public Data A	Secret A
+2	Public Data B	Secret B
+3	Public Data C	Secret C
+SELECT id, public_col, sensitive_col FROM definer_view;
+id	public_col	sensitive_col
+1	Public Data A	Secret A
+2	Public Data B	Secret B
+3	Public Data C	Secret C
+CREATE SQL SECURITY INVOKER VIEW invoker_view AS
+SELECT id, public_col, sensitive_col
+FROM sensitive_data;
+GRANT SELECT ON test_view_db.invoker_view TO 'view_definer_u';
+GRANT SELECT ON test_view_db.invoker_view TO 'view_invoker_u1';
+GRANT SELECT ON test_view_db.invoker_view TO 'view_invoker_u2';
+revoke one columns privilege, so view_definer_u can not access definer_view;
+REVOKE SELECT(sensitive_col) ON `test_view_db`.`sensitive_data` FROM 'view_definer_u'@'%';
+SHOW CREATE VIEW invoker_view;
+View	Create View	character_set_client	collation_connection
+invoker_view	CREATE ALGORITHM=UNDEFINED DEFINER=`view_definer_u`@`%` SQL SECURITY INVOKER VIEW `invoker_view` (`id`, `public_col`, `sensitive_col`) AS SELECT `id` AS `id`,`public_col` AS `public_col`,`sensitive_col` AS `sensitive_col` FROM `test_view_db`.`sensitive_data`	utf8mb4	utf8mb4_general_ci
+view_invoker_u1 lacks the SELECT privilege of sensitive_col
+SELECT id, public_col, sensitive_col FROM invoker_view;
+Error 1356 (HY000): View 'test_view_db.invoker_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+SELECT * FROM invoker_view;
+Error 1356 (HY000): View 'test_view_db.invoker_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+GRANT SELECT(sensitive_col) on test_view_db.sensitive_data to view_invoker_u1;
+SELECT * FROM invoker_view;
+id	public_col	sensitive_col
+1	Public Data A	Secret A
+2	Public Data B	Secret B
+3	Public Data C	Secret C
+SELECT id, public_col, sensitive_col FROM definer_view;
+Error 1356 (HY000): View 'test_view_db.definer_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+SELECT * FROM definer_view;
+Error 1356 (HY000): View 'test_view_db.definer_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+view_invoker_u2 lacks all columns' SELECT privilege
+SELECT id, public_col, sensitive_col FROM invoker_view;
+Error 1356 (HY000): View 'test_view_db.invoker_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+SELECT * FROM invoker_view;
+Error 1356 (HY000): View 'test_view_db.invoker_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+GRANT SELECT on test_view_db.sensitive_data to view_invoker_u2;
+SELECT * FROM invoker_view;
+id	public_col	sensitive_col
+1	Public Data A	Secret A
+2	Public Data B	Secret B
+3	Public Data C	Secret C
+SELECT id, public_col, sensitive_col FROM definer_view;
+Error 1356 (HY000): View 'test_view_db.definer_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+SELECT * FROM definer_view;
+Error 1356 (HY000): View 'test_view_db.definer_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_definer_u'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_definer_u'@'%';
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_invoker_u1'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_invoker_u1'@'%';
+REVOKE SELECT ON `test_view_db`.`definer_view` FROM 'view_invoker_u2'@'%';
+REVOKE SELECT ON `test_view_db`.`invoker_view` FROM 'view_invoker_u2'@'%';
+GRANT SELECT(sensitive_col) ON  `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%';
+REVOKE SELECT(sensitive_col) ON  `test_view_db`.`sensitive_data` FROM 'view_invoker_u1'@'%';
+SHOW GRANTS FOR view_definer_u;
+Grants for view_definer_u@%
+GRANT USAGE ON *.* TO 'view_definer_u'@'%'
+GRANT CREATE VIEW,SHOW VIEW ON `test_view_db`.* TO 'view_definer_u'@'%'
+GRANT SELECT(id, public_col, sensitive_col) ON `test_view_db`.`sensitive_data` TO 'view_definer_u'@'%'
+SHOW GRANTS FOR view_invoker_u1;
+Grants for view_invoker_u1@%
+GRANT USAGE ON *.* TO 'view_invoker_u1'@'%'
+GRANT SELECT(id, public_col) ON `test_view_db`.`sensitive_data` TO 'view_invoker_u1'@'%'
+SHOW GRANTS FOR view_invoker_u2;
+Grants for view_invoker_u2@%
+GRANT USAGE ON *.* TO 'view_invoker_u2'@'%'
+GRANT SELECT ON `test_view_db`.`sensitive_data` TO 'view_invoker_u2'@'%'
+test view_definer_u
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_definer_u'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_definer_u'@'%';
+SELECT * FROM invoker_view;
+Error 1142 (42000): SELECT command denied to user 'view_definer_u'@'%' for table 'invoker_view'
+SELECT * FROM definer_view;
+Error 1142 (42000): SELECT command denied to user 'view_definer_u'@'%' for table 'definer_view'
+SELECT id, public_col FROM invoker_view;
+id	public_col
+1	Public Data A
+2	Public Data B
+3	Public Data C
+SELECT id, public_col FROM definer_view;
+id	public_col
+1	Public Data A
+2	Public Data B
+3	Public Data C
+SELECT sensitive_col FROM invoker_view;
+Error 1143 (42000): SELECT command denied to user 'view_definer_u'@'%' for column 'sensitive_col' in table 'invoker_view'
+SELECT sensitive_col FROM definer_view;
+Error 1143 (42000): SELECT command denied to user 'view_definer_u'@'%' for column 'sensitive_col' in table 'definer_view'
+test view_invoker_u1
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_invoker_u1'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_invoker_u1'@'%';
+SELECT * FROM invoker_view;
+Error 1356 (HY000): View 'test_view_db.invoker_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+SELECT * FROM definer_view;
+Error 1142 (42000): SELECT command denied to user 'view_invoker_u1'@'%' for table 'definer_view'
+SELECT id, public_col FROM invoker_view;
+Error 1356 (HY000): View 'test_view_db.invoker_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+SELECT id, public_col FROM definer_view;
+id	public_col
+1	Public Data A
+2	Public Data B
+3	Public Data C
+SELECT sensitive_col FROM invoker_view;
+Error 1356 (HY000): View 'test_view_db.invoker_view' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+SELECT sensitive_col FROM definer_view;
+Error 1143 (42000): SELECT command denied to user 'view_invoker_u1'@'%' for column 'sensitive_col' in table 'definer_view'
+test view_invoker_u2
+GRANT SELECT(id, public_col) ON `test_view_db`.`invoker_view` TO 'view_invoker_u2'@'%';
+GRANT SELECT(id, public_col) ON `test_view_db`.`definer_view` TO 'view_invoker_u2'@'%';
+SELECT * FROM invoker_view;
+Error 1142 (42000): SELECT command denied to user 'view_invoker_u2'@'%' for table 'invoker_view'
+SELECT * FROM definer_view;
+Error 1142 (42000): SELECT command denied to user 'view_invoker_u2'@'%' for table 'definer_view'
+SELECT id, public_col FROM invoker_view;
+id	public_col
+1	Public Data A
+2	Public Data B
+3	Public Data C
+SELECT id, public_col FROM definer_view;
+id	public_col
+1	Public Data A
+2	Public Data B
+3	Public Data C
+SELECT sensitive_col FROM invoker_view;
+Error 1143 (42000): SELECT command denied to user 'view_invoker_u2'@'%' for column 'sensitive_col' in table 'invoker_view'
+SELECT sensitive_col FROM definer_view;
+Error 1143 (42000): SELECT command denied to user 'view_invoker_u2'@'%' for column 'sensitive_col' in table 'definer_view'
+drop user view_definer_u, view_invoker_u1, view_invoker_u2;
+drop database test_view_db;
+create database test_information_schema;
+create table test_information_schema.t (a int, b int);
+create user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;
+grant select on test_information_schema.* to test_information_schema_u1;
+grant select on test_information_schema.t to test_information_schema_u2;
+grant select(a) on test_information_schema.t to test_information_schema_u3;
+// default user can see all privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u1'@'%'	def	test_information_schema	SELECT	NO
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u2'@'%'	def	test_information_schema	t	SELECT	NO
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u3'@'%'	def	test_information_schema	t	a	SELECT	NO
+// test_information_schema_u1 can only see schema_privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u1'@'%'	def	test_information_schema	SELECT	NO
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+// test_information_schema_u2 can only see table_privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u2'@'%'	def	test_information_schema	t	SELECT	NO
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+// test_information_schema_u3 can only see column_privileges.
+select * from information_schema.schema_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
+select * from information_schema.table_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+select * from information_schema.column_privileges where TABLE_SCHEMA = 'test_information_schema';
+GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRANTABLE
+'test_information_schema_u3'@'%'	def	test_information_schema	t	a	SELECT	NO
+drop database test_information_schema;
+drop user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;
