@@ -22,6 +22,7 @@ go_test(
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/mydump",
+        "//pkg/planner/core",
         "//pkg/store",
         "//pkg/testkit",
         "//tests/realtikvtest",

@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -592,19 +594,33 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	task *proto.Task, taskMeta *TaskMeta) error {
-	// we have already switch import-mode when switch to post-process step.
+	// we have already switched import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
 	}
 
+	tableStatsDelta := &statsstorage.DeltaUpdate{
+		Delta: variable.TableDelta{
+			Delta:    taskMeta.Summary.ImportedRows,
+			Count:    taskMeta.Summary.ImportedRows,
+			InitTime: time.Now(),
+			TableID:  taskMeta.Plan.TableInfo.ID,
+		},
+		TableID: taskMeta.Plan.TableInfo.ID,
+	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, taskMeta.Summary.ImportedRows); err != nil {
+			return true, taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+				txn, err2 := se.Txn(true)
+				if err2 != nil {
+					return err2
+				}
+
+				if err := statsstorage.UpdateStatsMeta(ctx, se, txn.StartTS(), tableStatsDelta); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()

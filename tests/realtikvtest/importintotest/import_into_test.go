@@ -149,6 +149,16 @@ func (s *mockGCSSuite) TestImportIntoStatsUpdate() {
 		require.NoError(s.T(), err)
 		return rows == 3
 	}, 30*time.Second, 100*time.Millisecond, "stats not updated after import into")
+
+	tableID, err := strconv.Atoi(result[0][fmap["TableID"]].(string))
+	require.NoError(s.T(), err)
+	require.Eventually(s.T(), func() bool {
+		r := s.tk.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id=%d", tableID)).Rows()
+		require.Len(s.T(), r, 1)
+		rows, err := strconv.Atoi(r[0][0].(string))
+		require.NoError(s.T(), err)
+		return rows == 3
+	}, 30*time.Second, 100*time.Millisecond, "stats meta not updated after import into")
 }
 
 func (s *mockGCSSuite) TestBasicImportInto() {
