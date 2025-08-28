@@ -15,44 +15,75 @@
 package importintotest
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
-// to run this test, you need to start a SYSTEM KS TiDB first.
 func TestOnUserKeyspace(t *testing.T) {
-	t.Skip("we can only run it manually now, will enable it later")
 	if kerneltype.IsClassic() {
 		t.Skip("only runs in nextgen kernel")
 	}
-	userStore := realtikvtest.CreateMockStoreAndSetup(t,
-		realtikvtest.WithKeyspaceName("cross_ks"))
+	runtimes := realtikvtest.PrepareForCrossKSTest(t, "keyspace1")
+	userStore := runtimes["keyspace1"].Store
 	userTK := testkit.NewTestKit(t, userStore)
 	prepareAndUseDB("cross_ks", userTK)
+	userTK.MustExec("drop table if exists t;")
 	userTK.MustExec("create table t (a bigint, b varchar(100));")
-	// currently, we cannot checksum across keyspace, skip it
-	// TODO enable it
-	// TODO we need upload file the S3, not a fixed file name and S3 address.
-	importSQL := `import into t FROM 's3://mybucket/a.csv?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%3a%2f%2f0.0.0.0%3a9000' with checksum_table='off'`
+	ctx := context.Background()
+	s3Args := "access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%3a%2f%2f0.0.0.0%3a9000"
+	objStore, err := storage.NewFromURL(ctx, fmt.Sprintf("s3://next-gen-test/data?%s", s3Args))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		objStore.Close()
+	})
+	require.NoError(t, objStore.WriteFile(ctx, "a.csv", []byte("1,1")))
+	importSQL := fmt.Sprintf(`import into t FROM 's3://next-gen-test/data/a.csv?%s'`, s3Args)
 	result := userTK.MustQuery(importSQL).Rows()
 	require.Len(t, result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	require.NoError(t, err)
+	userTK.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 	taskKey := importinto.TaskKey(int64(jobID))
 	// job to user keyspace, task to system keyspace
 	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
-	userTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
-	querySQL := `select sum(c) from (select count(1) c from mysql.tidb_global_task where task_key=?
-		union select count(1) c from mysql.tidb_global_task_history where task_key=?) t`
-	sysKSTk.MustQuery(querySQL, taskKey, taskKey).Check(testkit.Rows("1"))
+	jobQuerySQL := fmt.Sprintf("select count(1) from mysql.tidb_import_jobs where id = %d", jobID)
+	taskQuerySQL := fmt.Sprintf(`select id from (select id from mysql.tidb_global_task where task_key='%s'
+		union select id from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
+	require.Len(t, userTK.MustQuery(jobQuerySQL).Rows(), 1)
+	rs := sysKSTk.MustQuery(taskQuerySQL).Rows()
+	require.Len(t, rs, 1)
+
+	// Check subtask summary from system keyspace is correct.
+	taskID := rs[0][0].(string)
+	subtaskQuery := fmt.Sprintf(`select summary from (select summary from mysql.tidb_background_subtask where task_key='%s' and step = 1
+		union select summary from mysql.tidb_background_subtask_history where task_key='%s' and step = 1) t`, taskID, taskID)
+	rs = sysKSTk.MustQuery(subtaskQuery).Rows()
+	require.Len(t, rs, 1)
+	subtaskSummary := &execute.SubtaskSummary{}
+	require.NoError(t, json.Unmarshal([]byte(rs[0][0].(string)), subtaskSummary))
+	require.EqualValues(t, 1, subtaskSummary.RowCnt.Load())
+
 	// reverse check
-	sysKSTk.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("0"))
-	userTK.MustQuery(querySQL, taskKey, taskKey).Check(testkit.Rows("0"))
+	sysKSTk.MustQuery(jobQuerySQL).Check(testkit.Rows("0"))
+	require.Len(t, userTK.MustQuery(taskQuerySQL).Rows(), 0)
+
+	// Check the job summary from user keyspace is correct, which is get from subtask summaries.
+	rs = userTK.MustQuery(fmt.Sprintf("select summary from mysql.tidb_import_jobs where id = %d", jobID)).Rows()
+	require.Len(t, rs, 1)
+	summary := &importer.Summary{}
+	require.NoError(t, json.Unmarshal([]byte(rs[0][0].(string)), summary))
+	require.EqualValues(t, 1, summary.ImportedRows)
 }

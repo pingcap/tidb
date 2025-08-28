@@ -10,6 +10,7 @@ go_test(
         "operator_test.go",
     ],
     flaky = True,
+    shard_count = 36,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -27,7 +28,6 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
@@ -35,7 +35,6 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/util/chunk",
         "//tests/realtikvtest",
-        "//tests/realtikvtest/testutils",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",

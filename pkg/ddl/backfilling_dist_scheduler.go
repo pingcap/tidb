@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -127,12 +126,8 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	case proto.BackfillStepReadIndex:
 		taskKS := task.Keyspace
 		store := sch.d.store
-		if taskKS != tidbconfig.GetGlobalKeyspaceName() {
-			taskMgr, err := diststorage.GetTaskManager()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+		if taskKS != sch.d.store.GetKeyspace() {
+			err = sch.WithNewSession(func(se sessionctx.Context) error {
 				store, err = se.GetSQLServer().GetKSStore(taskKS)
 				return err
 			})
@@ -194,11 +189,11 @@ func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-func skipMergeSort(stats []external.MultipleFilesStat) bool {
+func skipMergeSort(stats []external.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 // OnDone implements scheduler.Extension interface.
@@ -609,7 +604,7 @@ func generateMergePlan(
 
 	allSkip := true
 	for _, multiStats := range multiStatsGroup {
-		if !skipMergeSort(multiStats) {
+		if !skipMergeSort(multiStats, task.Concurrency) {
 			allSkip = false
 			break
 		}

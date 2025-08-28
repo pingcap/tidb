@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -62,6 +63,9 @@ func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expect
 }
 
 func TestScopeBasic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("target scope in nextgen is fixed to 'dxf_service', skip this test")
+	}
 	nodeCnt := 3
 	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
 
@@ -77,6 +81,9 @@ func TestScopeBasic(t *testing.T) {
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
 
 	// 2. one "background" role.
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_service_scope=''")
+	})
 	tk.MustExec("set global tidb_service_scope=background")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
@@ -190,6 +197,9 @@ func TestTargetScope(t *testing.T) {
 }
 
 func TestTiDBMaxDistTaskNodesSettings(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_max_dist_task_nodes in nextgen is not supported to be changed, skip this test")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

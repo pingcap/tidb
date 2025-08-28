@@ -17,6 +17,7 @@ package tpch
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
@@ -24,163 +25,192 @@ import (
 )
 
 func TestQ1(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createLineItem(t, tk, dom)
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
-	integrationSuiteData := GetTPCHSuiteData()
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createLineItem(t, tk, dom)
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData := GetTPCHSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+			})
+			tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 		}
-	)
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-		})
-		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
-	}
+	})
 }
 
 func TestQ2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createPart(t, tk, dom)
-	createSupplier(t, tk, dom)
-	createPartsupp(t, tk, dom)
-	createNation(t, tk, dom)
-	createRegion(t, tk, dom)
-	testkit.LoadTableStats("test.part.json", dom)
-	testkit.LoadTableStats("test.supplier.json", dom)
-	testkit.LoadTableStats("test.partsupp.json", dom)
-	testkit.LoadTableStats("test.region.json", dom)
-	testkit.LoadTableStats("test.nation.json", dom)
-	integrationSuiteData := GetTPCHSuiteData()
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createPart(t, tk, dom)
+		createSupplier(t, tk, dom)
+		createPartsupp(t, tk, dom)
+		createNation(t, tk, dom)
+		createRegion(t, tk, dom)
+		testkit.LoadTableStats("test.part.json", dom)
+		testkit.LoadTableStats("test.supplier.json", dom)
+		testkit.LoadTableStats("test.partsupp.json", dom)
+		testkit.LoadTableStats("test.region.json", dom)
+		testkit.LoadTableStats("test.nation.json", dom)
+		integrationSuiteData := GetTPCHSuiteData()
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		costTraceFormat := `explain format='cost_trace' `
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+			})
+			tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+			checkCost(t, tk, input[i])
 		}
-	)
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	costTraceFormat := `explain format='cost_trace' `
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
-		})
-		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
-		checkCost(t, tk, input[i])
-	}
+	})
 }
 
 func TestQ3(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createCustomer(t, tk, dom)
-	createOrders(t, tk, dom)
-	createLineItem(t, tk, dom)
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
-	integrationSuiteData := GetTPCHSuiteData()
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createCustomer(t, tk, dom)
+		createOrders(t, tk, dom)
+		createLineItem(t, tk, dom)
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+		integrationSuiteData := GetTPCHSuiteData()
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+			})
+			tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 		}
-	)
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-		})
-		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
-	}
+	})
 }
 
 func TestQ4(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createOrders(t, tk, dom)
-	createLineItem(t, tk, dom)
-	testkit.LoadTableStats("test.lineitem.json", dom)
-	testkit.LoadTableStats("test.orders.json", dom)
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createOrders(t, tk, dom)
+		createLineItem(t, tk, dom)
+		testkit.LoadTableStats("test.lineitem.json", dom)
+		testkit.LoadTableStats("test.orders.json", dom)
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData := GetTPCHSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		costTraceFormat := `explain format='cost_trace' `
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+			})
+			tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+			checkCost(t, tk, input[i])
 		}
-	)
-	integrationSuiteData := GetTPCHSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	costTraceFormat := `explain format='cost_trace' `
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
-		})
-		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
-		checkCost(t, tk, input[i])
-	}
+	})
 }
 
 func TestQ5(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createCustomer(t, tk, dom)
-	createOrders(t, tk, dom)
-	createLineItem(t, tk, dom)
-	createSupplier(t, tk, dom)
-	createNation(t, tk, dom)
-	createRegion(t, tk, dom)
-	testkit.LoadTableStats("test.customer.json", dom)
-	testkit.LoadTableStats("test.orders.json", dom)
-	testkit.LoadTableStats("test.lineitem.json", dom)
-	testkit.LoadTableStats("test.supplier.json", dom)
-	testkit.LoadTableStats("test.nation.json", dom)
-	testkit.LoadTableStats("test.region.json", dom)
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createCustomer(t, tk, dom)
+		createOrders(t, tk, dom)
+		createLineItem(t, tk, dom)
+		createSupplier(t, tk, dom)
+		createNation(t, tk, dom)
+		createRegion(t, tk, dom)
+		testkit.LoadTableStats("test.customer.json", dom)
+		testkit.LoadTableStats("test.orders.json", dom)
+		testkit.LoadTableStats("test.lineitem.json", dom)
+		testkit.LoadTableStats("test.supplier.json", dom)
+		testkit.LoadTableStats("test.nation.json", dom)
+		testkit.LoadTableStats("test.region.json", dom)
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData := GetTPCHSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		costTraceFormat := `explain format='cost_trace' `
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+			})
+			tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+			checkCost(t, tk, input[i])
 		}
-	)
-	integrationSuiteData := GetTPCHSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	costTraceFormat := `explain format='cost_trace' `
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
-		})
-		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
-		checkCost(t, tk, input[i])
-	}
+	})
+}
+
+func TestQ14(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createLineItem(t, tk, dom)
+		createPart(t, tk, dom)
+		testkit.LoadTableStats("test.lineitem.json", dom)
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData := GetTPCHSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		costTraceFormat := `explain format='brief' `
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+			})
+			tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+			checkCost(t, tk, input[i])
+		}
+	})
 }
 
 // check the cost trace's cost and verbose's cost. they should be the same.
@@ -198,152 +228,156 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q4 string) {
 }
 
 func TestQ9(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createLineItem(t, tk, dom)
-	createNation(t, tk, dom)
-	createOrders(t, tk, dom)
-	createPart(t, tk, dom)
-	createPartsupp(t, tk, dom)
-	createSupplier(t, tk, dom)
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createLineItem(t, tk, dom)
+		createNation(t, tk, dom)
+		createOrders(t, tk, dom)
+		createPart(t, tk, dom)
+		createPartsupp(t, tk, dom)
+		createSupplier(t, tk, dom)
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 
-	integrationSuiteData := GetTPCHSuiteData()
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+		integrationSuiteData := GetTPCHSuiteData()
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+			})
+			tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 		}
-	)
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-		})
-		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
-	}
+	})
 }
 
 func TestQ13(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createCustomer(t, tk, dom)
-	createOrders(t, tk, dom)
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
-	integrationSuiteData := GetTPCHSuiteData()
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createCustomer(t, tk, dom)
+		createOrders(t, tk, dom)
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+		integrationSuiteData := GetTPCHSuiteData()
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+			})
+			tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 		}
-	)
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-		})
-		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
-	}
+	})
 }
 
 func TestQ18(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	createCustomer(t, tk, dom)
-	createOrders(t, tk, dom)
-	createLineItem(t, tk, dom)
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
-	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
-	integrationSuiteData := GetTPCHSuiteData()
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		createCustomer(t, tk, dom)
+		createOrders(t, tk, dom)
+		createLineItem(t, tk, dom)
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+		integrationSuiteData := GetTPCHSuiteData()
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+			})
+			tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 		}
-	)
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-		})
-		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
-	}
+	})
 }
 
 func TestQ21(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	createSupplier(t, tk, dom)
-	createLineItem(t, tk, dom)
-	createOrders(t, tk, dom)
-	createNation(t, tk, dom)
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec(`use test`)
+		createSupplier(t, tk, dom)
+		createLineItem(t, tk, dom)
+		createOrders(t, tk, dom)
+		createNation(t, tk, dom)
+		testkit.LoadTableStats("test.supplier.json", dom)
+		testkit.LoadTableStats("test.lineitem.json", dom)
+		testkit.LoadTableStats("test.orders.json", dom)
+		testkit.LoadTableStats("test.nation.json", dom)
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData := GetTPCHSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		costTraceFormat := `explain format='cost_trace' `
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+			})
+			tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+			checkCost(t, tk, input[i])
 		}
-	)
-	integrationSuiteData := GetTPCHSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	costTraceFormat := `explain format='cost_trace' `
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
-		})
-		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
-		checkCost(t, tk, input[i])
-	}
+	})
 }
 
 func TestQ22(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	createCustomer(t, tk, dom)
-	createOrders(t, tk, dom)
-	tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec(`use test`)
+		createCustomer(t, tk, dom)
+		createOrders(t, tk, dom)
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData := GetTPCHSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		costTraceFormat := `explain format='cost_trace' `
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+			})
+			tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+			checkCost(t, tk, input[i])
 		}
-	)
-	integrationSuiteData := GetTPCHSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	costTraceFormat := `explain format='cost_trace' `
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
-		})
-		tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
-		checkCost(t, tk, input[i])
-	}
+	})
 }
 
 func BenchmarkTPCHQ1(b *testing.B) {
@@ -431,8 +465,7 @@ func BenchmarkTPCHQ21(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		tk.MustQuery("explain format='cost_trace' SELECT o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
-		tk.MustQuery("explain format='cost_trace' SELECT /*+ NO_INDEX_JOIN(orders, lineitem),NO_INDEX_HASH_JOIN(orders, lineitem) */ o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
+		tk.MustQuery("explain format='brief' SELECT s_name, COUNT(*) AS numwait FROM supplier, lineitem l1, orders, nation WHERE s_suppkey = l1.l_suppkey AND o_orderkey = l1.l_orderkey AND o_orderstatus = 'F' AND l1.l_receiptdate > l1.l_commitdate AND EXISTS (SELECT * FROM lineitem l2 WHERE l2.l_orderkey = l1.l_orderkey AND l2.l_suppkey <> l1.l_suppkey) AND NOT EXISTS (SELECT * FROM lineitem l3 WHERE l3.l_orderkey = l1.l_orderkey AND l3.l_suppkey <> l1.l_suppkey AND l3.l_receiptdate > l3.l_commitdate) AND s_nationkey = n_nationkey AND n_name = 'EGYPT' GROUP BY s_name ORDER BY numwait DESC, s_name LIMIT 100;")
 	}
 }
 

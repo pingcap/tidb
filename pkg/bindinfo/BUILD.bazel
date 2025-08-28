@@ -64,7 +64,6 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":bindinfo"],
     flaky = True,
-    race = "on",
     shard_count = 44,
     deps = [
         "//pkg/parser",
@@ -74,7 +73,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner/util/fixcontrol",
         "//pkg/server",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

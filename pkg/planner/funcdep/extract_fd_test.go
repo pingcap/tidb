@@ -220,7 +220,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
@@ -331,7 +331,7 @@ func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 	is := testGetIS(t, tk.Session())
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")

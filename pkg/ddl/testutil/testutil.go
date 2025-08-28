@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -73,7 +73,7 @@ func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, don
 }
 
 // ExtractAllTableHandles extracts all handles of a given table.
-func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]int64, error) {
+func ExtractAllTableHandles(se sessionapi.Session, dbName, tbName string) ([]int64, error) {
 	dom := domain.GetDomain(se)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tbName))
 	if err != nil {
@@ -174,12 +174,7 @@ func SetTableMode(
 	tblInfo *model.TableInfo,
 	mode model.TableMode,
 ) error {
-	args := &model.AlterTableModeArgs{
-		TableMode: mode,
-		SchemaID:  dbInfo.ID,
-		TableID:   tblInfo.ID,
-	}
-	err := de.AlterTableMode(ctx, args)
+	err := ddl.AlterTableMode(de, ctx, mode, dbInfo.ID, tblInfo.ID)
 	if err == nil {
 		checkTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 		CheckTableMode(t, store, dbInfo, tblInfo, mode)
@@ -212,10 +207,13 @@ func RefreshMeta(
 	t *testing.T,
 	de ddl.Executor,
 	dbID, tableID int64,
+	dbName, tableName string,
 ) {
 	args := &model.RefreshMetaArgs{
-		SchemaID: dbID,
-		TableID:  tableID,
+		SchemaID:      dbID,
+		TableID:       tableID,
+		InvolvedDB:    dbName,
+		InvolvedTable: tableName,
 	}
 	err := de.RefreshMeta(ctx, args)
 	require.NoError(t, err)
