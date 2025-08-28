@@ -2441,8 +2441,18 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 	s.EnablePseudoForOutdatedStats = val
 }
 
-// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
+// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead with adjusted.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+	// Replica read only works for read-only statements.
+	if !s.StmtCtx.IsReadOnly {
+		if s.StmtCtx.HasReplicaReadHint {
+			s.StmtCtx.AppendWarning(errors.New("Ignore replica read hint for non-read-only statement"))
+		}
+		return kv.ReplicaReadLeader
+	}
+	if s.StmtCtx.RCCheckTS || s.RcWriteCheckTS {
+		return kv.ReplicaReadLeader
+	}
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
@@ -2450,6 +2460,12 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
 		return kv.ReplicaReadLeader
 	}
+	return s.replicaRead
+}
+
+// GetReplicaReadUnadjusted returns the unadjusted replica read type.
+// In most cases, you should use GetReplicaRead instead of this method.
+func (s *SessionVars) GetReplicaReadUnadjusted() kv.ReplicaReadType {
 	return s.replicaRead
 }
 
