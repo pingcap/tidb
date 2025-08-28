@@ -262,7 +262,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
 			if apply.JoinType == logicalop.LeftOuterJoin {
-				if skipDecorrelatForLeftOuter(apply, proj) {
+				if skipDecorrelatForLeftOuterApply(apply, proj) {
 					goto NoOptimize
 				}
 			}
@@ -622,7 +622,7 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *logicalop.LogicalAp
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func skipDecorrelatForLeftOuter(apply *logicalop.LogicalJoin, proj *logicalop.LogicalProjection) bool {
+func skipDecorrelatForLeftOuterApply(apply *logicalop.LogicalApply, proj *logicalop.LogicalProjection) bool {
 	allConst := len(proj.Exprs) > 0
 	for _, expr := range proj.Exprs {
 		if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
@@ -639,39 +639,34 @@ func skipDecorrelatForLeftOuter(apply *logicalop.LogicalJoin, proj *logicalop.Lo
 		return true
 	}
 
-	projOnlyUseOuter := true
-	for _, expr := range proj.Exprs {
-		// If proj.Exprs are all from outerPlan, skip decorrelate.
-		// Because these exprs may invalidate the semantics of LeftOuterJoin, which output non-null value for not matched row.
-		// example:
-		//    Projection(pulled up from the original Apply)
-		//    |
-		//    Join (LeftOuter)
-		// TODO: we should use null-reject attr to decide if proj.Exprs can be pulled up or not.
-		cols := expression.ExtractColumns(expr)
-		if outerPlan.Schema().ColumnsIndices(cols) != nil {
-			projOnlyUseOuter = false
-			break
-		}
-	}
-
-	if !projOnlyUseOuter {
-		// Selection may filter all rows of inner side.
-		var hasSelection bool
-		findSelection := func() {
-			for _, child := p.Children() {
-				if child.IsSelection() {
-					return true
-				}
-				if (findSelection(child)) {
-					return true
-				}
-			}
-			return false
-		}
-		if hasSelection {
+	var childHasLimit, childHasAgg bool
+	TraverseBasePlan(proj, func(p base.Plan) bool {
+		if _, ok := p.(*logicalop.LogicalLimit); ok {
+			childHasLimit = true
 			return true
 		}
+		if _, ok := p.(*logicalop.LogicalAggregation); ok {
+			childHasAgg = true
+			return true
+		}
+		return false
+	})
+	// To avoid false positive, we only check whether to skip decorrelate for projection pull-up.
+	if !childHasLimit && !childHasAgg {
+		// If proj.Exprs are all from outerPlan, we cannot make sure the output row of projection is always null,
+		// which may break the semantics of LeftOuterJoin.
+		// Because the right side of output row of LeftOuterJoin is always null when join conditions are not met.
+		// TODO: should also disable decorrelate when proj.Exprs use columns from innerPlan and its expression is not null-rejective.
+		outerPlan := apply.Children()[0]
+		var skipDecorrelate bool
+		for _, expr := range proj.Exprs {
+			cols := expression.ExtractColumns(expr)
+			if outerPlan.Schema().ColumnsIndices(cols) != nil {
+				skipDecorrelate = true
+				break
+			}
+		}
+		return skipDecorrelate
 	}
 	return false
 }

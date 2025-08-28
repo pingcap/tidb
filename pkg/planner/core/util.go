@@ -196,3 +196,25 @@ func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool
 	}
 	return false
 }
+
+// TraverseBasePlan traverses a base.Plan in pre-order way, and applies f to each node.
+// It stops traversing the subtree when f returns true.
+func TraverseBasePlan(plan base.LogicalPlan, f func(base.Plan) bool) {
+	if plan == nil || f(plan) {
+		return
+	}
+	if logicalCTE, ok := plan.(*logicalop.LogicalCTE); ok {
+		if logicalCTE.Cte != nil {
+			if logicalCTE.Cte.SeedPartLogicalPlan != nil {
+				TraverseBasePlan(logicalCTE.Cte.SeedPartLogicalPlan, f)
+			}
+			if logicalCTE.Cte.RecursivePartLogicalPlan != nil {
+				TraverseBasePlan(logicalCTE.Cte.RecursivePartLogicalPlan, f)
+			}
+		}
+		return
+	}
+	for _, child := range plan.Children() {
+		TraverseBasePlan(child, f)
+	}
+}
