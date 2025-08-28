@@ -127,7 +127,17 @@ run_sql "SHOW CREATE TABLE test.pairs17_child;"
 check_contains "ON DELETE CASCADE"
 
 ## check table test.pairs18
-run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs18' AND INDEX_ID = 2 AND IS_GLOBAL = 1;"
+run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs18_parent';"
+check_contains "RESCNT: 1"
+run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test2' AND TABLE_NAME = 'pairs18_child';"
+check_contains "RESCNT: 1"
+run_sql "SELECT * FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = 'test2' AND TABLE_NAME = 'pairs18_child' AND CONSTRAINT_TYPE = 'FOREIGN KEY';"
+check_contains "CONSTRAINT_NAME: fk_0"
+run_sql "SHOW CREATE TABLE test2.pairs18_child;"
+check_contains "ON DELETE SET NULL ON UPDATE CASCADE"
+
+## check table test.pairs19
+run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs19' AND INDEX_ID = 2 AND IS_GLOBAL = 1;"
 check_contains "RESCNT: 1"
 
 # adjust some index to be visible
@@ -180,7 +190,11 @@ run_sql "select count(*) AS RESCNT from test.pairs16_child use index(i2) where p
 check_not_contains "RESCNT: 0"
 run_sql "select count(*) AS RESCNT from test.pairs17_parent use index(i2) where id = 1;"
 check_not_contains "RESCNT: 0"
-run_sql "select count(*) AS RESCNT from test.pairs18 use index(i1) where pid = 1;"
+run_sql "select count(*) AS RESCNT from test.pairs18_parent use index(i1) where id = 1;"
 check_not_contains "RESCNT: 0"
-run_sql "select count(*) AS RESCNT from test.pairs18 use index(i1) where pid = 10;"
+run_sql "select count(*) AS RESCNT from test2.pairs18_child use index(i1) where pid = 1;"
+check_not_contains "RESCNT: 0"
+run_sql "select count(*) AS RESCNT from test.pairs19 use index(i1) where pid = 1;"
+check_not_contains "RESCNT: 0"
+run_sql "select count(*) AS RESCNT from test.pairs19 use index(i1) where pid = 10;"
 check_not_contains "RESCNT: 0"

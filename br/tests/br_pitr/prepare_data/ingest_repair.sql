@@ -83,6 +83,13 @@ CREATE TABLE test.pairs17_child (id int, pid int, index i1(pid), foreign key fk_
 INSERT INTO test.pairs17_parent VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
 INSERT INTO test.pairs17_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
 
+-- test foreign key constraint 6
+CREATE DATABASE test2;
+CREATE TABLE test.pairs18_parent (id int);
+CREATE TABLE test2.pairs18_child (id int, pid int);
+INSERT INTO test.pairs18_parent VALUES (1), (2), (3), (4), (5);
+INSERT INTO test2.pairs18_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
 -- test global index
-CREATE TABLE test.pairs18 (id int, pid int) partition by range(id) (partition p0 values less than (6), partition p1 values less than (11));
-INSERT INTO test.pairs18 values (1, 1), (10, 10);
+CREATE TABLE test.pairs19 (id int, pid int) partition by range(id) (partition p0 values less than (6), partition p1 values less than (11));
+INSERT INTO test.pairs19 values (1, 1), (10, 10);
