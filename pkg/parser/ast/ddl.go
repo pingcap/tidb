@@ -572,10 +572,7 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		pkTp := n.PrimaryKeyTp.String()
 		if len(pkTp) != 0 {
 			ctx.WritePlain(" ")
-			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
-				ctx.WriteKeyWord(pkTp)
-				return nil
-			})
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDClusteredIndex, pkTp)
 		}
 		if n.StrValue == "Global" {
 			ctx.WriteKeyWord(" GLOBAL")
@@ -781,10 +778,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
-			ctx.WriteKeyWord(n.PrimaryKeyTp.String())
-			return nil
-		})
+		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDClusteredIndex, n.PrimaryKeyTp.String())
 		hasPrevOption = true
 	}
 	if n.KeyBlockSize > 0 {
@@ -2022,10 +2016,7 @@ type DropIndexStmt struct {
 func (n *DropIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP INDEX ")
 	if n.IfExists {
-		_ = ctx.WriteWithSpecialComments("", func() error {
-			ctx.WriteKeyWord("IF EXISTS ")
-			return nil
-		})
+		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")
@@ -2703,11 +2694,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.StrValue)
 	case TableOptionAutoIncrement:
 		if n.BoolValue {
-			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() error {
-				ctx.WriteKeyWord("FORCE")
-				return nil
-			})
-			ctx.WritePlain(" ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDForceAutoInc, "FORCE ")
 		}
 		ctx.WriteKeyWord("AUTO_INCREMENT ")
 		ctx.WritePlain("= ")
@@ -2721,11 +2708,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		})
 	case TableOptionAutoRandomBase:
 		if n.BoolValue {
-			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() error {
-				ctx.WriteKeyWord("FORCE")
-				return nil
-			})
-			ctx.WritePlain(" ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDForceAutoInc, "FORCE ")
 		}
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAutoRandomBase, func() error {
 			ctx.WriteKeyWord("AUTO_RANDOM_BASE ")
@@ -3885,10 +3868,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.StatsOptionsSpec")
 		}
 	case AlterTableRemoveTTL:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
-			ctx.WriteKeyWord("REMOVE TTL")
-			return nil
-		})
+		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTTL, "REMOVE TTL")
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
