@@ -31,6 +31,7 @@ import (
 	hints []*ast.TableOptimizerHint
 	table 	ast.HintTable
 	modelIdents []ast.CIStr
+	leadingExpr *ast.LeadingExpr // Added: Recursive expression for parsing LEADING hint
 }
 
 %token	<number>
@@ -185,6 +186,10 @@ import (
 	PartitionList    "partition name list in optimizer hint"
 	PartitionListOpt "optional partition name list in optimizer hint"
 
+%type	<leadingExpr>
+	LeadingTableExpr "leading table expression"
+	LeadingTableList "leading table list"
+
 
 %start	Start
 
@@ -241,6 +246,13 @@ TableOptimizerHintOpt:
 		h := $3
 		h.HintName = ast.NewCIStr($1)
 		$$ = h
+	}
+|	"LEADING" '(' LeadingTableList ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			HintData: $3,
+		}
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{
@@ -404,6 +416,39 @@ HintStorageTypeAndTable:
 		h := $3
 		h.HintData = ast.NewCIStr($1)
 		$$ = h
+	}
+
+LeadingTableList:
+	LeadingTableExpr
+	{
+		$$ = $1
+	}
+|	LeadingTableList ',' LeadingTableExpr
+	{
+		$$ = &ast.LeadingExpr{Left: $1, Right: $3}
+	}
+
+LeadingTableExpr:
+	Identifier QueryBlockOpt PartitionListOpt
+	{
+		$$ = &ast.LeadingExpr{Table: &ast.HintTable{
+			TableName:     ast.NewCIStr($1),
+			QBName:        ast.NewCIStr($2),
+			PartitionList: $3,
+		}}
+	}
+|	Identifier '.' Identifier QueryBlockOpt PartitionListOpt
+	{
+		$$ = &ast.LeadingExpr{Table: &ast.HintTable{
+			DBName:        ast.NewCIStr($1),
+			TableName:     ast.NewCIStr($3),
+			QBName:        ast.NewCIStr($4),
+			PartitionList: $5,
+		}}
+	}
+|	'(' LeadingTableList ')'
+	{
+		$$ = $2
 	}
 
 QueryBlockOpt:
@@ -645,7 +690,6 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_HASH_JOIN"
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
-|	"LEADING"
 |	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:

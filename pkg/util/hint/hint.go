@@ -557,6 +557,16 @@ type PlanHints struct {
 	PreferLimitToCop bool // limit_to_cop
 	CTEMerge         bool // merge
 	TimeRangeHint    ast.HintTimeRange
+	LeadingOrder     *LeadingTableOrder
+}
+
+// LeadingTableOrder represents a node in the LEADING hint tree.
+type LeadingTableOrder struct {
+	// Tables is a list of tables if this is a leaf node, or nil for internal nodes.
+	Tables []HintedTable
+	// Left and Right are children nodes for an internal join node.
+	Left  *LeadingTableOrder
+	Right *LeadingTableOrder
 }
 
 // HintedTable indicates which table this hint should take effect on.
@@ -756,12 +766,14 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
 	)
+	p = &PlanHints{} //initialize p
+
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -877,10 +889,31 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			cteMerge = true
 		case HintLeading:
-			if leadingHintCnt == 0 {
-				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
-			}
 			leadingHintCnt++
+			if leadingHintCnt > 1 || (leadingHintCnt > 0 && straightJoinOrder) {
+				if p.LeadingOrder != nil {
+					p.LeadingOrder = nil
+				}
+				if leadingHintCnt > 1 {
+					warnHandler.SetHintWarning("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
+				} else if straightJoinOrder {
+					warnHandler.SetHintWarning("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid")
+				}
+				continue
+			}
+
+			leadingExpr, ok := hint.HintData.(*ast.LeadingExpr)
+			if !ok {
+				warnHandler.SetHintWarning("Internal error: leading hint data format is incorrect.")
+				continue
+			}
+
+			var leadingOrder *LeadingTableOrder
+			leadingOrder, err = getLeadingTableOrder(leadingExpr, currentDB, hintProcessor, currentLevel, warnHandler)
+			if err != nil {
+				return nil, 0, err
+			}
+			p.LeadingOrder = leadingOrder
 		case HintSemiJoinRewrite:
 			if !handlingExistsSubquery && !handlingInSubquery {
 				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause.")
@@ -924,10 +957,38 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		TimeRangeHint:      timeRangeHint,
 		PreferLimitToCop:   preferLimitToCop,
 		CTEMerge:           cteMerge,
-		LeadingJoinOrder:   leadingJoinOrder,
+		LeadingOrder:       p.LeadingOrder,
 		HJBuild:            hjBuildTables,
 		HJProbe:            hjProbeTables,
 	}, subQueryHintFlags, nil
+}
+
+// getLeadingTableOrder is a recursive helper function to transform the ast.LeadingExpr tree into a LeadingTableOrder tree.
+func getLeadingTableOrder(expr *ast.LeadingExpr, currentDB string, hintProcessor *QBHintHandler, currentLevel int, warnHandler hintWarnHandler) (*LeadingTableOrder, error) {
+	if expr == nil {
+		return nil, nil
+	}
+	if expr.Table != nil {
+		// ast.HintTable to HintedTable
+		tables := tableNames2HintTableInfo(currentDB, "leading", []ast.HintTable{*expr.Table}, hintProcessor, currentLevel, warnHandler)
+		return &LeadingTableOrder{Tables: tables}, nil
+	}
+
+	// Internal nodes, recursively handle left and right subtrees
+	leftOrder, err := getLeadingTableOrder(expr.Left, currentDB, hintProcessor, currentLevel, warnHandler)
+	if err != nil {
+		return nil, err
+	}
+	rightOrder, err := getLeadingTableOrder(expr.Right, currentDB, hintProcessor, currentLevel, warnHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build new internal nodes
+	return &LeadingTableOrder{
+		Left:  leftOrder,
+		Right: rightOrder,
+	}, nil
 }
 
 // RemoveDuplicatedHints removes duplicated hints in this hit list.
