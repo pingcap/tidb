@@ -1902,6 +1902,10 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeSnapshot != nil {
 		s.sessionVars.EnableAnalyzeSnapshot = *execOption.AnalyzeSnapshot
 	}
+	prevAnalyzeReorgStateIndex := s.sessionVars.AnalyzeReorgStateIndex
+	if execOption.AnalyzeReorgIndexes {
+		s.sessionVars.AnalyzeReorgStateIndex = true
+	}
 	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
 	if len(execOption.PartitionPruneMode) > 0 {
 		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
@@ -1912,6 +1916,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		s.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
+		s.sessionVars.AnalyzeReorgStateIndex = prevAnalyzeReorgStateIndex
 		if err := s.sessionVars.SetSystemVar(vardef.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
@@ -1966,10 +1971,15 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if len(execOption.PartitionPruneMode) > 0 {
 		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
 	}
+	prevAnalyzeReorgStateIndex := se.sessionVars.AnalyzeReorgStateIndex
+	if execOption.AnalyzeReorgIndexes {
+		se.sessionVars.AnalyzeReorgStateIndex = true
+	}
 
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
+		se.sessionVars.AnalyzeReorgStateIndex = prevAnalyzeReorgStateIndex
 		if err := se.sessionVars.SetSystemVar(vardef.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
