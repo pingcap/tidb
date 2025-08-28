@@ -540,18 +540,18 @@ DROP TABLE IF EXISTS customer, orders;
 CREATE TABLE `customer` (  `C_CUSTKEY` bigint(20) NOT NULL,  `C_NAME` varchar(25) NOT NULL,  `C_ADDRESS` varchar(40) NOT NULL,  `C_NATIONKEY` bigint(20) NOT NULL,  `C_PHONE` char(15) NOT NULL,  `C_ACCTBAL` decimal(15,2) NOT NULL,  `C_MKTSEGMENT` char(10) NOT NULL,  `C_COMMENT` varchar(117) NOT NULL,  PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 CREATE TABLE `orders` (  `O_ORDERKEY` bigint(20) NOT NULL,  `O_CUSTKEY` bigint(20) NOT NULL,  `O_ORDERSTATUS` char(1) NOT NULL,  `O_TOTALPRICE` decimal(15,2) NOT NULL,  `O_ORDERDATE` date NOT NULL,  `O_ORDERPRIORITY` char(15) NOT NULL,  `O_CLERK` char(15) NOT NULL,  `O_SHIPPRIORITY` bigint(20) NOT NULL,  `O_COMMENT` varchar(79) NOT NULL,  PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 set tidb_opt_agg_push_down=ON;
-explain format='brief' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;
-id	estRows	task	access object	operator info
-Projection	8000.00	root		executor__aggregate.customer.c_custkey, Column#18
-└─HashAgg	8000.00	root		group by:executor__aggregate.customer.c_custkey, funcs:count(Column#19)->Column#18, funcs:firstrow(executor__aggregate.customer.c_custkey)->executor__aggregate.customer.c_custkey
-  └─HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(executor__aggregate.customer.c_custkey, executor__aggregate.orders.o_custkey)]
-    ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
-    └─HashAgg(Probe)	6400.00	root		group by:executor__aggregate.orders.o_custkey, funcs:count(Column#20)->Column#19, funcs:firstrow(executor__aggregate.orders.o_custkey)->executor__aggregate.orders.o_custkey
-      └─TableReader	6400.00	root		data:HashAgg
-        └─HashAgg	6400.00	cop[tikv]		group by:executor__aggregate.orders.o_custkey, funcs:count(executor__aggregate.orders.o_orderkey)->Column#20
-          └─Selection	8000.00	cop[tikv]		not(like(executor__aggregate.orders.o_comment, "%special%requests%", 92))
-            └─TableFullScan	10000.00	cop[tikv]	table:orders	keep order:false, stats:pseudo
+explain format='plan_tree' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;
+id	task	access object	operator info
+Projection	root		executor__aggregate.customer.c_custkey, Column#18
+└─HashAgg	root		group by:executor__aggregate.customer.c_custkey, funcs:count(Column#19)->Column#18, funcs:firstrow(executor__aggregate.customer.c_custkey)->executor__aggregate.customer.c_custkey
+  └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(executor__aggregate.customer.c_custkey, executor__aggregate.orders.o_custkey)]
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:customer	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	root		group by:executor__aggregate.orders.o_custkey, funcs:count(Column#20)->Column#19, funcs:firstrow(executor__aggregate.orders.o_custkey)->executor__aggregate.orders.o_custkey
+      └─TableReader	root		data:HashAgg
+        └─HashAgg	cop[tikv]		group by:executor__aggregate.orders.o_custkey, funcs:count(executor__aggregate.orders.o_orderkey)->Column#20
+          └─Selection	cop[tikv]		not(like(executor__aggregate.orders.o_comment, "%special%requests%", 92))
+            └─TableFullScan	cop[tikv]	table:orders	keep order:false, stats:pseudo
 set tidb_opt_agg_push_down=default;
 SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
 DROP TABLE IF EXISTS t1;
@@ -1981,13 +1981,13 @@ commit;
 drop table if exists t;
 create table t (i int);
 insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);
-explain format = 'brief' select * from t order by i + 1;
-id	estRows	task	access object	operator info
-Projection	10000.00	root		executor__aggregate.t.i
-└─Sort	10000.00	root		Column#3
-  └─Projection	10000.00	root		executor__aggregate.t.i, plus(executor__aggregate.t.i, 1)->Column#3
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t order by i + 1;
+id	task	access object	operator info
+Projection	root		executor__aggregate.t.i
+└─Sort	root		Column#3
+  └─Projection	root		executor__aggregate.t.i, plus(executor__aggregate.t.i, 1)->Column#3
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t order by i + 1;
 i
 1
@@ -1999,14 +1999,14 @@ i
 3
 3
 3
-explain format = 'brief' select * from t order by i + 1 limit 2;
-id	estRows	task	access object	operator info
-Projection	2.00	root		executor__aggregate.t.i
-└─TopN	2.00	root		Column#3, offset:0, count:2
-  └─Projection	2.00	root		executor__aggregate.t.i, plus(executor__aggregate.t.i, 1)->Column#3
-    └─TableReader	2.00	root		data:TopN
-      └─TopN	2.00	cop[tikv]		plus(executor__aggregate.t.i, 1), offset:0, count:2
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t order by i + 1 limit 2;
+id	task	access object	operator info
+Projection	root		executor__aggregate.t.i
+└─TopN	root		Column#3, offset:0, count:2
+  └─Projection	root		executor__aggregate.t.i, plus(executor__aggregate.t.i, 1)->Column#3
+    └─TableReader	root		data:TopN
+      └─TopN	cop[tikv]		plus(executor__aggregate.t.i, 1), offset:0, count:2
+        └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t order by i + 1 limit 2;
 i
 1
@@ -2030,34 +2030,34 @@ analyze table test;
 select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
 sum(a)	(select NULL from test where tt.a = test.a limit 1)	(select NULL from test where tt.a = test.a limit 1)	(select NULL from test where tt.a = test.a limit 1)
 1	NULL	NULL	NULL
-explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
-id	estRows	task	access object	operator info
-Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
-└─Apply	1.00	root		CARTESIAN left outer join, left side:Apply
-  ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:Apply
-  │ ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:HashAgg
-  │ │ ├─HashAgg(Build)	1.00	root		funcs:sum(Column#28)->Column#9, funcs:firstrow(Column#29)->executor__aggregate.test.a
-  │ │ │ └─Projection	1.00	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column#28, executor__aggregate.test.a->Column#29
-  │ │ │   └─TableReader	1.00	root		data:TableFullScan
-  │ │ │     └─TableFullScan	1.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-  │ │ └─Projection(Probe)	1.00	root		<nil>->Column#12
-  │ │   └─Limit	1.00	root		offset:0, count:1
-  │ │     └─TableReader	1.00	root		data:Limit
-  │ │       └─Limit	1.00	cop[tikv]		offset:0, count:1
-  │ │         └─Selection	1.00	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-  │ │           └─TableFullScan	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
-  │ └─Projection(Probe)	1.00	root		<nil>->Column#15
-  │   └─Limit	1.00	root		offset:0, count:1
-  │     └─TableReader	1.00	root		data:Limit
-  │       └─Limit	1.00	cop[tikv]		offset:0, count:1
-  │         └─Selection	1.00	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-  │           └─TableFullScan	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
-  └─Projection(Probe)	1.00	root		<nil>->Column#18
-    └─Limit	1.00	root		offset:0, count:1
-      └─TableReader	1.00	root		data:Limit
-        └─Limit	1.00	cop[tikv]		offset:0, count:1
-          └─Selection	1.00	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-            └─TableFullScan	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
+id	task	access object	operator info
+Projection	root		Column#9, Column#12, Column#15, Column#18
+└─Apply	root		CARTESIAN left outer join, left side:Apply
+  ├─Apply(Build)	root		CARTESIAN left outer join, left side:Apply
+  │ ├─Apply(Build)	root		CARTESIAN left outer join, left side:HashAgg
+  │ │ ├─HashAgg(Build)	root		funcs:sum(Column#28)->Column#9, funcs:firstrow(Column#29)->executor__aggregate.test.a
+  │ │ │ └─Projection	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column#28, executor__aggregate.test.a->Column#29
+  │ │ │   └─TableReader	root		data:TableFullScan
+  │ │ │     └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+  │ │ └─Projection(Probe)	root		<nil>->Column#12
+  │ │   └─Limit	root		offset:0, count:1
+  │ │     └─TableReader	root		data:Limit
+  │ │       └─Limit	cop[tikv]		offset:0, count:1
+  │ │         └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
+  │ │           └─TableFullScan	cop[tikv]	table:test	keep order:false, stats:pseudo
+  │ └─Projection(Probe)	root		<nil>->Column#15
+  │   └─Limit	root		offset:0, count:1
+  │     └─TableReader	root		data:Limit
+  │       └─Limit	cop[tikv]		offset:0, count:1
+  │         └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
+  │           └─TableFullScan	cop[tikv]	table:test	keep order:false, stats:pseudo
+  └─Projection(Probe)	root		<nil>->Column#18
+    └─Limit	root		offset:0, count:1
+      └─TableReader	root		data:Limit
+        └─Limit	cop[tikv]		offset:0, count:1
+          └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
+            └─TableFullScan	cop[tikv]	table:test	keep order:false, stats:pseudo
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
 select distinct avg(nullif(77.15, PI()));
@@ -2077,7 +2077,7 @@ CREATE TABLE `t_a` (
 `g` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'is deleted',
 PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='settlement table';
-explain format = 'brief' SELECT
+explain format = 'plan_tree' SELECT
 MAX(id) AS id,
 LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
 a,
@@ -2089,13 +2089,13 @@ WHERE `f` >= 1753632000
 AND `f` <= 1753718399
 AND `g` = 0
 GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
-id	estRows	task	access object	operator info
-Projection	1.00	root		Column#9, left(cast(from_unixtime(cast(executor__aggregate.t_a.e, decimal(10,0) UNSIGNED BINARY)), var_string(19)), 10)->Column#13, executor__aggregate.t_a.a, Column#10, Column#11, Column#12
-└─HashAgg	1.00	root		group by:Column#19, Column#21, funcs:max(Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:sum(Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:firstrow(Column#19)->executor__aggregate.t_a.a, funcs:firstrow(Column#20)->executor__aggregate.t_a.e
-  └─Projection	1.00	root		executor__aggregate.t_a.id->Column#15, executor__aggregate.t_a.b->Column#16, executor__aggregate.t_a.c->Column#17, executor__aggregate.t_a.d->Column#18, executor__aggregate.t_a.a->Column#19, executor__aggregate.t_a.e->Column#20, left(cast(from_unixtime(cast(executor__aggregate.t_a.e, decimal(10,0) UNSIGNED BINARY)), var_string(19)), 10)->Column#21
-    └─TableReader	1.00	root		data:Selection
-      └─Selection	1.00	cop[tikv]		eq(executor__aggregate.t_a.g, 0), ge(executor__aggregate.t_a.f, 1753632000), le(executor__aggregate.t_a.f, 1753718399)
-        └─TableFullScan	10000.00	cop[tikv]	table:t_a	keep order:false, stats:pseudo
+id	task	access object	operator info
+Projection	root		Column#9, left(cast(from_unixtime(cast(executor__aggregate.t_a.e, decimal(10,0) UNSIGNED BINARY)), var_string(19)), 10)->Column#13, executor__aggregate.t_a.a, Column#10, Column#11, Column#12
+└─HashAgg	root		group by:Column#19, Column#21, funcs:max(Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:sum(Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:firstrow(Column#19)->executor__aggregate.t_a.a, funcs:firstrow(Column#20)->executor__aggregate.t_a.e
+  └─Projection	root		executor__aggregate.t_a.id->Column#15, executor__aggregate.t_a.b->Column#16, executor__aggregate.t_a.c->Column#17, executor__aggregate.t_a.d->Column#18, executor__aggregate.t_a.a->Column#19, executor__aggregate.t_a.e->Column#20, left(cast(from_unixtime(cast(executor__aggregate.t_a.e, decimal(10,0) UNSIGNED BINARY)), var_string(19)), 10)->Column#21
+    └─TableReader	root		data:Selection
+      └─Selection	cop[tikv]		eq(executor__aggregate.t_a.g, 0), ge(executor__aggregate.t_a.f, 1753632000), le(executor__aggregate.t_a.f, 1753718399)
+        └─TableFullScan	cop[tikv]	table:t_a	keep order:false, stats:pseudo
 SELECT
 MAX(id) AS id,
 LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
