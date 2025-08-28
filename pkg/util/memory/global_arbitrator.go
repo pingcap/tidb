@@ -279,19 +279,20 @@ func UsingGlobalMemArbitration() bool {
 	return globalArbitrator.enable.Load()
 }
 
-// StopGlobalMemArbitratorForTest stops the async runner of the global memory arbitrator (suggest to use in tests only).
-func StopGlobalMemArbitratorForTest() bool {
+// CleanupGlobalMemArbitratorForTest stops the async runner of the global memory arbitrator (suggest to use in tests only).
+func CleanupGlobalMemArbitratorForTest() {
+	SetGlobalMemArbitratorWorkMode(ArbitratorModeDisable.String())
+
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
 	if globalArbitrator.v.baseDir == "" {
-		panic("base-dir of the global memory arbitrator is not set, please call SetupGlobalMemArbitratorForTest first")
+		panic("`baseDir` of the global memory arbitrator is not set, please call `SetupGlobalMemArbitratorForTest` first")
 	}
-	m := globalArbitrator.v.Load()
-	if m == nil {
-		return false
+	if m := globalArbitrator.v.Load(); m != nil {
+		m.stop()
+		globalArbitrator.v.Store(nil)
 	}
-	return m.stop()
 }
 
 // SetupGlobalMemArbitratorForTest sets up the global memory arbitrator for tests.
@@ -299,9 +300,10 @@ func SetupGlobalMemArbitratorForTest(baseDir string) {
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
-	if globalArbitrator.v.baseDir == "" {
-		globalArbitrator.v.baseDir = baseDir
+	if globalArbitrator.v.Load() != nil {
+		panic("the global memory arbitrator is already set up")
 	}
+	globalArbitrator.v.baseDir = baseDir
 }
 
 // GetGlobalMemArbitratorWorkModeText returns the text of the global memory arbitrator work mode.

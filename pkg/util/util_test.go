@@ -33,7 +33,7 @@ import (
 func TestLogFormat(t *testing.T) {
 	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
 	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
-	defer memory.StopGlobalMemArbitratorForTest()
+	defer memory.CleanupGlobalMemArbitratorForTest()
 
 	mem := memory.NewTracker(-1, -1)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)

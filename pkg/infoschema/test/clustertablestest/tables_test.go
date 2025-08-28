@@ -207,7 +207,7 @@ func TestSomeTables(t *testing.T) {
 
 	{
 		memory.SetupGlobalMemArbitratorForTest(t.TempDir())
-		defer memory.StopGlobalMemArbitratorForTest()
+		defer memory.CleanupGlobalMemArbitratorForTest()
 		require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
 		memTracker := se2.GetSessionVars().StmtCtx.MemTracker
 		require.True(t,

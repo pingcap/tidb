@@ -580,9 +580,8 @@ func TestOOMActionPriority(t *testing.T) {
 }
 
 func TestGlobalMemArbitrator(t *testing.T) {
-	testDir := t.TempDir()
-	SetupGlobalMemArbitratorForTest(testDir)
-	defer StopGlobalMemArbitratorForTest()
+	SetupGlobalMemArbitratorForTest(t.TempDir())
+	defer CleanupGlobalMemArbitratorForTest()
 	defer func() {
 		require.True(t, globalArbitrator.metrics.bigPool.Load() == 0)
 		require.True(t, globalArbitrator.metrics.smallPool.Load() == 0)
@@ -601,7 +600,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	}
 
 	{
-		r := newMemStateRecorder(testDir)
+		r := newMemStateRecorder(t.TempDir())
 		os.RemoveAll(r.baseDir)
 		{
 			m, err := r.Load()

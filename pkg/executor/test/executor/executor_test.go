@@ -3171,7 +3171,7 @@ func TestQueryWithKill(t *testing.T) {
 
 func TestGlobalMemArbitrator(t *testing.T) {
 	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
-	defer memory.StopGlobalMemArbitratorForTest()
+	defer memory.CleanupGlobalMemArbitratorForTest()
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 	tk := testkit.NewTestKit(t, store)
@@ -3346,7 +3346,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	}
 	{
 		require.True(t, tk.Session().GetSessionVars().ConnectionID != 0)
-		b := memory.GlobalMemArbitrator().GetAwaitFreeBudgets(1)
+		b := memory.GlobalMemArbitrator().GetAwaitFreeBudgets(tk.Session().GetSessionVars().ConnectionID)
 		b.ConsumeQuota(0, memory.DefMaxLimit)
 		require.True(t, b.Used.Load() == memory.DefMaxLimit)
 		tk.MustExec("set global tidb_mem_arbitrator_mode = standard")
