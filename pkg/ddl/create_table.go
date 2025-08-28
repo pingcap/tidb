@@ -1009,6 +1009,24 @@ func buildColumnsAndConstraints(
 	cols := make([]*table.Column, 0, len(colDefs))
 	colMap := make(map[string]*table.Column, len(colDefs))
 
+	originTsTp := types.NewFieldType(mysql.TypeLonglong)
+	originTsTp.SetFlag(mysql.UnsignedFlag)
+
+	if ctx.EnableTableActiveActive() {
+		colDefs = append(colDefs, &ast.ColumnDef{
+			Name: &ast.ColumnName{
+				Name: model.ExtraOriginTsName,
+			},
+			Tp: originTsTp,
+			Options: []*ast.ColumnOption{
+				{
+					Tp:   ast.ColumnOptionDefaultValue,
+					Expr: ast.NewValueExpr(nil, "", ""),
+				},
+			},
+		})
+	}
+
 	for i, colDef := range colDefs {
 		if field_types.TiDBStrictIntegerDisplayWidth {
 			switch colDef.Tp.GetType() {
@@ -1471,6 +1489,7 @@ func BuildTableInfo(
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 
+	tbInfo.EnableActiveActive = ctx.EnableTableActiveActive()
 	err = addIndexForForeignKey(ctx, tbInfo)
 	return tbInfo, err
 }

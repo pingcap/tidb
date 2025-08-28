@@ -118,6 +118,8 @@ const (
 	BackgroundGoroutineLifecycleHooks
 	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
 	PrewriteEncounterLockPolicy
+	// SetMinCommitTS sets the min commit ts for the transaction
+	SetMinCommitTS
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option

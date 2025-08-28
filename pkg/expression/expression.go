@@ -1030,7 +1030,11 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
 func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
+	columnInfos := tbl.Cols()
+	commitTSColumnInfo := model.NewExtraCommitTsColInfo()
+	commitTSColumnInfo.Offset = len(columnInfos)
+	columnInfos = append(columnInfos, commitTSColumnInfo)
+	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, columnInfos, tbl)
 	if err != nil {
 		return nil, nil, err
 	}

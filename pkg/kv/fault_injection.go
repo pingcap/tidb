@@ -16,6 +16,7 @@ package kv
 
 import (
 	"context"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"sync"
 
 	"github.com/tikv/client-go/v2/tikv"
@@ -92,7 +93,7 @@ func (t *InjectedTransaction) Get(ctx context.Context, k Key) ([]byte, error) {
 }
 
 // BatchGet returns an error if cfg.getError is set.
-func (t *InjectedTransaction) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+func (t *InjectedTransaction) BatchGet(ctx context.Context, keys []Key) (map[string]tikvstore.ValueItem, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
@@ -128,7 +129,7 @@ func (t *InjectedSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 }
 
 // BatchGet returns an error if cfg.getError is set.
-func (t *InjectedSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+func (t *InjectedSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string]tikvstore.ValueItem, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {

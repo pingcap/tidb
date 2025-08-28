@@ -293,8 +293,9 @@ type Column struct {
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
 
-	OrigName string
-	IsHidden bool
+	OrigName    string
+	IsHidden    bool
+	SysReserved bool
 
 	// IsPrefix indicates whether this column is a prefix column in index.
 	//

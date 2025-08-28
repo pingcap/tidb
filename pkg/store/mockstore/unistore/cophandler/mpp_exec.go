@@ -131,19 +131,20 @@ type tableScanExec struct {
 
 	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
 	physTblIDColIdx *int
+	commitTSColIdx  *int
 	// This is used to update the paging range result, updated in next().
 	paging *coprocessor.KeyRange
 }
 
 func (e *tableScanExec) SkipValue() bool { return false }
 
-func (e *tableScanExec) Process(key, value []byte) error {
+func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = e.decoder.DecodeToChunk(value, handle, e.chk)
+	err = e.decoder.DecodeToChunk(value, commitTS, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -294,7 +295,7 @@ func (e *indexScanExec) isNewVals(values [][]byte) bool {
 	return false
 }
 
-func (e *indexScanExec) Process(key, value []byte) error {
+func (e *indexScanExec) Process(key, value []byte, commitTS uint64) error {
 	if kerneltype.IsNextGen() && len(key) > 4 && key[0] == 'x' {
 		key = key[4:] // remove the keyspace prefix
 	}

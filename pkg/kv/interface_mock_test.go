@@ -16,6 +16,7 @@ package kv
 
 import (
 	"context"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -83,7 +84,7 @@ func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }
 
-func (t *mockTxn) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+func (t *mockTxn) BatchGet(ctx context.Context, keys []Key) (map[string]tikvstore.ValueItem, error) {
 	return nil, nil
 }
 
@@ -303,7 +304,7 @@ func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 func (s *mockSnapshot) SetPriority(priority int) {
 }
 
-func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string]tikvstore.ValueItem, error) {
 	m := make(map[string][]byte, len(keys))
 	for _, k := range keys {
 		v, err := s.store.Get(ctx, k)

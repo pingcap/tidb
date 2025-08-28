@@ -65,6 +65,7 @@ type ColumnInfo struct {
 	Comment             string              `json:"comment"`
 	// A hidden column is used internally(expression index) and are not accessible by users.
 	Hidden           bool `json:"hidden"`
+	SysReserved      bool `json:"sys_reserved"`
 	*ChangeStateInfo `json:"change_state_info"`
 	// Version means the version of the column info.
 	// Version = 0: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in system time zone.
@@ -293,6 +294,22 @@ func NewExtraHandleColInfo() *ColumnInfo {
 
 	colInfo.SetCharset(charset.CharsetBin)
 	colInfo.SetCollate(charset.CollationBin)
+	return colInfo
+}
+
+func NewExtraCommitTsColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraRowCommitTsID,
+		Name: ExtraCommitTsName,
+	}
+	colInfo.SetType(mysql.TypeLonglong)
+	colInfo.SetFlag(mysql.NotNullFlag | mysql.UnsignedFlag)
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.SetFlen(flen)
+	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
+	colInfo.State = StatePublic
 	return colInfo
 }
 

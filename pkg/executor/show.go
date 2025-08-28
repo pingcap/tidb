@@ -1078,7 +1078,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col == nil || col.Hidden {
+		if col == nil || col.Hidden || col.SysReserved {
 			continue
 		}
 		if needAddComma {

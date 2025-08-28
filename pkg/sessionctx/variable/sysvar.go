@@ -3633,6 +3633,19 @@ var defaultSysVars = []*SysVar{
 			return vardef.AdvancerCheckPointLagLimit.Load().String(), nil
 		},
 	},
+	{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  vardef.TiDBEnableTableActiveActive,
+		Value: vardef.Off,
+		Type:  vardef.TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableTableActiveActive = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(s.EnableTableActiveActive), nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

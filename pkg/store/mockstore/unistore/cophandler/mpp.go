@@ -89,6 +89,10 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 			ts.physTblIDColIdx = new(int)
 			*ts.physTblIDColIdx = i
 		}
+		if col.ColumnId == model.ExtraRowCommitTsID {
+			ts.commitTSColIdx = new(int)
+			*ts.commitTSColIdx = i
+		}
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}
@@ -111,6 +115,10 @@ func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan)
 		if col.ColumnId == model.ExtraPhysTblID {
 			ts.physTblIDColIdx = new(int)
 			*ts.physTblIDColIdx = i
+		}
+		if col.ColumnId == model.ExtraRowCommitTsID {
+			ts.commitTSColIdx = new(int)
+			*ts.commitTSColIdx = i
 		}
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)

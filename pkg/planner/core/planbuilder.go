@@ -4251,6 +4251,14 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 			return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(
 				insertStmt.Columns[missingColIdx].Name.O, clauseMsg[fieldList])
 		}
+	} else if insertPlan.Table.Meta().EnableActiveActive {
+		visibleCols := insertPlan.Table.VisibleCols()
+		affectedValuesCols = make([]*table.Column, 0, len(visibleCols)-1)
+		for _, col := range visibleCols {
+			if !col.SysReserved {
+				affectedValuesCols = append(affectedValuesCols, col)
+			}
+		}
 	} else {
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,

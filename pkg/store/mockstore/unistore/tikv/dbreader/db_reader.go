@@ -106,23 +106,28 @@ func (r *DBReader) GetMvccInfoByKey(key []byte, _ bool, mvccInfo *kvrpcpb.MvccIn
 }
 
 // Get gets a value with the key and start ts.
-func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, error) {
+func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, uint64, error) {
 	r.txn.SetReadTS(startTS)
 	if r.RcCheckTS {
 		r.txn.SetReadTS(math.MaxUint64)
 	}
 	item, err := r.txn.Get(key)
 	if err != nil && err != badger.ErrKeyNotFound {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	if item == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 	err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
-	return item.Value()
+
+	val, err := item.Value()
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	return val, item.Version(), nil
 }
 
 // GetIter returns the *badger.Iterator of a *DBReader.
@@ -157,7 +162,7 @@ func (r *DBReader) getReverseIter() *badger.Iterator {
 }
 
 // BatchGetFunc defines a batch get function.
-type BatchGetFunc = func(key, value []byte, err error)
+type BatchGetFunc = func(key, value []byte, commitTS uint64, err error)
 
 // BatchGet batch gets keys.
 func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
@@ -168,20 +173,25 @@ func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 	items, err := r.txn.MultiGet(keys)
 	if err != nil {
 		for _, key := range keys {
-			f(key, nil, err)
+			f(key, nil, 0, err)
 		}
 		return
 	}
 	for i, item := range items {
 		key := keys[i]
 		var val []byte
+		var commitTS uint64
 		if item != nil {
 			val, err = item.Value()
 			if err == nil {
 				err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 			}
+
+			if err == nil {
+				commitTS = item.Version()
+			}
 		}
-		f(key, val, err)
+		f(key, val, commitTS, err)
 	}
 }
 
@@ -196,7 +206,7 @@ type ScanFunc = func(key, value []byte) error
 type ScanProcessor interface {
 	// Process accepts key and value, should not keep reference to them.
 	// Returns ErrScanBreak will break the scan loop.
-	Process(key, value []byte) error
+	Process(key, value []byte, commitTS uint64) error
 	// SkipValue returns if we can skip the value.
 	SkipValue() bool
 }
@@ -238,7 +248,8 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 				return errors.Trace(err)
 			}
 		}
-		err = proc.Process(key, val)
+		version := iter.Item().Version()
+		err = proc.Process(key, val, version)
 		if err != nil {
 			if err == ErrScanBreak {
 				break
@@ -304,7 +315,7 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 				return errors.Trace(err)
 			}
 		}
-		err = proc.Process(key, val)
+		err = proc.Process(key, val, iter.Item().Version())
 		if err != nil {
 			if err == ErrScanBreak {
 				break

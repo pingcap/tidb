@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	tikverr "github.com/tikv/client-go/v2/error"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
@@ -30,7 +31,7 @@ type tikvBatchGetter struct {
 	tidbBatchGetter BatchGetter
 }
 
-func (b tikvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+func (b tikvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string]tikvstore.ValueItem, error) {
 	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
 	vals, err := b.tidbBatchGetter.BatchGet(ctx, kvKeys)
 	return vals, err
@@ -65,7 +66,7 @@ func (b tikvBatchBufferGetter) Get(ctx context.Context, k []byte) ([]byte, error
 	return val, err
 }
 
-func (b tikvBatchBufferGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+func (b tikvBatchBufferGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string]tikvstore.ValueItem, error) {
 	bufferValues, err := b.tidbBuffer.BatchGet(ctx, keys)
 	if err != nil {
 		return nil, err
@@ -82,7 +83,9 @@ func (b tikvBatchBufferGetter) BatchGet(ctx context.Context, keys [][]byte) (map
 				}
 				return nil, err
 			}
-			bufferValues[string(key)] = val
+			bufferValues[string(key)] = tikvstore.ValueItem{
+				Value: val,
+			}
 		}
 	}
 	return bufferValues, nil
@@ -97,13 +100,13 @@ type BatchBufferGetter interface {
 	Len() int
 	Getter
 	// BatchGet gets a batch of values, keys are in bytes slice format.
-	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys [][]byte) (map[string]tikvstore.ValueItem, error)
 }
 
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
-	BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []kv.Key) (map[string]tikvstore.ValueItem, error)
 }
 
 // Getter is the interface for the Get method.
@@ -126,7 +129,7 @@ func NewBufferBatchGetter(buffer BatchBufferGetter, middleCache Getter, snapshot
 }
 
 // BatchGet implements the BatchGetter interface.
-func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string]tikvstore.ValueItem, error) {
 	tikvKeys := toTiKVKeys(keys)
 	storageValues, err := b.tikvBufferBatchGetter.BatchGet(ctx, tikvKeys)
 

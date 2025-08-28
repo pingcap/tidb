@@ -145,6 +145,13 @@ func (e *InsertValues) initInsertColumns() error {
 				e.Table.Meta().Name.O, e.Columns[missingColIdx].Name.O,
 			)
 		}
+	} else if e.Table.Meta().EnableActiveActive {
+		cols = make([]*table.Column, 0, len(tableCols))
+		for _, col := range tableCols {
+			if !col.SysReserved {
+				cols = append(cols, col)
+			}
+		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
@@ -1344,7 +1351,7 @@ func (e *InsertValues) removeRow(
 	inReplace bool,
 ) (bool, error) {
 	newRow := r.row
-	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+	oldRow, _, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
 	if err != nil {
 		logutil.BgLogger().Error(
 			"get old row failed when replace",

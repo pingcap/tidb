@@ -196,7 +196,7 @@ type MemBuffer interface {
 	GetLocal(context.Context, []byte) ([]byte, error)
 
 	// BatchGet gets values from the memory buffer.
-	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys [][]byte) (map[string]tikvstore.ValueItem, error)
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
@@ -267,7 +267,7 @@ type Transaction interface {
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
-	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []Key) (map[string]tikvstore.ValueItem, error)
 	IsPessimistic() bool
 	// CacheTableInfo caches the index name.
 	// PresumeKeyNotExists will use this to help decode error message.
@@ -657,7 +657,7 @@ type Response interface {
 type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
-	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []Key) (map[string]tikvstore.ValueItem, error)
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt int, val any)
@@ -668,7 +668,7 @@ type SnapshotInterceptor interface {
 	// OnGet intercepts Get operation for Snapshot
 	OnGet(ctx context.Context, snap Snapshot, k Key) ([]byte, error)
 	// OnBatchGet intercepts BatchGet operation for Snapshot
-	OnBatchGet(ctx context.Context, snap Snapshot, keys []Key) (map[string][]byte, error)
+	OnBatchGet(ctx context.Context, snap Snapshot, keys []Key) (map[string]tikvstore.ValueItem, error)
 	// OnIter intercepts Iter operation for Snapshot
 	OnIter(snap Snapshot, k Key, upperBound Key) (Iterator, error)
 	// OnIterReverse intercepts IterReverse operation for Snapshot
@@ -678,7 +678,7 @@ type SnapshotInterceptor interface {
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
-	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []Key) (map[string]tikvstore.ValueItem, error)
 }
 
 // Driver is the interface that must be implemented by a KV storage.

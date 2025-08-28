@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	kv2 "github.com/tikv/client-go/v2/kv"
 	"runtime/trace"
 	"time"
 
@@ -124,7 +125,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	return txn.MayFlush()
 }
 
-func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
+func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string]kv2.ValueItem, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchUniqueIndices")
 	defer r.End()
 
@@ -153,7 +154,7 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 	return txn.BatchGet(ctx, batchKeys)
 }
 
-func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
+func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string]kv2.ValueItem) error {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchConflictedOldRows")
 	defer r.End()
 
@@ -167,7 +168,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 					// temp indexes.
 					continue
 				}
-				handle, err := tablecodec.DecodeHandleInIndexValue(val)
+				handle, err := tablecodec.DecodeHandleInIndexValue(val.Value)
 				if err != nil {
 					return err
 				}
@@ -204,10 +205,11 @@ func (e *InsertExec) updateDupRow(
 	dupKeyCheck table.DupKeyCheckMode,
 	autoColIdx int,
 ) error {
-	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
+	oldRow, commitTS, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
 	}
+	oldRow = append(oldRow, types.NewUintDatum(commitTS))
 	// get the extra columns from the SELECT clause.
 	var extraCols []types.Datum
 	if len(e.Ctx().GetSessionVars().CurrInsertBatchExtraCols) > 0 {
@@ -412,19 +414,22 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 	// Use public columns for new row.
 	numCols := len(e.Table.Cols())
 	// Use writable columns for old row for update.
-	numWritableCols := len(e.Table.WritableCols())
+	numWritableCols := len(e.Table.WritableCols()) + 1
 
 	extraLen := 0
 	if e.SelectExec != nil {
 		extraLen = e.SelectExec.Schema().Len() - e.rowLen
 	}
 
-	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen)
+	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen+1)
 
 	// Append the old row before the new row, to be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
 	for _, col := range e.Table.WritableCols() {
 		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
 	}
+	commitTSFt := types.NewFieldType(mysql.TypeLonglong)
+	commitTSFt.SetFlag(mysql.UnsignedFlag)
+	evalBufferTypes = append(evalBufferTypes, commitTSFt)
 	if extraLen > 0 {
 		evalBufferTypes = append(evalBufferTypes, e.SelectExec.RetFieldTypes()[e.rowLen:]...)
 	}
@@ -493,6 +498,14 @@ func (e *InsertExec) doDupRowUpdate(
 
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
+	if e.Table.Meta().EnableActiveActive {
+		for i, col := range e.Table.WritableCols() {
+			if col.Name == model.ExtraOriginTsName {
+				e.row4Update[i] = types.Datum{}
+			}
+		}
+	}
+
 	sctx := e.Ctx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	for _, assign := range nonGenerated {
@@ -519,7 +532,7 @@ func (e *InsertExec) doDupRowUpdate(
 		assignFlag[assign.Col.Index] = true
 	}
 
-	newData := e.row4Update[:len(oldRow)]
+	newData := e.row4Update[:len(oldRow)-1]
 	_, ignored, err := updateRecord(
 		ctx, e.Ctx(),
 		handle, oldRow, newData,

@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	kv2 "github.com/tikv/client-go/v2/kv"
 	"math"
 	"slices"
 	"strconv"
@@ -3820,7 +3821,7 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 		// Meaning we need to check here if a record was double written to the new partition,
 		// i.e. concurrently written by StateWriteOnly or StateWriteReorganization.
 		// and if so, skip it.
-		var found map[string][]byte
+		var found map[string]kv2.ValueItem
 		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
 		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
 		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
@@ -3863,7 +3864,7 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 			}
 
 			if vals, ok := found[string(key)]; ok {
-				if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
+				if len(vals.Value) == len(prr.vals) && bytes.Equal(vals.Value, prr.vals) {
 					// Already backfilled or double written earlier by concurrent DML
 					continue
 				}
