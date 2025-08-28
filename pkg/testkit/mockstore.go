@@ -41,10 +41,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -72,7 +74,7 @@ func WithCascades(on bool) TestOption {
 }
 
 // RunTestUnderCascades run the basic test body among two different planner mode.
-func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string)) {
+func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
@@ -89,7 +91,7 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 	// iter the options
 	for _, val := range options {
 		t.Run(val.name, func(t *testing.T) {
-			store := CreateMockStore(t)
+			store := CreateMockStore(t, opts...)
 			tk := NewTestKit(t, store)
 			val.opt(tk)
 			testFunc(t, tk, val.name, funcName)
@@ -98,7 +100,7 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 }
 
 // RunTestUnderCascadesWithDomain run the basic test body among two different planner mode.
-func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
+func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
@@ -115,7 +117,7 @@ func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk
 	// iter the options
 	for _, val := range options {
 		t.Run(val.name, func(t *testing.T) {
-			store, do := CreateMockStoreAndDomain(t)
+			store, do := CreateMockStoreAndDomain(t, opts...)
 			tk := NewTestKit(t, store)
 			val.opt(tk)
 			testFunc(t, tk, do, val.name, funcName)
@@ -162,7 +164,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		dom, err = session.BootstrapSession(store)
 		t.Cleanup(func() {
 			dom.Close()
-			ddl.CloseOwnerManager()
+			ddl.CloseOwnerManager(store)
 			err := store.Close()
 			require.NoError(t, err)
 			view.Stop()
@@ -174,20 +176,20 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		view.Stop()
 	})
 	gctuner.GlobalMemoryLimitTuner.Stop()
-	tryMakeImage()
+	tryMakeImage(t)
 	store, _ := CreateMockStoreAndDomain(t, opts...)
 	_ = store.(helper.Storage)
 	return store
 }
 
 // tryMakeImage tries to create a bootstraped storage, the store is used as image for testing later.
-func tryMakeImage(opts ...mockstore.MockTiKVStoreOption) {
+func tryMakeImage(t testing.TB, opts ...mockstore.MockTiKVStoreOption) {
 	if mockstore.ImageAvailable() {
 		return
 	}
 	retry, err := false, error(nil)
 	for err == nil {
-		retry, err = tryMakeImageOnce()
+		retry, err = tryMakeImageOnce(t)
 		if !retry {
 			break
 		}
@@ -195,7 +197,7 @@ func tryMakeImage(opts ...mockstore.MockTiKVStoreOption) {
 	}
 }
 
-func tryMakeImageOnce() (retry bool, err error) {
+func tryMakeImageOnce(t testing.TB) (retry bool, err error) {
 	const lockFile = "/tmp/tidb-unistore-bootstraped-image-lock-file"
 	lock, err := os.Create(lockFile)
 	if err != nil {
@@ -218,8 +220,12 @@ func tryMakeImageOnce() (retry bool, err error) {
 	if err != nil {
 		return false, err
 	}
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+		kvstore.SetSystemStorage(store)
+	}
 
-	session.SetSchemaLease(500 * time.Millisecond)
+	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
@@ -319,7 +325,7 @@ func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Du
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	if kerneltype.IsNextGen() {
-		updateConfigForNextgen(t)
+		testenv.UpdateConfigForNextgen(t)
 	}
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
@@ -332,6 +338,9 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	})
 	store = schematracker.UnwrapStorage(store)
 	_ = store.(helper.Storage)
+	if kerneltype.IsNextGen() && store.GetKeyspace() == keyspace.System {
+		kvstore.SetSystemStorage(store)
+	}
 	return store, dom
 }
 
@@ -373,7 +382,7 @@ func CreateMockStoreAndDomainForKS(t testing.TB, ks string, opts ...mockstore.Mo
 }
 
 func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
@@ -385,7 +394,7 @@ func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
@@ -406,15 +415,15 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 
 // CreateMockStoreWithSchemaLease return a new mock kv.Storage.
 func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
-	if kerneltype.IsNextGen() {
-		updateConfigForNextgen(t)
-	}
 	store, _ := CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
 	return schematracker.UnwrapStorage(store)
 }
 
 // CreateMockStoreAndDomainWithSchemaLease return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom := bootstrap(t, store, lease)
@@ -432,18 +441,4 @@ func SetTiFlashReplica(t testing.TB, dom *domain.Domain, dbName, tableName strin
 		Count:     1,
 		Available: true,
 	}
-}
-
-func updateConfigForNextgen(t testing.TB) {
-	t.Helper()
-	// in nextgen, SYSTEM ks must be bootstrapped first, to make UT easier, we
-	// always run them inside SYSTEM keyspace, if your test requires bootstrapping
-	// multiple keyspace, you should use CreateMockStoreAndDomainForKS instead.
-	bak := *config.GetGlobalConfig()
-	t.Cleanup(func() {
-		config.StoreGlobalConfig(&bak)
-	})
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = keyspace.System
-	})
 }

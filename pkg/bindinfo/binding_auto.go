@@ -47,7 +47,7 @@ var RecordRelevantOptVarsAndFixes func(sctx sessionctx.Context, stmt ast.StmtNod
 var GenBriefPlanWithSCtx func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
-// "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
+// "EXPLAIN EXPLORE <SQL>" to help users understand the historical plans for a specific SQL.
 type BindingPlanInfo struct {
 	*Binding
 
@@ -245,7 +245,9 @@ func (ba *bindingAuto) getBindingPlanInfo(currentDB, sqlOrDigest, charset, colla
 			}); err != nil {
 				bindingLogger().Error("get plan digest failed",
 					zap.String("bind_sql", binding.BindSQL), zap.Error(err))
+				continue
 			}
+			binding.PlanDigest = planDigest
 		}
 
 		pInfo, err := ba.getPlanExecInfo(planDigest)

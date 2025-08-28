@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -33,9 +34,11 @@ func randomPlanCacheKey() string {
 }
 
 func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
-	plans := []base.Plan{&Insert{}, &Update{}, &Delete{}, &PhysicalTableScan{}, &physicalop.PhysicalTableDual{}, &PhysicalTableReader{},
-		&PhysicalTableScan{}, &PhysicalIndexJoin{}, &PhysicalIndexHashJoin{}, &PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
-		&PhysicalIndexLookUpReader{}, &PhysicalApply{}, &PhysicalApply{}, &physicalop.PhysicalLimit{}}
+	plans := []base.Plan{&Insert{}, &Update{}, &Delete{}, &physicalop.PhysicalTableScan{}, &physicalop.PhysicalTableDual{}, &physicalop.PhysicalTableReader{},
+		&physicalop.PhysicalTableScan{}, &physicalop.PhysicalIndexJoin{}, &physicalop.PhysicalIndexHashJoin{},
+		&physicalop.PhysicalIndexMergeJoin{}, &physicalop.PhysicalIndexMergeReader{},
+		&physicalop.PhysicalIndexLookUpReader{}, &physicalop.PhysicalApply{},
+		&physicalop.PhysicalApply{}, &physicalop.PhysicalLimit{}}
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &PlanCacheValue{
 		Plan:       plans[random.Int()%len(plans)],
@@ -45,7 +48,7 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
-	mockCtx := MockContext()
+	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 	defer func() {
 		domain.GetDomain(mockCtx).StatsHandle().Close()
@@ -125,7 +128,7 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	mockCtx := MockContext()
+	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 	defer func() {
 		domain.GetDomain(mockCtx).StatsHandle().Close()
@@ -181,7 +184,7 @@ func TestLRUPCGet(t *testing.T) {
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	mockCtx := MockContext()
+	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 	defer func() {
 		domain.GetDomain(mockCtx).StatsHandle().Close()
@@ -219,7 +222,7 @@ func TestLRUPCDelete(t *testing.T) {
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(3, 0, 0, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -252,7 +255,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 }
 
 func TestLRUPCSetCapacity(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(5, 0, 0, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -321,7 +324,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 }
 
 func TestIssue37914(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(3, 0.1, 1, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -337,7 +340,7 @@ func TestIssue37914(t *testing.T) {
 }
 
 func TestIssue38244(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(3, 0, 0, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -367,7 +370,7 @@ func TestIssue38244(t *testing.T) {
 
 func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -388,7 +391,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 		require.Equal(t, lru.MemoryUsage(), res)
 	}
 	// evict
-	p := &PhysicalTableScan{}
+	p := &physicalop.PhysicalTableScan{}
 	k := "key-3"
 	v := &PlanCacheValue{Plan: p}
 	opts := pTypes

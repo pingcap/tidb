@@ -99,10 +99,13 @@ func TestStartState(t *testing.T) {
 		vardef.TiDBOptIndexJoinCostFactor,
 		vardef.TiDBOptOrderingIdxSelRatio,
 		vardef.TiDBOptRiskEqSkewRatio,
+		vardef.TiDBOptRiskRangeSkewRatio,
+		vardef.TiDBOptRiskGroupNDVSkewRatio,
+		vardef.TiDBOptSelectivityFactor,
 	}
 	fixes := []uint64{fixcontrol.Fix44855, fixcontrol.Fix45132, fixcontrol.Fix52869}
 
 	state, err := getStartState(vars, fixes)
 	require.NoError(t, err)
-	require.Equal(t, state.Encode(), "1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0100,0.0000,OFF,1000,OFF")
+	require.Equal(t, state.Encode(), "1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0100,0.0000,0.0000,0.0000,0.8000,OFF,1000,OFF")
 }
