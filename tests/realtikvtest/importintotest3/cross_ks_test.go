@@ -26,11 +26,14 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
+
+var fmap = plannercore.ImportIntoFieldMap
 
 func TestOnUserKeyspace(t *testing.T) {
 	if kerneltype.IsClassic() {
@@ -57,14 +60,23 @@ func TestOnUserKeyspace(t *testing.T) {
 	require.NoError(t, err)
 	userTK.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 	taskKey := importinto.TaskKey(int64(jobID))
+	tableID, err := strconv.Atoi(result[0][fmap["TableID"]].(string))
+	require.NoError(t, err)
 	// job to user keyspace, task to system keyspace
 	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
-	jobQuerySQL := fmt.Sprintf("select count(1) from mysql.tidb_import_jobs where id = %d", jobID)
+	jobQuerySQL := fmt.Sprintf("select count(1) from mysql.tidb_import_jobs where id = %d and table_id=%d and table_schema='%s'", jobID, tableID, "cross_ks")
 	taskQuerySQL := fmt.Sprintf(`select id from (select id from mysql.tidb_global_task where task_key='%s'
 		union select id from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
 	require.Len(t, userTK.MustQuery(jobQuerySQL).Rows(), 1)
 	rs := sysKSTk.MustQuery(taskQuerySQL).Rows()
 	require.Len(t, rs, 1)
+
+	// check table stats
+	r := userTK.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id=%d", tableID)).Rows()
+	require.Len(t, r, 1)
+	rows, err := strconv.Atoi(r[0][0].(string))
+	require.NoError(t, err)
+	require.Equal(t, 1, rows)
 
 	// Check subtask summary from system keyspace is correct.
 	taskID := rs[0][0].(string)
