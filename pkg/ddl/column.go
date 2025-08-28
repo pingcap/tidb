@@ -900,7 +900,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 			nextKey    kv.Key
 			taskDone   bool
 		)
-		if w.oldColInfo.Name.L == "random" {
+		if w.oldColInfo.Name.L == "random_m2m" {
 			t := time.Now()
 			rowRecords, nextKey, taskDone, err = w.getMockRowRecord(handleRange)
 			logutil.DDLLogger().Info("use MockRowRecord",
