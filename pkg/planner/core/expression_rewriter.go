@@ -1280,88 +1280,13 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 		}
 	} else if allowVarOverride &&
 		len(corCols) > 0 &&
-		planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelate &&
-		subqueryPlan != nil {
-
+		planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelate {
 		// Check if this is a select list subquery
-		isSelectListSubquery := planCtx.curClause == fieldList
-
-		if isSelectListSubquery {
-			// For select list subqueries, apply index coverage check
-			tableInfo := getTableInfoFromPlan(subqueryPlan)
-			if tableInfo != nil && canEfficientlyEvaluateCorrelation(corCols, tableInfo) {
-				// Only enable decorrelation by the session variable if correlation columns are index-covered
-				noDecorrelate = true
-			}
-		} else {
-			// For where clause subqueries, always allow decorrelation if session variable is enabled
+		if planCtx.curClause == fieldList {
 			noDecorrelate = true
 		}
 	}
-
 	return noDecorrelate
-}
-
-// getTableInfoFromPlan extracts table info from a logical plan
-func getTableInfoFromPlan(p base.LogicalPlan) *model.TableInfo {
-	// Try to find table info by traversing the plan tree
-	switch v := p.(type) {
-	case *logicalop.DataSource:
-		return v.TableInfo
-	//case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation,
-	//	*logicalop.LogicalSort, *logicalop.LogicalLimit, *logicalop.LogicalMaxOneRow,
-	//	*logicalop.LogicalJoin, *logicalop.LogicalUnionAll, *logicalop.LogicalWindow,
-	//	*logicalop.LogicalTopN, *logicalop.LogicalExpand, *logicalop.LogicalSequence:
-	default:
-		// Check ALL children for table info
-		for _, child := range v.Children() {
-			if tableInfo := getTableInfoFromPlan(child); tableInfo != nil {
-				return tableInfo
-			}
-		}
-	}
-	return nil
-}
-
-// canEfficientlyEvaluateCorrelation checks if correlation columns are covered by any index (in any position)
-func canEfficientlyEvaluateCorrelation(corCols []*expression.CorrelatedColumn, tableInfo *model.TableInfo) bool {
-	if len(corCols) == 0 || tableInfo == nil {
-		return false
-	}
-
-	// Extract column IDs from correlation columns
-	corColIDs := make(map[int64]bool)
-	for _, corCol := range corCols {
-		corColIDs[corCol.Column.UniqueID] = true
-	}
-
-	// Check if any index has correlation columns in any position
-	for _, idx := range tableInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-
-		// Check all columns in the index, not just the first one
-		for _, col := range idx.Columns {
-			if col.Offset < len(tableInfo.Columns) {
-				colID := tableInfo.Columns[col.Offset].ID
-				if corColIDs[colID] {
-					// Found a correlation column in the index
-					return true
-				}
-			}
-		}
-	}
-
-	// Check primary key coverage
-	if tableInfo.PKIsHandle {
-		pkCol := tableInfo.GetPkColInfo()
-		if pkCol != nil && corColIDs[pkCol.ID] {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) (ast.Node, bool) {
