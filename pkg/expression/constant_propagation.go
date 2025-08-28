@@ -247,7 +247,8 @@ var propConstSolverPool = sync.Pool{
 
 type propConstSolver struct {
 	basePropConstSolver
-	conditions    []Expression
+	conditions []Expression
+	// TODO: remove this func pointer for performance
 	vaildExprFunc VaildConstantPropagationExpressionFuncType
 }
 
@@ -476,10 +477,11 @@ var propSpecialJoinConstSolverPool = sync.Pool{
 
 type propSpecialJoinConstSolver struct {
 	basePropConstSolver
-	joinConds     []Expression
-	filterConds   []Expression
-	outerSchema   *Schema
-	innerSchema   *Schema
+	joinConds   []Expression
+	filterConds []Expression
+	outerSchema *Schema
+	innerSchema *Schema
+	// TODO: remove this func pointer for performance
 	vaildExprFunc VaildConstantPropagationExpressionFuncType
 
 	// nullSensitive indicates if this outer join is null sensitive, if true, we cannot generate
