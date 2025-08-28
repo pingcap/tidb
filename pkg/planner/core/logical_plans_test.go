@@ -1999,23 +1999,23 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
-			result: "PRIMARY_KEY,b,b_c",
+			result: "PRIMARY_KEY,b_global,b_c_global",
 		},
 		{
 			sql:    "select b from pt2_global_index where b > 1 order by b",
-			result: "b,b_c",
+			result: "b_global,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 or g = 5",
-			result: "PRIMARY_KEY,[b,g]",
+			result: "PRIMARY_KEY,[b_global,g]",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "b_c", // will prune `b_c`
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c`
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
-			result: "PRIMARY_KEY,c_d_e,b_c", // will prune `b_c` and keep `c_d_e`
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c` and keep `c_d_e`
 		},
 		{
 			sql:    "select * from pt2_global_index where c > 1 and d > 1 and e > 1",
@@ -2023,7 +2023,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where (b = 1 and c = 1) or (b = 2 and c = 2)",
-			result: "b_c",
+			result: "b_c_global",
 		},
 	}
 	s := coretestsdk.CreatePlannerSuiteElems()
