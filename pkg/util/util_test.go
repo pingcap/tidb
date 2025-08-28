@@ -78,7 +78,7 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, "txn_start_ts", logFields[4].Key)
 	assert.Equal(t, int64(23333), logFields[4].Integer)
 	assert.Equal(t, "mem", logFields[5].Key)
-	assert.Equal(t, "max 2013265920 Bytes (1.88 GB), arbitration_time 2.1s, wait_arbitrate_start 1970-01-02 18:17:36.789, wait_arbitrate_bytes 123456789123", logFields[5].String)
+	assert.Equal(t, "max 2013265920 Bytes (1.88 GB), arbitration_time 2.1s, wait_arbitrate_start 1970-01-02 10:17:36.789 UTC, wait_arbitrate_bytes 123456789123", logFields[5].String)
 	assert.Equal(t, "sql", logFields[6].Key)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
 

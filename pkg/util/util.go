@@ -166,7 +166,7 @@ func GenLogFields(costTime time.Duration, info *sessmgr.ProcessInfo, needTruncat
 				s += fmt.Sprintf(", arbitration_time %ss", strconv.FormatFloat(dur.Seconds(), 'f', -1, 64)) // mem quota arbitration time of current SQL
 			}
 			if ts, sz := info.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {
-				s += fmt.Sprintf(", wait_arbitrate_start %s, wait_arbitrate_bytes %d", ts.Format("2006-01-02 15:04:05.999"), sz) // mem quota wait arbitrate time of current SQL
+				s += fmt.Sprintf(", wait_arbitrate_start %s, wait_arbitrate_bytes %d", ts.In(time.UTC).Format("2006-01-02 15:04:05.999 MST"), sz) // mem quota wait arbitrate time of current SQL
 			}
 		}
 		logFields = append(logFields, zap.String("mem", s))

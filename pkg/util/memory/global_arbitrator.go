@@ -195,8 +195,6 @@ func reportGlobalMemArbitratorMetrics() {
 
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
 func HandleGlobalMemArbitratorRuntime(s *runtime.MemStats) {
-	defer recover()
-
 	m := GlobalMemArbitrator()
 	if m == nil {
 		return
@@ -491,7 +489,7 @@ func newMemStateRecorder(baseDir string) *runtimeMemStateRecorder {
 
 func (m *runtimeMemStateRecorder) Store(memState *RuntimeMemStateV1) error {
 	if _, err := os.Stat(m.baseDir); err != nil && !os.IsExist(err) {
-		err = os.MkdirAll(m.baseDir, 0o755)
+		err = os.MkdirAll(m.baseDir, 0750)
 		if err != nil {
 			return fmt.Errorf("failed to create dir `%s`, err: %v", m.baseDir, err)
 		}

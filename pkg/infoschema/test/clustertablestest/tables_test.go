@@ -261,13 +261,14 @@ func TestSomeTables(t *testing.T) {
 		SessionAlias:      "中文alias",
 	})
 	tk.Session().SetSessionManager(sm)
+	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 2.1 1970-01-02 18:17:36.789 123456789123 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 2.1 1970-01-02 10:17:36.789 123456789123 0"+
 				"  rg1 alias1 0 0 0", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 2.1 1970-01-02 18:17:36.789 123456789123 0  rg2  0 0 0",
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 2.1 1970-01-02 10:17:36.789 123456789123 0  rg2  0 0 0",
 				"autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 2.1 1970-01-02 18:17:36.789 123456789123 0  rg3"+
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 2.1 1970-01-02 10:17:36.789 123456789123 0  rg3"+
 				" 中文alias 0 0 0", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(

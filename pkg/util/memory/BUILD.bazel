@@ -48,6 +48,7 @@ go_test(
         "//pkg/errno",
         "//pkg/parser/terror",
         "//pkg/testkit/testsetup",
+        "//pkg/util/sqlkiller",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
