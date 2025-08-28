@@ -77,15 +77,28 @@ func NewChecker(realDDL ddl.DDL, realExecutor ddl.Executor, infoCache *infoschem
 	}
 	if kerneltype.IsNextGen() {
 		// Prepare the system tables for schema tracker,
-		// because system tables are created trhough meta kv instead of SQL during bootstrap.
+		// because system tables are created through meta kv instead of SQL during bootstrap.
 		p := parser.New()
-		var stmts []ast.StmtNode
-		stmts, _, _ = p.ParseSQL("CREATE DATABASE IF NOT EXISTS mysql;")
-		tracker.CreateSchema(nil, stmts[0].(*ast.CreateDatabaseStmt))
-		stmts, _, _ = p.ParseSQL("CREATE DATABASE IF NOT EXISTS sys;")
-		tracker.CreateSchema(nil, stmts[0].(*ast.CreateDatabaseStmt))
+		var (
+			stmts []ast.StmtNode
+			err   error
+		)
+		stmts, _, err = p.ParseSQL("CREATE DATABASE IF NOT EXISTS mysql;")
+		mustNil(err)
+		err = tracker.CreateSchema(nil, stmts[0].(*ast.CreateDatabaseStmt))
+		mustNil(err)
+		stmts, _, err = p.ParseSQL("CREATE DATABASE IF NOT EXISTS sys;")
+		mustNil(err)
+		err = tracker.CreateSchema(nil, stmts[0].(*ast.CreateDatabaseStmt))
+		mustNil(err)
 	}
 	return checker
+}
+
+func mustNil(err error) {
+	if err != nil {
+		panic(err)
+	}
 }
 
 // Disable turns off check.
