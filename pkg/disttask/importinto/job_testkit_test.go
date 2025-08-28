@@ -187,7 +187,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	// local sort
 	taskMeta := importinto.TaskMeta{
 		Plan: importer.Plan{},
-		Summary: &importer.Summary{
+		Summary: importer.Summary{
 			EncodeSummary: importer.StepSummary{
 				Bytes:  10000,
 				RowCnt: 1000,
@@ -232,7 +232,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
-		Summary: &importer.Summary{
+		Summary: importer.Summary{
 			IngestSummary: importer.StepSummary{
 				Bytes:  10000,
 				RowCnt: 1000,
@@ -289,7 +289,7 @@ func TestShowImportProgress(t *testing.T) {
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
-		Summary: &importer.Summary{
+		Summary: importer.Summary{
 			EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
 			MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
 			IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
