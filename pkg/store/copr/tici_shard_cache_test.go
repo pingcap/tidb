@@ -114,7 +114,7 @@ func TestShardCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, locs, 5)
 	// [a,c), [c,e), [e,g), [i,k), [k,m)
-	require.Equal(t, cache.mu.sorted.b.Len(), 5)
+	require.Equal(t, cache.mu.sorted[0].b.Len(), 5)
 
 	ranges = ranges[:0]
 	ranges = append(ranges, kv.KeyRange{
@@ -125,5 +125,23 @@ func TestShardCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, locs, 3)
 	// [e,g), [g,i), [i,k)
-	require.Equal(t, cache.mu.sorted.b.Len(), 6) // insert [g,i) into the cache
+	require.Equal(t, cache.mu.sorted[0].b.Len(), 6) // insert [g,i) into the cache
+
+	ranges = make([]kv.KeyRange, 0)
+	ranges = append(ranges, kv.KeyRange{
+		StartKey: []byte("b"),
+		EndKey:   []byte("f"),
+	})
+
+	ranges = append(ranges, kv.KeyRange{
+		StartKey: []byte("i"),
+		EndKey:   []byte("l"),
+	})
+
+	locs, err = cache.BatchLocateKeyRanges(ctx, 0, 1, ranges)
+	require.NoError(t, err)
+	require.Len(t, locs, 5)
+	// test another indexID
+	require.Equal(t, cache.mu.sorted[0].b.Len(), 6)
+	require.Equal(t, cache.mu.sorted[1].b.Len(), 5)
 }
