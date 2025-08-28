@@ -1041,7 +1041,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	}
 	np = er.popExistsSubPlan(planCtx, np)
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, false, np)
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, true, np)
 
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
@@ -1274,7 +1274,7 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 				"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 			noDecorrelate = false
 		}
-	} else if allowVarOverride && // Only scalar subquery allows the variable override (true) currently
+	} else if allowVarOverride && // Only scalar and exists subquery allows the variable override (true) currently
 		len(corCols) > 0 && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelate && subqueryPlan != nil {
 		tableInfo := getTableInfoFromPlan(subqueryPlan)
 		if tableInfo != nil && canEfficientlyEvaluateCorrelation(corCols, tableInfo) {
@@ -1292,9 +1292,15 @@ func getTableInfoFromPlan(p base.LogicalPlan) *model.TableInfo {
 	switch v := p.(type) {
 	case *logicalop.DataSource:
 		return v.TableInfo
-	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation, *logicalop.LogicalSort, *logicalop.LogicalLimit, *logicalop.LogicalMaxOneRow:
-		if len(v.Children()) > 0 {
-			return getTableInfoFromPlan(v.Children()[0])
+	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation,
+		*logicalop.LogicalSort, *logicalop.LogicalLimit, *logicalop.LogicalMaxOneRow,
+		*logicalop.LogicalJoin, *logicalop.LogicalUnionAll, *logicalop.LogicalWindow,
+		*logicalop.LogicalTopN, *logicalop.LogicalExpand, *logicalop.LogicalSequence:
+		// Check ALL children for table info
+		for _, child := range v.Children() {
+			if tableInfo := getTableInfoFromPlan(child); tableInfo != nil {
+				return tableInfo
+			}
 		}
 	}
 	return nil
@@ -1312,22 +1318,20 @@ func canEfficientlyEvaluateCorrelation(corCols []*expression.CorrelatedColumn, t
 		corColIDs[corCol.Column.UniqueID] = true
 	}
 
-	// Check if any index covers these correlation columns
+	// Check if any index has correlation columns as the first column
 	for _, idx := range tableInfo.Indices {
 		if idx.State != model.StatePublic {
 			continue
 		}
 
-		// Check if index prefix covers correlation columns
-		for i, col := range idx.Columns {
-			// Get the actual column ID from the table info using the offset
-			if col.Offset < len(tableInfo.Columns) {
-				colID := tableInfo.Columns[col.Offset].ID
+		// Only check the first column of each index
+		if len(idx.Columns) > 0 {
+			firstCol := idx.Columns[0]
+			if firstCol.Offset < len(tableInfo.Columns) {
+				colID := tableInfo.Columns[firstCol.Offset].ID
 				if corColIDs[colID] {
-					// Found a correlation column in index, check if it's in prefix
-					if i == 0 || (i > 0 && idx.Columns[i-1].Offset != col.Offset) {
-						return true
-					}
+					// Found a correlation column as the first column of an index
+					return true
 				}
 			}
 		}
