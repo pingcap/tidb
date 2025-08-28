@@ -153,6 +153,8 @@ type LogicalJoin struct {
 
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
+
+	CartesianJoin bool
 }
 
 // Init initializes LogicalJoin.
