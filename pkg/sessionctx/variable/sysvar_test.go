@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1557,6 +1558,10 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 }
 
 func TestGlobalSystemVariableInitialValue(t *testing.T) {
+	pessFairLockingDefaultVal := vardef.On
+	if kerneltype.IsNextGen() {
+		pessFairLockingDefaultVal = vardef.Off
+	}
 	vars := []struct {
 		name    string
 		val     string
@@ -1605,7 +1610,7 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBPessimisticTransactionFairLocking,
 			BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking),
-			vardef.On,
+			pessFairLockingDefaultVal,
 		},
 	}
 	for _, v := range vars {

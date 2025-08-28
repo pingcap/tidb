@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -2536,12 +2537,14 @@ func TestAdmin(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test2")
 	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
-	result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
-	result.Check(testkit.Rows())
-	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
-	result.Check(testkit.Rows())
+	if kerneltype.IsClassic() {
+		result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
+		result.Check(testkit.Rows())
+		result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+		result.Check(testkit.Rows())
+	}
 	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), ddl.DefNumHistoryJobs)
-	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
+	result := tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
 
@@ -2697,6 +2700,10 @@ func TestAdmin(t *testing.T) {
 	m := meta.NewMutator(txn)
 	startKey := meta.DDLJobHistoryKey(m, 0)
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
+	if kerneltype.IsNextGen() {
+		startKey = store.GetCodec().EncodeKey(startKey)
+		endKey = store.GetCodec().EncodeKey(endKey)
+	}
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
 	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), 20)
