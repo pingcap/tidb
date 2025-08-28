@@ -956,12 +956,12 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 	case ConstraintKey:
 		ctx.WriteKeyWord("KEY")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 	case ConstraintIndex:
 		ctx.WriteKeyWord("INDEX")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 	case ConstraintUniq:
 		ctx.WriteKeyWord("UNIQUE")
@@ -992,12 +992,12 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 	case ConstraintVector:
 		ctx.WriteKeyWord("VECTOR INDEX")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 	case ConstraintColumnar:
 		ctx.WriteKeyWord("COLUMNAR INDEX")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 	}
 
@@ -1009,7 +1009,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("FOREIGN KEY ")
 		if n.IfNotExists {
-			ctx.WriteKeyWord("IF NOT EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
 		}
 	} else if n.Name != "" || n.IsEmptyIndex {
 		ctx.WritePlain(" ")
@@ -1928,7 +1928,7 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteKeyWord("INDEX ")
 	if n.IfNotExists {
-		ctx.WriteKeyWord("IF NOT EXISTS ")
+		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")
@@ -3405,7 +3405,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableAddColumns:
 		ctx.WriteKeyWord("ADD COLUMN ")
 		if n.IfNotExists {
-			ctx.WriteKeyWord("IF NOT EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
 		}
 		if n.Position != nil && len(n.NewColumns) == 1 {
 			if err := n.NewColumns[0].Restore(ctx); err != nil {
@@ -3446,7 +3446,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropColumn:
 		ctx.WriteKeyWord("DROP COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		if err := n.OldColumnName.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.OldColumnName")
@@ -3457,19 +3457,19 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropIndex:
 		ctx.WriteKeyWord("DROP INDEX ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		ctx.WriteName(n.Name)
 	case AlterTableDropForeignKey:
 		ctx.WriteKeyWord("DROP FOREIGN KEY ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		ctx.WriteName(n.Name)
 	case AlterTableModifyColumn:
 		ctx.WriteKeyWord("MODIFY COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		if err := n.NewColumns[0].Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.NewColumns[0]")
@@ -3483,7 +3483,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableChangeColumn:
 		ctx.WriteKeyWord("CHANGE COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		if err := n.OldColumnName.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.OldColumnName")
@@ -3571,7 +3571,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableAddPartitions:
 		ctx.WriteKeyWord("ADD PARTITION")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 		if n.NoWriteToBinlog {
 			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
@@ -3660,7 +3660,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropPartition:
 		ctx.WriteKeyWord("DROP PARTITION ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		for i, name := range n.PartitionNames {
 			if i != 0 {
