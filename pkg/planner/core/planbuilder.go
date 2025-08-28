@@ -1638,7 +1638,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetIsPartition(isPartition)
 	ts.SetSchema(idxColSchema)
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
+	ts.Columns = physicalop.ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 	switch {
 	case hasExtraCol:
 		ts.Columns = append(ts.Columns, extraInfo)
@@ -1864,9 +1864,9 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	readers := make([]*PhysicalIndexLookUpReader, 0, len(readerPlans))
+	readers := make([]*physicalop.PhysicalIndexLookUpReader, 0, len(readerPlans))
 	for _, plan := range readerPlans {
-		readers = append(readers, plan.(*PhysicalIndexLookUpReader))
+		readers = append(readers, plan.(*physicalop.PhysicalIndexLookUpReader))
 	}
 	p.IndexInfos = indexInfos
 	p.IndexLookUpReaders = readers
@@ -3994,13 +3994,12 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 }
 
 // resolveGeneratedColumns resolves generated columns with their generation expressions respectively.
-// onDups indicates which columns are in on-duplicate list
-// and it will be **modified** inside this function.
+// If not-nil onDups is passed in, it will be **modified in place** and record columns in on-duplicate list
 func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
 			// columns having on-update-now flag should also be considered.
-			if mysql.HasOnUpdateNowFlag(column.GetFlag()) {
+			if onDups != nil && mysql.HasOnUpdateNowFlag(column.GetFlag()) {
 				onDups[column.Name.L] = struct{}{}
 			}
 			continue
@@ -5717,17 +5716,22 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
 		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
-			origin := sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
-			sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+			origin := stmtCtx.EnableOptimizeTrace
+			stmtCtx.EnableOptimizeTrace = true
 			defer func() {
-				sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = origin
+				stmtCtx.EnableOptimizeTrace = origin
 			}()
 		}
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
-		targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
+		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
+		} else {
+			targetPlan, _, err = OptimizeAstNodeNoCache(ctx, sctx, nodeW, b.is)
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -26,14 +26,14 @@ drop table if exists t30965;
 CREATE TABLE `t30965` ( `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL, `d` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL, KEY `ib` (`b`));
 insert into t30965 (a,b,c) value(3,4,5);
 select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;
-explain format = 'brief' select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;
+explain format = 'plan_tree' select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;
 
 
 # TestRemoveOrderbyInSubquery
 drop table if exists t1;
 CREATE TABLE `t1` ( `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL);
 insert into t1 (a,b,c) value(3,4,5);
-explain format = 'brief' select * from (select * from t1 order by a) tmp;
+explain format = 'plan_tree' select * from (select * from t1 order by a) tmp;
 
 
 # TestHJBuildAndProbeHintWithBinding

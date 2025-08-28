@@ -330,6 +330,15 @@ const (
 	// TiDBOptRiskRangeSkewRatio controls the amount of skew that is applied to range predicate estimation when a range falls within a bucket or outside the histogram bucket range.
 	TiDBOptRiskRangeSkewRatio = "tidb_opt_risk_range_skew_ratio"
 
+	// TiDBOptRiskScaleNDVSkewRatio controls the NDV estimation risk strategy for scaling NDV estimation.
+	TiDBOptRiskScaleNDVSkewRatio = "tidb_opt_scale_ndv_skew_ratio"
+
+	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for multi-column operations
+	// including GROUP BY, JOIN, and DISTINCT operations.
+	// When 0: uses conservative estimate (max of individual column NDVs, production default)
+	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
+	TiDBOptRiskGroupNDVSkewRatio = "tidb_opt_group_ndv_skew_ratio"
+
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// TiDBOptCopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -370,6 +379,12 @@ const (
 	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
 	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
 	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
+
+	// The following selectivity factors represent a multiplier for the selectivity of each predicate.
+	// These factors are used to determine the selectivity of predicates in the optimizer's cost model.
+	// TiDBOptSelectivityFactor: If one condition can't be calculated,
+	// we will assume that the selectivity of this condition is 0.8 by default.
+	TiDBOptSelectivityFactor = "tidb_opt_selectivity_factor"
 
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
@@ -1332,11 +1347,13 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
-	DefOptLimitPushDownThreshold            = 100
+	DefOptLimitPushDownThreshold            = 5000
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
 	DefOptRiskEqSkewRatio                   = 0.0
 	DefOptRiskRangeSkewRatio                = 0.0
+	DefOptRiskScaleNDVSkewRatio             = 1.0
+	DefOptRiskGroupNDVSkewRatio             = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0
@@ -1364,6 +1381,7 @@ const (
 	DefOptMergeJoinCostFactor               = 1.0
 	DefOptHashJoinCostFactor                = 1.0
 	DefOptIndexJoinCostFactor               = 1.0
+	DefOptSelectivityFactor                 = 0.8
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
