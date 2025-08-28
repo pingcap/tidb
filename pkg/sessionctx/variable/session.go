@@ -343,7 +343,7 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 	return buf
 }
 
-// UpdateDeltaForTable updates the delta info for some table.
+// FlushStmtTableDelta flush the stmt's table delta info into txn.
 func (tc *TransactionContext) FlushStmtTableDelta(sc *stmtctx.StatementContext) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
