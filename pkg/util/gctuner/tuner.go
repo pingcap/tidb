@@ -88,6 +88,14 @@ func Tuning(threshold uint64) {
 	globalTuner.setThreshold(threshold)
 }
 
+// GetGOGC returns the current GCPercent.
+func GetGOGC() uint32 {
+	if globalTuner == nil {
+		return defaultGCPercent
+	}
+	return globalTuner.getGCPercent()
+}
+
 // only allow one gc tuner in one process
 // It is not thread-safe. so it is a private, singleton pattern to avoid misuse.
 var globalTuner *tuner

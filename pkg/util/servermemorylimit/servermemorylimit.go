@@ -249,7 +249,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 			types.NewDatum(info.memoryCurrent), // MEMORY_CURRENT
 			info.processInfoDatum[0],           // PROCESSID
 			info.processInfoDatum[9],           // MEM
-			info.processInfoDatum[11],          // DISK
+			info.processInfoDatum[13],          // DISK
 			info.processInfoDatum[2],           // CLIENT
 			info.processInfoDatum[3],           // DB
 			info.processInfoDatum[1],           // USER

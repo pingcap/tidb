@@ -44,8 +44,8 @@ const (
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
-	Finish          func()
-	killSignalEvent struct {
+	Finish    func()
+	killEvent struct {
 		ch   chan struct{}
 		desc string
 		sync.Mutex
@@ -65,58 +65,58 @@ type SQLKiller struct {
 	IsConnectionAlive atomic.Pointer[func() bool]
 }
 
-// ChanKillSignalEvent returns a recv chan which will be closed when the kill signal is sent.
-func (killer *SQLKiller) ChanKillSignalEvent() <-chan struct{} {
-	killer.killSignalEvent.Lock()
-	defer killer.killSignalEvent.Unlock()
+// GetKillEventChan returns a recv chan which will be closed when the kill signal is sent.
+func (killer *SQLKiller) GetKillEventChan() <-chan struct{} {
+	killer.killEvent.Lock()
+	defer killer.killEvent.Unlock()
 
-	if killer.killSignalEvent.ch != nil {
-		return killer.killSignalEvent.ch
+	if killer.killEvent.ch != nil {
+		return killer.killEvent.ch
 	}
 
-	killer.killSignalEvent.ch = make(chan struct{})
-	if killer.killSignalEvent.triggered {
-		close(killer.killSignalEvent.ch)
+	killer.killEvent.ch = make(chan struct{})
+	if killer.killEvent.triggered {
+		close(killer.killEvent.ch)
 	}
 
-	return killer.killSignalEvent.ch
+	return killer.killEvent.ch
 }
 
-func (killer *SQLKiller) triggerKillSignalEvent() {
-	killer.killSignalEvent.Lock()
-	defer killer.killSignalEvent.Unlock()
+func (killer *SQLKiller) triggerKillEvent() {
+	killer.killEvent.Lock()
+	defer killer.killEvent.Unlock()
 
-	if killer.killSignalEvent.triggered {
+	if killer.killEvent.triggered {
 		return
 	}
 
-	if killer.killSignalEvent.ch != nil {
-		close(killer.killSignalEvent.ch)
+	if killer.killEvent.ch != nil {
+		close(killer.killEvent.ch)
 	}
-	killer.killSignalEvent.triggered = true
+	killer.killEvent.triggered = true
 }
 
-func (killer *SQLKiller) resetKillSignalEvent() {
-	killer.killSignalEvent.Lock()
-	defer killer.killSignalEvent.Unlock()
+func (killer *SQLKiller) resetKillEvent() {
+	killer.killEvent.Lock()
+	defer killer.killEvent.Unlock()
 
-	if !killer.killSignalEvent.triggered && killer.killSignalEvent.ch != nil {
-		close(killer.killSignalEvent.ch)
+	if !killer.killEvent.triggered && killer.killEvent.ch != nil {
+		close(killer.killEvent.ch)
 	}
-	killer.killSignalEvent.ch = nil
-	killer.killSignalEvent.triggered = false
-	killer.killSignalEvent.desc = ""
+	killer.killEvent.ch = nil
+	killer.killEvent.triggered = false
+	killer.killEvent.desc = ""
 }
 
 // SendKillSignalWithKillEventReason sets the reason for the kill event and sends a kill signal.
 func (killer *SQLKiller) SendKillSignalWithKillEventReason(killSignal killSignal, desc string) {
 	{
-		killer.killSignalEvent.Lock()
-		killer.killSignalEvent.desc = desc
-		killer.killSignalEvent.Unlock()
+		killer.killEvent.Lock()
+		killer.killEvent.desc = desc
+		killer.killEvent.Unlock()
 	}
 	killer.sendKillSignal(killSignal)
-	killer.triggerKillSignalEvent()
+	killer.triggerKillEvent()
 }
 
 func (killer *SQLKiller) sendKillSignal(reason killSignal) {
@@ -130,7 +130,7 @@ func (killer *SQLKiller) sendKillSignal(reason killSignal) {
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	killer.sendKillSignal(reason)
-	killer.triggerKillSignalEvent()
+	killer.triggerKillEvent()
 }
 
 // GetKillSignal gets the kill signal.
@@ -139,11 +139,11 @@ func (killer *SQLKiller) GetKillSignal() killSignal {
 }
 
 func (killer *SQLKiller) getKillEventReason() (res string) {
-	killer.killSignalEvent.Lock()
+	killer.killEvent.Lock()
 	//
-	res = killer.killSignalEvent.desc
+	res = killer.killEvent.desc
 	//
-	killer.killSignalEvent.Unlock()
+	killer.killEvent.Unlock()
 	return res
 }
 
@@ -241,6 +241,6 @@ func (killer *SQLKiller) Reset() {
 	}
 
 	atomic.StoreUint32(&killer.Signal, 0)
-	killer.resetKillSignalEvent()
+	killer.resetKillEvent()
 	killer.lastCheckTime.Store(nil)
 }

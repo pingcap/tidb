@@ -401,8 +401,8 @@ func AjustGlobalMemArbitratorLimit() {
 	doSetGlobalMemArbitratorLimit()
 }
 
-// RegisterCallbackAfterGlobalMemArbitratorEnabled registers a callback to be called after the global memory arbitrator is enabled.
-func RegisterCallbackAfterGlobalMemArbitratorEnabled(f func()) {
+// RegisterCallbackForGlobalMemArbitrator registers a callback to be called after the global memory arbitrator is enabled.
+func RegisterCallbackForGlobalMemArbitrator(f func()) {
 	globalArbitrator.enable.Lock()
 
 	globalArbitrator.enable.callbacks = append(globalArbitrator.enable.callbacks, f)

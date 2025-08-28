@@ -1237,7 +1237,7 @@ func (t *Tracker) InitMemArbitrator(
 
 	var cancelChan <-chan struct{}
 	if killer != nil {
-		cancelChan = killer.ChanKillSignalEvent()
+		cancelChan = killer.GetKillEventChan()
 	}
 	ctx := NewArbitrationContext(
 		cancelChan,

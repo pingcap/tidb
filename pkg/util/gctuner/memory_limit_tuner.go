@@ -71,7 +71,7 @@ func (t *memoryLimitTuner) DisableAdjustMemoryLimit() {
 func (t *memoryLimitTuner) EnableAdjustMemoryLimit() {
 	t.adjustDisabled.Add(-1)
 	t.UpdateMemoryLimit()
-	wrapRuntimeSetMemoryLimit()
+	resetGlobalArbitratorLimit()
 }
 
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
@@ -130,7 +130,7 @@ func (t *memoryLimitTuner) tuning() {
 				for !t.adjustPercentageInProgress.CompareAndSwap(true, false) {
 					continue
 				}
-				wrapRuntimeSetMemoryLimit()
+				resetGlobalArbitratorLimit()
 			}()
 			memory.TriggerMemoryLimitGC.Store(true)
 		}
@@ -203,10 +203,10 @@ func init() {
 	initGOMemoryLimitValue = debug.SetMemoryLimit(-1)
 	GlobalMemoryLimitTuner.Start()
 
-	memory.RegisterCallbackAfterGlobalMemArbitratorEnabled(wrapRuntimeSetMemoryLimit)
+	memory.RegisterCallbackForGlobalMemArbitrator(resetGlobalArbitratorLimit)
 }
 
-func wrapRuntimeSetMemoryLimit() {
+func resetGlobalArbitratorLimit() {
 	GlobalMemoryLimitTuner.tuningLock.Lock()
 	defer GlobalMemoryLimitTuner.tuningLock.Unlock()
 
