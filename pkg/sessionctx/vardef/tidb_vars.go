@@ -1832,15 +1832,6 @@ func serverMemoryLimitDefaultValue() string {
 	return "0"
 }
 
-func mustParseDuration(str string) time.Duration {
-	duration, err := time.ParseDuration(str)
-	if err != nil {
-		panic(fmt.Sprintf("%s is not a duration", str))
-	}
-
-	return duration
-}
-
 func mustParseTime(layout string, str string) time.Time {
 	time, err := time.ParseInLocation(layout, str, time.UTC)
 	if err != nil {
