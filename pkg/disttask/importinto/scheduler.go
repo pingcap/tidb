@@ -608,7 +608,7 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()
-				return importer.FinishJob(ctx, exec, taskMeta.JobID, taskMeta.Summary)
+				return importer.FinishJob(ctx, exec, taskMeta.JobID, &taskMeta.Summary)
 			})
 		},
 	)
@@ -628,7 +628,7 @@ func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
-				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg, taskMeta.Summary)
+				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg, &taskMeta.Summary)
 			})
 		},
 	)

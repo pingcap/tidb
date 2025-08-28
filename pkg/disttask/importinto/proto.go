@@ -36,7 +36,7 @@ type TaskMeta struct {
 	Stmt  string
 
 	// Summary is the summary of the whole import task.
-	Summary *importer.Summary
+	Summary importer.Summary
 
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
