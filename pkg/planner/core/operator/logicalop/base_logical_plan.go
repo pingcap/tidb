@@ -69,10 +69,9 @@ type BaseLogicalPlan struct {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
-	_, ok1 := p.self.(*LogicalSequence)
-	_, ok2 := p.self.(*LogicalMaxOneRow)
-	_, ok3 := p.self.(*LogicalLock)
-	if !ok1 && !ok2 && !ok3 {
+	switch p.self.(type) {
+	case *LogicalSequence, *LogicalMaxOneRow, *LogicalLock:
+	default:
 		intest.Assert(false, "Hash64 should not be called directly")
 	}
 	h.HashInt(p.ID())
