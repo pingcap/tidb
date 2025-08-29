@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -43,7 +42,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	joinMethodHintInfo := make(map[int]*joinMethodHint)
 	var (
 		group             []base.LogicalPlan
-		joinOrderHintInfo []*h.PlanHints
+		joinOrderHintInfo []*hint.PlanHints
 		eqEdges           []*expression.ScalarFunction
 		otherConds        []expression.Expression
 		joinTypes         []*joinTypeWithExtMsg
@@ -360,9 +359,9 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 // The Join Group {t1, t2, t3} contains two leading hints includes leading(t3) and leading(t1).
 // Although they are in different query blocks, they are conflicting.
 // In addition, the table alias 't4' cannot be recognized because of the join group.
-func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
+func checkAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, bool) {
 	leadingHintNum := len(hintInfo)
-	var leadingHintInfo *h.PlanHints
+	var leadingHintInfo *hint.PlanHints
 	hasDiffLeadingHint := false
 	if leadingHintNum > 0 {
 		leadingHintInfo = hintInfo[0]
@@ -382,7 +381,7 @@ func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
 
 type joinMethodHint struct {
 	preferredJoinMethod uint
-	joinMethodHintInfo  *h.PlanHints
+	joinMethodHintInfo  *hint.PlanHints
 }
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
@@ -399,7 +398,7 @@ type basicJoinGroupInfo struct {
 type joinGroupResult struct {
 	group             []base.LogicalPlan
 	hasOuterJoin      bool
-	joinOrderHintInfo []*h.PlanHints
+	joinOrderHintInfo []*hint.PlanHints
 	*basicJoinGroupInfo
 }
 
@@ -413,7 +412,7 @@ type baseSingleGroupJoinOrderSolver struct {
 
 // generateLeadingPlan builds a join plan tree from the given LEADING hint expression.
 // It returns true if successful, the built plan, and the remaining join groups.
-func (s *baseSingleGroupJoinOrderSolver) generateLeadingPlan(curJoinGroup []base.LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (bool, base.LogicalPlan, []base.LogicalPlan) {
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingPlan(curJoinGroup []base.LogicalPlan, hintInfo *hint.PlanHints, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (bool, base.LogicalPlan, []base.LogicalPlan) {
 	leadingPlan, remainingGroup, err := s.buildLeadingJoinTree(hintInfo.LeadingOrder, curJoinGroup, hasOuterJoin, opt)
 	if err != nil {
 		s.ctx.GetSessionVars().StmtCtx.SetHintWarning(err.Error())
