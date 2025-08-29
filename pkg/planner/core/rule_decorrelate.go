@@ -166,7 +166,8 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
 	// But this problem has affected tiflash CI.
 	// Simplify predicates from the LogicalSelection
-	simplifiedPredicates := ruleutil.ApplyPredicateSimplification(p.SCtx(), logicalSelection.Conditions, true, nil)
+	simplifiedPredicates := ruleutil.ApplyPredicateSimplification(p.SCtx(), logicalSelection.Conditions,
+		true, nil)
 
 	// Determine if this is a "true selection"
 	trueSelection := false

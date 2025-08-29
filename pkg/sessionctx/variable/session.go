@@ -1023,6 +1023,9 @@ type SessionVars struct {
 	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket or outside the histogram bucket range.
 	RiskRangeSkewRatio float64
 
+	// RiskScaleNDVSkewRatio controls the NDV estimation risk strategy for scaling NDV estimation.
+	RiskScaleNDVSkewRatio float64
+
 	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for multi-column operations
 	// including GROUP BY, JOIN, and DISTINCT operations.
 	// When 0: uses conservative estimate (max of individual column NDVs, production default)
@@ -1066,6 +1069,7 @@ type SessionVars struct {
 	MergeJoinCostFactor        float64
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
+	SelectivityFactor          float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
@@ -2199,6 +2203,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
+		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
 		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
@@ -2240,6 +2245,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
 		HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
+		SelectivityFactor:             vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),

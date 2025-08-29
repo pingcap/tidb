@@ -16,6 +16,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/scheduler",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
@@ -58,9 +59,11 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 37,
+    shard_count = 38,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler/mock",

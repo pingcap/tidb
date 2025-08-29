@@ -4194,7 +4194,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 				allowPseudoTblTriggerLoading = true
 			}
 			// Copy it so we can modify the ModifyCount and the RealtimeCount safely.
-			statsTbl = statsTbl.ShallowCopy()
+			statsTbl = statsTbl.CopyAs(statistics.MetaOnly)
 			statsTbl.RealtimeCount = analyzeCount
 			statsTbl.ModifyCount = 0
 		}
