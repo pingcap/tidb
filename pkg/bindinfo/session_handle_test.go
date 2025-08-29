@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/server"
@@ -306,6 +307,21 @@ func TestIssue53834(t *testing.T) {
 	tk.MustExec(`create binding using replace into t select /*+ memory_quota(1 mb) */ * from t`)
 	err = tk.ExecToErr(`replace into t select * from t`)
 	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
+}
+
+func TestPessimisticAutoCommitCreateBinding(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+
+	// Test create binding in pessimistic auto commit mode.
+	tk.MustExec("create binding for select * from t using select * from t use index(idx)")
 }
 
 func TestPreparedStmt(t *testing.T) {
