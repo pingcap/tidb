@@ -34,8 +34,8 @@ import (
 )
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
-func CanUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
-	if !IsGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
+func CanUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column, crossJoin bool) bool {
+	if !IsGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys, crossJoin) && !joinversion.UseHashJoinV2ForNonGAJoin {
 		return false
 	}
 	switch joinType {
@@ -46,7 +46,7 @@ func CanUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Co
 			return false
 		}
 		// cross join is not supported
-		if len(leftJoinKeys) == 0 {
+		if len(leftJoinKeys) == 0 || crossJoin {
 			return false
 		}
 		// NullEQ is not supported yet
@@ -62,13 +62,13 @@ func CanUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Co
 }
 
 // IsGAForHashJoinV2 judges if this hash join is GA
-func IsGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+func IsGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column, crossJoin bool) bool {
 	// nullaware join
 	if len(leftNAJoinKeys) > 0 {
 		return false
 	}
 	// cross join
-	if len(leftJoinKeys) == 0 {
+	if len(leftJoinKeys) == 0 || crossJoin {
 		return false
 	}
 	// join with null equal condition
@@ -151,7 +151,7 @@ func (p *PhysicalHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
-	return CanUseHashJoinV2(p.JoinType, p.LeftJoinKeys, p.IsNullEQ, p.LeftNAJoinKeys)
+	return CanUseHashJoinV2(p.JoinType, p.LeftJoinKeys, p.IsNullEQ, p.LeftNAJoinKeys, p.CartesianJoin)
 }
 
 // CanTiFlashUseHashJoinV2 returns if current join is supported by hash join v2 in TiFlash
@@ -399,6 +399,9 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	lSchema := p.Children()[0].Schema()
 	rSchema := p.Children()[1].Schema()
 	ctx := p.SCtx()
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	for i, fun := range p.EqualConditions {
 		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
 		if err != nil {

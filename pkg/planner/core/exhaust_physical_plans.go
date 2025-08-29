@@ -89,7 +89,8 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
 		leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
 		leftNAJoinKeys, _ := p.GetNAJoinKeys()
-		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && physicalop.CanUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
+		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() &&
+			physicalop.CanUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys, p.CartesianJoin) {
 			if !forceLeftToBuild {
 				joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 			}

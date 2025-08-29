@@ -724,7 +724,7 @@ func getCost4PhysicalApply(pp base.PhysicalPlan, lCount, rCount, lCost, rCost fl
 		cpuCost += lCount * rCount * sessVars.GetCPUFactor()
 		rCount *= cost.SelectionFactor
 	}
-	if len(p.EqualConditions)+len(p.OtherConditions)+len(p.NAEqualConditions) > 0 {
+	if len(p.EqualConditions)+len(p.OtherConditions)+len(p.NAEqualConditions) > 0 && (!p.CartesianJoin && len(p.OtherConditions) == 0) {
 		if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
 			p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
 			cpuCost += lCount * rCount * sessVars.GetCPUFactor() * 0.5
@@ -854,7 +854,7 @@ func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag
 	memoryCost := buildCnt * memoryFactor
 	diskCost := buildCnt * diskFactor * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
-	numPairs := cardinality.EstimateFullJoinRowCount(p.SCtx(), false,
+	numPairs := cardinality.EstimateFullJoinRowCount(p.SCtx(), p.CartesianJoin,
 		p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo(),
 		p.LeftJoinKeys, p.RightJoinKeys,
 		p.Children()[0].Schema(), p.Children()[1].Schema(),
