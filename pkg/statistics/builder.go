@@ -241,8 +241,8 @@ func buildHistExcludingTopN(
 	sc *stmtctx.StatementContext,
 	hg *Histogram,
 	samples []*SampleItem,
+	encodedSamples [][]byte,
 	topNSet map[string]struct{},
-	getComparedBytes func(types.Datum) ([]byte, error),
 	count, ndv, numBuckets int64,
 	memTracker *memory.Tracker,
 ) (corrXYSum float64, err error) {
@@ -251,13 +251,10 @@ func buildHistExcludingTopN(
 		return buildHist(sc, hg, samples, count, ndv, numBuckets, memTracker)
 	}
 
-	// filter samples to exclude TopN values
+	// filter samples to exclude TopN values using cached encoded bytes
 	filteredSamples := make([]*SampleItem, 0, len(samples))
-	for _, sample := range samples {
-		sampleBytes, err := getComparedBytes(sample.Value)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+	for i, sample := range samples {
+		sampleBytes := encodedSamples[i] // reuse cached encoded bytes
 
 		// skip if this sample is a TopN value
 		if _, isTopN := topNSet[string(sampleBytes)]; !isTopN {
@@ -321,8 +318,9 @@ func BuildHistAndTopN(
 	}()
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
+		timeZone := ctx.GetSessionVars().StmtCtx.TimeZone()
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
+			encoded, err := codec.EncodeKey(timeZone, nil, datum)
 			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if memTracker != nil {
 				// tmp memory usage
@@ -370,8 +368,7 @@ func BuildHistAndTopN(
 		allowPruning = false
 	}
 
-	// Step1: collect topn from samples
-
+	// Step1: collect topn from samples and cache encoded bytes for reuse
 	// use heap for efficient TopN maintenance - O(log N) insertions
 	topNHeap := NewTopNHeap(numTopN, func(a, b TopNMeta) int {
 		if a.Count < b.Count {
@@ -381,10 +378,14 @@ func BuildHistAndTopN(
 		}
 		return 0
 	})
+
+	encodedSamples := make([][]byte, sampleNum)
+
 	cur, err := getComparedBytes(samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	encodedSamples[0] = cur
 	curCnt := float64(0)
 	// sampleNDV is the number of distinct values in the samples, which may differ from the real NDV due to sampling.
 	// Initialize to 1 because the first time in the loop we don't increment the sampleNDV - we increment upon change
@@ -404,6 +405,8 @@ func BuildHistAndTopN(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		encodedSamples[i] = sampleBytes // cache for later use
+
 		// case 1, this value is equal to the last one: current count++
 		if bytes.Equal(cur, sampleBytes) {
 			curCnt++
@@ -479,8 +482,8 @@ func BuildHistAndTopN(
 			topNSet[string(topN.Encoded)] = struct{}{}
 		}
 
-		_, err = buildHistExcludingTopN(sc, hg, samples, topNSet,
-			getComparedBytes, count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker)
+		_, err = buildHistExcludingTopN(sc, hg, samples, encodedSamples, topNSet,
+			count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}
