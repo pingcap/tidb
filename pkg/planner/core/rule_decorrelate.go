@@ -262,7 +262,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
 			if apply.JoinType == logicalop.LeftOuterJoin {
-				if skipDecorrelatForLeftOuterApply(apply, proj) {
+				if skipDecorrelateProjectionForLeftOuterApply(apply, proj) {
 					goto NoOptimize
 				}
 			}
@@ -623,7 +623,7 @@ func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *logicalop.LogicalAp
 }
 
 // Return true if we should skip decorrelation for LeftOuterApply + Projection.
-func skipDecorrelatForLeftOuterApply(apply *logicalop.LogicalApply, proj *logicalop.LogicalProjection) bool {
+func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, proj *logicalop.LogicalProjection) bool {
 	allConst := len(proj.Exprs) > 0
 	for _, expr := range proj.Exprs {
 		if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
