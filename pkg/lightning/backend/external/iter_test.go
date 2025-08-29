@@ -15,6 +15,7 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -351,7 +352,9 @@ func TestReadAfterCloseConnReader(t *testing.T) {
 	err := reader.switchConcurrentMode(false)
 	require.NoError(t, err)
 
-	wrapKVReader := &KVReader{reader}
+	var buf bytes.Buffer
+	buf.Grow(256)
+	wrapKVReader := &KVReader{byteReader: reader, kvBuffer: buf}
 	_, _, err = wrapKVReader.nextKV()
 	require.ErrorIs(t, err, io.EOF)
 }
