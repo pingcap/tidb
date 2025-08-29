@@ -707,6 +707,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
+	var castDur time.Duration
 	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, taskRange.physicalTable.RecordPrefix(),
 		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
@@ -719,9 +720,11 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 				return false, nil
 			}
 
+			t := time.Now()
 			if err1 := w.getRowRecord(handle, recordKey, rawRow); err1 != nil {
 				return false, errors.Trace(err1)
 			}
+			castDur += time.Since(t)
 			lastAccessedHandle = recordKey
 			if recordKey.Cmp(taskRange.endKey) == 0 {
 				taskDone = true
@@ -734,9 +737,11 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 		taskDone = true
 	}
 
-	logutil.DDLLogger().Debug("txn fetches handle info",
+	logutil.DDLLogger().Info("txn fetches handle info",
 		zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()),
+		zap.Duration("castDur", castDur),
+		zap.Int("fetchedRows", len(w.rowRecords)),
 		zap.Duration("takeTime", time.Since(startTime)), zap.Any("region id", taskRange.regionID))
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
@@ -880,11 +885,15 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
-
+		t := time.Now()
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		logutil.DDLLogger().Info("fetchRowColVals",
+			zap.Duration("takeTime", time.Since(t)),
+			zap.Bool("taskDone", taskDone),
+			zap.Int("len", len(rowRecords)))
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
@@ -915,7 +924,11 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
-
+	logutil.DDLLogger().Info("updateColumnWorker BackfillData",
+		zap.Duration("takeTimes", time.Since(oprStartTime)),
+		zap.Int("scanCount", taskCtx.scanCount),
+		zap.Int("addedCount", taskCtx.addedCount),
+	)
 	return
 }
 
