@@ -3929,6 +3929,8 @@ func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) ex
 	}
 
 	ret.ranges = ts.Ranges
+	ret.groupedRanges = ts.GroupedRanges
+	ret.groupByColIdxs = ts.GroupByColIdxs
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -4134,6 +4136,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 		colLens:                    is.IdxColLens,
 		plans:                      v.IndexPlans,
 		outputColumns:              v.OutputColumns,
+		GroupedRanges:              is.GroupedRanges,
 	}
 
 	for _, col := range v.OutputColumns {
@@ -4316,6 +4319,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
+		GroupedRanges:              is.GroupedRanges,
 	}
 
 	if v.ExtraHandleCol != nil {

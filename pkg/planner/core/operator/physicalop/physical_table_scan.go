@@ -144,6 +144,12 @@ type PhysicalTableScan struct {
 
 	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
 	UsedColumnarIndexes []*ColumnarIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+
+	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
+	GroupedRanges map[string][]*ranger.Range `plan-cache-clone:"shallow"`
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge-sort to satisfy physical property.
+	// This field is used to rebuild GroupedRanges in plan cache.
+	GroupByColIdxs []int `plan-cache-clone:"shallow"`
 }
 
 const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))

@@ -220,6 +220,23 @@ const (
 	AllCTECanMpp
 )
 
+// SortPropMatchResult describes the result of matching PhysicalProperty.SortItem against an access path.
+type SortPropMatchResult int
+
+const (
+	// SortPropNotSatisfied xxx
+	SortPropNotSatisfied SortPropMatchResult = iota
+	// SortPropSatisfiedUnconditionally xxx
+	SortPropSatisfiedUnconditionally
+	// SortPropSatisfiedByMergeSort xxx
+	SortPropSatisfiedByMergeSort
+)
+
+// Matched xxx
+func (r SortPropMatchResult) Matched() bool {
+	return r == SortPropSatisfiedUnconditionally || r == SortPropSatisfiedByMergeSort
+}
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {
