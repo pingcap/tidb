@@ -64,6 +64,7 @@ func (s *mockGCSSuite) SetupSuite() {
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/domain/deltaUpdateDuration", `return`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
 }

@@ -1558,10 +1558,6 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 }
 
 func TestGlobalSystemVariableInitialValue(t *testing.T) {
-	pessFairLockingDefaultVal := vardef.On
-	if kerneltype.IsNextGen() {
-		pessFairLockingDefaultVal = vardef.Off
-	}
 	vars := []struct {
 		name    string
 		val     string
@@ -1600,7 +1596,12 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBTxnAssertionLevel,
 			vardef.DefTiDBTxnAssertionLevel,
-			vardef.AssertionFastStr,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.AssertionStrictStr
+				}
+				return vardef.AssertionFastStr
+			}(),
 		},
 		{
 			vardef.TiDBEnableMutationChecker,
@@ -1610,7 +1611,12 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBPessimisticTransactionFairLocking,
 			BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking),
-			pessFairLockingDefaultVal,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.Off
+				}
+				return vardef.On
+			}(),
 		},
 	}
 	for _, v := range vars {
