@@ -91,6 +91,7 @@ func (p *BasePhysicalJoin) CloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 	}
 	cloned.LeftNAJoinKeys = utilfuncp.CloneColumnsForPlanCache(p.LeftNAJoinKeys, nil)
 	cloned.RightNAJoinKeys = utilfuncp.CloneColumnsForPlanCache(p.RightNAJoinKeys, nil)
+	cloned.CartesianJoin = p.CartesianJoin
 	return cloned, true
 }
 
@@ -116,6 +117,7 @@ func (p *BasePhysicalJoin) CloneWithSelf(newCtx base.PlanContext, newSelf base.P
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
+	cloned.CartesianJoin = p.CartesianJoin
 	return cloned, nil
 }
 

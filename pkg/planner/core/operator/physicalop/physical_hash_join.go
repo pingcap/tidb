@@ -123,6 +123,7 @@ func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild
 		JoinType:        p.JoinType,
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
+		CartesianJoin:   p.CartesianJoin,
 	}
 	hashJoin := PhysicalHashJoin{
 		BasePhysicalJoin:  baseJoin,
