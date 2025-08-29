@@ -6888,6 +6888,7 @@ UnReservedKeyword:
 |	"TEXT"
 |	"THAN"
 |	"TIME" %prec lowerThanStringLitToken
+|	"TIMEOUT"
 |	"TIMESTAMP" %prec lowerThanStringLitToken
 |	"TRACE"
 |	"TRANSACTION"
@@ -8127,7 +8128,6 @@ FunctionNameConflict:
 |	"ROW_COUNT"
 |	"SECOND"
 |	"TIME"
-|	"TIMEOUT"
 |	"TIMESTAMP"
 |	"TRUNCATE"
 |	"USER"
