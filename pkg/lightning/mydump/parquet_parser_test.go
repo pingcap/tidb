@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joechenrh/arrow-go/v18/parquet"
-	"github.com/joechenrh/arrow-go/v18/parquet/schema"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"

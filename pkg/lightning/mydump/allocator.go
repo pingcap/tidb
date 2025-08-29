@@ -21,7 +21,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/joechenrh/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	tidbmemory "github.com/pingcap/tidb/pkg/util/memory"

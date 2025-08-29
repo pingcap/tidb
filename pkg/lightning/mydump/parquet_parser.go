@@ -24,10 +24,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/joechenrh/arrow-go/v18/arrow/memory"
-	"github.com/joechenrh/arrow-go/v18/parquet"
-	"github.com/joechenrh/arrow-go/v18/parquet/file"
-	"github.com/joechenrh/arrow-go/v18/parquet/schema"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/file"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -521,7 +521,8 @@ func (pp *ParquetParser) Init() error {
 func (pp *ParquetParser) resetReader() {
 	for _, d := range pp.dumpers {
 		if d.reader != nil {
-			d.reader.Reset()
+			//nolint: errcheck
+			d.reader.Close()
 		}
 	}
 }
@@ -899,6 +900,9 @@ func NewParquetParser(
 		zap.Bool("streaming mode", meta.UseStreaming),
 	)
 
+	workerPool := &errgroup.Group{}
+	workerPool.SetLimit(8)
+
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
 		wrapper = &parquetFileWrapper{
@@ -914,7 +918,7 @@ func NewParquetParser(
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = meta.UseStreaming
 
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop), file.WithWorkerPool(workerPool))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -950,7 +954,11 @@ func NewParquetParser(
 		} else {
 			newWrapper = wrapper
 		}
-		reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
+		reader, err := file.NewParquetReader(newWrapper,
+			file.WithReadProps(prop),
+			file.WithMetadata(reader.MetaData()),
+			file.WithWorkerPool(workerPool),
+		)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -963,15 +971,16 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		readers:      subreaders,
-		colMetas:     columnMetas,
-		columnNames:  columnNames,
-		alloc:        allocator,
-		logger:       log.Wrap(logutil.Logger(ctx)),
-		memoryUsage:  memoryUsage,
-		memLimiter:   readerMemoryLimiter,
-		rowPool:      &pool,
-		parallelRead: !strings.HasPrefix(store.URI(), storage.LocalURIPrefix) && meta.UseStreaming,
+		readers:     subreaders,
+		colMetas:    columnMetas,
+		columnNames: columnNames,
+		alloc:       allocator,
+		logger:      log.Wrap(logutil.Logger(ctx)),
+		memoryUsage: memoryUsage,
+		memLimiter:  readerMemoryLimiter,
+		rowPool:     &pool,
+		// parallelRead: !strings.HasPrefix(store.URI(), storage.LocalURIPrefix) && meta.UseStreaming,
+		parallelRead: false,
 	}
 	if err := parser.Init(); err != nil {
 		return nil, errors.Trace(err)
