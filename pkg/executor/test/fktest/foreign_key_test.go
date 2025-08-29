@@ -1405,6 +1405,13 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("explain analyze delete from t1 where id=1")
 	tk.MustQuery("select id, name, leader from t1 order by id").Check(testkit.Rows("10 l1_a <nil>", "11 l1_b <nil>", "12 l1_c <nil>"))
 
+	// Test explain analyze issue #https://github.com/pingcap/tidb/issues/63276
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1)")
+	tk.Session().GetSessionVars().ConnectionID = 10024
+	tk.MustExec("explain analyze delete from t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+
 	// Test string type foreign key.
 	tk.MustExec("drop table t1")
 	tk.MustExec("create table t1 (id varchar(10) key, name varchar(10), leader varchar(10),  index(leader), foreign key (leader) references t1(id) ON DELETE SET NULL);")
