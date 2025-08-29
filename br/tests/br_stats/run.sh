@@ -26,6 +26,14 @@ for i in $(seq $DB_COUNT); do
     go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
+<<<<<<< HEAD
+=======
+run_sql "CREATE TABLE ${DB}1.br_stats_partition (id INT NOT NULL, store_id INT NOT NULL, store_n INT NOT NULL, custinfo JSON, UNIQUE KEY i1(id) GLOBAL, KEY i2(store_id), KEY i3(store_n), KEY zips((CAST(custinfo->'$.zipcode' AS UNSIGNED ARRAY)))) PARTITION BY RANGE (store_id) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN MAXVALUE);"
+for j in $(seq 9); do
+    run_sql "INSERT INTO ${DB}1.br_stats_partition values ($j, $j, $j, '{\"zipcode\": [$j, $(($j+1))]}');"
+done
+
+>>>>>>> 19cc638d3af (br: fix stats meta count is zero if backup has no checksum (#60979))
 unset BR_LOG_TO_TERM
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --log-file $LOG --ignore-stats=false --filter "${DB}1.*" --filter "${DB}2.*" || cat $LOG
 dump_cnt=$(cat $LOG | grep "dump stats to json" | wc -l)

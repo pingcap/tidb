@@ -30,6 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+>>>>>>> 19cc638d3af (br: fix stats meta count is zero if backup has no checksum (#60979))
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -178,8 +184,131 @@ func (rc *SnapClient) GoValidateChecksum(
 	return outCh
 }
 
+<<<<<<< HEAD
 func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 	ctx context.Context,
+=======
+const statsMetaItemBufferSize = 3000
+
+type statsMetaItemBuffer struct {
+	sync.Mutex
+	metaUpdates []statstypes.MetaUpdate
+}
+
+func NewStatsMetaItemBuffer() *statsMetaItemBuffer {
+	return &statsMetaItemBuffer{
+		metaUpdates: make([]statstypes.MetaUpdate, 0, statsMetaItemBufferSize),
+	}
+}
+
+func (buffer *statsMetaItemBuffer) appendItem(item statstypes.MetaUpdate) (metaUpdates []statstypes.MetaUpdate) {
+	buffer.Lock()
+	defer buffer.Unlock()
+	buffer.metaUpdates = append(buffer.metaUpdates, item)
+	if len(buffer.metaUpdates) < statsMetaItemBufferSize {
+		return
+	}
+	metaUpdates = buffer.metaUpdates
+	buffer.metaUpdates = make([]statstypes.MetaUpdate, 0, statsMetaItemBufferSize)
+	return metaUpdates
+}
+
+func (buffer *statsMetaItemBuffer) take() (metaUpdates []statstypes.MetaUpdate) {
+	buffer.Lock()
+	defer buffer.Unlock()
+	metaUpdates = buffer.metaUpdates
+	buffer.metaUpdates = nil
+	return metaUpdates
+}
+
+func (buffer *statsMetaItemBuffer) UpdateMetasRest(ctx context.Context, statsHandler *handle.Handle) error {
+	metaUpdates := buffer.take()
+	if len(metaUpdates) == 0 {
+		return nil
+	}
+	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
+}
+
+func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHandler *handle.Handle, physicalID, count int64) error {
+	item := statstypes.MetaUpdate{
+		PhysicalID:  physicalID,
+		Count:       count,
+		ModifyCount: count,
+	}
+	metaUpdates := buffer.appendItem(item)
+	if len(metaUpdates) == 0 {
+		return nil
+	}
+	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
+}
+
+func calculateRowCountForPhysicalTable(files []*backuppb.File) int64 {
+	totalKvs := uint64(0)
+	for _, file := range files {
+		if tablecodec.IsRecordKey(file.StartKey) {
+			totalKvs += file.TotalKvs
+		}
+	}
+	return int64(totalKvs)
+}
+
+func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+	count := calculateRowCountForPhysicalTable(tbl.OldTable.FilesOfPhysicals[tbl.OldTable.Info.ID])
+	if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, tbl.Table.ID, count); statsErr != nil {
+		log.Error("update stats meta failed", zap.Error(statsErr))
+		return statsErr
+	}
+	return nil
+}
+
+func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+	totalCount := int64(0)
+	physicalRowCountMap := make(map[int64]int64)
+	for physicalID, files := range tbl.OldTable.FilesOfPhysicals {
+		if physicalID == tbl.OldTable.Info.ID {
+			continue
+		}
+		count := calculateRowCountForPhysicalTable(files)
+		totalCount += count
+		physicalRowCountMap[physicalID] = count
+	}
+	for _, oldDef := range tbl.OldTable.Info.Partition.Definitions {
+		count := physicalRowCountMap[oldDef.ID]
+		if count > 0 {
+			newDefID, err := utils.GetPartitionByName(tbl.Table, oldDef.Name)
+			if err != nil {
+				log.Error("failed to get the partition by name",
+					zap.String("db name", tbl.OldTable.DB.Name.O),
+					zap.String("table name", tbl.Table.Name.O),
+					zap.String("partition name", oldDef.Name.O),
+					zap.Int64("downstream table id", tbl.Table.ID),
+					zap.Int64("upstream partition id", oldDef.ID),
+				)
+				return errors.Trace(err)
+			}
+			if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, newDefID, count); statsErr != nil {
+				log.Error("update stats meta failed", zap.Error(statsErr))
+				return statsErr
+			}
+		}
+	}
+	if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, tbl.Table.ID, totalCount); statsErr != nil {
+		log.Error("update stats meta failed", zap.Error(statsErr))
+		return statsErr
+	}
+	return nil
+}
+
+func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle, tbl *CreatedTable) error {
+	if tbl.OldTable.Info.Partition == nil {
+		return updateStatsMetaForNonPartitionTable(ctx, buffer, statsHandler, tbl)
+	}
+	return updateStatsMetaForPartitionTable(ctx, buffer, statsHandler, tbl)
+}
+
+func (rc *SnapClient) registerUpdateMetaAndLoadStats(
+	builder *PipelineConcurrentBuilder,
+>>>>>>> 19cc638d3af (br: fix stats meta count is zero if backup has no checksum (#60979))
 	s storage.ExternalStorage,
 	inCh <-chan *CreatedTable,
 	errCh chan<- error,
@@ -227,10 +356,15 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
 			// Not need to return err when failed because of update analysis-meta
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
+<<<<<<< HEAD
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
 			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore", false); statsErr != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
+=======
+			if statsErr = updateStatsMetaForTable(c, buffer, statsHandler, tbl); statsErr != nil {
+				return statsErr
+>>>>>>> 19cc638d3af (br: fix stats meta count is zero if backup has no checksum (#60979))
 			}
 		}
 		return nil

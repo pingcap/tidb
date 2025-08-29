@@ -126,7 +126,13 @@ type MockUpdateCh struct {
 
 func (m MockUpdateCh) IncBy(cnt int64) {}
 
+<<<<<<< HEAD
 func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64, downstreamID func(upstream int64) int64) []*snapclient.CreatedTable {
+=======
+func (m MockUpdateCh) Inc() {}
+
+func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64, filesmap map[int64]map[int64][]*backuppb.File, downstreamID func(upstream int64) int64) []*snapclient.CreatedTable {
+>>>>>>> 19cc638d3af (br: fix stats meta count is zero if backup has no checksum (#60979))
 	createdTables := make([]*snapclient.CreatedTable, 0, len(upstreamTableIDs))
 	triggerID := 0
 	for _, upstreamTableID := range upstreamTableIDs {
