@@ -17,17 +17,89 @@ package statistics
 import (
 	"bytes"
 	"math"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
 )
+
+const (
+	// defaultTopNValue is the default value for numTopN parameter
+	defaultTopNValue = 100
+	// topNPruningThreshold represents 10% threshold for TopN pruning
+	topNPruningThreshold = 10
+	// defaultHistogramBuckets is the default number of histogram buckets
+	defaultHistogramBuckets = 256
+	// bucketNDVDivisor is used to calculate bucket count based on remaining NDV
+	bucketNDVDivisor = 2
+)
+
+// TopNWithRange wraps TopNMeta with index range information for efficient histogram building.
+type TopNWithRange struct {
+	TopNMeta       // embedded TopNMeta
+	startIdx int64 // inclusive start index in samples array
+	endIdx   int64 // inclusive end index in samples array
+}
+
+// SequentialRangeChecker efficiently checks if an index is within any TopN range.
+// It takes advantage of the fact that we iterate indices sequentially (0,1,2,...)
+// and ranges are sorted, so we can advance through ranges rather than search.
+type SequentialRangeChecker struct {
+	ranges          []TopNWithRange
+	currentRangeIdx int // index of the range we're currently checking
+}
+
+// NewSequentialRangeChecker creates a new range checker with sorted ranges.
+func NewSequentialRangeChecker(ranges []TopNWithRange) *SequentialRangeChecker {
+	// Sort ranges by start index to enable sequential checking
+	sort.Slice(ranges, func(i, j int) bool {
+		return ranges[i].startIdx < ranges[j].startIdx
+	})
+
+	return &SequentialRangeChecker{
+		ranges:          ranges,
+		currentRangeIdx: 0,
+	}
+}
+
+// IsIndexInTopNRange checks if the given index is within any TopN range.
+// This is optimized for sequential index access patterns.
+func (s *SequentialRangeChecker) IsIndexInTopNRange(idx int64) bool {
+	// Advance past completed ranges
+	for s.currentRangeIdx < len(s.ranges) && idx > s.ranges[s.currentRangeIdx].endIdx {
+		s.currentRangeIdx++
+	}
+
+	// Check if current index is in the current range
+	if s.currentRangeIdx < len(s.ranges) {
+		currentRange := s.ranges[s.currentRangeIdx]
+		return idx >= currentRange.startIdx && idx <= currentRange.endIdx
+	}
+
+	return false
+}
+
+// processTopNValueHeap handles the logic for a complete TopN value count using existing heap with range tracking.
+func processTopNValueHeap(topNHeap *TopNHeap[TopNWithRange], encoded []byte, curCnt float64,
+	startIdx, endIdx int64, numTopN int, allowPruning bool, sampleFactor float64) {
+	// case 1: prune values with count of 1 under certain conditions
+	if curCnt == 1 && allowPruning && (topNHeap.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
+		return
+	}
+
+	// case 2: add to heap (existing heap handles all optimization internally)
+	newItem := TopNWithRange{
+		TopNMeta: TopNMeta{Encoded: encoded, Count: uint64(curCnt)},
+		startIdx: startIdx,
+		endIdx:   endIdx,
+	}
+	topNHeap.Add(newItem)
+}
 
 // SortedBuilder is used to build histograms for PK and index.
 type SortedBuilder struct {
@@ -143,13 +215,21 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 
 // buildHist builds histogram from samples and other information.
 // It stores the built histogram in hg and returns corrXYSum used for calculating the correlation.
+// If rangeChecker is provided, it will skip indices that are within TopN ranges for efficient building.
 func buildHist(
 	sc *stmtctx.StatementContext,
 	hg *Histogram,
 	samples []*SampleItem,
 	count, ndv, numBuckets int64,
 	memTracker *memory.Tracker,
+	rangeChecker ...*SequentialRangeChecker, // optional range checker for skipping TopN indices
 ) (corrXYSum float64, err error) {
+	// determine if we should skip certain indices based on TopN ranges
+	var checker *SequentialRangeChecker
+	if len(rangeChecker) > 0 {
+		checker = rangeChecker[0]
+	}
+
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
@@ -164,12 +244,28 @@ func buildHist(
 	bucketIdx := 0
 	var lastCount int64
 	corrXYSum = float64(0)
+
+	// find the first non-skipped sample to initialize the histogram
+	var firstSampleIdx int64 = 0
+	if checker != nil {
+		for i := range sampleNum {
+			if !checker.IsIndexInTopNRange(i) {
+				firstSampleIdx = i
+				break
+			}
+		}
+		if firstSampleIdx >= sampleNum {
+			// all samples are in TopN ranges, return empty histogram
+			return 0, nil
+		}
+	}
+
 	// The underlying idea is that when a value is sampled,
 	// it does not necessarily mean that the actual row count of this value reaches the sample factor.
 	// In extreme cases, it could be that this value only appears once, and that one row happens to be sampled.
 	// Therefore, if the sample count of this value is only once, we use a more conservative ndvFactor.
 	// However, if the calculated ndvFactor is larger than the sampleFactor, we still use the sampleFactor.
-	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
+	hg.AppendBucket(&samples[firstSampleIdx].Value, &samples[firstSampleIdx].Value, int64(sampleFactor), int64(ndvFactor))
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
 	defer func() {
@@ -180,9 +276,17 @@ func buildHist(
 	}()
 
 	var upper = new(types.Datum)
-	// Note: Start from 1 because we have already processed the first sample.
-	for i := int64(1); i < sampleNum; i++ {
-		corrXYSum += float64(i) * float64(samples[i].Ordinal)
+	processedCount := int64(1) // we've processed the first sample
+
+	// Note: Start from firstSampleIdx+1 because we have already processed the first non-skipped sample.
+	for i := firstSampleIdx + 1; i < sampleNum; i++ {
+		// Skip if this index is in a TopN range
+		if checker != nil && checker.IsIndexInTopNRange(i) {
+			continue
+		}
+
+		processedCount++
+		corrXYSum += float64(processedCount-1) * float64(samples[i].Ordinal)
 		hg.UpperToDatum(bucketIdx, upper)
 		if memTracker != nil {
 			// tmp memory usage
@@ -194,7 +298,7 @@ func buildHist(
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		totalCount := float64(i+1) * sampleFactor
+		totalCount := float64(processedCount) * sampleFactor
 		if cmp == 0 {
 			// The new item has the same value as the current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
@@ -274,8 +378,9 @@ func BuildHistAndTopN(
 	}()
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
+		timeZone := ctx.GetSessionVars().StmtCtx.TimeZone()
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
+			encoded, err := codec.EncodeKey(timeZone, nil, datum)
 			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if memTracker != nil {
 				// tmp memory usage
@@ -316,22 +421,30 @@ func BuildHistAndTopN(
 
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(count) / float64(len(samples))
-	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
+	sampleFactor := float64(count) / float64(sampleNum)
+	// If a numTopn value other than default is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
-	if numTopN != 100 {
+	if numTopN != defaultTopNValue {
 		allowPruning = false
 	}
 
-	// Step1: collect topn from samples
+	// Step1: collect topn from samples using heap and track their index ranges
+	// use heap for efficient TopN maintenance - O(log N) insertions
+	topNHeap := NewTopNHeap(numTopN, func(a, b TopNWithRange) int {
+		if a.Count < b.Count {
+			return -1 // min-heap: smaller counts at root
+		} else if a.Count > b.Count {
+			return 1
+		}
+		return 0
+	})
 
-	// the topNList is always sorted by count from more to less
-	topNList := make([]TopNMeta, 0, numTopN)
 	cur, err := getComparedBytes(samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	curCnt := float64(0)
+	curStartIdx := int64(0) // track start index of current value group
 	// sampleNDV is the number of distinct values in the samples, which may differ from the real NDV due to sampling.
 	// Initialize to 1 because the first time in the loop we don't increment the sampleNDV - we increment upon change
 	// of value, and the first value is always new.
@@ -350,6 +463,7 @@ func BuildHistAndTopN(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+
 		// case 1, this value is equal to the last one: current count++
 		if bytes.Equal(cur, sampleBytes) {
 			curCnt++
@@ -357,36 +471,11 @@ func BuildHistAndTopN(
 		}
 		// case 2, meet a different value: counting for the "current" is complete
 		sampleNDV++
-		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
-		if curCnt == 1 && allowPruning && (len(topNList) >= (numTopN/10) || sampleFactor > 1) {
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-2, now topn is empty: append the "current" count directly
-		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-3, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && (curCnt == 1 || uint64(curCnt) <= topNList[len(topNList)-1].Count) {
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-4, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
-			}
-		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
-		}
+		// process the completed value using heap with range tracking
+		processTopNValueHeap(topNHeap, cur, curCnt, curStartIdx, int64(i)-1, numTopN, allowPruning, sampleFactor)
+
 		cur, curCnt = sampleBytes, 1
+		curStartIdx = i // new value group starts at current index
 	}
 
 	// Calc the correlation of the column between the handle column.
@@ -394,27 +483,18 @@ func BuildHistAndTopN(
 		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
 	}
 
-	// Handle the counting for the last value. Basically equal to the case 2 above - including
-	// limiting addition of a value with a count of 1 (since it will be pruned anyway).
-	if numTopN != 0 && (!allowPruning || (allowPruning && (sampleFactor <= 1 || curCnt > 1))) {
-		// now topn is empty: append the "current" count directly
-		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
-			// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-			j := len(topNList)
-			for ; j > 0; j-- {
-				if uint64(curCnt) < topNList[j-1].Count {
-					break
-				}
-			}
-			topNList = append(topNList, TopNMeta{})
-			copy(topNList[j+1:], topNList[j:])
-			topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-			if len(topNList) > numTopN {
-				topNList = topNList[:numTopN]
-			}
-		}
+	// handle the counting for the last value
+	if numTopN != 0 {
+		processTopNValueHeap(topNHeap, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor)
+	}
+
+	// convert heap to sorted slice
+	heapItems := topNHeap.ToSortedSlice()
+
+	// extract TopNMeta for result
+	topNList := make([]TopNMeta, len(heapItems))
+	for i, item := range heapItems {
+		topNList[i] = item.TopNMeta
 	}
 
 	if allowPruning {
@@ -438,65 +518,8 @@ func BuildHistAndTopN(
 
 	haveAllNDV := sampleNDV == lenTopN && lenTopN > 0
 
-	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
-	lenSamples := int64(len(samples))
-	if lenTopN > 0 && !haveAllNDV && lenSamples > 0 && numBuckets > 0 {
-		for i := int64(0); i < lenSamples; i++ {
-			sampleBytes, err := getComparedBytes(samples[i].Value)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			// Safety:
-			// When a sample value matches an entry in the topN list, it is removed from the samples array,
-			// so it can never match the previous sample. Therefore, this equality check will never be true
-			// in that case. For values not found in topN, we don't need keep checking the same value.
-			if i > 0 && bytes.Equal(sampleBytes, samples[i-1].Value.GetBytes()) {
-				// If the sample is the same as the previous one, we can skip it.
-				continue
-			}
-			// For debugging invalid sample data.
-			var (
-				foundTwice      bool
-				firstTimeSample types.Datum
-			)
-			for j := range topNList {
-				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-					// This should never happen, but we met this panic before, so we add this check here.
-					// See: https://github.com/pingcap/tidb/issues/35948
-					if foundTwice {
-						datumString, err := firstTimeSample.ToString()
-						if err != nil {
-							statslogutil.StatsLogger().Error("try to convert datum to string failed", zap.Error(err))
-						}
-
-						statslogutil.StatsLogger().Warn(
-							"invalid sample data",
-							zap.Bool("isColumn", isColumn),
-							zap.Int64("columnID", id),
-							zap.String("datum", datumString),
-							zap.Binary("sampleBytes", sampleBytes),
-							zap.Binary("topNBytes", topNList[j].Encoded),
-						)
-						// NOTE: if we don't return here, we may meet panic in the following code.
-						// The i may decrease to a negative value.
-						// We haven't fix the issue here, because we don't know how to
-						// remove the invalid sample data from the samples.
-						break
-					}
-					// First time to find the same value in topN: need to record the sample data for debugging.
-					firstTimeSample = samples[i].Value
-					// Found the same value in topn: need to skip over this value in samples.
-					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-					samples = samples[:uint64(len(samples))-topNList[j].Count]
-					lenSamples = int64(len(samples))
-					i--
-					foundTwice = true
-					continue
-				}
-			}
-		}
-	}
-
+	// Step2: calculate adjusted parameters for histogram
+	// The histogram will be built with reduced count and NDV to account for TopN values
 	var topNTotalCount uint64
 	for i := range topn.TopN {
 		topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
@@ -508,16 +531,21 @@ func BuildHistAndTopN(
 		return hg, topn, nil
 	}
 
-	// Step3: build histogram with the rest samples
-	if lenSamples > 0 {
+	// Step3: build histogram excluding TopN values
+	if len(samples) > 0 && lenTopN < ndv {
 		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if lenTopN < int64(numTopN) && numBuckets == 256 {
-			// set the number of buckets to be the number of remaining distinct values divided by 2
+		if lenTopN < int64(numTopN) && numBuckets == defaultHistogramBuckets {
+			// set the number of buckets to be the number of remaining distinct values divided by bucketNDVDivisor
 			// but no less than 1 and no more than the original number of buckets
-			numBuckets = int(min(max(1, remainingNDV/2), int64(numBuckets)))
+			numBuckets = int(min(max(1, remainingNDV/bucketNDVDivisor), int64(numBuckets)))
 		}
-		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker)
+
+		// create range checker for efficient TopN index skipping using heap items directly
+		rangeChecker := NewSequentialRangeChecker(heapItems)
+
+		_, err = buildHist(sc, hg, samples,
+			count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker, rangeChecker)
 		if err != nil {
 			return nil, nil, err
 		}
