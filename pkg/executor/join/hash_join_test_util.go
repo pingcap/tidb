@@ -144,16 +144,6 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 	return e
 }
 
-func buildDataSource(sortCase *testutil.SortCase, schema *expression.Schema) *testutil.MockDataSource {
-	opt := testutil.MockDataSourceParameters{
-		DataSchema: schema,
-		Rows:       sortCase.Rows,
-		Ctx:        sortCase.Ctx,
-		Ndvs:       sortCase.Ndvs,
-	}
-	return testutil.BuildMockDataSource(opt)
-}
-
 func generateCMPFunc(fieldTypes []*types.FieldType) func(chunk.Row, chunk.Row) int {
 	cmpFuncs := make([]chunk.CompareFunc, 0, len(fieldTypes))
 	for _, colType := range fieldTypes {

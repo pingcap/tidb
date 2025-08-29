@@ -45,12 +45,6 @@ import (
 // Also, we cannot use the functions in `session/session.go` (to avoid cyclic dependency), so
 // registering function here is really needed.
 
-var allIsolationReadEngines = map[kv.StoreType]struct{}{
-	kv.TiKV:    {},
-	kv.TiFlash: {},
-	kv.TiDB:    {},
-}
-
 func withSession(pool syssession.Pool, fn func(session.Session) error) error {
 	return pool.WithSession(func(s *syssession.Session) error {
 		return s.WithSessionContext(func(sctx sessionctx.Context) error {

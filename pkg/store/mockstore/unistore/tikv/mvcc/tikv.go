@@ -127,5 +127,3 @@ const (
 	LockTypeLock        LockType = 'L'
 	LockTypePessimistic LockType = 'S'
 )
-
-var errInvalidLockCFValue = errors.New("invalid lock CF value")
