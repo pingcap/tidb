@@ -355,7 +355,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		selfSchema.PKOrUK = childSchema[0].Clone().PKOrUK
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
 		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
-		if len(p.EqualConditions) == 0 {
+		if len(p.EqualConditions) == 0 || p.CartesianJoin {
 			return
 		}
 		// Extract all left and right columns from equal conditions
@@ -555,7 +555,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
 	p.EqualCondOutCnt = cardinality.EstimateFullJoinRowCount(p.SCtx(),
-		0 == len(p.EqualConditions),
+		len(p.EqualConditions) == 0 || p.CartesianJoin,
 		leftProfile, rightProfile,
 		leftJoinKeys, rightJoinKeys,
 		childSchema[0], childSchema[1],
@@ -1744,7 +1744,7 @@ func (p *LogicalJoin) updateEQCond() {
 	// todo: by now, when there is already a normal EQ condition, just keep NA-EQ as other-condition filters above it.
 	// eg: select * from stu where stu.name not in (select name from exam where exam.stu_id = stu.id);
 	// combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id> for join key is little complicated for now.
-	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
+	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && (len(p.EqualConditions) == 0 || p.CartesianJoin)
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		var otherCond expression.CNFExprs
 		for i := range p.OtherConditions {
