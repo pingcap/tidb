@@ -20,9 +20,9 @@ import "container/heap"
 // It keeps the N items with the highest values according to the comparison function.
 // The root of the heap is always the smallest item, making it easy to remove when adding better items.
 type TopNHeap[T any] struct {
+	cmpFunc func(T, T) int
 	items   []T
 	maxSize int
-	cmpFunc func(T, T) int
 }
 
 // NewTopNHeap creates a new TopN heap with the specified maximum size and comparison function.
@@ -89,7 +89,7 @@ func (h *TopNHeap[T]) ToSortedSlice() []T {
 	copy(result, h.items)
 
 	// sort in descending order (best first)
-	for i := 0; i < len(result)-1; i++ {
+	for i := range len(result) - 1 {
 		for j := i + 1; j < len(result); j++ {
 			if h.cmpFunc(result[i], result[j]) < 0 {
 				result[i], result[j] = result[j], result[i]
