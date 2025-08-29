@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -80,8 +81,15 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	originalReadStaleness := se.GetSessionVars().ReadStaleness
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	sessVars.ReadStaleness = 0
+	// NT-DML should not use the bulk DML mode.
+	originalBulkDMLEnabled := sessVars.BulkDMLEnabled
+	sessVars.BulkDMLEnabled = false
+	// NT-DML is used to be large and unusual, so we don't mix it with other DMLs, give it the prefix "NTDML-".
+	stmtType := fmt.Sprintf("NTDML-%s", ast.GetStmtLabel(stmt.DMLStmt))
+	ctx = stmtctx.WithStmtLabel(ctx, stmtType)
 	defer func() {
 		sessVars.ReadStaleness = originalReadStaleness
+		sessVars.BulkDMLEnabled = originalBulkDMLEnabled
 	}()
 	nodeW := resolve.NewNodeW(stmt)
 	err := core.Preprocess(ctx, se, nodeW)

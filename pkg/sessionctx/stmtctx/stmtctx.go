@@ -16,6 +16,7 @@ package stmtctx
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"slices"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -1412,4 +1414,22 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(", err:")
 	b.WriteString(r.Error.Error())
 	return b.String()
+}
+
+type stmtLabelKeyType struct{}
+
+var stmtLabelKey stmtLabelKeyType
+
+// WithStmtLabel sets the label for the statement node.
+func WithStmtLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, stmtLabelKey, label)
+}
+
+// GetStmtLabel returns the label for the statement node.
+// context with stmtLabelKey will return the label if it exists.
+func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
+	if val := ctx.Value(stmtLabelKey); val != nil {
+		return val.(string)
+	}
+	return ast.GetStmtLabel(node)
 }
