@@ -70,29 +70,96 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 // IsNullRejected(A AND B) = IsNullRejected(A) OR IsNullRejected(B)
 func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
 	skipPlanCacheCheck bool) bool {
+	if notIsNullCanNullRejected(ctx.GetExprCtx(), predicate, innerSchema) {
+		return true
+	}
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	if expression.ContainOuterNot(predicate) {
 		return false
 	}
-
+	if !isSimpleExpr(predicate) {
+		return false
+	}
 	switch expr := predicate.(type) {
 	case *expression.ScalarFunction:
-		if expr.FuncName.L == ast.LogicAnd {
+		switch expr.FuncName.L {
+		case ast.Case:
+			panic("we find it")
+		case ast.LogicAnd:
 			if IsNullRejected(ctx, innerSchema, expr.GetArgs()[0], skipPlanCacheCheck) {
 				return true
 			}
 			return IsNullRejected(ctx, innerSchema, expr.GetArgs()[1], skipPlanCacheCheck)
-		} else if expr.FuncName.L == ast.LogicOr {
+		case ast.LogicOr:
 			if !(IsNullRejected(ctx, innerSchema, expr.GetArgs()[0], skipPlanCacheCheck)) {
 				return false
 			}
 			return IsNullRejected(ctx, innerSchema, expr.GetArgs()[1], skipPlanCacheCheck)
-		} else if expr.FuncName.L == ast.In {
+		case ast.In:
 			return isNullRejectedInList(ctx, expr, innerSchema, skipPlanCacheCheck)
+		default:
+			return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
 		}
-		return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
 	default:
 		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
+	}
+}
+
+func notIsNullCanNullRejected(ctx expression.BuildContext,
+	expr expression.Expression, innerSchema *expression.Schema) bool {
+	switch e := expr.(type) {
+	case *expression.ScalarFunction:
+		if e.FuncName.L == ast.UnaryNot {
+			if ee, ok := e.GetArgs()[0].(*expression.ScalarFunction); ok {
+				if ee.FuncName.L == ast.IsNull {
+					return expression.ExprReferenceSchema(ee, innerSchema) || allConstants(ctx, ee)
+				}
+			}
+		}
+	default:
+	}
+	return false
+}
+
+// isSimpleExpr is to determine whether an expression is simple (`isSimpleExpr`),
+// and only if it is simple, then you can use `isNullRejectedSimpleExpr`.
+func isSimpleExpr(expr expression.Expression) bool {
+	switch e := expr.(type) {
+	case *expression.ScalarFunction:
+		switch e.FuncName.L {
+		case ast.LogicAnd, ast.LogicOr, ast.In, ast.UnaryNot, ast.Case:
+			for _, arg := range e.GetArgs() {
+				if scalarFunctionCount(arg) > 1 {
+					return false
+				}
+			}
+		default:
+			if scalarFunctionCount(e) > 1 {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+func scalarFunctionCount(expr expression.Expression) int {
+	switch e := expr.(type) {
+	case *expression.ScalarFunction:
+		if e.FuncName.L == ast.Cast {
+			// Casts generally return specific values,
+			// which have no impact on is-null-rejected,
+			// so it returns 0.
+			return 0
+		}
+		count := 1
+		for _, arg := range e.GetArgs() {
+			count += scalarFunctionCount(arg)
+		}
+		return count
+	default:
+		return 0
 	}
 }
 
