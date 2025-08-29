@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -26,13 +27,14 @@ import (
 )
 
 func init() {
-	variable.SlowLogRuleFieldAccessors[variable.SlowLogPlanDigest] = variable.SlowLogFieldAccessor{
+	variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPlanDigest)] = variable.SlowLogFieldAccessor{
+		Parse: variable.ParseString,
 		Setter: func(_ context.Context, seVars *variable.SessionVars, items *variable.SlowQueryLogItems) {
 			_, planDigest := GetPlanDigest(seVars.StmtCtx)
 			items.PlanDigest = planDigest.String()
 		},
 		Match: func(_ *variable.SessionVars, items *variable.SlowQueryLogItems, threshold any) bool {
-			return variable.MatchEqual(threshold, items.PlanDigest)
+			return variable.MatchEqual(threshold, strings.ToLower(items.PlanDigest))
 		},
 	}
 }
@@ -67,7 +69,7 @@ func Match(seVars *variable.SessionVars, items *variable.SlowQueryLogItems) bool
 
 		// And logical relationship
 		for _, condition := range rule.Conditions {
-			accessor := variable.SlowLogRuleFieldAccessors[condition.Field]
+			accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(condition.Field)]
 			if ok := accessor.Match(seVars, items, condition.Threshold); !ok {
 				matched = false
 				break

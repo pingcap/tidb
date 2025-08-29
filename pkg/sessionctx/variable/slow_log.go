@@ -542,7 +542,7 @@ type SlowLogRules struct {
 }
 
 // SlowLogFieldAccessor defines how to get or set a specific field in SlowQueryLogItems.
-// - Parse converts a string value (from user input) into the proper type for comparison.
+// - Parse converts a user-provided threshold string into the proper type for comparison.
 // - Setter is optional and pre-fills the field before matching if it needs explicit preparation.
 // - Match evaluates whether the field in SlowQueryLogItems meets a specific threshold.
 //   - threshold is the value to compare against when determining a match.
@@ -608,7 +608,8 @@ func matchGE[T numericComparable](threshold any, v T) bool {
 	return ok && v >= tv
 }
 
-func parseString(v string) (any, error)  { return v, nil }
+// ParseString converts the input string to lowercase and returns it.
+func ParseString(v string) (any, error)  { return strings.ToLower(v), nil }
 func parseInt64(v string) (any, error)   { return strconv.ParseInt(v, 10, 64) }
 func parseUint64(v string) (any, error)  { return strconv.ParseUint(v, 10, 64) }
 func parseFloat64(v string) (any, error) { return strconv.ParseFloat(v, 64) }
@@ -618,25 +619,25 @@ func parseBool(v string) (any, error)    { return strconv.ParseBool(v) }
 // that are relevant to evaluating and triggering SlowLogRules.
 // It's exporting for testing.
 var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
-	SlowLogConnIDStr: {
+	strings.ToLower(SlowLogConnIDStr): {
 		Parse: parseUint64,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
 			return matchGE(threshold, seVars.ConnectionID)
 		},
 	},
-	SlowLogSessAliasStr: {
-		Parse: parseString,
+	strings.ToLower(SlowLogSessAliasStr): {
+		Parse: ParseString,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
-			return MatchEqual(threshold, seVars.SessionAlias)
+			return MatchEqual(threshold, strings.ToLower(seVars.SessionAlias))
 		},
 	},
-	SlowLogDBStr: {
-		Parse: parseString,
+	strings.ToLower(SlowLogDBStr): {
+		Parse: ParseString,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
-			return MatchEqual(threshold, seVars.CurrentDB)
+			return MatchEqual(threshold, strings.ToLower(seVars.CurrentDB))
 		},
 	},
-	SlowLogExecRetryCount: {
+	strings.ToLower(SlowLogExecRetryCount): {
 		Parse: parseUint64,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
 			items.ExecRetryCount = seVars.StmtCtx.ExecRetryCount
@@ -645,7 +646,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return matchGE(threshold, items.ExecRetryCount)
 		},
 	},
-	SlowLogQueryTimeStr: {
+	strings.ToLower(SlowLogQueryTimeStr): {
 		Parse: parseFloat64,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
 			items.TimeTotal = seVars.GetTotalCostDuration()
@@ -654,47 +655,47 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return matchGE(threshold, items.TimeTotal.Seconds())
 		},
 	},
-	SlowLogParseTimeStr: {
+	strings.ToLower(SlowLogParseTimeStr): {
 		Parse: parseFloat64,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
 			return matchGE(threshold, seVars.DurationParse.Seconds())
 		},
 	},
-	SlowLogCompileTimeStr: {
+	strings.ToLower(SlowLogCompileTimeStr): {
 		Parse: parseFloat64,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
 			return matchGE(threshold, seVars.DurationCompile.Seconds())
 		},
 	},
-	SlowLogOptimizeTimeStr: {
+	strings.ToLower(SlowLogOptimizeTimeStr): {
 		Parse: parseFloat64,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
 			return matchGE(threshold, seVars.DurationOptimization.Seconds())
 		},
 	},
-	SlowLogWaitTSTimeStr: {
+	strings.ToLower(SlowLogWaitTSTimeStr): {
 		Parse: parseFloat64,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
 			return matchGE(threshold, seVars.DurationWaitTS.Seconds())
 		},
 	},
-	SlowLogIsInternalStr: {
+	strings.ToLower(SlowLogIsInternalStr): {
 		Parse: parseBool,
 		Match: func(seVars *SessionVars, _ *SlowQueryLogItems, threshold any) bool {
 			return MatchEqual(threshold, seVars.InRestrictedSQL)
 		},
 	},
-	SlowLogDigestStr: {
-		Parse: parseString,
+	strings.ToLower(SlowLogDigestStr): {
+		Parse: ParseString,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
 			_, digest := seVars.StmtCtx.SQLDigest()
 			items.Digest = digest.String()
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
-			return MatchEqual(threshold, items.Digest)
+			return MatchEqual(threshold, strings.ToLower(items.Digest))
 		},
 	},
-	SlowLogNumCopTasksStr: {
+	strings.ToLower(SlowLogNumCopTasksStr): {
 		Parse: parseInt64,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
 			copTasksDetail := seVars.StmtCtx.CopTasksDetails()
@@ -704,7 +705,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return matchGE(threshold, int64(items.CopTasks.NumCopTasks))
 		},
 	},
-	SlowLogMemMax: {
+	strings.ToLower(SlowLogMemMax): {
 		Parse: parseInt64,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
 			items.MemMax = seVars.MemTracker.MaxConsumed()
@@ -713,7 +714,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return matchGE(threshold, items.MemMax)
 		},
 	},
-	SlowLogDiskMax: {
+	strings.ToLower(SlowLogDiskMax): {
 		Parse: parseInt64,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
 			items.DiskMax = seVars.DiskTracker.MaxConsumed()
@@ -722,7 +723,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return matchGE(threshold, items.DiskMax)
 		},
 	},
-	SlowLogWriteSQLRespTotal: {
+	strings.ToLower(SlowLogWriteSQLRespTotal): {
 		Parse: parseFloat64,
 		Setter: func(ctx context.Context, _ *SessionVars, items *SlowQueryLogItems) {
 			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
@@ -735,7 +736,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return matchGE(threshold, items.WriteSQLRespTotal.Seconds())
 		},
 	},
-	SlowLogSucc: {
+	strings.ToLower(SlowLogSucc): {
 		Parse: parseBool,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
 			items.Succ = seVars.StmtCtx.ExecSuccess
@@ -744,118 +745,118 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 			return MatchEqual(threshold, items.Succ)
 		},
 	},
-	SlowLogResourceGroup: {
-		Parse: parseString,
+	strings.ToLower(SlowLogResourceGroup): {
+		Parse: ParseString,
 		Setter: func(_ context.Context, seVars *SessionVars, items *SlowQueryLogItems) {
 			items.ResourceGroupName = seVars.StmtCtx.ResourceGroupName
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
-			return MatchEqual(threshold, items.ResourceGroupName)
+			return MatchEqual(threshold, strings.ToLower(items.ResourceGroupName))
 		},
 	},
 	// The following fields are related to util.ExecDetails.
-	SlowLogKVTotal: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogKVTotal): makeKVExecDetailAccessor(
 		parseFloat64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, time.Duration(d.WaitKVRespDuration).Seconds())
 		},
 	),
-	SlowLogPDTotal: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogPDTotal): makeKVExecDetailAccessor(
 		parseFloat64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, time.Duration(d.WaitPDRespDuration).Seconds())
 		},
 	),
-	SlowLogUnpackedBytesSentTiKVTotal: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogUnpackedBytesSentTiKVTotal): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.UnpackedBytesSentKVTotal)
 		},
 	),
-	SlowLogUnpackedBytesReceivedTiKVTotal: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogUnpackedBytesReceivedTiKVTotal): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.UnpackedBytesReceivedKVTotal)
 		},
 	),
-	SlowLogUnpackedBytesSentTiKVCrossZone: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogUnpackedBytesSentTiKVCrossZone): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.UnpackedBytesSentKVCrossZone)
 		},
 	),
-	SlowLogUnpackedBytesReceivedTiKVCrossZone: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogUnpackedBytesReceivedTiKVCrossZone): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.UnpackedBytesReceivedKVCrossZone)
 		},
 	),
-	SlowLogUnpackedBytesSentTiFlashTotal: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogUnpackedBytesSentTiFlashTotal): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.UnpackedBytesSentMPPTotal)
 		},
 	),
-	SlowLogUnpackedBytesReceivedTiFlashTotal: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogUnpackedBytesReceivedTiFlashTotal): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.UnpackedBytesReceivedMPPTotal)
 		},
 	),
-	SlowLogUnpackedBytesSentTiFlashCrossZone: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogUnpackedBytesSentTiFlashCrossZone): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.UnpackedBytesSentMPPCrossZone)
 		},
 	),
-	SlowLogUnpackedBytesReceivedTiFlashCrossZone: makeKVExecDetailAccessor(
+	strings.ToLower(SlowLogUnpackedBytesReceivedTiFlashCrossZone): makeKVExecDetailAccessor(
 		parseInt64,
 		func(d *util.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.UnpackedBytesReceivedMPPCrossZone)
 		},
 	),
 	// The following fields are related to execdetails.ExecDetails.
-	execdetails.ProcessTimeStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.ProcessTimeStr): makeExecDetailAccessor(
 		parseFloat64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.TimeDetail.ProcessTime.Seconds())
 		}),
-	execdetails.BackoffTimeStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.BackoffTimeStr): makeExecDetailAccessor(
 		parseFloat64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.BackoffTime.Seconds())
 		}),
-	execdetails.TotalKeysStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.TotalKeysStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.ScanDetail.TotalKeys)
 		}),
-	execdetails.ProcessKeysStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.ProcessKeysStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.ScanDetail.ProcessedKeys)
 		}),
-	execdetails.PreWriteTimeStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.PreWriteTimeStr): makeExecDetailAccessor(
 		parseFloat64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.CommitDetail.PrewriteTime.Seconds())
 		}),
-	execdetails.CommitTimeStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.CommitTimeStr): makeExecDetailAccessor(
 		parseFloat64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, d.CommitDetail.CommitTime.Seconds())
 		}),
-	execdetails.WriteKeysStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.WriteKeysStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, int64(d.CommitDetail.WriteKeys))
 		}),
-	execdetails.WriteSizeStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.WriteSizeStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, int64(d.CommitDetail.WriteSize))
 		}),
-	execdetails.PrewriteRegionStr: makeExecDetailAccessor(
+	strings.ToLower(execdetails.PrewriteRegionStr): makeExecDetailAccessor(
 		parseUint64,
 		func(d *execdetails.ExecDetails, threshold any) bool {
 			return matchGE(threshold, int64(atomic.LoadInt32(&d.CommitDetail.PrewriteRegionNum)))
@@ -863,6 +864,11 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 }
 
 // ParseSlowLogRules parses a raw slow log rules string into a structured SlowLogRules object.
+// Each rule is separated by a semicolon (';'), and within each rule, fields are separated by commas (',').
+// Each field is a key-value pair separated by a colon (':').
+// Example:
+//
+//	"field1:val1,field2:val2;field2:val2,field3:val3;field4:val4"
 func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 	rawRules = strings.TrimSpace(rawRules)
 	if rawRules == "" {
@@ -874,7 +880,7 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 		return nil, nil
 	}
 	if len(rules) > 10 {
-		return nil, errors.Errorf("invalid slow log rules count:%d", len(rules))
+		return nil, errors.Errorf("invalid slow log rules count:%d, limit is 10", len(rules))
 	}
 
 	slowLogRules := &SlowLogRules{
@@ -894,7 +900,7 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 				return nil, errors.Errorf("invalid slow log field format:%s", field)
 			}
 
-			fieldName := strings.TrimSpace(kv[0])
+			fieldName := strings.ToLower(strings.TrimSpace(kv[0]))
 			value := strings.TrimSpace(kv[1])
 			fieldValue, err := ParseSlowLogFieldValue(fieldName, strings.Trim(value, "\"'"))
 			if err != nil {
@@ -917,7 +923,7 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 
 // ParseSlowLogFieldValue is exporting for testing.
 func ParseSlowLogFieldValue(fieldName string, value string) (any, error) {
-	parser, ok := SlowLogRuleFieldAccessors[fieldName]
+	parser, ok := SlowLogRuleFieldAccessors[strings.ToLower(fieldName)]
 	if !ok {
 		return nil, errors.Errorf("unknown slow log field name:%s", fieldName)
 	}

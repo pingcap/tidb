@@ -41,6 +41,27 @@ func newMockCtx() sessionctx.Context {
 	return ctx
 }
 
+func TestSlowLogFieldAccessor(t *testing.T) {
+	for field, accessor := range variable.SlowLogRuleFieldAccessors {
+		require.Equalf(t, strings.ToLower(field), field, "field %q: field name should be all lowercase", field)
+		require.NotNilf(t, accessor.Parse, "field %q: Parse function is missing", field)
+		require.NotNilf(t, accessor.Match, "field %q: Match function is missing", field)
+		if accessor.Setter == nil {
+			if field == strings.ToLower(variable.SlowLogParseTimeStr) ||
+				field == strings.ToLower(variable.SlowLogCompileTimeStr) ||
+				field == strings.ToLower(variable.SlowLogOptimizeTimeStr) ||
+				field == strings.ToLower(variable.SlowLogWaitTSTimeStr) ||
+				field == strings.ToLower(variable.SlowLogIsInternalStr) ||
+				field == strings.ToLower(variable.SlowLogConnIDStr) ||
+				field == strings.ToLower(variable.SlowLogSessAliasStr) ||
+				field == strings.ToLower(variable.SlowLogDBStr) {
+				continue
+			}
+			require.NotNilf(t, accessor.Setter, "field %q: Setter function is missing", field)
+		}
+	}
+}
+
 func TestMatchSingleRuleSingleCondition(t *testing.T) {
 	ctx := newMockCtx()
 	items := &variable.SlowQueryLogItems{MemMax: 200}
@@ -143,7 +164,7 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 
 func TestParseSingleSlowLogField(t *testing.T) {
 	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 37)
-	accessor, ok := variable.SlowLogRuleFieldAccessors[variable.SlowLogPlanDigest]
+	accessor, ok := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPlanDigest)]
 	require.True(t, ok)
 	require.NotNil(t, accessor.Setter)
 	require.NotNil(t, accessor.Match)
@@ -201,10 +222,10 @@ func compareConditionsUnordered(t *testing.T, got, want []variable.SlowLogCondit
 	require.Equal(t, len(got), len(want))
 	gotMap := make(map[string]any, len(got))
 	for _, c := range got {
-		gotMap[c.Field] = c.Threshold
+		gotMap[strings.ToLower(c.Field)] = c.Threshold
 	}
 	for _, c := range want {
-		val, ok := gotMap[c.Field]
+		val, ok := gotMap[strings.ToLower(c.Field)]
 		require.True(t, ok)
 		require.Equal(t, c.Threshold, val)
 	}
@@ -218,20 +239,20 @@ func TestParseSlowLogRules(t *testing.T) {
 	rules := []variable.SlowLogRule{
 		{
 			Conditions: []variable.SlowLogCondition{
-				{Field: "Conn_ID", Threshold: uint64(123)},
-				{Field: "DB", Threshold: "db1"},
-				{Field: "Succ", Threshold: true},
-				{Field: "Query_time", Threshold: 0.5276},
-				{Field: "Resource_group", Threshold: "rg1"},
+				{Field: strings.ToLower(variable.SlowLogConnIDStr), Threshold: uint64(123)},
+				{Field: strings.ToLower(variable.SlowLogDBStr), Threshold: "db1"},
+				{Field: strings.ToLower(variable.SlowLogSucc), Threshold: true},
+				{Field: strings.ToLower(variable.SlowLogQueryTimeStr), Threshold: 0.5276},
+				{Field: strings.ToLower(variable.SlowLogResourceGroup), Threshold: "rg1"},
 			},
 		},
 	}
 	allConditionFields := map[string]struct{}{
-		"Conn_ID":        {},
-		"DB":             {},
-		"Succ":           {},
-		"Query_time":     {},
-		"Resource_group": {},
+		strings.ToLower(variable.SlowLogConnIDStr):     {},
+		strings.ToLower(variable.SlowLogDBStr):         {},
+		strings.ToLower(variable.SlowLogSucc):          {},
+		strings.ToLower(variable.SlowLogQueryTimeStr):  {},
+		strings.ToLower(variable.SlowLogResourceGroup): {},
 	}
 	compareConditionsUnordered(t, rules[0].Conditions, slowLogRules.Rules[0].Conditions)
 	require.Equal(t, allConditionFields, slowLogRules.AllConditionFields)
@@ -247,19 +268,19 @@ func TestParseSlowLogRules(t *testing.T) {
 	rules = []variable.SlowLogRule{
 		{
 			Conditions: []variable.SlowLogCondition{
-				{Field: "Conn_ID", Threshold: uint64(123)},
-				{Field: "DB", Threshold: "db1"},
-				{Field: "Succ", Threshold: true},
-				{Field: "Query_time", Threshold: 0.5276},
-				{Field: "Resource_group", Threshold: "rg1"},
+				{Field: strings.ToLower(variable.SlowLogConnIDStr), Threshold: uint64(123)},
+				{Field: strings.ToLower(variable.SlowLogDBStr), Threshold: "db1"},
+				{Field: strings.ToLower(variable.SlowLogSucc), Threshold: true},
+				{Field: strings.ToLower(variable.SlowLogQueryTimeStr), Threshold: 0.5276},
+				{Field: strings.ToLower(variable.SlowLogResourceGroup), Threshold: "rg1"},
 			},
 		},
 		{
 			Conditions: []variable.SlowLogCondition{
-				{Field: "Conn_ID", Threshold: uint64(124)},
-				{Field: "DB", Threshold: "db2"},
-				{Field: "Succ", Threshold: false},
-				{Field: "Query_time", Threshold: 1.5276},
+				{Field: strings.ToLower(variable.SlowLogConnIDStr), Threshold: uint64(124)},
+				{Field: strings.ToLower(variable.SlowLogDBStr), Threshold: "db2"},
+				{Field: strings.ToLower(variable.SlowLogSucc), Threshold: false},
+				{Field: strings.ToLower(variable.SlowLogResourceGroup), Threshold: 1.5276},
 			},
 		},
 	}
@@ -301,8 +322,8 @@ func TestParseSlowLogRules(t *testing.T) {
 	for _, cond := range slowLogRules.Rules[0].Conditions {
 		m[cond.Field] = cond.Threshold
 	}
-	require.Equal(t, int64(200), m[variable.SlowLogMemMax])
-	require.Equal(t, false, m[variable.SlowLogSucc])
+	require.Equal(t, int64(200), m[strings.ToLower(variable.SlowLogMemMax)])
+	require.Equal(t, false, m[strings.ToLower(variable.SlowLogSucc)])
 
 	// empty fields in a single rule
 	_, err = variable.ParseSlowLogRules("Conn_ID:1,  , DB:db")
