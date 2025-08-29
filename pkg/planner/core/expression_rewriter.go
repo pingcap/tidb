@@ -1272,15 +1272,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64, allowVarOverride bool) bool {
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 
-	if noDecorrelate {
-		if len(corCols) == 0 {
+	if len(corCols) == 0 {
+		if noDecorrelate {
 			planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 				"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 			noDecorrelate = false
 		}
-	}
-	if allowVarOverride && // caller passed true to allow EnableNoDecorrelateInSelect variable to apply
-		len(corCols) > 0 && // has correlation columns
+	} else if allowVarOverride && // caller passed true to allow EnableNoDecorrelateInSelect variable to apply
 		planCtx.curClause == fieldList { // subquery is in the select list
 		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
 		// If it isn't already enabled via hint, and variable is set, then enable it
