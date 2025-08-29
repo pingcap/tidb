@@ -85,7 +85,8 @@ func (s *SequentialRangeChecker) IsIndexInTopNRange(idx int64) bool {
 }
 
 // processTopNValueHeap handles the logic for a complete TopN value count using existing heap with range tracking.
-func processTopNValueHeap(topNHeap *TopNHeap[TopNWithRange], encoded []byte, curCnt float64, startIdx, endIdx int64, numTopN int, allowPruning bool, sampleFactor float64) {
+func processTopNValueHeap(topNHeap *TopNHeap[TopNWithRange], encoded []byte, curCnt float64,
+	startIdx, endIdx int64, numTopN int, allowPruning bool, sampleFactor float64) {
 	// case 1: prune values with count of 1 under certain conditions
 	if curCnt == 1 && allowPruning && (topNHeap.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
 		return
@@ -247,7 +248,7 @@ func buildHist(
 	// find the first non-skipped sample to initialize the histogram
 	var firstSampleIdx int64 = 0
 	if checker != nil {
-		for i := int64(0); i < sampleNum; i++ {
+		for i := range sampleNum {
 			if !checker.IsIndexInTopNRange(i) {
 				firstSampleIdx = i
 				break
