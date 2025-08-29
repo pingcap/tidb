@@ -546,6 +546,7 @@ func TestGetTableMVCC(t *testing.T) {
 
 	hexKey := p2.Key
 	if kerneltype.IsNextGen() {
+		// EncodeKey(nil) returns the codec's key prefix. We use this to strip the prefix from the hex key.
 		keyPrefix := strings.ToUpper(hex.EncodeToString(ts.store.GetCodec().EncodeKey(nil)))
 		hexKey = strings.TrimPrefix(hexKey, keyPrefix)
 	}
