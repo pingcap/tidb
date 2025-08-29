@@ -96,15 +96,17 @@ type Loader struct {
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
+	loadForBR          bool
 }
 
-func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn) *Loader {
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, loadForBR bool) *Loader {
 	mode := LoadModeAuto
 	return &Loader{
 		mode:      mode,
 		store:     store,
 		infoCache: infoCache,
 		deferFn:   deferFn,
+		loadForBR: loadForBR,
 		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 }
@@ -412,6 +414,18 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
+	} else if l.loadForBR {
+		// only load system databases
+		allSchemas = make([]*model.DBInfo, 0, 6)
+		m.IterDatabases(func(dbInfo *model.DBInfo) error {
+			if metadef.IsSystemDB(dbInfo.Name.L) {
+				allSchemas = append(allSchemas, dbInfo)
+			}
+			if metadef.IsBRRelatedDB(dbInfo.Name.O) {
+				allSchemas = append(allSchemas, dbInfo)
+			}
+			return nil
+		})
 	} else {
 		allSchemas, err = m.ListDatabases()
 		if err != nil {
