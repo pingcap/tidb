@@ -1058,7 +1058,7 @@ a	b
 2023-01-21	2023-01-05
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 drop table if exists t;
 create table t(a int, index(a));

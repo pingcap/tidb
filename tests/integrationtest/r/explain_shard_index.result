@@ -13,7 +13,7 @@ Projection	root		explain_shard_index.test3.id, explain_shard_index.test3.a, expl
 explain format='plan_tree' select * from test3 where a=100 and (b = 100 or b = 200);
 id	task	access object	operator info
 Projection	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
-└─Selection	root		or(eq(explain_shard_index.test3.b, 100), eq(explain_shard_index.test3.b, 200))
+└─Selection	root		in(explain_shard_index.test3.b, 100, 200)
   └─Point_Get	root	table:test3, index:uk_expr(tidb_shard(`a`), a)	
 explain format='plan_tree' select * from test3 where tidb_shard(a) = 8;
 id	task	access object	operator info

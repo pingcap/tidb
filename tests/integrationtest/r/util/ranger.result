@@ -168,7 +168,7 @@ a	b
 explain format='plan_tree' select * from t where a = 0 or a = 4;
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		or(eq(util__ranger.t.a, 0), eq(util__ranger.t.a, 4))
+└─Selection	cop[tikv]		in(util__ranger.t.a, 0, 4)
   └─TableFullScan	cop[tikv]	table:t, partition:p0	keep order:false
 select * from t where a = 0 or a = 4;
 a	b
@@ -283,7 +283,7 @@ explain format='plan_tree' select * from t2 where t='aaaa' or t = 'a';
 id	task	access object	operator info
 IndexLookUp	root		
 ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:t(t)	range:["a","a"], ["aaa","aaa"], keep order:false, stats:pseudo
-└─Selection(Probe)	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
+└─Selection(Probe)	cop[tikv]		in(util__ranger.t2.t, "aaaa", "a")
   └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t2 where t='aaaa' or t = 'a';
 id	t
@@ -301,7 +301,7 @@ id	t
 explain format='plan_tree' select * from t2 where t='aaaa' or t = 'a';
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
+└─Selection	cop[tikv]		in(util__ranger.t2.t, "aaaa", "a")
   └─TableFullScan	cop[tikv]	table:t2	keep order:false
 select * from t2 where t='aaaa' or t = 'a';
 id	t
@@ -424,7 +424,7 @@ a	b	c
 2	2	3
 explain format='plan_tree' select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);
 id	task	access object	operator info
-Selection	root		eq(util__ranger.t.c, 3), or(eq(util__ranger.t.a, 1), eq(util__ranger.t.a, 2))
+Selection	root		eq(util__ranger.t.c, 3), in(util__ranger.t.a, 1, 2)
 └─Batch_Point_Get	root	table:t, index:PRIMARY(a, b)	keep order:false, desc:false
 select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);
 a	b	c

@@ -480,7 +480,7 @@ Sort	root		tpch50.nation.n_name, tpch50.nation.n_name, Column#50
       └─Projection	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.lineitem.l_shipdate, tpch50.nation.n_name, tpch50.nation.n_name
         └─HashJoin	root		inner join, equal:[eq(tpch50.customer.c_nationkey, tpch50.nation.n_nationkey)], other cond:or(and(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA")), and(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN")))
           ├─TableReader(Build)	root		data:Selection
-          │ └─Selection	cop[tikv]		or(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN"))
+          │ └─Selection	cop[tikv]		in(tpch50.nation.n_name, "INDIA", "JAPAN")
           │   └─TableFullScan	cop[tikv]	table:n2	keep order:false
           └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.orders.o_custkey, tpch50.customer.c_custkey)]
             ├─TableReader(Build)	root		data:TableFullScan
@@ -489,7 +489,7 @@ Sort	root		tpch50.nation.n_name, tpch50.nation.n_name, Column#50
               ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey)]
               │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
               │ │ ├─TableReader(Build)	root		data:Selection
-              │ │ │ └─Selection	cop[tikv]		or(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA"))
+              │ │ │ └─Selection	cop[tikv]		in(tpch50.nation.n_name, "JAPAN", "INDIA")
               │ │ │   └─TableFullScan	cop[tikv]	table:n1	keep order:false
               │ │ └─TableReader(Probe)	root		data:TableFullScan
               │ │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
