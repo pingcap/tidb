@@ -640,34 +640,18 @@ func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, p
 		return true
 	}
 
-	var childHasLimit, childHasAgg bool
-	TraverseBasePlan(proj, func(p base.Plan) bool {
-		if _, ok := p.(*logicalop.LogicalLimit); ok {
-			childHasLimit = true
-			return true
+	// If proj.Exprs are all from outerPlan, we cannot make sure the output row of projection is always null,
+	// which may break the semantics of LeftOuterJoin.
+	// Because the right side of output row of LeftOuterJoin is always null when join conditions are not met.
+	// TODO: should also disable decorrelate when proj.Exprs use columns from innerPlan and its expression is not null-rejective.
+	outerPlan := apply.Children()[0]
+	var skipDecorrelate bool
+	for _, expr := range proj.Exprs {
+		cols := expression.ExtractColumns(expr)
+		if outerPlan.Schema().ColumnsIndices(cols) != nil {
+			skipDecorrelate = true
+			break
 		}
-		if _, ok := p.(*logicalop.LogicalAggregation); ok {
-			childHasAgg = true
-			return true
-		}
-		return false
-	})
-	// To avoid false positive, we only check whether to skip decorrelate for projection pull-up.
-	if !childHasLimit && !childHasAgg {
-		// If proj.Exprs are all from outerPlan, we cannot make sure the output row of projection is always null,
-		// which may break the semantics of LeftOuterJoin.
-		// Because the right side of output row of LeftOuterJoin is always null when join conditions are not met.
-		// TODO: should also disable decorrelate when proj.Exprs use columns from innerPlan and its expression is not null-rejective.
-		outerPlan := apply.Children()[0]
-		var skipDecorrelate bool
-		for _, expr := range proj.Exprs {
-			cols := expression.ExtractColumns(expr)
-			if outerPlan.Schema().ColumnsIndices(cols) != nil {
-				skipDecorrelate = true
-				break
-			}
-		}
-		return skipDecorrelate
 	}
-	return false
+	return skipDecorrelate
 }

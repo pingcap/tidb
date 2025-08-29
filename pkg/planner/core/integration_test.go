@@ -2399,17 +2399,3 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 		tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
-
-func TestWrongDecorrelate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (amount decimal(65,20),segment1 varchar(50));")
-	tk.MustExec("INSERT INTO t1 (amount, segment1) VALUES (6.23000000000000000000, '60021022342');")
-	tk.MustExec("INSERT INTO t1 (amount, segment1) VALUES (30025.20000000000000000000, '60121022342');")
-	tk.MustExec("INSERT INTO t1 (amount, segment1) VALUES (0.00000000000000000000, '60021022342');")
-	tk.MustQuery("SELECT (SELECT IF(substr(dd.segment1,1,3)='600','X','') FROM dual WHERE dd.amount<>0) c1,dd.amount,dd.segment1 FROM t1 dd order by 1, 2, 3;").Check(testkit.Rows(
-		"<nil> 0.00000000000000000000 60021022342",
-		" 30025.20000000000000000000 60121022342",
-		"X 6.23000000000000000000 60021022342"))
-}
