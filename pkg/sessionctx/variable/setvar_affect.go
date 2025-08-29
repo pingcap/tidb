@@ -116,6 +116,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_store_batch_size":                           {},
 	"mpp_version":                                     {},
 	"tidb_enable_inl_join_inner_multi_pattern":        {},
+	"tidb_opt_enable_no_decorrelate_in_select":        {},
 	"tidb_opt_enable_late_materialization":            {},
 	"tidb_opt_ordering_index_selectivity_threshold":   {},
 	"tidb_opt_ordering_index_selectivity_ratio":       {},
@@ -131,7 +132,6 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tiflash_fine_grained_shuffle_batch_size":         {},
 	"tiflash_fine_grained_shuffle_stream_count":       {},
 	"tidb_hash_join_version":                          {},
-	"tidb_enable_no_decorrelate":                      {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},

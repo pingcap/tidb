@@ -739,7 +739,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 		return v, true
 	}
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, false)
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
 
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
@@ -1045,7 +1045,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	}
 	np = er.popExistsSubPlan(planCtx, np)
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, true)
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
 
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
@@ -1217,7 +1217,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	lt, rt := lexpr.GetType(er.sctx.GetEvalCtx()), rexpr.GetType(er.sctx.GetEvalCtx())
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, false)
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
 
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
@@ -1269,7 +1269,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	return v, true
 }
 
-func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64, allowVarOverride bool) bool {
+func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64) bool {
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 
 	if len(corCols) == 0 {
@@ -1278,12 +1278,16 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 				"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 			noDecorrelate = false
 		}
-	} else if allowVarOverride && // caller passed true to allow EnableNoDecorrelateInSelect variable to apply
-		planCtx.curClause == fieldList { // subquery is in the select list
-		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
-		// If it isn't already enabled via hint, and variable is set, then enable it
-		if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelateInSelect {
-			noDecorrelate = true
+	} else {
+		sctx := planCtx.builder.subQueryCtx
+		// Only support scalar and exists subqueries
+		validSubqType := sctx == handlingScalarSubquery || sctx == handlingExistsSubquery
+		if validSubqType && planCtx.curClause == fieldList { // subquery is in the select list
+			planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
+			// If it isn't already enabled via hint, and variable is set, then enable it
+			if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelateInSelect {
+				noDecorrelate = true
+			}
 		}
 	}
 	return noDecorrelate
@@ -1300,7 +1304,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	}
 	np = planCtx.builder.buildMaxOneRow(np)
 	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags, true)
+	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags)
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
 		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, logicalop.LeftOuterJoin, noDecorrelate)
