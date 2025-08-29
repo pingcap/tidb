@@ -1278,11 +1278,13 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 				"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 			noDecorrelate = false
 		}
-	} else if allowVarOverride &&
-		len(corCols) > 0 &&
-		planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelate {
-		// Check if this is a select list subquery
-		if planCtx.curClause == fieldList {
+	}
+	if allowVarOverride && // caller passed true to allow EnableNoDecorrelateInSelect variable to apply
+		len(corCols) > 0 && // has correlation columns
+		planCtx.curClause == fieldList { // subquery is in the select list
+		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
+		// If it isn't already enabled via hint, and variable is set, then enable it
+		if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelateInSelect {
 			noDecorrelate = true
 		}
 	}
