@@ -242,6 +242,9 @@ type stmtSummaryStats struct {
 
 	storageKV  bool // query read from TiKV
 	storageMPP bool // query read from TiFlash
+
+	sumMemArbitration float64
+	maxMemArbitration float64
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -283,6 +286,8 @@ type StmtExecInfo struct {
 	PlanCacheUnqualified string
 
 	LazyInfo StmtExecLazyInfo
+
+	MemArbitration time.Duration
 }
 
 // StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
@@ -877,6 +882,12 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
 	}
+	memArbitration := sei.MemArbitration.Seconds()
+	ssStats.sumMemArbitration += memArbitration
+	if memArbitration > ssStats.maxMemArbitration {
+		ssStats.maxMemArbitration = memArbitration
+	}
+
 	ssStats.sumDisk += sei.DiskMax
 	if sei.DiskMax > ssStats.maxDisk {
 		ssStats.maxDisk = sei.DiskMax

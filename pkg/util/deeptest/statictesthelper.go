@@ -213,6 +213,8 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 		} else {
 			require.Fail(t, "a function should be compared by pointer or ignored, because there's no way to compare the content of a function", path)
 		}
+	case reflect.Chan:
+		require.True(t, valA.IsNil() && valB.IsNil())
 	default:
 		require.Fail(t, "unsupported type: "+valA.Type().String(), path)
 	}
