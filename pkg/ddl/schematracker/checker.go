@@ -68,19 +68,11 @@ type Checker struct {
 
 // NewChecker creates a Checker.
 func NewChecker(realDDL ddl.DDL, realExecutor ddl.Executor, infoCache *infoschema.InfoCache) *Checker {
-	tracker := NewSchemaTracker(2)
-	checker := &Checker{
+	return &Checker{
 		realDDL:      realDDL,
 		realExecutor: realExecutor,
 		infoCache:    infoCache,
-		tracker:      tracker,
-	}
-	return checker
-}
-
-func mustNil(err error) {
-	if err != nil {
-		panic(err)
+		tracker:      NewSchemaTracker(2),
 	}
 }
 
