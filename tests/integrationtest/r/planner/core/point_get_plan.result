@@ -54,11 +54,11 @@ Selection	root		eq(planner__core__point_get_plan.t.b, 1), eq(planner__core__poin
 └─Point_Get	root	table:t	handle:1
 explain format='plan_tree' select * from t where 1 = a and 1 = b and 1 = c;
 id	task	access object	operator info
-Selection	root		eq(1, planner__core__point_get_plan.t.b), eq(1, planner__core__point_get_plan.t.c)
+Selection	root		eq(planner__core__point_get_plan.t.b, 1), eq(planner__core__point_get_plan.t.c, 1)
 └─Point_Get	root	table:t	handle:1
 explain format='plan_tree' select * from t where 1 = a and b = 1 and 1 = c;
 id	task	access object	operator info
-Selection	root		eq(1, planner__core__point_get_plan.t.c), eq(planner__core__point_get_plan.t.b, 1)
+Selection	root		eq(planner__core__point_get_plan.t.b, 1), eq(planner__core__point_get_plan.t.c, 1)
 └─Point_Get	root	table:t	handle:1
 explain format='plan_tree' select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2));
 id	task	access object	operator info
