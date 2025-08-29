@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -707,6 +708,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
+	var castDur time.Duration
 	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, taskRange.physicalTable.RecordPrefix(),
 		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
@@ -719,9 +721,11 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 				return false, nil
 			}
 
+			t := time.Now()
 			if err1 := w.getRowRecord(handle, recordKey, rawRow); err1 != nil {
 				return false, errors.Trace(err1)
 			}
+			castDur += time.Since(t)
 			lastAccessedHandle = recordKey
 			if recordKey.Cmp(taskRange.endKey) == 0 {
 				taskDone = true
@@ -734,9 +738,11 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 		taskDone = true
 	}
 
-	logutil.DDLLogger().Debug("txn fetches handle info",
+	logutil.DDLLogger().Info("txn fetches handle info",
 		zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()),
+		zap.Duration("castDur", castDur),
+		zap.Int("fetchedRows", len(w.rowRecords)),
 		zap.Duration("takeTime", time.Since(startTime)))
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
@@ -851,6 +857,21 @@ func (w *updateColumnWorker) cleanRowMap() {
 	}
 }
 
+func (w *updateColumnWorker) getMockRowRecord(handleRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
+	mockRecord := make([]*rowRecord, 0)
+	n := w.batchCnt
+	tableID, handleStart, _ := tablecodec.DecodeRecordKey(handleRange.startKey)
+
+	pk := handleStart.IntValue()
+	for len(mockRecord) < n {
+		rowKey := tablecodec.EncodeRowKey(tableID, codec.EncodeInt(nil, pk))
+		newRowVal := []uint8{128, 0, 4, 0, 0, 0, 1, 2, 3, 4, 8, 0, 16, 0, 33, 0, 41, 0, 146, 75, 107, 93, 84, 220, 43, 0, 146, 75, 107, 93, 84, 220, 43, 0, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 55, 56, 146, 75, 107, 93, 84, 220, 43, 0}
+		mockRecord = append(mockRecord, &rowRecord{key: rowKey, vals: newRowVal})
+		pk++
+	}
+	return mockRecord, tablecodec.EncodeRowKey(tableID, codec.EncodeInt(nil, pk)), false, nil
+}
+
 // BackfillData will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
 func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
@@ -879,7 +900,28 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		}
 		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
-		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		var (
+			rowRecords []*rowRecord
+			nextKey    kv.Key
+			taskDone   bool
+		)
+		if w.oldColInfo.Name.L == "random_m2m" {
+			t := time.Now()
+			rowRecords, nextKey, taskDone, err = w.getMockRowRecord(handleRange)
+			logutil.DDLLogger().Info("use MockRowRecord",
+				zap.Duration("takeTime", time.Since(t)),
+				zap.Int("len", len(rowRecords)))
+		} else {
+			t := time.Now()
+			rowRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
+			//if len(rowRecords) > 0 {
+			//	fmt.Println("fetchRowColVals", rowRecords[0].key, rowRecords[0].vals)
+			//}
+			logutil.DDLLogger().Info("fetchRowColVals",
+				zap.Duration("takeTime", time.Since(t)),
+				zap.Bool("taskDone", taskDone),
+				zap.Int("len", len(rowRecords)))
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -914,6 +956,11 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
 
+	logutil.DDLLogger().Info("updateColumnWorker BackfillData",
+		zap.Duration("takeTimes", time.Since(oprStartTime)),
+		zap.Int("scanCount", taskCtx.scanCount),
+		zap.Int("addedCount", taskCtx.addedCount),
+	)
 	return
 }
 
