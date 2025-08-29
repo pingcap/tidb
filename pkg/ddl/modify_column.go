@@ -845,7 +845,11 @@ func GetModifiableColumnJob(
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column")
 		}
 		// new col's origin default value be the same as the new default value.
-		if err = newCol.ColumnInfo.SetOriginDefaultValue(newCol.ColumnInfo.GetDefaultValue()); err != nil {
+		originDefVal, err := generateOriginDefaultValue(newCol.ColumnInfo, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err = newCol.ColumnInfo.SetOriginDefaultValue(originDefVal); err != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column set origin default value failed")
 		}
 	}

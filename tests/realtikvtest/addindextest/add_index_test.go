@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -242,5 +243,38 @@ func TestModifyColumnWithIndex(t *testing.T) {
 		tk.MustExec("admin check table t;")
 		tk.MustExec("alter table t modify a bit(5) not null")
 		tk.MustExec("admin check table t;")
+	}
+}
+
+func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	testcases := []struct {
+		caseName        string
+		enableDistTask  string
+		enableFastReorg string
+	}{
+		{"txn", "off", "off"},
+		{"local ingest", "off", "on"},
+		{"dxf ingest", "on", "on"},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_ddl_enable_fast_reorg = %s;", tc.enableFastReorg))
+			tk.MustExec("drop table if exists t1")
+			tk.MustExec("create table t1 (c int(10), c1 datetime default (date_format(now(),'%Y-%m-%d')));")
+			tk.MustExec("insert into t1(c) values (1), (2);")
+			tk.MustExec("alter table t1 add index idx(c1);")
+			tk.MustExec("insert into t1 values (3, default);")
+			tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
+			tk.MustExec("insert into t1 values (4, default);")
+			tk.MustGetErrCode("alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));", errno.ErrTruncatedWrongValue)
+			tk.MustExec("delete from t1 where c = 4;")
+			tk.MustExec("alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));")
+			tk.MustExec("insert into t1 values (5, default);")
+			tk.MustExec("alter table t1 drop index idx;")
+		})
 	}
 }
