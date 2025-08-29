@@ -1703,7 +1703,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 		require.NoError(t, err)
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow), kv.IntHandle(randomRow), nil)
 		require.NoError(t, err)
-		err = txn.Commit(context.Background())
+		require.NoError(t, txn.Commit(context.Background()))
 		tk.MustExec("admin check table admin_test")
 	}
 }
@@ -1790,7 +1790,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow))
 		require.NoError(t, err)
-		err = txn.Commit(context.Background())
+		require.NoError(t, txn.Commit(context.Background()))
 		tk.MustExec("admin check table admin_test")
 	}
 
@@ -1814,7 +1814,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 		require.NoError(t, err)
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow))
 		require.NoError(t, err)
-		err = txn.Commit(context.Background())
+		require.NoError(t, txn.Commit(context.Background()))
 		tk.MustExec("admin check table admin_test")
 	}
 
@@ -2208,4 +2208,24 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 		err = tk.ExecToErr("admin check table t")
 		require.Error(t, err)
 	}
+}
+
+func TestAdminCheckIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Unsupported index
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t(pk char(10) PRIMARY KEY CLUSTERED, c1 JSON, INDEX mvi((CAST(c1 AS SIGNED ARRAY))))")
+	tk.MustExec("INSERT INTO t VALUES ('abc', '[1, 2, 3]')")
+	tk.ExecToErr("ADMIN CHECK INDEX t mvi (0, 3)")
+
+	// MV Index
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t(pk int PRIMARY KEY CLUSTERED, c1 JSON, INDEX mvi((CAST(c1 AS SIGNED ARRAY))))")
+	tk.MustExec("INSERT INTO t VALUES (2, '[1, 2, 3]')")
+	rs := tk.MustQuery("ADMIN CHECK INDEX t mvi (0, 3)").Sort().Rows()
+	require.EqualValues(t, rs, [][]any{{"1", "2"}, {"2", "2"}, {"3", "2"}})
 }

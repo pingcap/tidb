@@ -1897,10 +1897,8 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 				TblName: tn.Name,
 				DBName:  tn.Schema,
 			})
-			tp := col.FieldType.Clone()
-			tp.SetArray(false)
 			schema.Append(&expression.Column{
-				RetType:  tp,
+				RetType:  col.FieldType.ArrayType(),
 				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				ID:       col.ID})
 		}
