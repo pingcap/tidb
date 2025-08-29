@@ -39,6 +39,9 @@ const (
 )
 
 var metaPrefix = []byte("m")
+// rawPrefix defines the prefix for RawKV keys (0x72). 
+// Used as the end key for meta range to exclude RawKV keys from meta placement rules.
+var rawPrefix = []byte("r")
 
 // GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
 func GroupID(id int64) string {

@@ -463,7 +463,10 @@ func GetRangeStartAndEndKeyHex(rangeBundleID string) (startKey string, endKey st
 	if rangeBundleID == TiDBBundleRangePrefixForMeta {
 		// Use codec.EncodeBytes to properly encode the meta prefix in table mode
 		startKey = hex.EncodeToString(codec.EncodeBytes(nil, metaPrefix))
-		endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(0)))
+		// Use rawPrefix as endKey to ensure the meta range [metaPrefix, rawPrefix) only
+		// contains meta keys and excludes RawKV keys. This prevents unintended placement
+		// policy application to raw keys that fall between meta ('m', 0x6d) and table ('t', 0x74) prefixes.
+		endKey = hex.EncodeToString(codec.EncodeBytes(nil, rawPrefix))
 	}
 	return startKey, endKey
 }
