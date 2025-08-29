@@ -102,7 +102,7 @@ func TestStartState(t *testing.T) {
 		vardef.TiDBOptRiskRangeSkewRatio,
 		vardef.TiDBOptRiskGroupNDVSkewRatio,
 		vardef.TiDBOptSelectivityFactor,
-    vardef.TiDBOptPreferRangeScan,
+		vardef.TiDBOptPreferRangeScan,
 		vardef.TiDBOptEnableNoDecorrelateInSelect,
 	}
 	fixes := []uint64{fixcontrol.Fix44855, fixcontrol.Fix45132, fixcontrol.Fix52869}
