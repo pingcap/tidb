@@ -31,7 +31,6 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/standby",
-        "//pkg/statistics",
         "//pkg/store",
         "//pkg/store/copr",
         "//pkg/store/driver",

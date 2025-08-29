@@ -23,24 +23,7 @@
     "name": "TestOutdatedAnalyze",
     "cases": [
       {
-        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
-        "EnablePseudoForOutdatedStats": true,
-        "RatioOfPseudoEstimate": 10
-      },
-      {
-        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
-        "EnablePseudoForOutdatedStats": true,
-        "RatioOfPseudoEstimate": 0.7
-      },
-      {
-        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
-        "EnablePseudoForOutdatedStats": false,
-        "RatioOfPseudoEstimate": 10
-      },
-      {
-        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
-        "EnablePseudoForOutdatedStats": false,
-        "RatioOfPseudoEstimate": 0.7
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5"
       }
     ]
   },

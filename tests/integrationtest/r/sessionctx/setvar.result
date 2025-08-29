@@ -1297,26 +1297,6 @@ set @@tidb_enable_ordered_result_mode=default;
 select @@tidb_enable_ordered_result_mode;
 @@tidb_enable_ordered_result_mode
 0
-select /*+ set_var(tidb_enable_pseudo_for_outdated_stats=0) */ @@tidb_enable_pseudo_for_outdated_stats;
-@@tidb_enable_pseudo_for_outdated_stats
-0
-select @@tidb_enable_pseudo_for_outdated_stats;
-@@tidb_enable_pseudo_for_outdated_stats
-0
-set @@tidb_enable_pseudo_for_outdated_stats=default;
-select @@tidb_enable_pseudo_for_outdated_stats;
-@@tidb_enable_pseudo_for_outdated_stats
-0
-select /*+ set_var(tidb_enable_pseudo_for_outdated_stats=1) */ @@tidb_enable_pseudo_for_outdated_stats;
-@@tidb_enable_pseudo_for_outdated_stats
-1
-select @@tidb_enable_pseudo_for_outdated_stats;
-@@tidb_enable_pseudo_for_outdated_stats
-0
-set @@tidb_enable_pseudo_for_outdated_stats=default;
-select @@tidb_enable_pseudo_for_outdated_stats;
-@@tidb_enable_pseudo_for_outdated_stats
-0
 select /*+ set_var(tidb_stats_load_sync_wait=0) */ @@tidb_stats_load_sync_wait;
 @@tidb_stats_load_sync_wait
 0
