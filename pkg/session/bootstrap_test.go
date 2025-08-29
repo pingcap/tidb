@@ -655,7 +655,11 @@ func TestForIssue23387(t *testing.T) {
 	currentBootstrapVersion = version57
 
 	// Bootstrap to an old version, create a user.
-	store := teststore.NewMockStoreWithoutBootstrap(t)
+	store, err := teststore.NewMockStoreWithoutBootstrap()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 
