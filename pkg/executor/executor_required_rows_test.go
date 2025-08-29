@@ -215,7 +215,7 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	domain.BindDomain(ctx, domain.NewMockDomain())
+	ctx.BindDomain(domain.NewMockDomain())
 	return ctx
 }
 
