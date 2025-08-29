@@ -2184,7 +2184,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"    ├─UnionScan_.*" +
 				"    │ └─IndexReader_.*" +
 				"    │   └─IndexRangeScan_.*" +
-				"    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.* foreign_keys:2 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.* foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
 				"      └─Delete_.*" +
 				"        ├─UnionScan_.*" +
 				"        │ └─IndexReader_.*" +
