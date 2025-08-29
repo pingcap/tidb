@@ -2010,20 +2010,13 @@ func newAddIndexTxnWorker(
 	}
 
 	allIndexes := make([]table.Index, 0, len(elements))
-	if job.Type == model.ActionModifyColumn {
-		// For modify column with indexes, we only need to add the index one by one.
-		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, currElement.ID)
+	for _, elem := range elements {
+		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 		allIndexes = append(allIndexes, index)
-	} else {
-		for _, elem := range elements {
-			if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
-				continue
-			}
-			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-			index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-			allIndexes = append(allIndexes, index)
-		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
@@ -2612,7 +2605,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if backendCtx == nil {
 				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, 0)
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, 0, true)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -2661,6 +2654,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	// generate taskKey for multi schema change.
 	if mInfo := reorgInfo.Job.MultiSchemaInfo; mInfo != nil {
 		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
+	}
+	if reorgInfo.Job.Type == model.ActionModifyColumn {
+		taskKey = fmt.Sprintf("%s/%d", taskKey, reorgInfo.currElement.ID)
 	}
 
 	// For resuming add index task.

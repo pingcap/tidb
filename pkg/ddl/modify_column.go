@@ -546,6 +546,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
+		changingCol.OriginDefaultValue = nil
 		var done bool
 		if job.MultiSchemaInfo != nil {
 			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
@@ -662,7 +663,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)
 			}, false)
-		return w.updateCurrentElement(jobCtx, tbl, reorgInfo)
+		return w.updateCurrentElement(jobCtx, tbl, reorgInfo, rh)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
