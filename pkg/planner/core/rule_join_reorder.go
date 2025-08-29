@@ -430,44 +430,41 @@ func (s *baseSingleGroupJoinOrderSolver) buildLeadingJoinTree(order *hint.Leadin
 		return nil, curJoinGroup, nil
 	}
 
-	if order.Tables != nil {
-		if len(order.Tables) != 1 {
-			return nil, nil, fmt.Errorf("invalid leading hint: leaf node has multiple tables")
-		}
+	// Leaf node: single table
+	if order.Table != nil {
+		hintTbl := order.Table
+		var plan base.LogicalPlan
+		var remainingGroup []base.LogicalPlan
+		matchFound := false
 
-		hintTbl := order.Tables[0].TblName
-
-		var (
-			plan           base.LogicalPlan
-			remainingGroup []base.LogicalPlan
-			matchFound     bool
-		)
-
-		// Traverse the currently available JoinGroup to find the matching table
+		// Find the matching table in current join group
 		for i, p := range curJoinGroup {
 			tableAlias := util.ExtractTableAlias(p, p.QueryBlockOffset())
 			if tableAlias == nil {
 				continue
 			}
 
-			if hintTbl.L == tableAlias.TblName.L {
+			// Match table name and consider query block
+			if (hintTbl.DBName.L == tableAlias.DBName.L || hintTbl.DBName.L == "*") &&
+				hintTbl.TblName.L == tableAlias.TblName.L &&
+				hintTbl.SelectOffset == tableAlias.SelectOffset {
 				plan = p
-				remainingGroup = make([]base.LogicalPlan, 0, len(curJoinGroup)-1)
-				remainingGroup = append(remainingGroup, curJoinGroup[:i]...)
-				remainingGroup = append(remainingGroup, curJoinGroup[i+1:]...)
+				remainingGroup = make([]base.LogicalPlan, len(curJoinGroup)-1)
+				copy(remainingGroup, curJoinGroup[:i])
+				copy(remainingGroup[i:], curJoinGroup[i+1:])
 				matchFound = true
 				break
 			}
 		}
 
 		if !matchFound {
-			return nil, nil, fmt.Errorf("table %s in leading hint is not a valid join group", hintTbl.O)
+			return nil, nil, fmt.Errorf("table %s in leading hint is not found in join group", hintTbl.TblName.O)
 		}
 
 		return plan, remainingGroup, nil
 	}
 
-	// recursively build left and right subtrees
+	// Internal node: recursively build left and right subtrees
 	leftPlan, leftRemaining, err := s.buildLeadingJoinTree(order.Left, curJoinGroup, hasOuterJoin, opt)
 	if err != nil {
 		return nil, nil, err
@@ -478,15 +475,13 @@ func (s *baseSingleGroupJoinOrderSolver) buildLeadingJoinTree(order *hint.Leadin
 		return nil, nil, err
 	}
 
-	// Merge left and right plan
-	var usedEdges []*expression.ScalarFunction
-	var joinType *joinTypeWithExtMsg
-
-	leftPlan, rightPlan, usedEdges, joinType = s.checkConnection(leftPlan, rightPlan)
+	// Check connection between left and right plans
+	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if hasOuterJoin && usedEdges == nil {
 		return nil, nil, fmt.Errorf("cartesian join is not allowed with outer join")
 	}
 
+	// Create the join
 	var joinPlan base.LogicalPlan
 	joinPlan, s.otherConds = s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
 	return joinPlan, rightRemaining, nil

@@ -563,7 +563,7 @@ type PlanHints struct {
 // LeadingTableOrder represents a node in the LEADING hint tree.
 type LeadingTableOrder struct {
 	// Tables is a list of tables if this is a leaf node, or nil for internal nodes.
-	Tables []HintedTable
+	Table *HintedTable
 	// Left and Right are children nodes for an internal join node.
 	Left  *LeadingTableOrder
 	Right *LeadingTableOrder
@@ -890,6 +890,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			cteMerge = true
 		case HintLeading:
 			leadingHintCnt++
+
+			// Check for multiple leading hints or conflict with straight_join
 			if leadingHintCnt > 1 || (leadingHintCnt > 0 && straightJoinOrder) {
 				if p.LeadingOrder != nil {
 					p.LeadingOrder = nil
@@ -908,10 +910,11 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				continue
 			}
 
-			var leadingOrder *LeadingTableOrder
-			leadingOrder, err = getLeadingTableOrder(leadingExpr, currentDB, hintProcessor, currentLevel, warnHandler)
+			// Parse the leading expression into a tree structure
+			leadingOrder, err := getLeadingTableOrder(leadingExpr, currentDB, hintProcessor, currentLevel, warnHandler)
 			if err != nil {
-				return nil, 0, err
+				warnHandler.SetHintWarning(fmt.Sprintf("Invalid LEADING hint: %s", err.Error()))
+				continue
 			}
 			p.LeadingOrder = leadingOrder
 		case HintSemiJoinRewrite:
@@ -968,13 +971,17 @@ func getLeadingTableOrder(expr *ast.LeadingExpr, currentDB string, hintProcessor
 	if expr == nil {
 		return nil, nil
 	}
+
 	if expr.Table != nil {
-		// ast.HintTable to HintedTable
+		// Leaf node: convert ast.HintTable to HintedTable
 		tables := tableNames2HintTableInfo(currentDB, "leading", []ast.HintTable{*expr.Table}, hintProcessor, currentLevel, warnHandler)
-		return &LeadingTableOrder{Tables: tables}, nil
+		if len(tables) != 1 {
+			return nil, fmt.Errorf("invalid table in leading hint")
+		}
+		return &LeadingTableOrder{Table: &tables[0]}, nil
 	}
 
-	// Internal nodes, recursively handle left and right subtrees
+	// Internal node: recursively process left and right subtrees
 	leftOrder, err := getLeadingTableOrder(expr.Left, currentDB, hintProcessor, currentLevel, warnHandler)
 	if err != nil {
 		return nil, err
@@ -984,7 +991,10 @@ func getLeadingTableOrder(expr *ast.LeadingExpr, currentDB string, hintProcessor
 		return nil, err
 	}
 
-	// Build new internal nodes
+	if leftOrder == nil || rightOrder == nil {
+		return nil, fmt.Errorf("invalid leading hint expression")
+	}
+
 	return &LeadingTableOrder{
 		Left:  leftOrder,
 		Right: rightOrder,
