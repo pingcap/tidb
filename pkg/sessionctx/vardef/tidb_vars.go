@@ -1388,7 +1388,7 @@ const (
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
-	DefOptEnableNoDecorrelateInSelect       = true
+	DefOptEnableNoDecorrelateInSelect       = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false
