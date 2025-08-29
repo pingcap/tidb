@@ -369,6 +369,11 @@ func MakeSourceFileRegion(
 // we should read the actual row count to prevent generating duplicate key. Otherwise, the row
 // count is not used, so we can skip reading the row count to improve performance.
 func NeedPreciseRowCount(tblInfo *model.TableInfo) bool {
+	// Some tests may not set the table info.
+	if tblInfo == nil {
+		return true
+	}
+
 	if common.TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
 		return true
 	}
