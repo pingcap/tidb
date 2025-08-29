@@ -546,6 +546,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
+		changingCol.OriginDefaultValue = nil
 		var done bool
 		if job.MultiSchemaInfo != nil {
 			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
