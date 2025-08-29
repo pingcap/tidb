@@ -3926,6 +3926,13 @@ type TableOptimizerHint struct {
 	Indexes []CIStr
 }
 
+// LeadingExpr represents a recursive LEADING hint expression.
+type LeadingExpr struct {
+	Table *HintTable
+	Left  *LeadingExpr
+	Right *LeadingExpr
+}
+
 // HintTimeRange is the payload of `TIME_RANGE` hint
 type HintTimeRange struct {
 	From string

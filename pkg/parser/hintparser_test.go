@@ -30,6 +30,32 @@ func TestParseHint(t *testing.T) {
 		errs   []string
 	}{
 		{
+			input: "LEADING(a,(b,(c,d)))",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("LEADING"),
+					HintData: &ast.LeadingExpr{
+						Left: &ast.LeadingExpr{
+							Table: &ast.HintTable{TableName: ast.NewCIStr("a")},
+						},
+						Right: &ast.LeadingExpr{
+							Left: &ast.LeadingExpr{
+								Table: &ast.HintTable{TableName: ast.NewCIStr("b")},
+							},
+							Right: &ast.LeadingExpr{
+								Left: &ast.LeadingExpr{
+									Table: &ast.HintTable{TableName: ast.NewCIStr("c")},
+								},
+								Right: &ast.LeadingExpr{
+									Table: &ast.HintTable{TableName: ast.NewCIStr("d")},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			input: "",
 			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
@@ -355,5 +381,92 @@ func TestParseHint(t *testing.T) {
 			require.Containsf(t, err.Error(), tc.errs[i], "input = %s, i = %d", tc.input, i)
 		}
 		require.Equalf(t, tc.output, output, "input = %s,\n... output = %q", tc.input, output)
+	}
+}
+
+func TestLeadingHintRecursiveCases(t *testing.T) {
+	cases := []struct {
+		name    string
+		sql     string
+		checkFn func(t *testing.T, leading *ast.LeadingExpr)
+	}{
+		{
+			name: "a,(b,(c,d))",
+			sql: `select /*+ LEADING(a,(b,(c,d))) */ * 
+			       from a join b on a.id=b.id 
+			       join c on b.id=c.id 
+			       join d on c.id=d.id`,
+			checkFn: func(t *testing.T, leading *ast.LeadingExpr) {
+				getName := func(e *ast.LeadingExpr) string {
+					if e == nil || e.Table == nil {
+						return ""
+					}
+					return e.Table.TableName.L
+				}
+				require.Equal(t, "a", getName(leading.Left))
+				require.Equal(t, "b", getName(leading.Right.Left))
+				require.Equal(t, "c", getName(leading.Right.Right.Left))
+				require.Equal(t, "d", getName(leading.Right.Right.Right))
+			},
+		},
+		{
+			name: "b,(a,(d,c))",
+			sql: `select /*+ LEADING(b,(a,(d,c))) */ * 
+			       from a join b on a.id=b.id 
+			       join c on b.id=c.id 
+			       join d on c.id=d.id`,
+			checkFn: func(t *testing.T, leading *ast.LeadingExpr) {
+				getName := func(e *ast.LeadingExpr) string {
+					if e == nil || e.Table == nil {
+						return ""
+					}
+					return e.Table.TableName.L
+				}
+				require.Equal(t, "b", getName(leading.Left))
+				require.Equal(t, "a", getName(leading.Right.Left))
+				require.Equal(t, "d", getName(leading.Right.Right.Left))
+				require.Equal(t, "c", getName(leading.Right.Right.Right))
+			},
+		},
+		{
+			name: "(a,b),(c,d)",
+			sql: `select /*+ LEADING((a,b),(c,d)) */ * 
+			       from a join b on a.id=b.id 
+			       join c on b.id=c.id 
+			       join d on c.id=d.id`,
+			checkFn: func(t *testing.T, leading *ast.LeadingExpr) {
+				getName := func(e *ast.LeadingExpr) string {
+					if e == nil || e.Table == nil {
+						return ""
+					}
+					return e.Table.TableName.L
+				}
+				require.Equal(t, "a", getName(leading.Left.Left))
+				require.Equal(t, "b", getName(leading.Left.Right))
+				require.Equal(t, "c", getName(leading.Right.Left))
+				require.Equal(t, "d", getName(leading.Right.Right))
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := parser.New()
+			stmt, err := p.ParseOneStmt(tc.sql, "", "")
+			require.NoError(t, err)
+
+			sel, ok := stmt.(*ast.SelectStmt)
+			require.True(t, ok)
+			require.Len(t, sel.TableHints, 1)
+
+			h := sel.TableHints[0]
+			require.Equal(t, "leading", h.HintName.L)
+
+			leading, ok := h.HintData.(*ast.LeadingExpr)
+			require.Truef(t, ok, "HintData should be *ast.LeadingExpr, got %T", h.HintData)
+			require.NotNil(t, leading)
+
+			tc.checkFn(t, leading)
+		})
 	}
 }
