@@ -122,6 +122,10 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessionapi.Session
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	defer func() {
+		tk.Session().GetSessionVars().InRestrictedSQL = false
+	}()
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
