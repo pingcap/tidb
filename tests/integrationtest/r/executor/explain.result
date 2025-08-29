@@ -368,14 +368,13 @@ create table t (a int, b int, index (a));
 insert into t values (1, 1);
 explain analyze format='brief' select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-IndexHashJoin	12.50	0	root		<execution_info>	inner join, inner:IndexLookUp, outer key:executor__explain.t.b, inner key:executor__explain.t.a, equal cond:eq(executor__explain.t.b, executor__explain.t.a)	<memory>	<disk>
-├─TableReader(Build)	10.00	0	root		<execution_info>	data:Selection	<memory>	<disk>
-│ └─Selection	10.00	0	cop[tikv]		<execution_info>	eq(executor__explain.t.b, 2333)	<memory>	<disk>
-│   └─TableFullScan	10000.00	1	cop[tikv]	table:t1	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
-└─IndexLookUp(Probe)	12.50	0	root		<execution_info>		<memory>	<disk>
-  ├─Selection(Build)	12.50	0	cop[tikv]		<execution_info>	eq(executor__explain.t.a, 2333)	<memory>	<disk>
-  │ └─IndexRangeScan	12500.00	0	cop[tikv]	table:t2, index:a(a)	<execution_info>	range: decided by [eq(executor__explain.t.a, executor__explain.t.b)], keep order:false, stats:pseudo	<memory>	<disk>
-  └─TableRowIDScan(Probe)	12.50	0	cop[tikv]	table:t2	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
+HashJoin	100.00	0	root		<execution_info>	CARTESIAN inner join, equal:[eq(executor__explain.t.b, executor__explain.t.a)]	<memory>	<disk>
+├─IndexLookUp(Build)	10.00	0	root		<execution_info>		<memory>	<disk>
+│ ├─IndexRangeScan(Build)	10.00	0	cop[tikv]	table:t2, index:a(a)	<execution_info>	range:[2333,2333], keep order:false, stats:pseudo	<memory>	<disk>
+│ └─TableRowIDScan(Probe)	10.00	0	cop[tikv]	table:t2	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
+└─TableReader(Probe)	10.00	0	root		<execution_info>	data:Selection	<memory>	<disk>
+  └─Selection	10.00	0	cop[tikv]		<execution_info>	eq(executor__explain.t.b, 2333)	<memory>	<disk>
+    └─TableFullScan	10000.00	1	cop[tikv]	table:t1	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
 drop table if exists t;
 CREATE TABLE `t` (`a` mediumint(9) NOT NULL,`b` year(4) NOT NULL,`c` varbinary(62) NOT NULL,`d` text COLLATE utf8mb4_unicode_ci NOT NULL,`e` tinyint(4) NOT NULL DEFAULT '115',`f` smallint(6) DEFAULT '2675',`g` date DEFAULT '1981-09-17',`h` mediumint(8) unsigned NOT NULL,`i` varchar(384) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,UNIQUE KEY `idx_23` (`h`,`f`),PRIMARY KEY (`h`,`a`) /*T![clustered_index] CLUSTERED */,UNIQUE KEY `idx_25` (`h`,`i`(5),`e`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (`h`) PARTITIONS 1;
 INSERT INTO `t` VALUES (2065948,1999,_binary '8jxN','rf',-54,-5656,'1987-07-03',259254,'7me坨'),(-8248164,2024,_binary 'zA5A','s)DAkX3',-93,-12983,'2027-12-18',299573,'LUf咲'),(-6131509,2023,_binary 'xdex#Y2','1th%h',-51,19149,'2013-10-28',428279,'矷莒X'),(7545837,1998,_binary 'PCVO','&(lJw6',30,4093,'1987-07-03',736235,'腏@TOIJ'),(-7449472,2029,_binary 'B7&jrl','EjbFfX!',80,-7590,'2011-11-03',765580,'堮ZQF_'),(-7176200,1988,_binary 'tiPglv7mX_#','CnCtNb',-25,NULL,'1987-07-03',842956,'Gq羣嗳殓'),(-115168,2036,_binary 'BqmX$-4It','!8#dvH',82,18787,'1991-09-20',921706,'椉2庘v'),(6665100,1987,_binary '4IJgk0fr4','(D',-73,28628,'1987-07-03',1149668,'摔玝S渉'),(-4065661,2021,_binary '8G%','xDO39xw#',-107,17356,'1970-12-20',1316239,'+0c35掬-阗'),(7622462,1990,_binary '&o+)s)D0','kjoS9Dzld',84,688,'1987-07-03',1403663,'$H鍿_M~'),(5269354,2018,_binary 'wq9hC8','s8XPrN+',-2,-31272,'2008-05-26',1534517,'y椁n躁Q'),(2065948,1982,_binary '8jxNjbksV','g$+i4dg',11,19800,'1987-07-03',1591457,'z^+H~薼A'),(4076971,2024,_binary '&!RrsH','7Mpvk',-63,-632,'2032-10-28',1611011,'鬰+EXmx'),(3522062,1981,_binary ')nq#!UiHKk8','j~wFe77ai',50,6951,'1987-07-03',1716854,'J'),(7859777,2012,_binary 'PBA5xgJ&G&','UM7o!u',18,-5978,'1987-07-03',1967012,'e)浢L獹'),(2065948,2028,_binary '8jxNjbk','JmsEki9t4',51,12002,'2017-12-23',1981288,'mp氏襚');
