@@ -41,6 +41,8 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 )
 
+var tableScanCopID = 1
+
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	err := se.Begin(context.Background())
 	if err != nil {
@@ -59,8 +61,8 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	return err
 }
 
-func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
-	dagPB, err := buildDAGPB(c.ExprCtx, c.DistSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos)
+func buildTableScan(ctx context.Context, c *copr.CopContextBase, distSQLCtx *distsqlctx.DistSQLContext, startTS uint64, start, end kv.Key, selectExpr expression.Expression) (distsql.SelectResult, error) {
+	dagPB, err := buildDAGPB(c.ExprCtx, distSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos, selectExpr)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +73,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 		SetStartTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
-		SetFromSessionVars(c.DistSQLCtx).
+		SetFromSessionVars(distSQLCtx).
 		SetConcurrency(1).
 		Build()
 	kvReq.RequestSource.RequestSourceInternal = true
@@ -80,7 +82,23 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 	if err != nil {
 		return nil, err
 	}
-	return distsql.Select(ctx, c.DistSQLCtx, kvReq, c.FieldTypes)
+
+	if distSQLCtx.RuntimeStatsColl == nil {
+		return distsql.Select(ctx, distSQLCtx, kvReq, c.FieldTypes)
+	}
+	// The plan ID of the table scan is always `tableScanCopID`, so we can read the stats of `tableScanCopID` executor to know
+	// how many rows have been scanned.
+	copPlanIDs := make([]int, 0, 2)
+	copPlanIDs = append(copPlanIDs, tableScanCopID)
+	rootPlanID := tableScanCopID
+	for i := range dagPB.Executors {
+		if i == 0 {
+			continue
+		}
+		copPlanIDs = append(copPlanIDs, tableScanCopID+i)
+		rootPlanID = tableScanCopID + i
+	}
+	return distsql.SelectWithRuntimeStats(ctx, distSQLCtx, kvReq, c.FieldTypes, copPlanIDs, rootPlanID)
 }
 
 func fetchTableScanResult(
@@ -136,19 +154,30 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 	return dtToRestored
 }
 
-func buildDAGPB(exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
+func buildDAGPB(exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, error) {
+	// TODO: pushdown partial index filter condition.
 	dagReq := &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(exprCtx.GetEvalCtx().Location())
 	dagReq.Flags = pushDownFlags
 	for i := range colInfos {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	execPB, err := constructTableScanPB(exprCtx, tblInfo, colInfos)
+	tblScanPB, err := constructTableScanPB(exprCtx, tblInfo, colInfos)
 	if err != nil {
 		return nil, err
 	}
-	dagReq.Executors = append(dagReq.Executors, execPB)
+	if selectExpr != nil {
+		selectionPB, err := constructSelectionPB(exprCtx, selectExpr, distSQLCtx, tblScanPB)
+		if err != nil {
+			return nil, err
+		}
+		dagReq.Executors = append(dagReq.Executors, tblScanPB, selectionPB)
+	} else {
+		dagReq.Executors = append(dagReq.Executors, tblScanPB)
+	}
 	distsql.SetEncodeType(distSQLCtx, dagReq)
+	collExec := true
+	dagReq.CollectExecutionSummaries = &collExec
 	return dagReq, nil
 }
 
@@ -157,6 +186,21 @@ func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, co
 	tblScan.TableId = tblInfo.ID
 	err := tables.SetPBColumnsDefaultValue(ctx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
+}
+
+func constructSelectionPB(ctx exprctx.BuildContext, expr expression.Expression, distSQLCtx *distsqlctx.DistSQLContext, child *tipb.Executor) (*tipb.Executor, error) {
+	pbExpr, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), []expression.Expression{expr}, distSQLCtx.Client)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tipb.Executor{
+		Tp: tipb.ExecType_TypeSelection,
+		Selection: &tipb.Selection{
+			Conditions: pbExpr,
+			Child:      child,
+		},
+	}, nil
 }
 
 // ExtractDatumByOffsets is exported for test.
