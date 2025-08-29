@@ -10,7 +10,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/schematracker",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/schemaver",
         "//pkg/ddl/serverstate",
@@ -21,7 +20,6 @@ go_library(
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
         "//pkg/owner",
-        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
@@ -36,8 +34,10 @@ go_library(
         "//pkg/table/tables",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
+        "//pkg/util/logutil",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

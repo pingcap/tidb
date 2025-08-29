@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -42,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -74,23 +74,6 @@ func NewChecker(realDDL ddl.DDL, realExecutor ddl.Executor, infoCache *infoschem
 		realExecutor: realExecutor,
 		infoCache:    infoCache,
 		tracker:      tracker,
-	}
-	if kerneltype.IsNextGen() {
-		// Prepare the system tables for schema tracker,
-		// because system tables are created through meta kv instead of SQL during bootstrap.
-		p := parser.New()
-		var (
-			stmts []ast.StmtNode
-			err   error
-		)
-		stmts, _, err = p.ParseSQL("CREATE DATABASE IF NOT EXISTS mysql;")
-		mustNil(err)
-		err = tracker.CreateSchema(nil, stmts[0].(*ast.CreateDatabaseStmt))
-		mustNil(err)
-		stmts, _, err = p.ParseSQL("CREATE DATABASE IF NOT EXISTS sys;")
-		mustNil(err)
-		err = tracker.CreateSchema(nil, stmts[0].(*ast.CreateDatabaseStmt))
-		mustNil(err)
 	}
 	return checker
 }
@@ -598,6 +581,13 @@ func (d *Checker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
 func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
 	de := d.realExecutor.(ddl.ExecutorForTest)
 	return de.DoDDLJobWrapper(ctx, jobW)
+}
+
+// InitFromIS initializes the schema tracker from an InfoSchema.
+func (d *Checker) InitFromIS(is infoschema.InfoSchema) {
+	if err := d.tracker.InitFromIS(is); err != nil {
+		logutil.BgLogger().Warn("failed to init schema tracker from info schema", zap.Error(err))
+	}
 }
 
 type storageAndMore interface {
