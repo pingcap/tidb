@@ -4201,8 +4201,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 
 	// 3. statistics is uninitialized or outdated.
 	pseudoStatsForUninitialized = !statsTbl.IsInitialized()
-	pseudoStatsForOutdated = ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
-	if pseudoStatsForUninitialized || pseudoStatsForOutdated {
+	if pseudoStatsForUninitialized {
 		tbl := *statsTbl
 		tbl.Pseudo = true
 		statsTbl = &tbl

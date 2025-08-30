@@ -1399,9 +1399,6 @@ type SessionVars struct {
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
 
-	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
-	EnablePseudoForOutdatedStats bool
-
 	// RegardNULLAsPoint if regard NULL as Point
 	RegardNULLAsPoint bool
 
@@ -2429,16 +2426,6 @@ func (s *SessionVars) GetEnableIndexMerge() bool {
 // SetEnableIndexMerge set SessionVars.enableIndexMerge.
 func (s *SessionVars) SetEnableIndexMerge(val bool) {
 	s.enableIndexMerge = val
-}
-
-// GetEnablePseudoForOutdatedStats get EnablePseudoForOutdatedStats from SessionVars.EnablePseudoForOutdatedStats.
-func (s *SessionVars) GetEnablePseudoForOutdatedStats() bool {
-	return s.EnablePseudoForOutdatedStats
-}
-
-// SetEnablePseudoForOutdatedStats set SessionVars.EnablePseudoForOutdatedStats.
-func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
-	s.EnablePseudoForOutdatedStats = val
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.

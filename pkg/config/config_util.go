@@ -37,21 +37,20 @@ func CloneConf(conf *Config) (*Config, error) {
 var (
 	// dynamicConfigItems contains all config items that can be changed during runtime.
 	dynamicConfigItems = map[string]struct{}{
-		"Performance.MaxProcs":            {},
-		"Performance.MaxMemory":           {},
-		"Performance.CrossJoin":           {},
-		"Performance.PseudoEstimateRatio": {},
-		"Performance.StmtCountLimit":      {},
-		"Performance.TCPKeepAlive":        {},
-		"TiKVClient.StoreLimit":           {},
-		"Log.Level":                       {},
-		"Log.ExpensiveThreshold":          {},
-		"Instance.SlowThreshold":          {},
-		"Instance.CheckMb4ValueInUTF8":    {},
-		"TxnLocalLatches.Capacity":        {},
-		"CompatibleKillQuery":             {},
-		"TreatOldVersionUTF8AsUTF8MB4":    {},
-		"OpenTracing.Enable":              {},
+		"Performance.MaxProcs":         {},
+		"Performance.MaxMemory":        {},
+		"Performance.CrossJoin":        {},
+		"Performance.StmtCountLimit":   {},
+		"Performance.TCPKeepAlive":     {},
+		"TiKVClient.StoreLimit":        {},
+		"Log.Level":                    {},
+		"Log.ExpensiveThreshold":       {},
+		"Instance.SlowThreshold":       {},
+		"Instance.CheckMb4ValueInUTF8": {},
+		"TxnLocalLatches.Capacity":     {},
+		"CompatibleKillQuery":          {},
+		"TreatOldVersionUTF8AsUTF8MB4": {},
+		"OpenTracing.Enable":           {},
 	}
 )
 
