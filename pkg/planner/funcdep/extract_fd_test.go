@@ -158,7 +158,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			sql:  "select exists (select * from x1) from x1 group by d",
 			best: "DataScan(x1)->Aggr(firstrow(1))->Projection",
 			// 14 is added in the logicAgg pruning process cause all the columns of agg has been pruned.
-			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {()-->(13)}",
+			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {()-->(17)}",
 		},
 		{
 			sql:  "select c is null from x1 group by c",
