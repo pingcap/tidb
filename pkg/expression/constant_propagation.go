@@ -250,6 +250,7 @@ type propConstSolver struct {
 	conditions []Expression
 	// TODO: remove this func pointer for performance
 	vaildExprFunc VaildConstantPropagationExpressionFuncType
+	cartesianJoin bool
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -259,7 +260,7 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, vaildExprFunc VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression {
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, vaildExprFunc VaildConstantPropagationExpressionFuncType, conditions []Expression) ([]Expression, bool) {
 	s.ctx = ctx
 	s.vaildExprFunc = vaildExprFunc
 	return s.solve(conditions)
@@ -270,6 +271,7 @@ func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	s.conditions = s.conditions[:0]
 	s.vaildExprFunc = nil
+	s.cartesianJoin = false
 	propConstSolverPool.Put(s)
 }
 
@@ -283,6 +285,7 @@ func (s *propConstSolver) propagateConstantEQ() {
 	visited := make([]bool, len(s.conditions))
 	cols := make([]*Column, 0, 4)
 	cons := make([]Expression, 0, 4)
+	evalCtx := s.ctx.GetEvalCtx()
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -296,12 +299,44 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				if isColEqCondition(s.conditions[i]) {
+					// We should protect the equal condition. so we append the new expr.
+					// It is necessary to set visited to false, for example.
+					//   a = b, a = 1, c = b + 1
+					// -> a = b, a = 1, c = b + 1, b = 1
+					// -> a = b, a = 1, c = 1 + 1, b = 1
+					newExpr := ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+					if !newExpr.Equal(evalCtx, cond) {
+						visited = append(visited, false) // nolint:makezero
+						// it is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
+						// and then using `b = 1` to get `a = 1` again.
+						visited[i] = true
+						s.conditions = append(s.conditions, newExpr)
+						s.cartesianJoin = true
+					}
+				} else {
+					s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				}
 			}
 		}
 		cols = cols[:0]
 		cons = cons[:0]
 	}
+}
+
+func isColEqCondition(expr Expression) bool {
+	if sf, ok := expr.(*ScalarFunction); ok {
+		if sf.FuncName.L == ast.EQ {
+			args := sf.GetArgs()
+			_, ok := args[1].(*Column)
+			if !ok {
+				return false
+			}
+			_, ok = args[0].(*Column)
+			return ok
+		}
+	}
+	return false
 }
 
 // propagateColumnEQ propagates expressions like 'column A = column B' by adding extra filters
@@ -431,7 +466,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 	return
 }
 
-func (s *propConstSolver) solve(conditions []Expression) []Expression {
+func (s *propConstSolver) solve(conditions []Expression) ([]Expression, bool) {
 	s.conditions = slices.Grow(s.conditions, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
@@ -442,20 +477,20 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 			zap.Int("numCols", len(s.columns)),
 			zap.Int("maxNumCols", MaxPropagateColsCnt),
 		)
-		return conditions
+		return conditions, s.cartesianJoin
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.conditions...)
 	s.conditions = RemoveDupExprs(s.conditions)
-	return slices.Clone(s.conditions)
+	return slices.Clone(s.conditions), s.cartesianJoin
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
-func PropagateConstant(ctx exprctx.ExprContext, filter VaildConstantPropagationExpressionFuncType, conditions ...Expression) []Expression {
+func PropagateConstant(ctx exprctx.ExprContext, filter VaildConstantPropagationExpressionFuncType, conditions ...Expression) ([]Expression, bool) {
 	if len(conditions) == 0 {
-		return conditions
+		return conditions, false
 	}
 	solver := newPropConstSolver()
 	defer func() {
@@ -488,6 +523,7 @@ type propSpecialJoinConstSolver struct {
 	// additional `col is not null` condition from column equal conditions. Specifically, this value
 	// is true for LeftOuterSemiJoin, AntiLeftOuterSemiJoin and AntiSemiJoin.
 	nullSensitive bool
+	cartesianJoin bool
 }
 
 func newPropSpecialJoinConstSolver() *propSpecialJoinConstSolver {
@@ -504,6 +540,7 @@ func (s *propSpecialJoinConstSolver) Clear() {
 	s.innerSchema = nil
 	s.nullSensitive = false
 	s.vaildExprFunc = nil
+	s.cartesianJoin = false
 	propSpecialJoinConstSolverPool.Put(s)
 }
 
@@ -642,6 +679,7 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 	clear(s.eqMapper)
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
+	evalCtx := s.ctx.GetEvalCtx()
 	for range MaxPropagateColsCnt {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -655,7 +693,24 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				if isColEqCondition(s.joinConds[i]) {
+					// We should protect the equal condition. so we append the new expr.
+					// It is necessary to set visited to false, for example.
+					//   a = b, a = 1, c = b + 1
+					// -> a = b, a = 1, c = b + 1, b = 1
+					// -> a = b, a = 1, c = 1 + 1, b = 1
+					newExpr := ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+					if !newExpr.Equal(evalCtx, cond) {
+						visited = append(visited, false) // nolint:makezero
+						// it is to prevent something like `a = b`, `a = 1` resulting in `b = 1`,
+						// and then using `b = 1` to get `a = 1` again.
+						visited[i+lenFilters] = true
+						s.joinConds = append(s.joinConds, newExpr)
+						s.cartesianJoin = true
+					}
+				} else {
+					s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				}
 			}
 		}
 	}
@@ -777,7 +832,7 @@ func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 	}
 }
 
-func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
+func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression, bool) {
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
@@ -791,13 +846,15 @@ func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) 
 			zap.Int("numCols", len(s.columns)),
 			zap.Int("maxNumCols", MaxPropagateColsCnt),
 		)
-		return joinConds, filterConds
+		return joinConds, filterConds, s.cartesianJoin
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
-	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+	s.joinConds = RemoveDupExprs(s.joinConds)
+	s.filterConds = RemoveDupExprs(s.filterConds)
+	return slices.Clone(s.joinConds), slices.Clone(s.filterConds), s.cartesianJoin
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
@@ -806,7 +863,8 @@ func propagateConstantDNF(ctx exprctx.ExprContext, filter VaildConstantPropagati
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, filter, item)...)
+				tmp, _ := PropagateConstant(ctx, filter, item)
+				dnfItems[j] = ComposeCNFCondition(ctx, tmp...)
 			}
 			conds[i] = ComposeDNFCondition(ctx, dnfItems...)
 		}
@@ -822,7 +880,7 @@ func propagateConstantDNF(ctx exprctx.ExprContext, filter VaildConstantPropagati
 // expressions in join conditions and filter conditions;
 func PropConstOverSpecialJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, nullSensitive bool,
-	vaildExprFunc VaildConstantPropagationExpressionFuncType) ([]Expression, []Expression) {
+	vaildExprFunc VaildConstantPropagationExpressionFuncType) ([]Expression, []Expression, bool) {
 	solver := newPropSpecialJoinConstSolver()
 	defer func() {
 		solver.Clear()
@@ -837,6 +895,6 @@ func PropConstOverSpecialJoin(ctx exprctx.ExprContext, joinConds, filterConds []
 
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
-	PropagateConstant(ctx exprctx.ExprContext, filter VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression
+	PropagateConstant(ctx exprctx.ExprContext, filter VaildConstantPropagationExpressionFuncType, conditions []Expression) ([]Expression, bool)
 	Clear()
 }

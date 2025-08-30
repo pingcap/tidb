@@ -871,7 +871,7 @@ func (*pushDownJoin) predicatePushDown(
 		tempCond = append(tempCond, join.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), nil, tempCond...)
+		tempCond, _ = expression.PropagateConstant(sctx.GetExprCtx(), nil, tempCond...)
 		// Return table dual when filter is constant false or null.
 		dual := logicalop.Conds2TableDual(join, tempCond)
 		if dual != nil {
@@ -902,9 +902,9 @@ func (*pushDownJoin) predicatePushDown(
 		copy(remainCond, predicates)
 		nullSensitive := join.JoinType == logicalop.AntiLeftOuterSemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin
 		if join.JoinType == logicalop.RightOuterJoin {
-			joinConds, remainCond = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive, nil)
+			joinConds, remainCond, join.CartesianJoin = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive, nil)
 		} else {
-			joinConds, remainCond = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive, nil)
+			joinConds, remainCond, join.CartesianJoin = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive, nil)
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)

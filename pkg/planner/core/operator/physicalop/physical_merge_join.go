@@ -106,6 +106,7 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 			LeftJoinKeys:    leftKeys,
 			RightJoinKeys:   rightKeys,
 			IsNullEQ:        newIsNullEQ,
+			CartesianJoin:   p.CartesianJoin,
 		}
 		mergeJoin := PhysicalMergeJoin{BasePhysicalJoin: baseJoin}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset())
 		mergeJoin.SetSchema(schema)
@@ -218,6 +219,7 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 		RightJoinKeys:   rightKeys,
 		IsNullEQ:        newNullEQ,
 		OtherConditions: otherConditions,
+		CartesianJoin:   p.CartesianJoin,
 	}
 	enforcedPhysicalMergeJoin := PhysicalMergeJoin{BasePhysicalJoin: baseJoin, Desc: desc}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset())
 	enforcedPhysicalMergeJoin.SetSchema(schema)

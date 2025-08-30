@@ -16,6 +16,7 @@ package core
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"slices"
 
@@ -47,6 +48,9 @@ type joinReorderGreedySolver struct {
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
 	var err error
+	if !s.ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans, tracer)
 	if err != nil {
 		return nil, err

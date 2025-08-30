@@ -368,7 +368,7 @@ create table t (a int, b int, index (a));
 insert into t values (1, 1);
 explain analyze format='brief' select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashJoin	100.00	0	root		<execution_info>	CARTESIAN inner join	<memory>	<disk>
+HashJoin	100.00	0	root		<execution_info>	CARTESIAN inner join, equal:[eq(executor__explain.t.b, executor__explain.t.a)]	<memory>	<disk>
 ├─IndexLookUp(Build)	10.00	0	root		<execution_info>		<memory>	<disk>
 │ ├─IndexRangeScan(Build)	10.00	0	cop[tikv]	table:t2, index:a(a)	<execution_info>	range:[2333,2333], keep order:false, stats:pseudo	<memory>	<disk>
 │ └─TableRowIDScan(Probe)	10.00	0	cop[tikv]	table:t2	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
