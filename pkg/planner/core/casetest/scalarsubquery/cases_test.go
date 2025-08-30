@@ -132,6 +132,7 @@ func TestSubqueryInExplainAnalyze(t *testing.T) {
 			// We only want columns 0, 3, 6 (id, task, operator info)
 			for i := range rows {
 				rows[i] = []any{rows[i][0], rows[i][3], rows[i][6]}
+
 			}
 			return rows
 		}
