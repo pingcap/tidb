@@ -16,7 +16,12 @@ package external
 
 import (
 	"context"
+	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"io"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -65,6 +70,9 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 
 	ret := make([][]byte, 0, r.concurrency)
 	eg := errgroup.Group{}
+
+	start := time.Now()
+	var totalRead int64
 	for i := range r.concurrency {
 		if r.offset >= r.fileSize {
 			break
@@ -78,7 +86,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 		offset := r.offset
 		r.offset += int64(end)
 		eg.Go(func() error {
-			_, err := storage.ReadDataInRange(
+			n, err := storage.ReadDataInRange(
 				r.ctx,
 				r.storage,
 				r.name,
@@ -88,6 +96,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 			if err != nil {
 				return errors.Annotatef(err, "offset: %d, readSize: %d", offset, len(buf))
 			}
+			atomic.AddInt64(&totalRead, int64(n))
 			return nil
 		})
 	}
@@ -95,6 +104,14 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	elapsed := time.Since(start)
+	if totalRead > 0 {
+		speed := float64(totalRead) / (1024.0 * 1024.0) / elapsed.Seconds()
+		logutil.BgLogger().Info("concurrentFileReader reload speed",
+			zap.Float64("speed(MiB/s)", speed),
+			zap.String("totalRead", units.BytesSize(float64(totalRead))),
+			zap.Duration("elapsed", elapsed),
+		)
+	}
 	return ret, nil
 }
