@@ -312,6 +312,9 @@ const (
 	// TiDBOptPreferRangeScan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
 	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
+	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
+	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
+
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
@@ -1385,6 +1388,7 @@ const (
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
+	DefOptEnableNoDecorrelateInSelect       = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false
