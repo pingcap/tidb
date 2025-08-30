@@ -670,6 +670,10 @@ id	task	access object	operator info
 Sort	root		explain_easy.t.a, explain_easy.t.b
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+ScalarSubQuery	root		Output: ScalarQueryCol#6
+└─MaxOneRow	root		
+  └─Projection	root		2->Column#5
+    └─TableDual	root		rows:1
 explain format = 'plan_tree' select * from (select * from t order by c) t order by a, b;
 id	task	access object	operator info
 Sort	root		explain_easy.t.a, explain_easy.t.b

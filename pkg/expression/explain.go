@@ -147,14 +147,23 @@ func (expr *Constant) ExplainInfo(ctx EvalContext) string {
 	if err != nil {
 		return "not recognized const value"
 	}
+
+	valueStr := expr.format(dt)
+
+	// Add subquery reference if available (same logic as StringWithCtx)
+	if expr.SubqueryRefID > 0 {
+		refStr := fmt.Sprintf("ScalarQueryCol#%d", expr.SubqueryRefID)
+		return fmt.Sprintf("%s<-(%s)", valueStr, refStr)
+	}
+
 	if redact == errors.RedactLogMarker {
 		builder := new(strings.Builder)
 		builder.WriteString("‹")
-		builder.WriteString(expr.format(dt))
+		builder.WriteString(valueStr)
 		builder.WriteString("›")
 		return builder.String()
 	}
-	return expr.format(dt)
+	return valueStr
 }
 
 // ExplainNormalizedInfo implements the Expression interface.
@@ -182,7 +191,7 @@ func (expr *Constant) format(dt types.Datum) string {
 func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, redactMode string) string {
 	builder := &strings.Builder{}
 	for i, expr := range exprs {
-		switch expr.(type) {
+		switch expr := expr.(type) {
 		case *Column, *CorrelatedColumn:
 			builder.WriteString(expr.StringWithCtx(ctx, redactMode))
 			if expr.StringWithCtx(ctx, redactMode) != schema.Columns[i].StringWithCtx(ctx, redactMode) {
@@ -191,8 +200,16 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 				builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 			}
 		case *Constant:
-			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
-			redact.WriteRedact(builder, v, redactMode)
+			// For Projection operators, show only the subquery reference without the constant value
+			if expr.SubqueryRefID > 0 {
+				refStr := fmt.Sprintf("ScalarQueryCol#%d", expr.SubqueryRefID)
+				builder.WriteString("(")
+				builder.WriteString(refStr)
+				builder.WriteString(")")
+			} else {
+				v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
+				redact.WriteRedact(builder, v, redactMode)
+			}
 			builder.WriteString("->")
 			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 		default:

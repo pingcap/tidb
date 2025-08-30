@@ -394,6 +394,13 @@ func extractScanAndMemoryFromBinaryPlan(binaryPlan string) ([]*TableReadCostMetr
 			return nil, err
 		}
 	}
+	// extract scan and memory from SubQueries part plan
+	for _, subQ := range explainData.Subqueries {
+		operatorExtractMetrics, err = extractMetricsFromOperatorTree(subQ, operatorExtractMetrics)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return operatorExtractMetrics, nil
 }
