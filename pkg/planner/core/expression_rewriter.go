@@ -1093,6 +1093,21 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			er.ctxStackAppend(scalarSubQ, types.EmptyName)
 			return v, true
 		}
+		// register the subquery plan but continue with normal execution
+		subqueryCtx := ScalarSubqueryEvalCtx{
+			scalarSubQuery: physicalPlan,
+			ctx:            ctx,
+			is:             b.is,
+		}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
+		newColIDs := make([]int64, 0, np.Schema().Len())
+		for range np.Schema().Columns {
+			newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
+			newColIDs = append(newColIDs, newColID)
+		}
+		subqueryCtx.outputColIDs = newColIDs
+
+		planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+
 		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
 		if err != nil {
 			er.err = err

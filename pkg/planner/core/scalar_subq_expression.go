@@ -335,7 +335,7 @@ func (ssctx *ScalarSubqueryEvalCtx) ExplainInfo() string {
 	for i, id := range ssctx.outputColIDs {
 		fmt.Fprintf(builder, "ScalarQueryCol#%d", id)
 		if i+1 != len(ssctx.outputColIDs) {
-			fmt.Fprintf(builder, ",")
+			fmt.Fprintf(builder, ", ")
 		}
 	}
 	return builder.String()
