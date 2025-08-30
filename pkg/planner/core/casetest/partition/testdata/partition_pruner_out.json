@@ -46,7 +46,7 @@
       {
         "SQL": "explain format = 'brief' select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
-          "HashJoin 1.00 root  inner join, equal:[eq(test_partition.t2.id, test_partition.t1.id) eq(test_partition.t2.a, test_partition.t1.id)]",
+          "HashJoin 1.00 root  CARTESIAN inner join, equal:[eq(test_partition.t2.id, test_partition.t1.id) eq(test_partition.t2.a, test_partition.t1.id)]",
           "├─Point_Get(Build) 1.00 root table:t1, partition:p2 handle:12",
           "└─Point_Get(Probe) 1.00 root table:t2, partition:p4, index:PRIMARY(id, a) "
         ]
