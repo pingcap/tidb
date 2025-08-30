@@ -1,11 +1,56 @@
-SELECT FORMAT(1.234,0,'en_US');
-SELECT FORMAT(1.234,1,'en_US');
-SELECT FORMAT(1.234,2,'en_US');
-SELECT FORMAT(1.234,3,'en_US');
-SELECT FORMAT(1.234,4,'en_US');
-SELECT FORMAT(1.234e-2,4,'en_US');
-SELECT FORMAT(-1.234,4,'en_US');
+# Different number of decimals
+SELECT FORMAT('1.234',1,'id_ID');
+SELECT FORMAT('1.234',2,'id_ID');
+SELECT FORMAT('1.234',3,'id_ID');
+SELECT FORMAT('1.234',4,'id_ID');
 
+# Nonexistend locale, should get a warning
+SELECT FORMAT('1.234',1,'xxxxxx');
+SHOW WARNINGS;
+
+# Testing a few locales. Mostly those that don't follow other locales
+SELECT FORMAT(12345678.9,4,'nl_BE');
+SELECT FORMAT(12345678.9,4,'fr_BE');
+SELECT FORMAT(12345678.9,4,'en_IN');
+SELECT FORMAT(12345678.9,4,'de_CH');
+SELECT FORMAT(12345678.9,4,'no_NO');
+SELECT FORMAT(12345678.9,4,'bg_BG');
+SELECT FORMAT(12345678.9,4,'ar_SA');
+SELECT FORMAT(12345678.9,4,'es_MX');
+SELECT FORMAT(12345678.9,4,'ps_AF');
+SELECT FORMAT(12345678.9,4,'kv_RU');
+SELECT FORMAT(12345678.9,4,'bn');
+
+# The first two should work fine, the third should give a warning.
+--enable_warnings
+SELECT FORMAT(12345678.9,999999999999999999,'de_CH');
+SELECT FORMAT(12345678.9,9999999999999999999,'de_CH');
+SELECT FORMAT(12345678.9,99999999999999999999,'de_CH');
+--disable_warnings
+
+# Test behavior to follow formatMaxDecimals=30
+SELECT FORMAT(12345678.9,29,'de_CH');
+SELECT FORMAT(12345678.9,30,'de_CH');
+SELECT FORMAT(12345678.9,31,'de_CH');
+
+# NULL handling
+SELECT FORMAT(NULL, 4), FORMAT(12332.2, NULL);
+
+# Rounding
+SELECT FORMAT(1.04, 1);
+SELECT FORMAT(1.05, 1);
+SELECT FORMAT(1.06, 1);
+SELECT FORMAT(2.5, 0);
+
+# Handling of precision that isn't simple integer
+SELECT FORMAT(1.06, 1.4);
+SELECT FORMAT(1.06, 1.6);
+
+# numbers that omit the zero
+SELECT FORMAT(.45, 3);
+SELECT FORMAT(-.45, 3);
+
+# https://github.com/pingcap/tidb/issues/56193
 WITH RECURSIVE cte(n) AS (
 	SELECT 1 n
 	UNION ALL
