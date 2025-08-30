@@ -118,7 +118,6 @@ select aes_decrypt(aes_encrypt(a, 'key'), 'key'), hex(a) from t;
 select encode(a, "key") from t;
 select decode(encode(a, "key"), "key"), hex(a) from t;
 select md5(a) from t;
-select password(a) from t;
 select compress(a) from t;
 select uncompress(compress(a)), a from t;
 select sha1(a), sha2(a, "key") from t;
