@@ -51,6 +51,7 @@ var (
 		CancelStandardModePlan  prometheus.Counter
 		ForceKillParse          prometheus.Counter
 		ForceKillPlan           prometheus.Counter
+		NoLimit                 prometheus.Counter
 	}
 
 	counters struct {
@@ -126,6 +127,7 @@ func InitMemoryMetrics() {
 	GlobalMemArbitratorTaskExec.CancelStandardModePlan = GlobalMemArbitratorTaskExecCount.WithLabelValues("cancel-standard-mode-plan")
 	GlobalMemArbitratorTaskExec.ForceKillParse = GlobalMemArbitratorTaskExecCount.WithLabelValues("force-kill-parse")
 	GlobalMemArbitratorTaskExec.ForceKillPlan = GlobalMemArbitratorTaskExecCount.WithLabelValues("force-kill-plan")
+	GlobalMemArbitratorTaskExec.NoLimit = GlobalMemArbitratorTaskExecCount.WithLabelValues("nolimit")
 }
 
 // AddGlobalMemArbitratorCounter adds a counter for the global memory arbitrator.

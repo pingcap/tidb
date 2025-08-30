@@ -1557,6 +1557,9 @@ func approxNormalizedSQLTokenCnt(sql string) (tokenCnt int64) {
 	return
 }
 
+// ignore: select @?; select expr;
+const validMinTokenCntForArbitrator = 3
+
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	globalMemArbitrator := memory.GlobalMemArbitrator()
 	arbitratorMode := globalMemArbitrator.WorkMode()
@@ -1567,7 +1570,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 		if s.sessionVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit {
 			tokenCnt := approxSQLTokenCnt(sql)
 			s.sessionVars.MemArbitrator.TokenCnt = tokenCnt
-			if tokenCnt > 2 {
+			if tokenCnt >= validMinTokenCntForArbitrator {
 				execUseArbitrator = true
 				commonMemQuota = tokenCnt * 25161
 			}
@@ -2349,7 +2352,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		if sessVars.MemArbitrator.TokenCnt == 0 {
 			sessVars.MemArbitrator.TokenCnt = approxNormalizedSQLTokenCnt(normalizedSQL)
 		}
-		if sessVars.MemArbitrator.TokenCnt < 3 {
+		if sessVars.MemArbitrator.TokenCnt < validMinTokenCntForArbitrator {
 			execUseArbitrator = false
 		}
 	}
@@ -2455,6 +2458,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Execute the physical plan.
 	defer logStmt(stmt, s) // defer until txnStartTS is set
 
+	if sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorNolimit {
+		metrics.GlobalMemArbitratorTaskExec.NoLimit.Inc()
+	}
 	if execUseArbitrator {
 		releaseCommonQuota()
 

@@ -126,12 +126,12 @@ func reportGlobalMemArbitratorMetrics() {
 		setQuota("max(pool-max-mem)", m.buffer.size.Load())
 	}
 	{
-		memMagnif := int64(0)
+		memMagnif := float64(0)
 		if quota := m.allocated(); quota > 0 {
-			memMagnif = calcRatio(m.heapController.lastGC.heapAlloc.Load(), quota)
-			memMagnif = min(memMagnif, defMaxMagnif)
+			f := min(calcRatio(m.heapController.lastGC.heapAlloc.Load(), quota), defMaxMagnif)
+			memMagnif = float64(f) / kilo
 		}
-		metrics.GlobalMemArbitratorRuntimeMemMagnifi.Set(float64(memMagnif))
+		metrics.GlobalMemArbitratorRuntimeMemMagnifi.Set(memMagnif)
 	}
 	{
 		setRootPool := func(label string, value int64) {

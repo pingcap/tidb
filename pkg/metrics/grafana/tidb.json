@@ -26219,12 +26219,12 @@
           "yaxes": [
             {
               "$$hashKey": "object:985",
-              "decimals": 0,
+              "decimals": 3,
               "format": "none",
               "label": null,
               "logBase": 1,
               "max": null,
-              "min": "1000",
+              "min": "1",
               "show": true
             },
             {
