@@ -1039,9 +1039,22 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		er.err = err
 		return v, true
 	}
-	np = er.popExistsSubPlan(planCtx, np)
+	// Add LIMIT 1 when noDecorrelate is true for EXISTS subqueries to enable early exit
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
+	if noDecorrelate {
+		// Create a LIMIT 1 clause for performance optimization
+		limitClause := &ast.Limit{
+			Count: ast.NewValueExpr(1, "", ""),
+		}
+		var err error
+		np, err = planCtx.builder.buildLimit(np, limitClause)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+	}
+	np = er.popExistsSubPlan(planCtx, np)
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
