@@ -745,6 +745,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 		zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()),
 		zap.Duration("castDur", castDur),
+		zap.Duration("iterateDur", iterateDur),
 		zap.Int("fetchedRows", len(w.rowRecords)),
 		zap.Duration("takeTime", time.Since(startTime)), zap.Any("region id", taskRange.regionID))
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
@@ -864,6 +865,7 @@ func (w *updateColumnWorker) cleanRowMap() {
 func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	txnSetDur := time.Duration(0)
+	getRowRecordDur := time.Duration(0)
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 
@@ -895,10 +897,11 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		if err != nil {
 			return errors.Trace(err)
 		}
-		logutil.DDLLogger().Info("fetchRowColVals",
-			zap.Duration("takeTime", time.Since(t)),
-			zap.Bool("taskDone", taskDone),
-			zap.Int("len", len(rowRecords)))
+		//logutil.DDLLogger().Info("fetchRowColVals",
+		//	zap.Duration("takeTime", time.Since(t)),
+		//	zap.Bool("taskDone", taskDone),
+		//	zap.Int("len", len(rowRecords)))
+		getRowRecordDur += time.Since(t)
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
@@ -936,6 +939,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		zap.Int("scanCount", taskCtx.scanCount),
 		zap.Int("addedCount", taskCtx.addedCount),
 		zap.Duration("txnSetDur", txnSetDur),
+		zap.Duration("getRowRecordDur", getRowRecordDur),
 	)
 	return
 }
