@@ -716,8 +716,8 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
-			oprStartTime = oprEndTime
 			iterateDur += oprEndTime.Sub(oprStartTime)
+			oprStartTime = oprEndTime
 
 			taskDone = recordKey.Cmp(taskRange.endKey) >= 0
 
