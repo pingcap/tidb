@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"modernc.org/mathutil"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/stretchr/testify/assert"
+	"modernc.org/mathutil"
 )
 
 func TestAutoIncPool(t *testing.T) {
