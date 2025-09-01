@@ -23,7 +23,6 @@ import (
 
 	"github.com/golang/snappy"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -72,88 +71,13 @@ func simplifyAndCheckBinaryPlan(t *testing.T, pb *tipb.ExplainData) {
 }
 
 func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("Please run the TestBinaryPlanInExplainAndSlowLogForNextGent")
-	}
 	// Prepare the slow log
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(originCfg)
-		require.NoError(t, f.Close())
-		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
-	}()
-	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		// If we don't set this, it will be false sometimes and the cost in the result will be different.
-		testKit.MustExec("set @@tidb_enable_chunk_rpc=true")
-		testKit.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
-		testKit.MustExec("set tidb_slow_log_threshold=0;")
-		defer func() {
-			testKit.MustExec("set tidb_slow_log_threshold=300;")
-		}()
-
-		var input []string
-		var output []struct {
-			SQL        string
-			BinaryPlan *tipb.ExplainData
-		}
-		planSuiteData := GetBinaryPlanSuiteData()
-		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-
-		for i, test := range input {
-			comment := fmt.Sprintf("case:%v sql:%s", i, test)
-			if len(test) < 7 || test[:7] != "explain" {
-				testKit.MustExec(test)
-				testdata.OnRecord(func() {
-					output[i].SQL = test
-					output[i].BinaryPlan = nil
-				})
-				continue
-			}
-			result := testdata.ConvertRowsToStrings(testKit.MustQuery(test).Rows())
-			require.Equal(t, len(result), 1, comment)
-			s := result[0]
-
-			// assert that the binary plan in the slow log is the same as the result in the EXPLAIN statement
-			slowLogResult := testdata.ConvertRowsToStrings(testKit.MustQuery("select binary_plan from information_schema.slow_query " +
-				`where query = "` + test + `;" ` +
-				"order by time desc limit 1").Rows())
-			require.Lenf(t, slowLogResult, 1, comment)
-			require.Equal(t, s, slowLogResult[0], comment)
-
-			b, err := base64.StdEncoding.DecodeString(s)
-			require.NoError(t, err)
-			b, err = snappy.Decode(nil, b)
-			require.NoError(t, err)
-			binary := &tipb.ExplainData{}
-			err = binary.Unmarshal(b)
-			require.NoError(t, err)
-			testdata.OnRecord(func() {
-				output[i].SQL = test
-				output[i].BinaryPlan = binary
-			})
-			simplifyAndCheckBinaryPlan(t, binary)
-			require.Equal(t, output[i].BinaryPlan, binary, comment)
-		}
-	})
-}
-
-func TestBinaryPlanInExplainAndSlowLogForNextGen(t *testing.T) {
-	if !kerneltype.IsNextGen() {
-		t.Skip("Please run the TestBinaryPlanInExplainAndSlowLog")
-	}
-	// Prepare the slow log
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-	f, err := os.CreateTemp("", "tidb-slow-*.log")
-	require.NoError(t, err)
-	newCfg.Log.SlowQueryFile = f.Name()
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)
