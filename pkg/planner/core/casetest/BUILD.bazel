@@ -35,7 +35,6 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util/hint",
         "//pkg/util/plancodec",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
