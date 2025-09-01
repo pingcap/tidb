@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importer
+package importsdk
 
 import (
 	"context"
@@ -61,7 +61,7 @@ func (s *mockGCSSuite) SetupSuite() {
 		PublicHost: gcsHost,
 	}
 	s.server, err = fakestorage.NewServerWithOptions(opt)
-	s.Require().NoError(err)
+	s.NoError(err)
 }
 
 func (s *mockGCSSuite) TearDownSuite() {
@@ -105,7 +105,7 @@ func (s *mockGCSSuite) TestDumplingSource() {
 	})
 
 	db, mock, err := sqlmock.New()
-	s.Require().NoError(err)
+	s.NoError(err)
 	defer db.Close()
 
 	mock.ExpectQuery(`SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`).
@@ -125,15 +125,15 @@ func (s *mockGCSSuite) TestDumplingSource() {
 		db,
 		WithConcurrency(1),
 	)
-	s.Require().NoError(err)
+	s.NoError(err)
 	defer importSDK.Close()
 
 	err = importSDK.CreateSchemasAndTables(context.Background())
-	s.Require().NoError(err)
+	s.NoError(err)
 
-	tablesMeta, err := importSDK.GetTablesMeta(context.Background())
-	s.Require().NoError(err)
-	s.Require().Len(tablesMeta, 2)
+	tablesMeta, err := importSDK.GetTableMetas(context.Background())
+	s.NoError(err)
+	s.Len(tablesMeta, 2)
 
 	expected1 := &TableMeta{
 		Database:   "db1",
@@ -157,24 +157,23 @@ func (s *mockGCSSuite) TestDumplingSource() {
 		TotalSize:    88,
 		WildcardPath: "gcs://dumpling/db2.tb2.*.sql",
 	}
-	s.Require().Equal(expected1, tablesMeta[0])
-	s.Require().Equal(expected2, tablesMeta[1])
+	s.Equal(expected1, tablesMeta[0])
+	s.Equal(expected2, tablesMeta[1])
 
 	// verify GetTableMetaByName for each db
 	tm1, err := importSDK.GetTableMetaByName(context.Background(), "db1", "tb1")
-	s.Require().NoError(err)
-	s.Require().Equal(tm1, expected1)
+	s.NoError(err)
+	s.Equal(tm1, expected1)
 	tm2, err := importSDK.GetTableMetaByName(context.Background(), "db2", "tb2")
-	s.Require().NoError(err)
-	s.Require().Equal(tm2, expected2)
+	s.NoError(err)
+	s.Equal(tm2, expected2)
 
-	totalSize, err := importSDK.GetTotalSize(context.Background())
-	s.Require().NoError(err)
-	s.Require().Equal(totalSize, int64(176))
+	totalSize := importSDK.GetTotalSize(context.Background())
+	s.Equal(totalSize, int64(176))
 
 	// check meets expectations
 	err = mock.ExpectationsWereMet()
-	s.Require().NoError(err)
+	s.NoError(err)
 }
 
 func (s *mockGCSSuite) TestCSVSource() {
@@ -214,7 +213,7 @@ func (s *mockGCSSuite) TestCSVSource() {
 	})
 
 	db, mock, err := sqlmock.New()
-	s.Require().NoError(err)
+	s.NoError(err)
 	defer db.Close()
 
 	mock.ExpectQuery(`SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`).
@@ -234,15 +233,15 @@ func (s *mockGCSSuite) TestCSVSource() {
 		db,
 		WithConcurrency(1),
 	)
-	s.Require().NoError(err)
+	s.NoError(err)
 	defer importSDK.Close()
 
 	err = importSDK.CreateSchemasAndTables(context.Background())
-	s.Require().NoError(err)
+	s.NoError(err)
 
-	tablesMeta, err := importSDK.GetTablesMeta(context.Background())
-	s.Require().NoError(err)
-	s.Require().Len(tablesMeta, 2)
+	tablesMeta, err := importSDK.GetTableMetas(context.Background())
+	s.NoError(err)
+	s.Len(tablesMeta, 2)
 
 	expected1 := &TableMeta{
 		Database:   "db1",
@@ -266,24 +265,23 @@ func (s *mockGCSSuite) TestCSVSource() {
 		TotalSize:    16,
 		WildcardPath: "gcs://csv/db2.tb2.*.csv",
 	}
-	s.Require().Equal(expected1, tablesMeta[0])
-	s.Require().Equal(expected2, tablesMeta[1])
+	s.Equal(expected1, tablesMeta[0])
+	s.Equal(expected2, tablesMeta[1])
 
 	// verify GetTableMetaByName for each db
 	tm1, err := importSDK.GetTableMetaByName(context.Background(), "db1", "tb1")
-	s.Require().NoError(err)
-	s.Require().Equal(tm1, expected1)
+	s.NoError(err)
+	s.Equal(tm1, expected1)
 	tm2, err := importSDK.GetTableMetaByName(context.Background(), "db2", "tb2")
-	s.Require().NoError(err)
-	s.Require().Equal(tm2, expected2)
+	s.NoError(err)
+	s.Equal(tm2, expected2)
 
-	totalSize, err := importSDK.GetTotalSize(context.Background())
-	s.Require().NoError(err)
-	s.Require().Equal(totalSize, int64(32))
+	totalSize := importSDK.GetTotalSize(context.Background())
+	s.Equal(totalSize, int64(32))
 
 	// check meets expectations
 	err = mock.ExpectationsWereMet()
-	s.Require().NoError(err)
+	s.NoError(err)
 }
 
 func (s *mockGCSSuite) TestOnlyDataFiles() {
@@ -298,7 +296,7 @@ func (s *mockGCSSuite) TestOnlyDataFiles() {
 	})
 
 	db, mock, err := sqlmock.New()
-	s.Require().NoError(err)
+	s.NoError(err)
 	defer db.Close()
 
 	mock.ExpectQuery(`SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`).
@@ -325,16 +323,16 @@ func (s *mockGCSSuite) TestOnlyDataFiles() {
 			},
 		}),
 	)
-	s.Require().NoError(err)
+	s.NoError(err)
 	defer importSDK.Close()
 
 	err = importSDK.CreateSchemasAndTables(context.Background())
-	s.Require().NoError(err)
+	s.NoError(err)
 
-	tablesMeta, err := importSDK.GetTablesMeta(context.Background())
-	s.Require().NoError(err)
-	s.Require().Len(tablesMeta, 1)
-	s.Require().Equal(&TableMeta{
+	tablesMeta, err := importSDK.GetTableMetas(context.Background())
+	s.NoError(err)
+	s.Len(tablesMeta, 1)
+	s.Equal(&TableMeta{
 		Database:   "db",
 		Table:      "tb",
 		SchemaFile: "",
@@ -347,15 +345,14 @@ func (s *mockGCSSuite) TestOnlyDataFiles() {
 	}, tablesMeta[0])
 
 	tableMeta, err := importSDK.GetTableMetaByName(context.Background(), "db", "tb")
-	s.Require().NoError(err)
-	s.Require().Equal(tableMeta, tablesMeta[0])
+	s.NoError(err)
+	s.Equal(tableMeta, tablesMeta[0])
 
-	totalSize, err := importSDK.GetTotalSize(context.Background())
-	s.Require().NoError(err)
-	s.Require().Equal(totalSize, int64(24))
+	totalSize := importSDK.GetTotalSize(context.Background())
+	s.Equal(totalSize, int64(24))
 
 	err = mock.ExpectationsWereMet()
-	s.Require().NoError(err)
+	s.NoError(err)
 }
 
 func TestLongestCommonPrefix(t *testing.T) {
@@ -373,15 +370,19 @@ func TestLongestCommonPrefix(t *testing.T) {
 
 func TestLongestCommonSuffix(t *testing.T) {
 	strs := []string{"abcXYZ", "defXYZ", "XYZ"}
-	s := longestCommonSuffix(strs)
+	s := longestCommonSuffix(strs, 0)
 	require.Equal(t, "XYZ", s)
 
 	// no common suffix
-	require.Equal(t, "", longestCommonSuffix([]string{"a", "b"}))
+	require.Equal(t, "", longestCommonSuffix([]string{"a", "b"}, 0))
 
 	// empty inputs
-	require.Equal(t, "", longestCommonSuffix(nil))
-	require.Equal(t, "", longestCommonSuffix([]string{}))
+	require.Equal(t, "", longestCommonSuffix(nil, 0))
+	require.Equal(t, "", longestCommonSuffix([]string{}, 0))
+
+	// same prefix
+	require.Equal(t, "", longestCommonSuffix([]string{"abc", "abc"}, 3))
+	require.Equal(t, "f", longestCommonSuffix([]string{"abcdf", "abcef"}, 3))
 }
 
 func TestGeneratePrefixSuffixPattern(t *testing.T) {
@@ -469,8 +470,7 @@ func TestProcessDataFiles(t *testing.T) {
 		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/a", RealSize: 10}},
 		{FileMeta: mydump.SourceFileMeta{Path: "s3://bucket/b", RealSize: 20}},
 	}
-	dfm, total, err := processDataFiles(files)
-	require.NoError(t, err)
+	dfm, total := processDataFiles(files)
 	require.Len(t, dfm, 2)
 	require.Equal(t, int64(30), total)
 	require.Equal(t, "s3://bucket/a", dfm[0].Path)
@@ -485,17 +485,89 @@ func TestValidatePattern(t *testing.T) {
 	smallAll := map[string]mydump.FileInfo{
 		"a.txt": {}, "b.txt": {},
 	}
-	require.True(t, validatePattern("*.txt", tableFiles, smallAll))
+	require.True(t, isValidPattern("*.txt", tableFiles, smallAll))
 
 	// allFiles includes an extra file => invalid
 	fullAll := map[string]mydump.FileInfo{
 		"a.txt": {}, "b.txt": {}, "c.txt": {},
 	}
-	require.False(t, validatePattern("*.txt", tableFiles, fullAll))
+	require.False(t, isValidPattern("*.txt", tableFiles, fullAll))
 
 	// If pattern doesn't match our table's file, it's also invalid
-	require.False(t, validatePattern("*.csv", tableFiles, smallAll))
+	require.False(t, isValidPattern("*.csv", tableFiles, smallAll))
 
 	// empty pattern => invalid
-	require.False(t, validatePattern("", tableFiles, smallAll))
+	require.False(t, isValidPattern("", tableFiles, smallAll))
+}
+
+func TestGenerateWildcardPath(t *testing.T) {
+	// Helper to create allFiles map
+	createAllFiles := func(paths []string) map[string]mydump.FileInfo {
+		allFiles := make(map[string]mydump.FileInfo)
+		for _, p := range paths {
+			allFiles[p] = mydump.FileInfo{
+				FileMeta: mydump.SourceFileMeta{Path: p},
+			}
+		}
+		return allFiles
+	}
+
+	// No files
+	files1 := []mydump.FileInfo{}
+	allFiles1 := createAllFiles([]string{})
+	_, err := generateWildcardPath(files1, allFiles1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no data files for table")
+
+	// Single file
+	files2 := generateFileMetas(t, []string{"db.tb.0001.sql"})
+	allFiles2 := createAllFiles([]string{"db.tb.0001.sql"})
+	path2, err := generateWildcardPath(files2, allFiles2)
+	require.NoError(t, err)
+	require.Equal(t, "db.tb.0001.sql", path2)
+
+	// Mydumper pattern succeeds
+	files3 := generateFileMetas(t, []string{"db.tb.0001.sql.gz", "db.tb.0002.sql.gz"})
+	allFiles3 := createAllFiles([]string{"db.tb.0001.sql.gz", "db.tb.0002.sql.gz"})
+	path3, err := generateWildcardPath(files3, allFiles3)
+	require.NoError(t, err)
+	require.Equal(t, "db.tb.*.sql.gz", path3)
+
+	// Mydumper pattern fails, fallback to prefix/suffix succeeds
+	files4 := []mydump.FileInfo{
+		{
+			TableName: filter.Table{Schema: "db", Name: "tb"},
+			FileMeta: mydump.SourceFileMeta{
+				Path:        "a.sql",
+				Type:        mydump.SourceTypeSQL,
+				Compression: mydump.CompressionNone,
+			},
+		},
+		{
+			TableName: filter.Table{Schema: "db", Name: "tb"},
+			FileMeta: mydump.SourceFileMeta{
+				Path:        "b.sql",
+				Type:        mydump.SourceTypeSQL,
+				Compression: mydump.CompressionNone,
+			},
+		},
+	}
+	allFiles4 := map[string]mydump.FileInfo{
+		files4[0].FileMeta.Path: files4[0],
+		files4[1].FileMeta.Path: files4[1],
+	}
+	path4, err := generateWildcardPath(files4, allFiles4)
+	require.NoError(t, err)
+	require.Equal(t, "*.sql", path4)
+
+	allFiles4["db-schema.sql"] = mydump.FileInfo{
+		FileMeta: mydump.SourceFileMeta{
+			Path:        "db-schema.sql",
+			Type:        mydump.SourceTypeSQL,
+			Compression: mydump.CompressionNone,
+		},
+	}
+	_, err = generateWildcardPath(files4, allFiles4)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot generate a unique wildcard pattern")
 }

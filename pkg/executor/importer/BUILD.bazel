@@ -4,7 +4,6 @@ go_library(
     name = "importer",
     srcs = [
         "chunk_process.go",
-        "cloud_sdk.go",
         "engine_process.go",
         "import.go",
         "job.go",
@@ -98,7 +97,6 @@ go_test(
     timeout = "short",
     srcs = [
         "chunk_process_testkit_test.go",
-        "cloud_sdk_test.go",
         "import_test.go",
         "importer_testkit_test.go",
         "job_test.go",
@@ -111,7 +109,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 37,
+    shard_count = 29,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
@@ -163,10 +161,7 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/promutil",
         "//pkg/util/syncutil",
-        "//pkg/util/table-filter",
-        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_docker_go_units//:go-units",
-        "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_google_uuid//:uuid",
         "@com_github_johannesboyne_gofakes3//:gofakes3",
         "@com_github_johannesboyne_gofakes3//backend/s3mem",
@@ -176,7 +171,6 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_stretchr_testify//require",
-        "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",

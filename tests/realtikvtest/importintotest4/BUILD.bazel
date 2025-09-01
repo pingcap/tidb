@@ -21,6 +21,7 @@ go_test(
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
         "//pkg/executor/importer",
+        "//pkg/importsdk",
         "//pkg/kv",
         "//pkg/lightning/config",
         "//pkg/planner/core",

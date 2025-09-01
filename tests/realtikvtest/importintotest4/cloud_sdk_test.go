@@ -21,7 +21,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
@@ -55,14 +55,14 @@ func (s *mockGCSSuite) TestCSVSource() {
 		WillReturnRows(sqlmock.NewRows([]string{"Create Table"}).AddRow(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`))
 
-	cloudSDK, err := importer.NewImportSDK(context.Background(), sourceURI, db,
-		importer.WithFileRouters([]*config.FileRouteRule{
+	cloudSDK, err := importsdk.NewImportSDK(context.Background(), sourceURI, db,
+		importsdk.WithFileRouters([]*config.FileRouteRule{
 			{Pattern: ".*", Table: "t", Schema: "cloud_csv", Type: "csv"},
 		}))
 	s.Require().NoError(err)
 	defer cloudSDK.Close()
 	s.Require().NoError(cloudSDK.CreateSchemasAndTables(context.Background()))
-	tableMetas, err := cloudSDK.GetTablesMeta(context.Background())
+	tableMetas, err := cloudSDK.GetTableMetas(context.Background())
 	s.Require().NoError(err)
 	s.Len(tableMetas, 1)
 	tableMeta := tableMetas[0]
@@ -129,12 +129,12 @@ func (s *mockGCSSuite) TestDumplingSource() {
 	mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `cloud_dumpling2`.`tb2` (`x` INT,`y` VARCHAR(10));")).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	cloudSDK, err := importer.NewImportSDK(context.Background(), sourceURI, db, importer.WithConcurrency(1))
+	cloudSDK, err := importsdk.NewImportSDK(context.Background(), sourceURI, db, importsdk.WithConcurrency(1))
 	s.Require().NoError(err)
 	defer cloudSDK.Close()
 
 	s.Require().NoError(cloudSDK.CreateSchemasAndTables(context.Background()))
-	tableMetas, err := cloudSDK.GetTablesMeta(context.Background())
+	tableMetas, err := cloudSDK.GetTableMetas(context.Background())
 	s.Require().NoError(err)
 	s.Len(tableMetas, 2)
 

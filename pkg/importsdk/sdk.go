@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importer
+package importsdk
 
 import (
 	"context"
@@ -33,14 +33,14 @@ type CloudImportSDK interface {
 	// CreateSchemasAndTables creates all database schemas and tables from source path
 	CreateSchemasAndTables(ctx context.Context) error
 
-	// GetTablesMeta returns metadata for all tables in the source path
-	GetTablesMeta(ctx context.Context) ([]*TableMeta, error)
+	// GetTableMetas returns metadata for all tables in the source path
+	GetTableMetas(ctx context.Context) ([]*TableMeta, error)
 
 	// GetTableMetaByName returns metadata for a specific table
 	GetTableMetaByName(ctx context.Context, schema, table string) (*TableMeta, error)
 
 	// GetTotalSize returns the cumulative size (in bytes) of all data files under the source path
-	GetTotalSize(ctx context.Context) (int64, error)
+	GetTotalSize(ctx context.Context) int64
 
 	// Close releases resources used by the SDK
 	Close() error
@@ -207,27 +207,14 @@ func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 	return nil
 }
 
-// GetTablesMeta implements the CloudImportSDK interface
-func (sdk *ImportSDK) GetTablesMeta(context.Context) ([]*TableMeta, error) {
+// GetTableMeta implements the CloudImportSDK interface
+func (sdk *ImportSDK) GetTableMetas(context.Context) ([]*TableMeta, error) {
 	dbMetas := sdk.loader.GetDatabases()
+	allFiles := sdk.loader.GetAllFiles()
 	var results []*TableMeta
-
-	// First, collect all data files across all tables for validation
-	allDataFiles := make(map[string]mydump.FileInfo)
 	for _, dbMeta := range dbMetas {
 		for _, tblMeta := range dbMeta.Tables {
-			for _, file := range tblMeta.DataFiles {
-				allDataFiles[file.FileMeta.Path] = file
-			}
-			if tblMeta.SchemaFile.FileMeta.Path != "" {
-				allDataFiles[tblMeta.SchemaFile.FileMeta.Path] = tblMeta.SchemaFile
-			}
-		}
-	}
-
-	for _, dbMeta := range dbMetas {
-		for _, tblMeta := range dbMeta.Tables {
-			tableMeta, err := sdk.buildTableMeta(dbMeta, tblMeta, allDataFiles)
+			tableMeta, err := sdk.buildTableMeta(dbMeta, tblMeta, allFiles)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to build metadata for table %s.%s",
 					dbMeta.Name, tblMeta.Name)
@@ -242,20 +229,7 @@ func (sdk *ImportSDK) GetTablesMeta(context.Context) ([]*TableMeta, error) {
 // GetTableMetaByName implements CloudImportSDK interface
 func (sdk *ImportSDK) GetTableMetaByName(_ context.Context, schema, table string) (*TableMeta, error) {
 	dbMetas := sdk.loader.GetDatabases()
-
-	// Collect all data files (and schema files) for pattern matching
-	allDataFiles := make(map[string]mydump.FileInfo)
-	for _, dbMeta := range dbMetas {
-		for _, tblMeta := range dbMeta.Tables {
-			for _, file := range tblMeta.DataFiles {
-				allDataFiles[file.FileMeta.Path] = file
-			}
-			if tblMeta.SchemaFile.FileMeta.Path != "" {
-				allDataFiles[tblMeta.SchemaFile.FileMeta.Path] = tblMeta.SchemaFile
-			}
-		}
-	}
-
+	allFiles := sdk.loader.GetAllFiles()
 	// Find the specific table
 	for _, dbMeta := range dbMetas {
 		if dbMeta.Name != schema {
@@ -267,7 +241,7 @@ func (sdk *ImportSDK) GetTableMetaByName(_ context.Context, schema, table string
 				continue
 			}
 
-			return sdk.buildTableMeta(dbMeta, tblMeta, allDataFiles)
+			return sdk.buildTableMeta(dbMeta, tblMeta, allFiles)
 		}
 
 		return nil, errors.Annotatef(ErrTableNotFound, "schema=%s, table=%s", schema, table)
@@ -277,16 +251,15 @@ func (sdk *ImportSDK) GetTableMetaByName(_ context.Context, schema, table string
 }
 
 // GetTotalSize implements CloudImportSDK interface
-func (sdk *ImportSDK) GetTotalSize(ctx context.Context) (int64, error) {
-	tables, err := sdk.GetTablesMeta(ctx)
-	if err != nil {
-		return 0, err
-	}
+func (sdk *ImportSDK) GetTotalSize(ctx context.Context) int64 {
 	var total int64
-	for _, tbl := range tables {
-		total += tbl.TotalSize
+	dbMetas := sdk.loader.GetDatabases()
+	for _, dbMeta := range dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			total += tblMeta.TotalSize
+		}
 	}
-	return total, nil
+	return total
 }
 
 // buildTableMeta creates a TableMeta from database and table metadata
@@ -303,14 +276,11 @@ func (sdk *ImportSDK) buildTableMeta(
 	}
 
 	// Process data files
-	dataFiles, totalSize, err := processDataFiles(tblMeta.DataFiles)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to process data files (table=%s.%s)", dbMeta.Name, tblMeta.Name)
-	}
+	dataFiles, totalSize := processDataFiles(tblMeta.DataFiles)
 	tableMeta.DataFiles = dataFiles
 	tableMeta.TotalSize = totalSize
 
-	wildcard, err := generateWildcard(tblMeta.DataFiles, allDataFiles)
+	wildcard, err := generateWildcardPath(tblMeta.DataFiles, allDataFiles)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to build wildcard for table=%s.%s", dbMeta.Name, tblMeta.Name)
 	}
@@ -329,7 +299,7 @@ func (sdk *ImportSDK) Close() error {
 }
 
 // processDataFiles converts mydump data files to DataFileMeta and calculates total size
-func processDataFiles(files []mydump.FileInfo) ([]DataFileMeta, int64, error) {
+func processDataFiles(files []mydump.FileInfo) ([]DataFileMeta, int64) {
 	dataFiles := make([]DataFileMeta, 0, len(files))
 	var totalSize int64
 
@@ -339,7 +309,7 @@ func processDataFiles(files []mydump.FileInfo) ([]DataFileMeta, int64, error) {
 		totalSize += dataFile.FileMeta.RealSize
 	}
 
-	return dataFiles, totalSize, nil
+	return dataFiles, totalSize
 }
 
 // createDataFileMeta creates a DataFileMeta from a mydump.DataFile
@@ -352,8 +322,8 @@ func createDataFileMeta(file mydump.FileInfo) DataFileMeta {
 	}
 }
 
-// generateWildcard creates a wildcard pattern that matches only this table's files
-func generateWildcard(
+// generateWildcardPath creates a wildcard pattern path that matches only this table's files
+func generateWildcardPath(
 	files []mydump.FileInfo,
 	allFiles map[string]mydump.FileInfo,
 ) (string, error) {
@@ -373,7 +343,7 @@ func generateWildcard(
 
 	// Try Mydumper-specific pattern first
 	p := generateMydumperPattern(files[0])
-	if p != "" && validatePattern(p, tableFiles, allFiles) {
+	if p != "" && isValidPattern(p, tableFiles, allFiles) {
 		return p, nil
 	}
 
@@ -383,14 +353,14 @@ func generateWildcard(
 		paths = append(paths, file.FileMeta.Path)
 	}
 	p = generatePrefixSuffixPattern(paths)
-	if p != "" && validatePattern(p, tableFiles, allFiles) {
+	if p != "" && isValidPattern(p, tableFiles, allFiles) {
 		return p, nil
 	}
 	return "", errors.Annotatef(ErrWildcardNotSpecific, "failed to find a wildcard that matches all and only the table's files.")
 }
 
-// validatePattern checks if a wildcard pattern matches only the table's files
-func validatePattern(pattern string, tableFiles map[string]struct{}, allFiles map[string]mydump.FileInfo) bool {
+// isValidPattern checks if a wildcard pattern matches only the table's files
+func isValidPattern(pattern string, tableFiles map[string]struct{}, allFiles map[string]mydump.FileInfo) bool {
 	if pattern == "" {
 		return false
 	}
@@ -466,16 +436,17 @@ func longestCommonPrefix(strs []string) string {
 	return prefix
 }
 
-// longestCommonSuffix finds the longest string that is a suffix of all strings in the slice
-func longestCommonSuffix(strs []string) string {
+// longestCommonSuffix finds the longest string that is a suffix of all strings in the slice, starting after the given prefix length
+func longestCommonSuffix(strs []string, prefixLen int) string {
 	if len(strs) == 0 {
 		return ""
 	}
 
-	suffix := strs[0]
+	suffix := strs[0][prefixLen:]
 	for _, s := range strs[1:] {
+		remaining := s[prefixLen:]
 		i := 0
-		for i < len(suffix) && i < len(s) && suffix[len(suffix)-i-1] == s[len(s)-i-1] {
+		for i < len(suffix) && i < len(remaining) && suffix[len(suffix)-i-1] == remaining[len(remaining)-i-1] {
 			i++
 		}
 		suffix = suffix[len(suffix)-i:]
@@ -498,18 +469,7 @@ func generatePrefixSuffixPattern(paths []string) string {
 	}
 
 	prefix := longestCommonPrefix(paths)
-	suffix := longestCommonSuffix(paths)
-
-	minLen := len(paths[0])
-	for _, p := range paths[1:] {
-		if len(p) < minLen {
-			minLen = len(p)
-		}
-	}
-	maxSuffixLen := minLen - len(prefix)
-	if len(suffix) > maxSuffixLen {
-		suffix = suffix[len(suffix)-maxSuffixLen:]
-	}
+	suffix := longestCommonSuffix(paths, len(prefix))
 
 	return prefix + "*" + suffix
 }
