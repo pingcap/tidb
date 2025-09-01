@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,14 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package ingestrec
 
-// ExplainInfo implements Plan interface.
-func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
-	return p.PhysicalIndexJoin.ExplainInfoInternal(false, true)
+func (m *TableForeignKeyRecordManager) GetFKRecordMap() map[ForeignKeyRecordKey]*ForeignKeyRecord {
+	return m.fkRecordMap
 }
 
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
-	return p.PhysicalIndexJoin.ExplainInfoInternal(true, true)
+func (m *TableForeignKeyRecordManager) GetReferredFKRecordMap() map[ForeignKeyRecordKey]*ForeignKeyRecord {
+	return m.referredFKRecordMap
+}
+
+func (m *ForeignKeyRecordManager) GetFKRecordMap() map[ForeignKeyRecordKey]*ForeignKeyRecord {
+	return m.fkRecordMap
+}
+
+func (i *IngestRecorder) GetFKRecordMap() map[ForeignKeyRecordKey]*ForeignKeyRecord {
+	return i.foreignKeyRecordManager.fkRecordMap
 }

@@ -889,6 +889,8 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
+	case format == types.ExplainFormatPlanTree && (!e.Analyze && e.RuntimeStatsColl == nil):
+		fieldNames = []string{"id", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -918,6 +920,9 @@ func (e *Explain) prepareSchema() error {
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
 			"explain_analyze", "binding"}
 	default:
+		if e.Analyze {
+			return errors.Errorf("explain format '%s' with analyze is not supported now", e.Format)
+		}
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 
@@ -1031,7 +1036,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache, types.ExplainFormatPlanTree:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.Rows = ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl)
@@ -1212,11 +1217,14 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 	}
 	taskType, id := getExplainIDAndTaskTp(flatOp)
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := getOperatorInfo(p)
+	estRows, estCost, costFormula, accessObject, operatorInfo := getOperatorInfo(p, format)
 
 	var row []string
 	if analyze || runtimeStatsColl != nil {
-		row = []string{id, estRows}
+		row = []string{id}
+		if format != types.ExplainFormatPlanTree {
+			row = append(row, estRows)
+		}
 		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
@@ -1226,7 +1234,10 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
-		row = []string{id, estRows}
+		row = []string{id}
+		if format != types.ExplainFormatPlanTree {
+			row = append(row, estRows)
+		}
 		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost ||
 			format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
@@ -1244,14 +1255,16 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explai
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(p)
+	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(p, e.Format)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
-		EstRows:      estRows,
 		TaskType:     taskType,
 		AccessObject: accessObject,
 		OperatorInfo: operatorInfo,
 		SubOperators: make([]*ExplainInfoForEncode, 0),
+	}
+	if e.Format != types.ExplainFormatPlanTree {
+		jsonRow.EstRows = estRows
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
@@ -1260,14 +1273,16 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explai
 	return jsonRow
 }
 
-func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
+func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
 	estCost = "N/A"
 	costFormula = "N/A"
 	sctx := p.SCtx()
 	if isPhysicalPlan {
-		estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
+		if format != types.ExplainFormatPlanTree {
+			estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
+		}
 		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.GetCost(), 'f', 2, 64)
@@ -1564,7 +1579,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 			pkLength = len(pkIdx.Columns)
 		}
 		return len(tableScan.Ranges[0].LowVal) == pkLength
-	case *PointGetPlan:
+	case *physicalop.PointGetPlan:
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!

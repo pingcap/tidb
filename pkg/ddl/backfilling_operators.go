@@ -675,9 +675,10 @@ func NewWriteExternalStoreOperator(
 
 // Close implements operator.Operator interface.
 func (o *WriteExternalStoreOperator) Close() error {
+	err := o.AsyncOperator.Close()
 	o.logger.Info("write external storage operator total count",
 		zap.Int64("count", o.totalCount.Load()))
-	return o.AsyncOperator.Close()
+	return err
 }
 
 // IndexWriteResult contains the result of writing index records to ingest engine.

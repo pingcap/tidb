@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
@@ -295,10 +295,19 @@ func (e *indexScanExec) isNewVals(values [][]byte) bool {
 }
 
 func (e *indexScanExec) Process(key, value []byte) error {
-	if kerneltype.IsNextGen() && len(key) > 4 && key[0] == 'x' {
-		key = key[4:] // remove the keyspace prefix
+	decodedKey := key
+	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
+		// If the key is in API V2, then ignore the prefix
+		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		decodedKey = k
+		if !kv.Key(decodedKey).HasPrefix(tablecodec.TablePrefix()) {
+			return errors.Errorf("invalid index key %q after decoded", key)
+		}
 	}
-	values, err := tablecodec.DecodeIndexKV(key, value, e.numIdxCols, e.hdlStatus, e.colInfos)
+	values, err := tablecodec.DecodeIndexKV(decodedKey, value, e.numIdxCols, e.hdlStatus, e.colInfos)
 	if err != nil {
 		return err
 	}
@@ -322,7 +331,7 @@ func (e *indexScanExec) Process(key, value []byte) error {
 	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
 	// The following if statement is to fill in the tid when we needed it.
 	if e.physTblIDColIdx != nil && *e.physTblIDColIdx >= len(values) {
-		tblID := tablecodec.DecodeTableID(key)
+		tblID := tablecodec.DecodeTableID(decodedKey)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
 	if e.chk.IsFull() {

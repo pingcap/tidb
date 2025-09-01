@@ -42,6 +42,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "@com_github_gorilla_mux//:mux",

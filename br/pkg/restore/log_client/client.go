@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -1503,37 +1504,81 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	return logIter, nil
 }
 
+func colsToStr(cols []ast.CIStr) string {
+	var str strings.Builder
+	for i, col := range cols {
+		if i != 0 {
+			str.WriteString(",")
+		}
+		str.WriteString(col.O)
+	}
+	return str.String()
+}
+
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
 	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
 	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
+	alterTableAddForeignKeyFormat  = "ALTER TABLE %%n.%%n ADD CONSTRAINT %%n FOREIGN KEY (%s) REFERENCES %%n.%%n (%s)"
+	alterTableDropForeignKeyFormat = "ALTER TABLE %n.%n DROP FOREIGN KEY %n"
 )
 
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
+) ([]checkpoint.CheckpointIngestIndexRepairSQL, []checkpoint.CheckpointForeignKeyUpdateSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
+	var fkSqls []checkpoint.CheckpointForeignKeyUpdateSQL
 	if rc.useCheckpoint {
 		exists, err := logCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
 		if err != nil {
-			return sqls, false, errors.Trace(err)
+			return sqls, fkSqls, false, errors.Trace(err)
 		}
 		if exists {
 			checkpointSQLs, err := logCheckpointMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
 			if err != nil {
-				return sqls, false, errors.Trace(err)
+				return sqls, fkSqls, false, errors.Trace(err)
 			}
 			sqls = checkpointSQLs.SQLs
+			fkSqls = checkpointSQLs.FKSQLs
 			log.Info("load ingest index repair sqls from checkpoint", zap.String("category", "ingest"), zap.Reflect("sqls", sqls))
-			return sqls, true, nil
+			return sqls, fkSqls, true, nil
 		}
 	}
 
-	if err := ingestRecorder.UpdateIndexInfo(rc.dom.InfoSchema()); err != nil {
-		return sqls, false, errors.Trace(err)
+	if err := ingestRecorder.UpdateIndexInfo(ctx, rc.dom.InfoSchema()); err != nil {
+		return sqls, fkSqls, false, errors.Trace(err)
+	}
+	if err := ingestRecorder.IterateForeignKeys(func(fkRecord *ingestrec.ForeignKeyRecord) error {
+		var (
+			addSQL  strings.Builder
+			addArgs []any = make([]any, 0, 7+len(fkRecord.Cols)+len(fkRecord.RefCols))
+		)
+		childCols := colsToStr(fkRecord.Cols)
+		parentCols := colsToStr(fkRecord.RefCols)
+		addSQL.WriteString(fmt.Sprintf(alterTableAddForeignKeyFormat, childCols, parentCols))
+		addArgs = append(addArgs,
+			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O, fkRecord.RefSchema.O, fkRecord.RefTable.O,
+		)
+		if onDelete := ast.ReferOptionType(fkRecord.OnDelete); onDelete != ast.ReferOptionNoOption {
+			addSQL.WriteString(fmt.Sprintf(" ON DELETE %s", onDelete.String()))
+		}
+		if onUpdate := ast.ReferOptionType(fkRecord.OnUpdate); onUpdate != ast.ReferOptionNoOption {
+			addSQL.WriteString(fmt.Sprintf(" ON UPDATE %s", onUpdate.String()))
+		}
+		fkSqls = append(fkSqls, checkpoint.CheckpointForeignKeyUpdateSQL{
+			FKID:       fkRecord.ID,
+			SchemaName: fkRecord.ChildSchemaNameO,
+			TableName:  fkRecord.ChildTableNameO,
+			FKName:     fkRecord.Name.O,
+			AddSQL:     addSQL.String(),
+			AddArgs:    addArgs,
+		})
+		return nil
+	}); err != nil {
+		return sqls, fkSqls, false, errors.Trace(err)
 	}
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
@@ -1559,7 +1604,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" USING ")
 			addSQL.WriteString(indexTypeStr)
 		}
-
+		// WITH PARSER [...]
+		if info.IndexInfo.FullTextInfo != nil {
+			addSQL.WriteString(" WITH PARSER ")
+			addSQL.WriteString(info.IndexInfo.FullTextInfo.ParserType.SQLName())
+		}
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
 			addSQL.WriteString(" COMMENT %?")
@@ -1570,6 +1619,12 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" INVISIBLE")
 		} else {
 			addSQL.WriteString(" VISIBLE")
+		}
+
+		if info.IndexInfo.Global {
+			addSQL.WriteString(" GLOBAL")
+		} else {
+			addSQL.WriteString(" LOCAL")
 		}
 
 		sqls = append(sqls, checkpoint.CheckpointIngestIndexRepairSQL{
@@ -1583,17 +1638,18 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 
 		return nil
 	}); err != nil {
-		return sqls, false, errors.Trace(err)
+		return sqls, fkSqls, false, errors.Trace(err)
 	}
 
 	if rc.useCheckpoint && len(sqls) > 0 {
 		if err := logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
-			SQLs: sqls,
+			SQLs:   sqls,
+			FKSQLs: fkSqls,
 		}); err != nil {
-			return sqls, false, errors.Trace(err)
+			return sqls, fkSqls, false, errors.Trace(err)
 		}
 	}
-	return sqls, false, nil
+	return sqls, fkSqls, false, nil
 }
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
@@ -1603,7 +1659,7 @@ func (rc *LogClient) RepairIngestIndex(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	g glue.Glue,
 ) error {
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
+	sqls, fkSqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1639,6 +1695,29 @@ func (rc *LogClient) RepairIngestIndex(
 			}
 		}
 	}
+	for i, sql := range fkSqls {
+		tableInfo, err := info.TableByName(ctx, ast.NewCIStr(sql.SchemaName), ast.NewCIStr(sql.TableName))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fkSqls[i].OldForeignKeyFound = false
+		fkSqls[i].ForeignKeyUpdated = false
+		if fromCheckpoint {
+			for _, fk := range tableInfo.Meta().ForeignKeys {
+				if fk.ID == sql.FKID {
+					// the original foreign key id is not dropped
+					fkSqls[i].OldForeignKeyFound = true
+					break
+				}
+				if fk.Name.O == sql.FKName {
+					// find the same name foreign key, but not the same foreign key id,
+					// which means the foreign key is updated and all the indexes are recreated
+					fkSqls[i].ForeignKeyUpdated = true
+					break
+				}
+			}
+		}
+	}
 
 	sessionCount := defaultRepairIndexSessionCount
 	indexSessions, err := createSessions(ctx, g, rc.dom.Store(), sessionCount)
@@ -1650,6 +1729,30 @@ func (rc *LogClient) RepairIngestIndex(
 	}()
 	workerpool := tidbutil.NewWorkerPool(sessionCount, "repair ingest index")
 	eg, ectx := errgroup.WithContext(ctx)
+	for _, fk := range fkSqls {
+		if fk.ForeignKeyUpdated {
+			continue
+		}
+		if fromCheckpoint && !fk.OldForeignKeyFound {
+			continue
+		}
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			indexSession := indexSessions[id%uint64(len(indexSessions))]
+			if err := indexSession.ExecuteInternal(ectx, alterTableDropForeignKeyFormat, fk.SchemaName, fk.TableName, fk.FKName); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	failpoint.Inject("failed-before-repair-ingest-index", func(v failpoint.Value) {
+		if v != nil && v.(bool) {
+			failpoint.Return(errors.New("failed before repair ingest index"))
+		}
+	})
+	eg, ectx = errgroup.WithContext(ctx)
 	mp := console.StartMultiProgress()
 	for _, sql := range sqls {
 		if sql.IndexRepaired {
@@ -1695,6 +1798,27 @@ func (rc *LogClient) RepairIngestIndex(
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
+	eg, ectx = errgroup.WithContext(ctx)
+	for _, fk := range fkSqls {
+		if fk.ForeignKeyUpdated {
+			continue
+		}
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			indexSession := indexSessions[id%uint64(len(indexSessions))]
+			if err := indexSession.ExecuteInternal(ectx, fk.AddSQL, fk.AddArgs...); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	failpoint.Inject("failed-after-repair-ingest-index", func(v failpoint.Value) {
+		if v != nil && v.(bool) {
+			failpoint.Return(errors.New("failed after repair ingest index"))
+		}
+	})
 
 	return nil
 }
