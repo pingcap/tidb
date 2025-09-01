@@ -48,9 +48,10 @@ func (s *mockGCSSuite) TestImportParquetWithClusteredIndex() {
 
 	testCases := []testCase{
 		{
-			createSQL:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY, k bigint NOT NULL, c char(16), pad char(16))",
-			importSQL:      "IMPORT INTO test.sbtest FROM '%s' FORMAT 'parquet'",
-			readSQL:        "SELECT id FROM test.sbtest ORDER BY id",
+			createSQL: "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY, k bigint NOT NULL, c char(16), pad char(16))",
+			importSQL: "IMPORT INTO test.sbtest FROM '%s' FORMAT 'parquet'",
+			// The ID of data generated is starting from 0, plus 1 to make it same as _tidb_rowid
+			readSQL:        "SELECT id + 1 FROM test.sbtest ORDER BY id",
 			checkCountOnly: false,
 		},
 		{
@@ -62,13 +63,13 @@ func (s *mockGCSSuite) TestImportParquetWithClusteredIndex() {
 		{
 			createSQL:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY AUTO_INCREMENT, k bigint NOT NULL, c char(16), pad char(16))",
 			importSQL:      "IMPORT INTO test.sbtest(@1, k, c, pad) FROM '%s' FORMAT 'parquet'",
-			readSQL:        "SELECT id FROM test.sbtest",
+			readSQL:        "SELECT id + 1 FROM test.sbtest",
 			checkCountOnly: false,
 		},
 		{
 			createSQL:      "CREATE TABLE test.sbtest(id bigint NOT NULL PRIMARY KEY AUTO_RANDOM, k bigint NOT NULL, c char(16), pad char(16))",
 			importSQL:      "IMPORT INTO test.sbtest(@1, k, c, pad) FROM '%s' FORMAT 'parquet'",
-			readSQL:        "SELECT id FROM test.sbtest",
+			readSQL:        "SELECT id + 1 FROM test.sbtest",
 			checkCountOnly: true,
 		},
 	}
