@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cznic/mathutil"
+	"modernc.org/mathutil"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/stretchr/testify/assert"
 )
