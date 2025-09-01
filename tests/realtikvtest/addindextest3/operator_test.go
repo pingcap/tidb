@@ -458,3 +458,21 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		require.NoError(t, opCtx.OperatorErr())
 	}
 }
+
+func TestModifyColumn(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c1 int primary key, c2 bigint, c3 bigint);")
+	for i := 0; i < 300; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d, %d);", i, i, i))
+	}
+	//tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2);")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	//tk.MustExec("alter table t1 add index idx(c2);")
+
+	tk.MustExec("alter table t1 modify column c2 varchar(30);")
+	tk.MustExec("alter table t1 modify column c2 bigint;")
+	tk.MustExec("admin check table t1;")
+}

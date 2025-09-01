@@ -16,6 +16,7 @@ package rowcodec
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"math"
 	"sort"
@@ -103,6 +104,10 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 		r.initOffsets()
 	}
 	for i, colID := range encoder.tempColIDs {
+		if i >= len(encoder.values) {
+			fmt.Println("panic in reformatCols", encoder.tempColIDs, encoder.values)
+			panic("index out of range")
+		}
 		if encoder.values[i].IsNull() {
 			if r.large() {
 				r.colIDs32[nullIdx] = uint32(colID)

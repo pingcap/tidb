@@ -843,6 +843,122 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
+func (dc *ddlCtx) modifyColumnInPipeline(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	t table.PhysicalTable,
+	reorgInfo *reorgInfo,
+) error {
+	if err := dc.isReorgRunnable(ctx, false); err != nil {
+		return errors.Trace(err)
+	}
+	job := reorgInfo.Job
+	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
+	defer cancel()
+
+	idxCnt := len(reorgInfo.elements)
+	//indexIDs := make([]int64, 0, idxCnt)
+	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	var indexNames strings.Builder
+	//uniques := make([]bool, 0, idxCnt)
+	//hasUnique := false
+	//for _, e := range reorgInfo.elements {
+	//	indexIDs = append(indexIDs, e.ID)
+	//	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
+	//	if indexInfo == nil {
+	//		logutil.DDLIngestLogger().Warn("index info not found",
+	//			zap.Int64("jobID", job.ID),
+	//			zap.Int64("tableID", t.Meta().ID),
+	//			zap.Int64("indexID", e.ID))
+	//		return errors.Errorf("index info not found: %d", e.ID)
+	//	}
+	//	indexInfos = append(indexInfos, indexInfo)
+	//	if indexNames.Len() > 0 {
+	//		indexNames.WriteString("+")
+	//	}
+	//	indexNames.WriteString(indexInfo.Name.O)
+	//	uniques = append(uniques, indexInfo.Unique)
+	//	hasUnique = hasUnique || indexInfo.Unique
+	//}
+
+	var (
+		//cfg *local.BackendConfig
+		//bd  *local.Backend
+		err error
+	)
+	//if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+	//	cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
+	//	if err != nil {
+	//		return errors.Trace(err)
+	//	}
+	//	defer bd.Close()
+	//}
+	//bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
+	//	WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
+	//	Build(cfg, bd)
+	//if err != nil {
+	//	return errors.Trace(err)
+	//}
+	//defer bcCtx.Close()
+
+	reorgCtx := dc.getReorgCtx(job.ID)
+	rowCntListener := &localRowCntCollector{
+		prevPhysicalRowCnt: reorgCtx.getRowCount(),
+		reorgCtx:           reorgCtx,
+		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
+	}
+
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(sctx)
+	//avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
+
+	//engines, err := bcCtx.Register(indexIDs, uniques, t)
+	//if err != nil {
+	//	logutil.DDLIngestLogger().Error("cannot register new engine",
+	//		zap.Int64("jobID", job.ID),
+	//		zap.Error(err),
+	//		zap.Int64s("index IDs", indexIDs))
+	//	return errors.Trace(err)
+	//}
+	importConc := job.ReorgMeta.GetConcurrency()
+	pipe, err := NewModifyColumnTxnPipeline(
+		opCtx,
+		dc.store,
+		sessPool,
+		nil, //bcCtx,
+		nil, //engines,
+		job.ID,
+		t,
+		indexInfos,
+		reorgInfo.StartKey,
+		reorgInfo.EndKey,
+		job.ReorgMeta,
+		0, //avgRowSize,
+		importConc,
+		rowCntListener,
+		reorgInfo,
+	)
+
+	if err != nil {
+		return err
+	}
+	return executeAndClosePipeline(opCtx, pipe, job, nil, 0)
+	//if err != nil {
+	//	err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
+	//	if err1 != nil {
+	//		logutil.DDLIngestLogger().Error("unregister engine failed",
+	//			zap.Int64("jobID", job.ID),
+	//			zap.Error(err1),
+	//			zap.Int64s("index IDs", indexIDs))
+	//	}
+	//	return err
+	//}
+	//return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
+}
+
 func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
 	reader, writer := pipe.GetReaderAndWriter()
 	if reader == nil || writer == nil {
@@ -887,18 +1003,18 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	}
 
 	// Adjust worker pool size and max write speed dynamically.
-	var wg util.WaitGroupWrapper
-	adjustCtx, cancel := context.WithCancel(ctx)
-	if job != nil {
-		wg.RunWithLog(func() {
-			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
-		})
-	}
+	//var wg util.WaitGroupWrapper
+	//adjustCtx, cancel := context.WithCancel(ctx)
+	//if job != nil {
+	//	wg.RunWithLog(func() {
+	//		adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
+	//	})
+	//}
 
 	err = pipe.Close()
 	failpoint.InjectCall("afterPipeLineClose", pipe)
-	cancel()
-	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
+	//cancel()
+	//wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
 		return opErr
 	}
@@ -974,6 +1090,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	})
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		return dc.addIndexWithLocalIngest(ctx, sessPool, t, reorgInfo)
+	}
+
+	if bfWorkerType == typeUpdateColumnWorker && reorgInfo.TableName == "t1" {
+		logutil.DDLLogger().Info("use modify column pipeline")
+		return dc.modifyColumnInPipeline(ctx, sessPool, t, reorgInfo)
 	}
 
 	jc := reorgInfo.NewJobContext()
