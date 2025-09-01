@@ -645,13 +645,11 @@ func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, p
 	// Because the right side of output row of LeftOuterJoin is always null when join conditions are not met.
 	// TODO: should also disable decorrelate when proj.Exprs use columns from innerPlan and its expression is not null-rejective.
 	outerPlan := apply.Children()[0]
-	var skipDecorrelate bool
 	for _, expr := range proj.Exprs {
 		cols := expression.ExtractColumns(expr)
 		if outerPlan.Schema().ColumnsIndices(cols) != nil {
-			skipDecorrelate = true
-			break
+			return true
 		}
 	}
-	return skipDecorrelate
+	return false
 }
