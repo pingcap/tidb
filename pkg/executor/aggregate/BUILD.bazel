@@ -49,6 +49,7 @@ go_test(
     shard_count = 3,
     deps = [
         ":aggregate",
+        "//pkg/config",
         "//pkg/executor/aggfuncs",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
@@ -63,6 +64,7 @@ go_test(
         "//pkg/util/memory",
         "//pkg/util/mock",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
     ],
 )
