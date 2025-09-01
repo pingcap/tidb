@@ -26,6 +26,7 @@ import (
 )
 
 type joinReorderGreedySolver struct {
+	allInnerJoin bool // allInnerJoin indicates whether all joins in the current join group are inner joins.
 	*baseSingleGroupJoinOrderSolver
 }
 
@@ -103,11 +104,10 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
 		var bestJoin, whateverValidOne base.LogicalPlan
 		for i, node := range s.curJoinGroup {
-			newJoin, remainOthers, numJoinKeys := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
+			newJoin, remainOthers, isCartesian := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
 			if newJoin == nil {
 				continue
 			}
-			isCartesian := numJoinKeys == 0
 			_, _, err := newJoin.RecursiveDeriveStats(nil)
 			if err != nil {
 				return nil, err
@@ -162,8 +162,14 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression, int) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression, bool) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
+	if len(usedEdges) == 0 && !s.allInnerJoin {
+		// For outer joins like `t1 left join t2 left join t3`, we have to ensure t1 participates join before
+		// t2 and t3, and cartesian join between t2 and t3 might lead to incorrect results.
+		// For safety we don't allow cartesian outer join here.
+		return nil, nil, false
+	}
 	join, otherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
-	return join, otherConds, len(usedEdges)
+	return join, otherConds, len(usedEdges) == 0
 }
