@@ -183,28 +183,8 @@ func setupMemoryMonitoring(ctx context.Context, memTotal, memUsed uint64) error 
 // Init initializes BR cli.
 func Init(cmd *cobra.Command) (err error) {
 	initOnce.Do(func() {
-		slowLogFilename, e := cmd.Flags().GetString(FlagSlowLogFile)
-		if e != nil {
-			err = e
-			return
-		}
-		tidbLogCfg := logutil.LogConfig{}
-		if len(slowLogFilename) != 0 {
-			tidbLogCfg.SlowQueryFile = slowLogFilename
-			// Just for special grpc log file,
-			// otherwise the info will be print in stdout...
-			tidbLogCfg.File.Filename = timestampLogFileName()
-		} else {
-			// Don't print slow log in br
-			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
-		}
-		e = logutil.InitLogger(&tidbLogCfg)
-		if e != nil {
-			err = e
-			return
-		}
 		// Initialize the logger.
-		conf := new(log.Config)
+		conf := logutil.LogConfig{}
 		conf.Level, err = cmd.Flags().GetString(FlagLogLevel)
 		if err != nil {
 			return
@@ -217,10 +197,18 @@ func Init(cmd *cobra.Command) (err error) {
 		if err != nil {
 			return
 		}
+		conf.SlowQueryFile, err = cmd.Flags().GetString(FlagSlowLogFile)
+		if err != nil {
+			return
+		}
 		_, outputLogToTerm := os.LookupEnv(envLogToTermKey)
 		if outputLogToTerm {
 			// Log to term if env `BR_LOG_TO_TERM` is set.
 			conf.File.Filename = ""
+		}
+		if len(conf.SlowQueryFile) == 0 {
+			// Don't print slow log in br
+			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
 		}
 		if len(conf.File.Filename) != 0 {
 			atomic.StoreUint64(&hasLogFile, 1)
@@ -228,12 +216,10 @@ func Init(cmd *cobra.Command) (err error) {
 			// cmd.PrintErr prints to stderr, but PrintErrf prints to stdout.
 			cmd.PrintErr(fmt.Sprintf("Detail BR log in %s \n", conf.File.Filename))
 		}
-		lg, p, e := log.InitLogger(conf)
-		if e != nil {
-			err = e
+		err = logutil.InitLogger(&conf)
+		if err != nil {
 			return
 		}
-		log.ReplaceGlobals(lg, p)
 		err = memory.InitMemoryHook()
 		if err != nil {
 			return
