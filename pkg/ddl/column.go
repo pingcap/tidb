@@ -603,7 +603,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 		}
 	}
-
+	defer checkColumnOrderByStates(tblInfo)
 	return w.doModifyColumnTypeWithData(d, t, job, dbInfo, tblInfo, changingCol, oldCol, modifyInfo.newCol.Name, modifyInfo.pos, modifyInfo.removedIdxs)
 }
 
@@ -694,7 +694,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// none -> delete only
-		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
+		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
@@ -735,7 +735,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// delete only -> write only
-		updateChangingObjState(changingCol, changingIdxs, model.StateWriteOnly)
+		updateObjectState(changingCol, changingIdxs, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -743,7 +743,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		updateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)
+		updateObjectState(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -775,10 +775,12 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
-		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
-		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
+
+		updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
+		updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
 		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
-		moveColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
+		moveChangingColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
+		moveOldColumnInfo(tblInfo, oldCol)
 		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
 		updateModifyingCols(oldCol, changingCol)
 
@@ -792,7 +794,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		switch oldCol.State {
 		case model.StateWriteOnly:
-			updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
+			updateObjectState(oldCol, oldIdxInfos, model.StateDeleteOnly)
+			moveOldColumnInfo(tblInfo, oldCol)
 			ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -960,7 +963,7 @@ func updateModifyingCols(oldCol, changingCol *model.ColumnInfo) {
 	oldCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: changingCol.Offset}
 }
 
-func moveColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
+func moveChangingColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
 	// Swap the old column with new column position.
 	oldOffset := oldCol.Offset
 	changingOffset := changingCol.Offset
@@ -970,6 +973,33 @@ func moveColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.C
 	// The validation of the position is done in `validatePosition`.
 	destOffset, _ := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
 	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
+}
+
+// moveOldColumnInfo is used to make sure the columns in TableInfo
+// are in correct order after the old column is changed to non-public state.
+func moveOldColumnInfo(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
+	order := []model.SchemaState{
+		model.StatePublic,
+		model.StateWriteReorganization,
+		model.StateWriteOnly,
+		model.StateDeleteReorganization,
+		model.StateDeleteOnly,
+		model.StateNone,
+	}
+	for len(order) > 0 && order[len(order)-1] != oldCol.State {
+		order = order[:len(order)-1]
+	}
+	dest := len(tblInfo.Columns) - 1
+	for i, col := range tblInfo.Columns {
+		if col.ID == oldCol.ID {
+			continue
+		}
+		if !slices.Contains(order, col.State) {
+			dest = i
+			break
+		}
+	}
+	tblInfo.MoveColumnInfo(oldCol.Offset, dest)
 }
 
 func moveIndexInfoToDest(tblInfo *model.TableInfo, changingCol *model.ColumnInfo,
@@ -1575,10 +1605,10 @@ func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName 
 	col.Name = newName
 }
 
-func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
-	changingCol.State = schemaState
-	for _, idx := range changingIdxs {
-		idx.State = schemaState
+func updateObjectState(col *model.ColumnInfo, idxs []*model.IndexInfo, state model.SchemaState) {
+	col.State = state
+	for _, idx := range idxs {
+		idx.State = state
 	}
 }
 

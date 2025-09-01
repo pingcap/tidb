@@ -80,7 +80,7 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
-	removingObjPrefix     = "_Tomestone$_"
+	removingObjPrefix     = "_Tombstone$_"
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
@@ -5476,6 +5476,41 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 		}
 	}
 	return nil
+}
+
+var colStateOrd = map[model.SchemaState]int{
+	model.StateNone:                 0,
+	model.StateDeleteOnly:           1,
+	model.StateDeleteReorganization: 2,
+	model.StateWriteOnly:            3,
+	model.StateWriteReorganization:  4,
+	model.StatePublic:               5,
+}
+
+func checkColumnOrderByStates(tblInfo *model.TableInfo) {
+	if intest.InTest {
+		minState := model.StatePublic
+		for _, col := range tblInfo.Columns {
+			if colStateOrd[col.State] < colStateOrd[minState] {
+				minState = col.State
+			} else if colStateOrd[col.State] > colStateOrd[minState] {
+				intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
+			}
+			if col.ChangeStateInfo != nil {
+				offset := col.ChangeStateInfo.DependencyColumnOffset
+				intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
+				depCol := tblInfo.Columns[offset]
+				switch {
+				case strings.HasPrefix(col.Name.O, changingColumnPrefix):
+					name := getChangingColumnOriginName(col)
+					intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
+				case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
+					name := getRemovingObjOriginName(depCol.Name.O)
+					intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
+				}
+			}
+		}
+	}
 }
 
 // ProcessColumnCharsetAndCollation process column charset and collation
