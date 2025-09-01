@@ -97,7 +97,7 @@ type ShardLocation struct {
 type shardIndexMu struct {
 	sync.RWMutex
 	shards map[uint64]*ShardWithAddr
-	sorted *SortedShards
+	sorted map[int64]*SortedShards // indexID -> SortedShards
 }
 
 // Client is the interface for the TiCI shard cache client.
@@ -170,7 +170,7 @@ func NewTiCIShardCache(client Client) *TiCIShardCache {
 		client: client,
 		mu: shardIndexMu{
 			shards: make(map[uint64]*ShardWithAddr),
-			sorted: NewSortedShards(btreeDegree),
+			sorted: make(map[int64]*SortedShards),
 		},
 	}
 }
@@ -234,7 +234,8 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 	}
 	ss += "]"
 	logutil.BgLogger().Info("TiCIShardCache BatchLocateKeyRanges",
-		zap.String("keyRanges", ss))
+		zap.String("keyRanges", ss),
+		zap.String("indexID", fmt.Sprintf("%d", indexID)))
 	uncachedRanges := make([]kv.KeyRange, 0, len(keyRanges))
 	cachedShards := make([]*ShardWithAddr, 0, len(keyRanges))
 	// 1. find shards from cache
@@ -248,7 +249,7 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 			}
 		}
 
-		shard := s.tryFindShardByKey(keyRange.StartKey, false)
+		shard := s.tryFindShardByKey(indexID, keyRange.StartKey, false)
 		lastShard = shard
 		if shard == nil {
 			uncachedRanges = append(uncachedRanges, keyRange)
@@ -264,7 +265,7 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 		containsAll := false
 	outer:
 		for {
-			batchShardInCache, err := s.scanShardsFromCache(ctx, keyRange.StartKey, keyRange.EndKey, defaultShardsPerBatch)
+			batchShardInCache, err := s.scanShardsFromCache(ctx, indexID, keyRange.StartKey, keyRange.EndKey, defaultShardsPerBatch)
 			if err != nil {
 				return nil, err
 			}
@@ -361,43 +362,49 @@ func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, shard := range shards {
-		s.insertShardToCache(shard, true)
+		s.insertShardToCache(indexID, shard, true)
 	}
 
 	return shards, nil
 }
 
-func (s *TiCIShardCache) insertShardToCache(cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
-	return s.mu.insertShardToCache(cachedShard, invalidateOldShard)
+func (s *TiCIShardCache) insertShardToCache(indexID int64, cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
+	return s.mu.insertShardToCache(indexID, cachedShard, invalidateOldShard)
 }
 
-func (s *TiCIShardCache) tryFindShardByKey(key []byte, isEndKey bool) (r *ShardWithAddr) {
+func (s *TiCIShardCache) tryFindShardByKey(indexID int64, key []byte, isEndKey bool) (r *ShardWithAddr) {
 	var expired bool
-	r, expired = s.searchCachedShardByKey(key, isEndKey)
+	r, expired = s.searchCachedShardByKey(indexID, key, isEndKey)
 	if r == nil || expired {
 		return nil
 	}
 	return r
 }
 
-func (s *TiCIShardCache) searchCachedShardByKey(key []byte, isEndKey bool) (*ShardWithAddr, bool) {
+func (s *TiCIShardCache) searchCachedShardByKey(indexID int64, key []byte, isEndKey bool) (*ShardWithAddr, bool) {
 	s.mu.RLock()
-	shard := s.mu.sorted.SearchByKey(key, isEndKey)
 	defer s.mu.RUnlock()
+	if _, ok := s.mu.sorted[indexID]; !ok {
+		return nil, false
+	}
+	shard := s.mu.sorted[indexID].SearchByKey(key, isEndKey)
 	if shard == nil {
 		return nil, false
 	}
 	return shard, false
 }
 
-func (s *TiCIShardCache) scanShardsFromCache(ctx context.Context, startKey, endKey []byte, limit int) ([]*ShardWithAddr, error) {
+func (s *TiCIShardCache) scanShardsFromCache(ctx context.Context, indexID int64, startKey, endKey []byte, limit int) ([]*ShardWithAddr, error) {
 	if limit == 0 {
 		return nil, nil
 	}
 	var shards []*ShardWithAddr
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	shards = s.mu.sorted.AscendGreaterOrEqual(startKey, endKey, limit)
+	if _, ok := s.mu.sorted[indexID]; !ok {
+		return nil, nil
+	}
+	shards = s.mu.sorted[indexID].AscendGreaterOrEqual(startKey, endKey, limit)
 	return shards, nil
 }
 
@@ -499,15 +506,18 @@ func (m *batchLocateShardsMerger) build() []*ShardLocation {
 	return m.mergedLocations
 }
 
-func (mu *shardIndexMu) insertShardToCache(cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
-	intersectingShard, _ := mu.sorted.removeIntersecting(cachedShard)
+func (mu *shardIndexMu) insertShardToCache(indexID int64, cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
+	if _, ok := mu.sorted[indexID]; !ok {
+		mu.sorted[indexID] = NewSortedShards(btreeDegree)
+	}
+	intersectingShard, _ := mu.sorted[indexID].removeIntersecting(cachedShard)
 	for _, item := range intersectingShard {
 		if invalidateOldShard {
 			item.cachedShard.invalidate()
 			mu.shards[item.cachedShard.ShardID] = nil
 		}
 	}
-	mu.sorted.ReplaceOrInsert(cachedShard)
+	mu.sorted[indexID].ReplaceOrInsert(cachedShard)
 	mu.shards[cachedShard.ShardID] = cachedShard
 	return true
 }
