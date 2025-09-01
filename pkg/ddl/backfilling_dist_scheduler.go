@@ -771,50 +771,115 @@ func generateMergeTempIndexPlan(
 	jobArgs *model.ModifyIndexArgs,
 ) ([][]byte, error) {
 	tblInfo := tbl.Meta()
-	indexIDs := make([]int64, 0, len(jobArgs.IndexArgs))
-	hasGlobalIndex := false
+	idxInfos, err := findIndexInfoFromIndexArgs(tblInfo, jobArgs)
+	if err != nil {
+		return nil, err
+	}
+	physicalTbl := tbl.(table.PhysicalTable)
+	if tblInfo.Partition == nil {
+		allMeta := make([][]byte, 0, 16)
+		for _, idxInfo := range idxInfos {
+			meta, err := genPlanForOneIndex(ctx, store, physicalTbl, idxInfo)
+			if err != nil {
+				return nil, err
+			}
+			allMeta = append(allMeta, meta...)
+		}
+		return allMeta, nil
+	}
+
+	allMeta := make([][]byte, 0, 16)
+	for _, idxInfo := range idxInfos {
+		if idxInfo.Global {
+			meta, err := genPlanForOneIndex(ctx, store, physicalTbl, idxInfo)
+			if err != nil {
+				return nil, err
+			}
+			allMeta = append(allMeta, meta...)
+			continue
+		}
+		defs := tblInfo.Partition.Definitions
+		for _, def := range defs {
+			partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
+			partMeta, err := genPlanForOneIndex(ctx, store, partTbl, idxInfo)
+			if err != nil {
+				return nil, err
+			}
+			allMeta = append(allMeta, partMeta...)
+		}
+	}
+	return allMeta, nil
+}
+
+func findIndexInfoFromIndexArgs(
+	tblInfo *model.TableInfo,
+	jobArgs *model.ModifyIndexArgs,
+) ([]*model.IndexInfo, error) {
+	var idxInfos []*model.IndexInfo
 	for _, ia := range jobArgs.IndexArgs {
-		var idxInfo *model.IndexInfo
-		for _, idx := range tbl.Meta().Indices {
+		found := false
+		for _, idx := range tblInfo.Indices {
 			if ia.IndexName.L == idx.Name.L {
-				indexIDs = append(indexIDs, idx.ID)
-				idxInfo = idx
-				if idx.Global {
-					hasGlobalIndex = true
-				}
+				idxInfos = append(idxInfos, idx)
+				found = true
 				break
 			}
 		}
-		if idxInfo == nil {
+		if !found {
 			return nil, errors.Errorf("index %s not found", ia.IndexName.O)
 		}
 	}
+	return idxInfos, nil
+}
 
-	if tblInfo.Partition == nil || hasGlobalIndex {
-		return generateMergeTempIndexPlanForPhysicalTable(ctx, store, tbl.(table.PhysicalTable), indexIDs)
-	}
-	metas := make([][]byte, 0, 16)
-	defs := tblInfo.Partition.Definitions
-	for _, def := range defs {
-		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
-		partMeta, err := generateMergeTempIndexPlanForPhysicalTable(ctx, store, partTbl, indexIDs)
+func genPlanForOneIndex(
+	ctx context.Context,
+	store kv.Storage,
+	tbl table.PhysicalTable,
+	idxInfo *model.IndexInfo,
+) ([][]byte, error) {
+	pid := tbl.GetPhysicalID()
+	start, end := encodeTempIndexRange(pid, idxInfo.ID, idxInfo.ID)
+	subtaskMetas := make([][]byte, 0, 4)
+	for {
+		kvRanges, err := loadTableRanges(ctx, pid, store, start, end, nil, backfillTaskChanSize)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
-		metas = append(metas, partMeta...)
+		if len(kvRanges) == 0 {
+			break
+		}
+		for _, r := range kvRanges {
+			subTaskMeta := &BackfillSubTaskMeta{
+				SortedKVMeta: external.SortedKVMeta{
+					StartKey: r.StartKey,
+					EndKey:   r.EndKey,
+				},
+			}
+			metaBytes, err := subTaskMeta.Marshal()
+			if err != nil {
+				return nil, err
+			}
+			subtaskMetas = append(subtaskMetas, metaBytes)
+		}
+		start = kvRanges[len(kvRanges)-1].EndKey
+		if start.Cmp(end) >= 0 {
+			break
+		}
 	}
-	return metas, nil
+	return subtaskMetas, nil
 }
 
 func generateMergeTempIndexPlanForPhysicalTable(
 	ctx context.Context,
 	store kv.Storage,
 	tbl table.PhysicalTable,
-	indexIDs []int64,
+	partTbl table.PhysicalTable,
+	indexInfos []*model.IndexInfo,
 ) ([][]byte, error) {
 	pid := tbl.GetPhysicalID()
-	start, end := encodeTempIndexRange(pid, indexIDs[0], indexIDs[len(indexIDs)-1])
-	splitKeys := getSplitKeysForMergeTempIndexPlan(pid, indexIDs)
+	start, end := encodeTempIndexRange(pid, indexInfos[0].ID, indexInfos[len(indexInfos)-1].ID)
+	splitKeys := getSplitKeysForMergeTempIndexPlan(pid, indexInfos)
 
 	subtaskMetas := make([][]byte, 0, 4)
 	for {
@@ -846,10 +911,10 @@ func generateMergeTempIndexPlanForPhysicalTable(
 	return subtaskMetas, nil
 }
 
-func getSplitKeysForMergeTempIndexPlan(pid int64, indexIDs []int64) []kv.Key {
-	splitKeys := make([]kv.Key, 0, len(indexIDs))
-	for _, eid := range indexIDs {
-		tempIdxID := tablecodec.TempIndexPrefix | eid
+func getSplitKeysForMergeTempIndexPlan(pid int64, indexInfos []*model.IndexInfo) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(indexInfos))
+	for _, info := range indexInfos {
+		tempIdxID := tablecodec.TempIndexPrefix | info.ID
 		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
 		splitKeys = append(splitKeys, splitKey)
 	}
