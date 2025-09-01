@@ -629,15 +629,17 @@ func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64)
 				CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 				SQLMode:        sctx.GetSessionVars().SQLMode,
 			}
+			// We should reset tiflash replica available to false so that let the user wait before
+			// tiflash replica is built after fixing the placement rules.
 			args := model.SetTiFlashReplicaArgs{TiflashReplica: ast.TiFlashReplicaSpec{
 				Count:  replica.TableInfo.TiFlashReplica.Count,
 				Labels: replica.TableInfo.TiFlashReplica.LocationLabels,
-			}}
+			}, ResetAvailable: true}
 			err = d.executor.doDDLJob2(sctx, job, &args)
 			if err != nil {
-				logutil.DDLLogger().Warn("fix placement rule err", zap.Error(err))
+				logutil.DDLLogger().Warn("fix tiflash placement rule err", zap.Error(err))
 			} else {
-				logutil.DDLLogger().Info("fix placement rule success", zap.Int64("tableID", replica.TableInfo.ID))
+				logutil.DDLLogger().Info("fix tiflash placement rule success", zap.Int64("tableID", replica.TableInfo.ID))
 				fixed[replica.TableInfo.ID] = struct{}{}
 			}
 		}
