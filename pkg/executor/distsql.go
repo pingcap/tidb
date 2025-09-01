@@ -875,7 +875,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			results = append(results, result)
 		}
-		if shouldUseMergeSort(e.byItems, nil, e.GroupedRanges, len(results)) {
+		if shouldUseMergeSort(e.byItems, e.prunedPartitions, e.GroupedRanges, len(results)) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
