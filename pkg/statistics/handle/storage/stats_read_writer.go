@@ -321,7 +321,7 @@ func (s *statsReadWriter) ReloadExtendedStatistics() error {
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		tables := make([]*statistics.Table, 0, s.statsHandler.Len())
 		for _, tbl := range s.statsHandler.Values() {
-			t, err := ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
+			t, err := ExtendedStatsFromStorage(sctx, tbl.CopyAs(statistics.ExtendedStatsWritable), tbl.PhysicalID, true)
 			if err != nil {
 				return err
 			}

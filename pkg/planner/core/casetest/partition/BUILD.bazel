@@ -17,6 +17,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
