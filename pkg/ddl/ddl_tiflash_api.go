@@ -530,7 +530,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 
 			if fullReplicasProgress != 1 {
 				if oneReplicaProgress >= 1.0 {
-					logutil.DDLLogger().Info("Tiflash replica is not available but at least one replica have been built ", zap.Int64("tableID", tb.ID), zap.Float64("progress", fullReplicasProgress), zap.Float64("oneReplicaProgress", oneReplicaProgress))
+					logutil.DDLLogger().Info("Tiflash replica is not available but at least one replica have been built", zap.Int64("tableID", tb.ID), zap.Float64("progress", fullReplicasProgress), zap.Float64("oneReplicaProgress", oneReplicaProgress))
 				} else {
 					logutil.DDLLogger().Info("Tiflash replica is not available", zap.Int64("tableID", tb.ID), zap.Float64("progress", fullReplicasProgress), zap.Float64("oneReplicaProgress", oneReplicaProgress))
 				}
