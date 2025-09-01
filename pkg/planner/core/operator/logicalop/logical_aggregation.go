@@ -718,6 +718,7 @@ func (la *LogicalAggregation) pushDownPredicatesByAggFuncs(cond *expression.Scal
 	// `aggFirstRowColumns` are the output columns of the first row function.
 	// We compare the columns in the push-down predicates with the output columns of the first row.
 	// The columns that match are the ones that can be pushed down.
+	// The length of extractedCols is 1, so this loop will only run once.
 	for _, col := range extractedCols {
 		schemaCol = aggFirstRowColumns.RetrieveColumn(col)
 	}
