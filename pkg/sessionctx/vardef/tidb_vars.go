@@ -570,6 +570,9 @@ const (
 	// TiDBDDLReorgMaxWriteSpeed defines the max write limitation for the lightning local backend
 	TiDBDDLReorgMaxWriteSpeed = "tidb_ddl_reorg_max_write_speed"
 
+	TiDBDDLModifyColumnReaderCnt = "modify_column_reader_cnt"
+	TiDBDDLModifyColumnWriterCnt = "modify_column_writer_cnt"
+
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
@@ -1822,6 +1825,9 @@ var (
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
+	// DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
+	DDLModifyColumnReaderCnt = atomic.NewInt64(2)
+	DDLModifyColumnWriterCnt = atomic.NewInt64(4)
 )
 
 func serverMemoryLimitDefaultValue() string {
