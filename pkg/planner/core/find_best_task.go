@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -1387,7 +1388,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 }
 
 // GroupRangesByCols xxx
-func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) map[string][]*ranger.Range {
+func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) [][]*ranger.Range {
 	groups := make(map[string][]*ranger.Range)
 	for _, ran := range ranges {
 		var datums []types.Datum
@@ -1404,7 +1405,10 @@ func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) map[string]
 		key := string(keyBytes)
 		groups[key] = append(groups[key], ran)
 	}
-	return groups
+
+	// Convert map to slice
+	result := slices.Collect(maps.Values(groups))
+	return result
 }
 
 // matchPropForIndexMergeAlternatives will match the prop with inside PartialAlternativeIndexPaths, and choose

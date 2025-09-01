@@ -599,30 +599,16 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 // 1. signedGroupedRanges for ranges less or equal than MaxInt64
 // 2. unsignedGroupedRanges for ranges greater than MaxInt64
 //
-// This function applies SplitRangesAcrossInt64Boundary to each group in the input map.
-func SplitGroupedRangesAcrossInt64Boundary(groupedRanges map[string][]*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) (signedGroupedRanges, unsignedGroupedRanges map[string][]*ranger.Range) {
-	if len(groupedRanges) == 0 {
-		return nil, nil
-	}
-
-	signedGroupedRanges = make(map[string][]*ranger.Range)
-	unsignedGroupedRanges = make(map[string][]*ranger.Range)
-
-	for groupKey, ranges := range groupedRanges {
+// This function applies SplitRangesAcrossInt64Boundary to each group in the input slice.
+func SplitGroupedRangesAcrossInt64Boundary(groupedRanges [][]*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) (signedGroupedRanges, unsignedGroupedRanges [][]*ranger.Range) {
+	for _, ranges := range groupedRanges {
 		signedRanges, unsignedRanges := SplitRangesAcrossInt64Boundary(ranges, keepOrder, desc, isCommonHandle)
 		if len(signedRanges) > 0 {
-			signedGroupedRanges[groupKey] = signedRanges
+			signedGroupedRanges = append(signedGroupedRanges, signedRanges)
 		}
 		if len(unsignedRanges) > 0 {
-			unsignedGroupedRanges[groupKey] = unsignedRanges
+			unsignedGroupedRanges = append(unsignedGroupedRanges, unsignedRanges)
 		}
-	}
-
-	if len(signedGroupedRanges) == 0 {
-		signedGroupedRanges = nil
-	}
-	if len(unsignedGroupedRanges) == 0 {
-		unsignedGroupedRanges = nil
 	}
 
 	return signedGroupedRanges, unsignedGroupedRanges

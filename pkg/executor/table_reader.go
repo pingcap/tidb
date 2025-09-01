@@ -152,7 +152,7 @@ type TableReaderExecutor struct {
 
 	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
 	// If not empty, this field takes precedence over ranges field.
-	groupedRanges map[string][]*ranger.Range
+	groupedRanges [][]*ranger.Range
 	// GroupByColIdxs stores the column indices used for grouping ranges when using merge-sort to satisfy physical property.
 	// This field is used to rebuild groupedRanges when corColInAccess is true.
 	groupByColIdxs []int
@@ -561,7 +561,7 @@ func (e *TableReaderExecutor) buildKVReqForRanges(ctx context.Context, ranges []
 		Build()
 }
 
-func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.Context, groupedRanges map[string][]*ranger.Range) ([]*kv.Request, error) {
+func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) ([]*kv.Request, error) {
 	var kvReqs []*kv.Request
 	for _, ranges := range groupedRanges {
 		if e.kvRangeBuilder != nil {
@@ -581,7 +581,7 @@ func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.C
 	return kvReqs, nil
 }
 
-func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, groupedRanges map[string][]*ranger.Range) (distsql.SelectResult, error) {
+func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) (distsql.SelectResult, error) {
 	kvReqs, err := e.buildKVReqSeparatelyForGroupedRanges(ctx, groupedRanges)
 	if err != nil {
 		return nil, err

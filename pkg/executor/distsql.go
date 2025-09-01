@@ -247,7 +247,7 @@ type IndexReaderExecutor struct {
 	dummy bool
 
 	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
-	GroupedRanges map[string][]*ranger.Range
+	GroupedRanges [][]*ranger.Range
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -522,7 +522,7 @@ type IndexLookUpExecutor struct {
 	partitionRangeMap  map[int64][]*ranger.Range
 	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
 	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
-	GroupedRanges map[string][]*ranger.Range
+	GroupedRanges [][]*ranger.Range
 
 	// All fields above are immutable.
 
@@ -1753,7 +1753,7 @@ func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 }
 
 // rebuildGroupedRanges rebuilds GroupedRanges after rebuilding ranges for correlated columns.
-func rebuildGroupedRanges(ranges []*ranger.Range, groupByColIdxs []int) map[string][]*ranger.Range {
+func rebuildGroupedRanges(ranges []*ranger.Range, groupByColIdxs []int) [][]*ranger.Range {
 	if len(groupByColIdxs) == 0 {
 		return nil
 	}
@@ -1761,7 +1761,7 @@ func rebuildGroupedRanges(ranges []*ranger.Range, groupByColIdxs []int) map[stri
 }
 
 // shouldUseMergeSort determines if merge sort is needed based on byItems, partitions, and GroupedRanges.
-func shouldUseMergeSort(byItems []*plannerutil.ByItems, partitions []table.PhysicalTable, groupedRanges map[string][]*ranger.Range, kvRangesCount int) bool {
+func shouldUseMergeSort(byItems []*plannerutil.ByItems, partitions []table.PhysicalTable, groupedRanges [][]*ranger.Range, kvRangesCount int) bool {
 	// Use merge sort if:
 	// 1. byItems is present and there are multiple partitions, OR
 	// 2. GroupedRanges is present and there are multiple kvRanges
@@ -1770,7 +1770,7 @@ func shouldUseMergeSort(byItems []*plannerutil.ByItems, partitions []table.Physi
 }
 
 // validateGroupedRangesAndPartitions ensures GroupedRanges and partRangeMap don't appear together.
-func validateGroupedRangesAndPartitions(partRangeMap map[int64][]*ranger.Range, groupedRanges map[string][]*ranger.Range) {
+func validateGroupedRangesAndPartitions(partRangeMap map[int64][]*ranger.Range, groupedRanges [][]*ranger.Range) {
 	intest.Assert(!(len(partRangeMap) > 0 && len(groupedRanges) > 0), "partRangeMap and GroupedRanges should not appear together")
 }
 
