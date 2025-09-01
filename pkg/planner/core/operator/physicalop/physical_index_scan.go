@@ -705,9 +705,6 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	} else {
 		is.SetStats(ds.TableStats.ScaleByExpectCnt(rowCount))
 	}
-	if ds.TableInfo.ID == 143 {
-		fmt.Println(1)
-	}
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
