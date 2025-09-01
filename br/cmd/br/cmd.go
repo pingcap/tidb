@@ -135,57 +135,47 @@ func calculateMemoryLimit(memleft uint64) uint64 {
 // Init initializes BR cli.
 func Init(cmd *cobra.Command) (err error) {
 	initOnce.Do(func() {
+		// Initialize the logger.
 		slowLogFilename, e := cmd.Flags().GetString(FlagSlowLogFile)
 		if e != nil {
 			err = e
 			return
 		}
 		tidbLogCfg := logutil.LogConfig{}
-		if len(slowLogFilename) != 0 {
-			tidbLogCfg.SlowQueryFile = slowLogFilename
-			// Just for special grpc log file,
-			// otherwise the info will be print in stdout...
-			tidbLogCfg.File.Filename = timestampLogFileName()
-		} else {
-			// Don't print slow log in br
-			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
-		}
-		e = logutil.InitLogger(&tidbLogCfg)
-		if e != nil {
-			err = e
-			return
-		}
-		// Initialize the logger.
-		conf := new(log.Config)
-		conf.Level, err = cmd.Flags().GetString(FlagLogLevel)
+		tidbLogCfg.Level, err = cmd.Flags().GetString(FlagLogLevel)
 		if err != nil {
 			return
 		}
-		conf.File.Filename, err = cmd.Flags().GetString(FlagLogFile)
+		tidbLogCfg.File.Filename, err = cmd.Flags().GetString(FlagLogFile)
 		if err != nil {
 			return
 		}
-		conf.Format, err = cmd.Flags().GetString(FlagLogFormat)
+		tidbLogCfg.Format, err = cmd.Flags().GetString(FlagLogFormat)
 		if err != nil {
 			return
 		}
 		_, outputLogToTerm := os.LookupEnv(envLogToTermKey)
 		if outputLogToTerm {
 			// Log to term if env `BR_LOG_TO_TERM` is set.
-			conf.File.Filename = ""
+			tidbLogCfg.File.Filename = ""
 		}
-		if len(conf.File.Filename) != 0 {
+		if len(slowLogFilename) != 0 {
+			tidbLogCfg.SlowQueryFile = slowLogFilename
+		} else {
+			// Don't print slow log in br
+			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
+		}
+		if len(tidbLogCfg.File.Filename) != 0 {
 			atomic.StoreUint64(&hasLogFile, 1)
 			summary.InitCollector(true)
 			// cmd.PrintErr prints to stderr, but PrintErrf prints to stdout.
-			cmd.PrintErr(fmt.Sprintf("Detail BR log in %s \n", conf.File.Filename))
+			cmd.PrintErr(fmt.Sprintf("Detail BR log in %s \n", tidbLogCfg.File.Filename))
 		}
-		lg, p, e := log.InitLogger(conf)
+		e = logutil.InitLogger(&tidbLogCfg)
 		if e != nil {
 			err = e
 			return
 		}
-		log.ReplaceGlobals(lg, p)
 		memory.InitMemoryHook()
 		if debug.SetMemoryLimit(-1) == math.MaxInt64 {
 			memtotal, e := memory.MemTotal()
