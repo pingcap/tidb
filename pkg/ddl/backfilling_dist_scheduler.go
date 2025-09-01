@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -779,7 +778,7 @@ func generateMergeTempIndexPlan(
 	if tblInfo.Partition == nil {
 		allMeta := make([][]byte, 0, 16)
 		for _, idxInfo := range idxInfos {
-			meta, err := genPlanForOneIndex(ctx, store, physicalTbl, idxInfo)
+			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -791,7 +790,7 @@ func generateMergeTempIndexPlan(
 	allMeta := make([][]byte, 0, 16)
 	for _, idxInfo := range idxInfos {
 		if idxInfo.Global {
-			meta, err := genPlanForOneIndex(ctx, store, physicalTbl, idxInfo)
+			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -801,7 +800,7 @@ func generateMergeTempIndexPlan(
 		defs := tblInfo.Partition.Definitions
 		for _, def := range defs {
 			partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
-			partMeta, err := genPlanForOneIndex(ctx, store, partTbl, idxInfo)
+			partMeta, err := genMergeTempPlanForOneIndex(ctx, store, partTbl, idxInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -832,7 +831,7 @@ func findIndexInfoFromIndexArgs(
 	return idxInfos, nil
 }
 
-func genPlanForOneIndex(
+func genMergeTempPlanForOneIndex(
 	ctx context.Context,
 	store kv.Storage,
 	tbl table.PhysicalTable,
@@ -868,55 +867,4 @@ func genPlanForOneIndex(
 		}
 	}
 	return subtaskMetas, nil
-}
-
-func generateMergeTempIndexPlanForPhysicalTable(
-	ctx context.Context,
-	store kv.Storage,
-	tbl table.PhysicalTable,
-	partTbl table.PhysicalTable,
-	indexInfos []*model.IndexInfo,
-) ([][]byte, error) {
-	pid := tbl.GetPhysicalID()
-	start, end := encodeTempIndexRange(pid, indexInfos[0].ID, indexInfos[len(indexInfos)-1].ID)
-	splitKeys := getSplitKeysForMergeTempIndexPlan(pid, indexInfos)
-
-	subtaskMetas := make([][]byte, 0, 4)
-	for {
-		kvRanges, err := loadTableRanges(ctx, pid, store, start, end, splitKeys, backfillTaskChanSize)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(kvRanges) == 0 {
-			break
-		}
-		for _, r := range kvRanges {
-			subTaskMeta := &BackfillSubTaskMeta{
-				SortedKVMeta: external.SortedKVMeta{
-					StartKey: r.StartKey,
-					EndKey:   r.EndKey,
-				},
-			}
-			metaBytes, err := subTaskMeta.Marshal()
-			if err != nil {
-				return nil, err
-			}
-			subtaskMetas = append(subtaskMetas, metaBytes)
-		}
-		start = kvRanges[len(kvRanges)-1].EndKey
-		if start.Cmp(end) >= 0 {
-			break
-		}
-	}
-	return subtaskMetas, nil
-}
-
-func getSplitKeysForMergeTempIndexPlan(pid int64, indexInfos []*model.IndexInfo) []kv.Key {
-	splitKeys := make([]kv.Key, 0, len(indexInfos))
-	for _, info := range indexInfos {
-		tempIdxID := tablecodec.TempIndexPrefix | info.ID
-		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
-		splitKeys = append(splitKeys, splitKey)
-	}
-	return splitKeys
 }
