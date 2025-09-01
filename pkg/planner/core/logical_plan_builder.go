@@ -877,12 +877,12 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		}
 	}
 
-	schemaCols := make([]*expression.Column, len(lColumns)+len(rColumns)-commonLen)
+	schemaCols := make([]*expression.Column, len(lColumns)+len(rColumns))
 	copy(schemaCols[:len(lColumns)], lColumns)
-	copy(schemaCols[len(lColumns):], rColumns[commonLen:])
+	copy(schemaCols[len(lColumns):], rColumns)
 	names := make(types.NameSlice, len(schemaCols))
 	copy(names, lNames)
-	copy(names[len(lNames):], rNames[commonLen:])
+	copy(names[len(lNames):], rNames)
 
 	conds := make([]expression.Expression, 0, commonLen)
 	for i := range commonLen {

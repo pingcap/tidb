@@ -45,3 +45,11 @@ WHERE EXISTS
                GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows("TableDual 0.00 root  rows:0"))
 	})
 }
+
+func TestNaturalJoinExpressionRewriter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table `mysql_1` (`col_bigint` bigint, col_numeric numeric);")
+	tk.MustQuery("select 0 from mysql_1 t1 where  exists ( select a2.col_bigint from mysql_1 a1 natural left join mysql_1 a2 where t1.col_bigint = (select distinct a2.col_bigint from  mysql_1 a2  where  ( t1.col_numeric <> '0.0330047607421875' ) ) )").Check(testkit.Rows())
+}
