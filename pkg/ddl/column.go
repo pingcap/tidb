@@ -615,10 +615,15 @@ func (w *worker) updateCurrentElement(
 		}
 	}
 
-	restoreReorgMeta := w.resetReorgMeta(reorgInfo.ReorgMeta, reorgInfo.Job)
+	restoreReorgMeta, err := resetReorgMeta(ctx, reorgInfo.Job, t, rh)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	elements := slices.Clone(reorgInfo.elements)
 	defer func() {
-		restoreReorgMeta()
+		if restoreReorgMeta != nil {
+			restoreReorgMeta()
+		}
 		reorgInfo.elements = elements
 	}()
 	for i := startElementOffset; i < len(elements[1:]); i++ {
@@ -659,30 +664,17 @@ func prepareForAddNextIndex(reorgInfo *reorgInfo, rh *reorgHandler) error {
 	return nil
 }
 
-func (w *worker) resetReorgMeta(reorgMeta *model.DDLReorgMeta, job *model.Job) func() {
-	origIsDistReorg := reorgMeta.IsDistReorg
-	origIsFastReorg := reorgMeta.IsFastReorg
-	origReorgTp := reorgMeta.ReorgTp
-	origUseCloud := reorgMeta.UseCloudStorage
+func resetReorgMeta(ctx context.Context, job *model.Job, t table.Table, rh *reorgHandler) (_ func(), err error) {
+	originReorgMeta := job.ReorgMeta
 	restoreReorgMeta := func() {
-		reorgMeta.IsDistReorg = origIsDistReorg
-		reorgMeta.IsFastReorg = origIsFastReorg
-		reorgMeta.ReorgTp = origReorgTp
-		reorgMeta.UseCloudStorage = origUseCloud
+		job.ReorgMeta = originReorgMeta
 	}
-
-	reorgMeta.IsDistReorg = vardef.EnableDistTask.Load()
-	reorgMeta.IsFastReorg = vardef.EnableFastReorg.Load()
-	reorgMeta.ReorgTp = model.ReorgTypeNone
-	if len(vardef.TiDBCloudStorageURI) > 0 {
-		loadCloudStorageURI(w, job)
-	}
-	if newReorgTp, err := pickBackfillType(job); err == nil {
-		reorgMeta.ReorgTp = newReorgTp
-	} else {
+	err = initJobReorgMetaFromVariables(ctx, job, t, rh.s.Context)
+	if err != nil {
 		restoreReorgMeta()
+		return nil, err
 	}
-	return restoreReorgMeta
+	return restoreReorgMeta, nil
 }
 
 type updateColumnWorker struct {
