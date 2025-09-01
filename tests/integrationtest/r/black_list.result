@@ -145,5 +145,5 @@ IndexLookUp	root
 explain format='plan_tree' select * from t where b = 1 and a > 'a';
 id	task	access object	operator info
 IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(b, a)	range:["a" "b","a" "b"], ["a" "c","a" "c"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(b, a)	range:["a" "b","a" "c"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo

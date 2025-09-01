@@ -53,8 +53,8 @@ e
 3
 desc select a+1 from t where a+1 in (1, 2, 3);
 id	estRows	task	access object	operator info
-IndexReader_7	30.00	root		index:IndexRangeScan_6
-└─IndexRangeScan_6	30.00	cop[tikv]	table:t, index:idx_c(c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
+IndexReader_7	250.00	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	250.00	cop[tikv]	table:t, index:idx_c(c)	range:[1,3], keep order:false, stats:pseudo
 select a+1 from t where a+1 in (1, 2, 3);
 a+1
 1
@@ -63,9 +63,9 @@ a+1
 3
 desc select * from t where a+1 in (1, 2, 3);
 id	estRows	task	access object	operator info
-IndexLookUp_8	30.00	root		
-├─IndexRangeScan_6(Build)	30.00	cop[tikv]	table:t, index:idx_c(c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	30.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_8	250.00	root		
+├─IndexRangeScan_6(Build)	250.00	cop[tikv]	table:t, index:idx_c(c)	range:[1,3], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a+1 in (1, 2, 3);
 a	b	c	e
 1	2	2	3
@@ -219,9 +219,9 @@ e
 3
 desc select a+1 from t where a+1 in (1, 2, 3);
 id	estRows	task	access object	operator info
-Projection_4	30.00	root		plus(explain_generate_column_substitute.t.a, 1)->Column#8
-└─IndexReader_7	30.00	root		index:IndexRangeScan_6
-  └─IndexRangeScan_6	30.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
+Projection_4	250.00	root		plus(explain_generate_column_substitute.t.a, 1)->Column#8
+└─IndexReader_7	250.00	root		index:IndexRangeScan_6
+  └─IndexRangeScan_6	250.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,3], keep order:false, stats:pseudo
 select a+1 from t where a+1 in (1, 2, 3);
 a+1
 1
@@ -230,10 +230,10 @@ a+1
 3
 desc select * from t where a+1 in (1, 2, 3);
 id	estRows	task	access object	operator info
-Projection_4	30.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b, explain_generate_column_substitute.t.c, explain_generate_column_substitute.t.e
-└─IndexLookUp_8	30.00	root		
-  ├─IndexRangeScan_6(Build)	30.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_7(Probe)	30.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection_4	250.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b, explain_generate_column_substitute.t.c, explain_generate_column_substitute.t.e
+└─IndexLookUp_8	250.00	root		
+  ├─IndexRangeScan_6(Build)	250.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_7(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a+1 in (1, 2, 3);
 a	b	c	e
 1	2	2	3
