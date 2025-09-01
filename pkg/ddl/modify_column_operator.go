@@ -428,7 +428,7 @@ type kvScanWorker struct {
 func (w *kvScanWorker) HandleTask(task TableScanTask, sender func(RowRecords)) {
 	t := time.Now()
 	defer func() {
-		ddllogutil.DDLLogger().Info("table scan worker handle task",
+		ddllogutil.DDLLogger().Info("kv scan worker handle task",
 			zap.Duration("takeTime", time.Since(t)),
 		)
 	}()
