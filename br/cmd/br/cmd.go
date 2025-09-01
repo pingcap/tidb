@@ -136,11 +136,6 @@ func calculateMemoryLimit(memleft uint64) uint64 {
 func Init(cmd *cobra.Command) (err error) {
 	initOnce.Do(func() {
 		// Initialize the logger.
-		slowLogFilename, e := cmd.Flags().GetString(FlagSlowLogFile)
-		if e != nil {
-			err = e
-			return
-		}
 		conf := logutil.LogConfig{}
 		conf.Level, err = cmd.Flags().GetString(FlagLogLevel)
 		if err != nil {
@@ -154,14 +149,16 @@ func Init(cmd *cobra.Command) (err error) {
 		if err != nil {
 			return
 		}
+		conf.SlowQueryFile, err = cmd.Flags().GetString(FlagSlowLogFile)
+		if err != nil {
+			return
+		}
 		_, outputLogToTerm := os.LookupEnv(envLogToTermKey)
 		if outputLogToTerm {
 			// Log to term if env `BR_LOG_TO_TERM` is set.
 			conf.File.Filename = ""
 		}
-		if len(slowLogFilename) != 0 {
-			conf.SlowQueryFile = slowLogFilename
-		} else {
+		if len(conf.SlowQueryFile) == 0 {
 			// Don't print slow log in br
 			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
 		}
@@ -171,9 +168,8 @@ func Init(cmd *cobra.Command) (err error) {
 			// cmd.PrintErr prints to stderr, but PrintErrf prints to stdout.
 			cmd.PrintErr(fmt.Sprintf("Detail BR log in %s \n", conf.File.Filename))
 		}
-		e = logutil.InitLogger(&conf)
-		if e != nil {
-			err = e
+		err = logutil.InitLogger(&conf)
+		if err != nil {
 			return
 		}
 		memory.InitMemoryHook()
