@@ -1132,6 +1132,107 @@ func getJobsBySQL(se sessionapi.Session, tbl, condition string) ([]*model.Job, e
 	return jobs, nil
 }
 
+func TestAddIndexWithAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	// add index
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
+	tk.MustExec("create table t(a int NOT NULL DEFAULT 10)")
+	for i := range 50 {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("ALTER TABLE t ADD index idx(a)")
+	tk.MustQuery("select * from t use index(idx) where a >1")
+	// get meta elements
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	aInfo := tbl.Meta().FindPublicColumnByName("a")
+	require.NotNil(t, aInfo)
+	idxInfo := tbl.Meta().FindIndexByName("idx")
+	require.NotNil(t, idxInfo)
+	// check the stats handle
+	statsTable, ok := dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	require.True(t, ok)
+	// check the stats element is analyzed
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(aInfo.ID, false))
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxInfo.ID, true))
+	require.NotNil(t, statsTable.HistColl.GetCol(aInfo.ID))
+	require.NotNil(t, statsTable.HistColl.GetIdx(idxInfo.ID))
+	colStatsVer := statsTable.HistColl.GetCol(aInfo.ID).Histogram.LastUpdateVersion
+	indexStatsVer := statsTable.HistColl.GetIdx(idxInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colStatsVer, indexStatsVer)
+	// test alter column
+	tk.MustExec("ALTER TABLE t modify column a varchar(10)")
+	tk.MustQuery("select * from t use index(idx) where a >1")
+	// reload the schema info
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	aInfo = tbl.Meta().FindPublicColumnByName("a")
+	require.NotNil(t, aInfo)
+	idxInfo = tbl.Meta().FindIndexByName("idx")
+	require.NotNil(t, idxInfo)
+	// check the stats handle
+	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	require.True(t, ok)
+	// check the stats element is analyzed
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(aInfo.ID, false))
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxInfo.ID, true))
+	require.NotNil(t, statsTable.HistColl.GetCol(aInfo.ID))
+	require.NotNil(t, statsTable.HistColl.GetIdx(idxInfo.ID))
+	colStatsVer2 := statsTable.HistColl.GetCol(aInfo.ID).Histogram.LastUpdateVersion
+	indexStatsVer2 := statsTable.HistColl.GetIdx(idxInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colStatsVer2, indexStatsVer2)
+	// colsStatsVer2 is not same as colStatsVer2
+	require.True(t, colStatsVer != colStatsVer2)
+
+	// for partition table, add index with analyze should be banned.
+	tk.MustExec("CREATE TABLE pt(id INT NOT NULL, stu_id INT NOT NULL) " +
+		"PARTITION BY RANGE (stu_id) (PARTITION p0 VALUES LESS THAN (25),PARTITION p1 VALUES LESS THAN (51))")
+	for i := range 50 {
+		tk.MustExec("insert into pt values (?,?)", i, i)
+	}
+	tk.MustExec("analyze table pt all columns")
+	// reload the schema info
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	require.NoError(t, err)
+	idInfo := tbl.Meta().FindPublicColumnByName("id")
+	require.NotNil(t, idInfo)
+	// check the stats handle
+	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	require.True(t, ok)
+	// column is analyzed from last time.
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, false))
+	require.NotNil(t, statsTable.HistColl.GetCol(idInfo.ID))
+	idColStatsVer := statsTable.HistColl.GetCol(idInfo.ID).Histogram.LastUpdateVersion
+
+	tk.MustExec("ALTER TABLE pt ADD index idx(id)")
+	tk.MustQuery("select * from pt use index(idx) where id >1")
+	// reload the schema info
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	require.NoError(t, err)
+	idInfo = tbl.Meta().FindPublicColumnByName("id")
+	require.NotNil(t, idInfo)
+	idxInfo = tbl.Meta().FindIndexByName("idx")
+	require.NotNil(t, idxInfo)
+
+	// check the stats handle
+	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	require.True(t, ok)
+	// column is analyzed from last time.
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, false))
+	// index is not analyzed.
+	require.False(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, true))
+	// column analyze time is same as before.
+	require.NotNil(t, statsTable.HistColl.GetCol(idInfo.ID))
+	idColStatsVer2 := statsTable.HistColl.GetCol(idInfo.ID).Histogram.LastUpdateVersion
+	// assert that column id is analyzed from
+	require.Equal(t, idColStatsVer, idColStatsVer2)
+
+	// modify column for partitioned table.
+	tk.MustGetErrMsg("ALTER TABLE pt modify column id varchar(10)", "[ddl:8200]Unsupported modify column: table is partition table")
+}
+
 func TestCreateTableWithVectorIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

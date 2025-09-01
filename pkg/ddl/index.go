@@ -1176,7 +1176,8 @@ SwitchIndexState:
 			}
 			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 		case model.AnalyzeStateRunning:
-			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) {
+			// currently we only analyze table for non-partitioned table.
+			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionedTable() == nil {
 				// after all old index data are reorged. re-analyze it.
 				done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 				if done {
