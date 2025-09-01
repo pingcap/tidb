@@ -619,4 +619,5 @@ func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinSpill(t *testing.T, isAnti bool
 	for _, param := range params2 {
 		testSpill(t, ctx, joinType, leftDataSourceWithSel, rightDataSourceWithSel, param)
 	}
+	checkNoLeakFiles(t)
 }

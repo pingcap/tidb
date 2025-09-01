@@ -17,14 +17,18 @@ package aggregate_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"math/rand"
+	"path/filepath"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -448,12 +452,14 @@ func TestGetCorrectResult(t *testing.T) {
 
 	finished.Store(true)
 	wg.Wait()
+	checkNoLeakFiles(t)
 }
 
 func TestFallBackAction(t *testing.T) {
 	for range 50 {
 		fallBackActionTest(t)
 	}
+	checkNoLeakFiles(t)
 }
 
 func TestRandomFail(t *testing.T) {
@@ -498,4 +504,24 @@ func TestRandomFail(t *testing.T) {
 
 	finishChan.Store(true)
 	wg.Wait()
+	checkNoLeakFiles(t)
+}
+
+func checkNoLeakFiles(t *testing.T) {
+	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
+
+	fileNum := 0
+	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		log.Info(fmt.Sprintf("name: %s", d.Name()))
+		if !d.IsDir() {
+			fileNum++
+		}
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, fileNum)
 }

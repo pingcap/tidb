@@ -382,6 +382,7 @@ func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
 
 	oneChunkInDiskCase(t, topnExec)
 	severalChunksInDiskCase(t, topnExec)
+	checkNoLeakFiles(t)
 }
 
 func TestTopNSpillDisk(t *testing.T) {
@@ -428,6 +429,7 @@ func TestTopNSpillDisk(t *testing.T) {
 	}
 
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
+	checkNoLeakFiles(t)
 }
 
 func TestTopNSpillDiskFailpoint(t *testing.T) {
@@ -479,6 +481,8 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 	}
+
+	checkNoLeakFiles(t)
 }
 
 func TestIssue54206(t *testing.T) {
@@ -492,6 +496,7 @@ func TestIssue54206(t *testing.T) {
 	tk.MustExec("create table t2(a bigint, b bigint);")
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustQuery("select t1.a+t1.b as result from t1 left join t2 on 1 = 0 order by result limit 1;")
+	checkNoLeakFiles(t)
 }
 
 func TestIssue54541(t *testing.T) {
@@ -514,6 +519,7 @@ func TestIssue54541(t *testing.T) {
 	exe := buildTopNExec(topNCase, dataSource, offset, count)
 
 	sortexec.TestKillSignalInTopN(t, exe)
+	checkNoLeakFiles(t)
 }
 
 func TestTopNFallBackAction(t *testing.T) {
@@ -543,4 +549,5 @@ func TestTopNFallBackAction(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
+	checkNoLeakFiles(t)
 }
