@@ -647,9 +647,9 @@ func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64)
 			}, ResetAvailable: true}
 			err = d.executor.doDDLJob2(sctx, job, &args)
 			if err != nil {
-				logutil.DDLLogger().Warn("fix tiflash placement rule err", zap.Error(err))
+				logutil.DDLLogger().Warn("fix tiflash placement rule err", zap.Int64("tableID", replica.TableInfo.ID), zap.Uint64("count", replica.TableInfo.TiFlashReplica.Count), zap.Error(err))
 			} else {
-				logutil.DDLLogger().Info("fix tiflash placement rule success", zap.Int64("tableID", replica.TableInfo.ID))
+				logutil.DDLLogger().Info("fix tiflash placement rule success", zap.Int64("tableID", replica.TableInfo.ID), zap.Uint64("count", replica.TableInfo.TiFlashReplica.Count))
 				fixed[replica.TableInfo.ID] = struct{}{}
 			}
 		}
