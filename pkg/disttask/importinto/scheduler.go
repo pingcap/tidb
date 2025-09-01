@@ -356,7 +356,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[step] = metas
-		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Summary))
+		logger.Info("move to post-process step", zap.Any("result", taskMeta.Summary))
 	case proto.StepDone:
 		return nil, nil
 	default:

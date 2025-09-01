@@ -15,29 +15,30 @@
 package teststore
 
 import (
-	"testing"
-
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit/testenv"
-	"github.com/stretchr/testify/require"
 )
 
 // NewMockStoreWithoutBootstrap creates a mock store without bootstrap.
 // This is a wrapper function for mockstore.NewMockStore to avoid potential circular dependency.
 // If you need to bootstrap the store, use `testkit.CreateMockStore` or `testkit.CreateMockStoreAndDomain` instead.
-func NewMockStoreWithoutBootstrap(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
+func NewMockStoreWithoutBootstrap(opts ...mockstore.MockTiKVStoreOption) (kv.Storage, error) {
 	store, err := mockstore.NewMockStore(opts...)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 
 	if kerneltype.IsNextGen() {
-		testenv.UpdateConfigForNextgen(t)
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = keyspace.System
+			conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
+		})
 		kvstore.SetSystemStorage(store)
 	}
-	t.Cleanup(func() {
-		require.NoError(t, store.Close())
-	})
-	return store
+	return store, nil
 }
