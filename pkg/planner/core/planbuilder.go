@@ -2072,7 +2072,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 			virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 			for _, idx := range tblInfo.Indices {
 				indexStateAnalyzable := idx.State == model.StatePublic ||
-					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().AnalyzeReorgStateIndex)
+					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyze)
 				// for mv index and ci index fail it first, then analyze those analyzable indexes.
 				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
 					continue
@@ -2357,7 +2357,7 @@ func getModifiedIndexesInfoForAnalyze(
 		// * we analyze the reorg state index.
 		// change column with covered index analyze:
 		// * we analyze the public state index.
-		if originIdx.State != model.StatePublic && !sCtx.GetSessionVars().AnalyzeReorgStateIndex {
+		if originIdx.State != model.StatePublic && !sCtx.GetSessionVars().EnableDDLAnalyze {
 			continue
 		}
 		if handleutil.IsSpecialGlobalIndex(originIdx, tblInfo) {

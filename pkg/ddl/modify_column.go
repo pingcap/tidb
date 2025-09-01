@@ -607,7 +607,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			analyzed := false
-			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) {
+			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tblInfo.Partition == nil {
 				analyzed = true
 			}
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
@@ -664,7 +664,7 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 			if err != nil {
 				return err
 			}
-			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionAnalyzeReorgIndexes}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
+			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",
 					zap.String("category", "ddl"),

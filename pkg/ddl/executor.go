@@ -3290,7 +3290,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
-	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLEmbedIndexAnalyze(sctx))
+	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -3391,7 +3391,7 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
-	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLEmbedIndexAnalyze(sctx))
+	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
 
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
@@ -4926,7 +4926,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
-	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLEmbedIndexAnalyze(ctx))
+	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
 
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -7070,14 +7070,14 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 	return scatterScope
 }
 
-func getEnableDDLEmbedIndexAnalyze(sctx sessionctx.Context) string {
-	var ddlEmbedIndexAnalyze string
+func getEnableDDLAnalyze(sctx sessionctx.Context) string {
+	var enableDDLAnalyze string
 	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLAnalyze)
 	if !ok {
 		// set the system default value.
-		ddlEmbedIndexAnalyze = variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
+		enableDDLAnalyze = variable.BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze)
 	} else {
-		ddlEmbedIndexAnalyze = val
+		enableDDLAnalyze = val
 	}
-	return ddlEmbedIndexAnalyze
+	return enableDDLAnalyze
 }

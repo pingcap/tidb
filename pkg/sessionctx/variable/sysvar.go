@@ -2782,7 +2782,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableDDLAnalyze, Value: BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
-			s.EnableDDLWithEmbeddedIndexAnalyze = TiDBOptOn(val)
+			s.EnableDDLAnalyze = TiDBOptOn(val)
 			return nil
 		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDefaultStrMatchSelectivity, Value: strconv.FormatFloat(vardef.DefTiDBDefaultStrMatchSelectivity, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
