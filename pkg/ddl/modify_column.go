@@ -1222,6 +1222,7 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 }
 
 // ProcessModifyColumnOptions process column options.
+// Export for tiflow.
 func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
