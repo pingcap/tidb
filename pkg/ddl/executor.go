@@ -77,6 +77,10 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
+<<<<<<< HEAD
+=======
+	removingObjPrefix     = "_Tombstone$_"
+>>>>>>> deb4d6563df (table: keep `table.Columns` order by states during modifying column (#62979))
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255

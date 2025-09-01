@@ -168,6 +168,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 	}
 
+	defer checkColumnOrderByStates(tblInfo)
 	return w.doModifyColumnTypeWithData(
 		jobCtx, job, dbInfo, tblInfo, changingCol, oldCol, args)
 }
@@ -436,7 +437,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// none -> delete only
-		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
+		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
@@ -488,7 +489,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// delete only -> write only
-		updateChangingObjState(changingCol, changingIdxs, model.StateWriteOnly)
+		updateObjectState(changingCol, changingIdxs, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -497,7 +498,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		updateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)
+		updateObjectState(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -528,16 +529,65 @@ func (w *worker) doModifyColumnTypeWithData(
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
+<<<<<<< HEAD
+=======
+		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
+
+		updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
+		updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
+		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
+		moveChangingColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
+		moveOldColumnInfo(tblInfo, oldCol)
+		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
+		updateModifyingCols(oldCol, changingCol)
+>>>>>>> deb4d6563df (table: keep `table.Columns` order by states during modifying column (#62979))
 
 		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
 		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
+=======
+	case model.StatePublic:
+		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+		switch oldCol.State {
+		case model.StateWriteOnly:
+			updateObjectState(oldCol, oldIdxInfos, model.StateDeleteOnly)
+			moveOldColumnInfo(tblInfo, oldCol)
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		case model.StateDeleteOnly:
+			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
+			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			// Refactor the job args to add the old index ids into delete range table.
+			rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
+			args.IndexIDs = rmIdxs
+			args.PartitionIDs = getPartitionIDs(tblInfo)
+			job.FillFinishedArgs(args)
+		default:
+			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
+			intest.Assert(false, errMsg)
+			return ver, errors.Errorf(errMsg)
+>>>>>>> deb4d6563df (table: keep `table.Columns` order by states during modifying column (#62979))
 		}
 
 		// Finish this job.
@@ -549,7 +599,6 @@ func (w *worker) doModifyColumnTypeWithData(
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
-
 	return ver, errors.Trace(err)
 }
 
@@ -669,6 +718,41 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 		}
 	}
 	return nil
+}
+
+var colStateOrd = map[model.SchemaState]int{
+	model.StateNone:                 0,
+	model.StateDeleteOnly:           1,
+	model.StateDeleteReorganization: 2,
+	model.StateWriteOnly:            3,
+	model.StateWriteReorganization:  4,
+	model.StatePublic:               5,
+}
+
+func checkColumnOrderByStates(tblInfo *model.TableInfo) {
+	if intest.InTest {
+		minState := model.StatePublic
+		for _, col := range tblInfo.Columns {
+			if colStateOrd[col.State] < colStateOrd[minState] {
+				minState = col.State
+			} else if colStateOrd[col.State] > colStateOrd[minState] {
+				intest.Assert(false, fmt.Sprintf("column %s state %s is not in order, expect at least %s", col.Name, col.State, minState))
+			}
+			if col.ChangeStateInfo != nil {
+				offset := col.ChangeStateInfo.DependencyColumnOffset
+				intest.Assert(offset >= 0 && offset < len(tblInfo.Columns))
+				depCol := tblInfo.Columns[offset]
+				switch {
+				case strings.HasPrefix(col.Name.O, changingColumnPrefix):
+					name := getChangingColumnOriginName(col)
+					intest.Assert(name == depCol.Name.O, "%s != %s", name, depCol.Name.O)
+				case strings.HasPrefix(depCol.Name.O, removingObjPrefix):
+					name := getRemovingObjOriginName(depCol.Name.O)
+					intest.Assert(name == col.Name.O, "%s != %s", name, col.Name.O)
+				}
+			}
+		}
+	}
 }
 
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
