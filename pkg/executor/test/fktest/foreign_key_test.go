@@ -1408,7 +1408,6 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	// Test explain analyze issue #https://github.com/pingcap/tidb/issues/63276
 	tk.MustExec("delete from t1")
 	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1)")
-	tk.Session().GetSessionVars().ConnectionID = 10024
 	tk.MustExec("explain analyze delete from t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
 
