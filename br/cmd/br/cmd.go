@@ -141,37 +141,37 @@ func Init(cmd *cobra.Command) (err error) {
 			err = e
 			return
 		}
-		tidbLogCfg := logutil.LogConfig{}
-		tidbLogCfg.Level, err = cmd.Flags().GetString(FlagLogLevel)
+		conf := logutil.LogConfig{}
+		conf.Level, err = cmd.Flags().GetString(FlagLogLevel)
 		if err != nil {
 			return
 		}
-		tidbLogCfg.File.Filename, err = cmd.Flags().GetString(FlagLogFile)
+		conf.File.Filename, err = cmd.Flags().GetString(FlagLogFile)
 		if err != nil {
 			return
 		}
-		tidbLogCfg.Format, err = cmd.Flags().GetString(FlagLogFormat)
+		conf.Format, err = cmd.Flags().GetString(FlagLogFormat)
 		if err != nil {
 			return
 		}
 		_, outputLogToTerm := os.LookupEnv(envLogToTermKey)
 		if outputLogToTerm {
 			// Log to term if env `BR_LOG_TO_TERM` is set.
-			tidbLogCfg.File.Filename = ""
+			conf.File.Filename = ""
 		}
 		if len(slowLogFilename) != 0 {
-			tidbLogCfg.SlowQueryFile = slowLogFilename
+			conf.SlowQueryFile = slowLogFilename
 		} else {
 			// Don't print slow log in br
 			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
 		}
-		if len(tidbLogCfg.File.Filename) != 0 {
+		if len(conf.File.Filename) != 0 {
 			atomic.StoreUint64(&hasLogFile, 1)
 			summary.InitCollector(true)
 			// cmd.PrintErr prints to stderr, but PrintErrf prints to stdout.
-			cmd.PrintErr(fmt.Sprintf("Detail BR log in %s \n", tidbLogCfg.File.Filename))
+			cmd.PrintErr(fmt.Sprintf("Detail BR log in %s \n", conf.File.Filename))
 		}
-		e = logutil.InitLogger(&tidbLogCfg)
+		e = logutil.InitLogger(&conf)
 		if e != nil {
 			err = e
 			return
