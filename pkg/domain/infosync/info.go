@@ -821,7 +821,7 @@ func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress
-func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (float64, float64, error) {
+func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (fullReplicaProgress float64, oneReplicaProgress float64, err error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, 0, errors.Trace(err)
