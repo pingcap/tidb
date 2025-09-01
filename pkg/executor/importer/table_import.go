@@ -303,6 +303,9 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 		},
 		Remote: &chunk.FileMeta,
 	}
+
+	info.Remote.ParquetMeta.Loc = ti.Location
+
 	parser, err := ti.LoadDataController.GetParser(ctx, info)
 	if err != nil {
 		return nil, err

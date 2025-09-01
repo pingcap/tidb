@@ -85,7 +85,7 @@ func getDecimalFromIntImpl(val int64, d *types.Datum, converted *convertedType) 
 	d.SetString(v[:dotIndex]+"."+v[dotIndex:], "utf8mb4_bin")
 }
 
-func getInt32Getter(converted *convertedType) setter[int32] {
+func getInt32Getter(converted *convertedType, loc *time.Location) setter[int32] {
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
 		return func(val int32, d *types.Datum) {
@@ -94,14 +94,14 @@ func getInt32Getter(converted *convertedType) setter[int32] {
 	case schema.ConvertedTypes.Date:
 		return func(val int32, d *types.Datum) {
 			// Convert days since Unix epoch to time.Time
-			t := time.Unix(int64(val)*86400, 0).UTC()
+			t := time.Unix(int64(val)*86400, 0).In(loc)
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeDate, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.TimeMillis:
 		return func(val int32, d *types.Datum) {
 			// Convert milliseconds to time.Time
-			t := time.UnixMilli(int64(val)).UTC()
+			t := time.UnixMilli(int64(val)).In(loc)
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
@@ -114,7 +114,7 @@ func getInt32Getter(converted *convertedType) setter[int32] {
 	return nil
 }
 
-func getInt64Getter(converted *convertedType) setter[int64] {
+func getInt64Getter(converted *convertedType, loc *time.Location) setter[int64] {
 	switch converted.converted {
 	case schema.ConvertedTypes.Uint32, schema.ConvertedTypes.Uint64:
 		return func(val int64, d *types.Datum) {
@@ -127,21 +127,21 @@ func getInt64Getter(converted *convertedType) setter[int64] {
 	case schema.ConvertedTypes.TimeMicros:
 		return func(val int64, d *types.Datum) {
 			// Convert microseconds to time.Time
-			t := time.UnixMicro(val).UTC()
+			t := time.UnixMicro(val).In(loc)
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.TimestampMillis:
 		return func(val int64, d *types.Datum) {
 			// Convert milliseconds to time.Time
-			t := time.UnixMilli(val).UTC()
+			t := time.UnixMilli(val).In(loc)
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
 	case schema.ConvertedTypes.TimestampMicros:
 		return func(val int64, d *types.Datum) {
 			// Convert microseconds to time.Time
-			t := time.UnixMicro(val).UTC()
+			t := time.UnixMicro(val).In(loc)
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
@@ -154,7 +154,7 @@ func getInt64Getter(converted *convertedType) setter[int64] {
 	return nil
 }
 
-func getInt96Data(val parquet.Int96, d *types.Datum) {
+func getInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location) {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
 	// --------------------------
@@ -165,9 +165,15 @@ func getInt96Data(val parquet.Int96, d *types.Datum) {
 	// NOTE: parquet date can be less than 1970-01-01 that is not supported by TiDB,
 	// where dt is a negative number but still legal in the context of Go.
 	// But it will cause errors or potential data inconsistency when importing.
-	t := val.ToTime()
+	t := val.ToTime().In(loc)
 	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 	d.SetMysqlTime(mysqlTime)
+}
+
+func getInt96Getter(_ *convertedType, loc *time.Location) setter[parquet.Int96] {
+	return func(val parquet.Int96, d *types.Datum) {
+		getInt96Data(val, d, loc)
+	}
 }
 
 func getFloat32Data(val float32, d *types.Datum) {

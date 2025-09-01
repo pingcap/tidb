@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -93,6 +94,7 @@ type MDTableMeta struct {
 type ParquetFileMeta struct {
 	Rows        int64 // row count
 	MemoryUsage int   // memory usage for reader
+	Loc         *time.Location
 }
 
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.

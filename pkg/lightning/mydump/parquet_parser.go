@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/parquet"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -169,20 +171,20 @@ func (dump *generalColumnDumper[T, R]) Next(d *types.Datum) bool {
 	return true
 }
 
-func createColumnDumper(tp parquet.Type, converted *convertedType, batchSize int) columnDumper {
+func createColumnDumper(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) columnDumper {
 	switch tp {
 	case parquet.Types.Boolean:
 		return newGeneralColumnDumper[bool, *file.BooleanColumnChunkReader](batchSize, getBoolData)
 	case parquet.Types.Int32:
-		return newGeneralColumnDumper[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Getter(converted))
+		return newGeneralColumnDumper[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Getter(converted, loc))
 	case parquet.Types.Int64:
-		return newGeneralColumnDumper[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Getter(converted))
+		return newGeneralColumnDumper[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Getter(converted, loc))
 	case parquet.Types.Float:
 		return newGeneralColumnDumper[float32, *file.Float32ColumnChunkReader](batchSize, getFloat32Data)
 	case parquet.Types.Double:
 		return newGeneralColumnDumper[float64, *file.Float64ColumnChunkReader](batchSize, getFloat64Data)
 	case parquet.Types.Int96:
-		return newGeneralColumnDumper[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Data)
+		return newGeneralColumnDumper[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Getter(converted, loc))
 	case parquet.Types.ByteArray:
 		return newGeneralColumnDumper[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArrayGetter(converted))
 	case parquet.Types.FixedLenByteArray:
@@ -309,15 +311,19 @@ type ParquetParser struct {
 }
 
 // Init initializes the Parquet parser and allocate necessary buffers
-func (pp *ParquetParser) Init() error {
+func (pp *ParquetParser) Init(loc *time.Location) error {
 	meta := pp.readers[0].MetaData()
 
 	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.readers[0].NumRowGroups(), int(meta.NumRows)
 
 	numCols := meta.Schema.NumColumns()
 	pp.dumpers = make([]columnDumper, numCols)
+
+	if loc == nil {
+		loc = timeutil.SystemLocation()
+	}
 	for i := range numCols {
-		pp.dumpers[i] = createColumnDumper(meta.Schema.Column(i).PhysicalType(), &pp.colMetas[i], 128)
+		pp.dumpers[i] = createColumnDumper(meta.Schema.Column(i).PhysicalType(), &pp.colMetas[i], loc, 128)
 	}
 
 	return nil
@@ -615,7 +621,7 @@ func NewParquetParser(
 		memLimiter:  readerMemoryLimiter,
 		rowPool:     &pool,
 	}
-	if err := parser.Init(); err != nil {
+	if err := parser.Init(meta.Loc); err != nil {
 		return nil, errors.Trace(err)
 	}
 

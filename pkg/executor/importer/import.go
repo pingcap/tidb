@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -244,7 +245,11 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
-	SQLMode mysql.SQLMode
+	// Location is used to convert time type for parquet, as we assume that time stored
+	// in parquet is always adjusted to UTC, see
+	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
+	Location *time.Location
+	SQLMode  mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
 	// for IMPORT INTO, it is always non-nil and default to be defaultCharacterSet.
@@ -471,6 +476,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
+		Location:         userSctx.GetSessionVars().Location(),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
