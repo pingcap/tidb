@@ -168,6 +168,7 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 		// For outer joins like `t1 left join t2 left join t3`, we have to ensure t1 participates join before
 		// t2 and t3, and cartesian join between t2 and t3 might lead to incorrect results.
 		// For safety we don't allow cartesian outer join here.
+		// For inner joins like `t1 join t2 join t3`, we can reorder them freely, so we allow cartesian join here.
 		return nil, nil, false
 	}
 	join, otherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
