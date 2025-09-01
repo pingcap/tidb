@@ -857,49 +857,12 @@ func (dc *ddlCtx) modifyColumnInPipeline(
 	defer cancel()
 
 	idxCnt := len(reorgInfo.elements)
-	//indexIDs := make([]int64, 0, idxCnt)
 	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
 	var indexNames strings.Builder
-	//uniques := make([]bool, 0, idxCnt)
-	//hasUnique := false
-	//for _, e := range reorgInfo.elements {
-	//	indexIDs = append(indexIDs, e.ID)
-	//	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
-	//	if indexInfo == nil {
-	//		logutil.DDLIngestLogger().Warn("index info not found",
-	//			zap.Int64("jobID", job.ID),
-	//			zap.Int64("tableID", t.Meta().ID),
-	//			zap.Int64("indexID", e.ID))
-	//		return errors.Errorf("index info not found: %d", e.ID)
-	//	}
-	//	indexInfos = append(indexInfos, indexInfo)
-	//	if indexNames.Len() > 0 {
-	//		indexNames.WriteString("+")
-	//	}
-	//	indexNames.WriteString(indexInfo.Name.O)
-	//	uniques = append(uniques, indexInfo.Unique)
-	//	hasUnique = hasUnique || indexInfo.Unique
-	//}
 
 	var (
-		cfg *local.BackendConfig
-		bd  *local.Backend
 		err error
 	)
-	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer bd.Close()
-	}
-	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
-		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
-		Build(cfg, bd)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer bcCtx.Close()
 
 	reorgCtx := dc.getReorgCtx(job.ID)
 	rowCntListener := &localRowCntCollector{
@@ -913,22 +876,12 @@ func (dc *ddlCtx) modifyColumnInPipeline(
 		return errors.Trace(err)
 	}
 	defer sessPool.Put(sctx)
-	//avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
-
-	//engines, err := bcCtx.Register(indexIDs, uniques, t)
-	//if err != nil {
-	//	logutil.DDLIngestLogger().Error("cannot register new engine",
-	//		zap.Int64("jobID", job.ID),
-	//		zap.Error(err),
-	//		zap.Int64s("index IDs", indexIDs))
-	//	return errors.Trace(err)
-	//}
 	importConc := job.ReorgMeta.GetConcurrency()
 	pipe, err := NewModifyColumnTxnPipeline(
 		opCtx,
 		dc.store,
 		sessPool,
-		bcCtx,
+		nil, //bcCtx,
 		nil, //engines,
 		job.ID,
 		t,
@@ -946,17 +899,6 @@ func (dc *ddlCtx) modifyColumnInPipeline(
 		return err
 	}
 	return executeAndClosePipeline(opCtx, pipe, job, nil, 0)
-	//if err != nil {
-	//	err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
-	//	if err1 != nil {
-	//		logutil.DDLIngestLogger().Error("unregister engine failed",
-	//			zap.Int64("jobID", job.ID),
-	//			zap.Error(err1),
-	//			zap.Int64s("index IDs", indexIDs))
-	//	}
-	//	return err
-	//}
-	//return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
 func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {

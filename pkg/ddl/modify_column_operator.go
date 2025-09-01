@@ -128,30 +128,12 @@ func NewTXNCommitOperator(
 	reorgMeta *model.DDLReorgMeta,
 	reorgInfo *reorgInfo,
 ) *TXNCommitOperator {
-	//writerCfg := getLocalWriterConfig(len(indexes), concurrency)
-	//var writerIDAlloc atomic.Int32
-	//jc := reorgInfo.NewJobContext()
-	//bCtx, err := newBackfillCtx(112233, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
-	//if err != nil {
-	//	panic(err)
-	//}
 
 	pool := workerpool.NewWorkerPool(
 		"txnCommitOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[RowRecords, IndexWriteResult] {
-			//writers := make([]ingest.Writer, 0, len(indexes))
-			//for i := range indexes {
-			//	writerID := int(writerIDAlloc.Add(1))
-			//	writer, err := engines[i].CreateWriter(writerID, writerCfg)
-			//	if err != nil {
-			//		logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
-			//		ctx.onError(err)
-			//		return nil
-			//	}
-			//	writers = append(writers, writer)
-			//}
 			jc := reorgInfo.NewJobContext()
 			bCtx, err := newBackfillCtx(112233, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
 			if err != nil {
@@ -278,33 +260,11 @@ func (w *txnCommitWorker) Close() {
 	}
 }
 
-//func (w *txnCommitWorker) WriteChunk(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
-//	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
-//		failpoint.Return(0, nil, errors.New("mock write local error"))
-//	})
-//	failpoint.InjectCall("writeLocalExec", rs.Done)
-//
-//	oprStartTime := time.Now()
-//	vars := w.se.GetSessionVars() //nolint:forbidigo
-//	sc := vars.StmtCtx
-//	cnt, lastHandle, err := writeChunk(w.ctx, w.writers, w.indexes, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
-//	if err != nil || cnt == 0 {
-//		return 0, nil, err
-//	}
-//	logSlowOperations(time.Since(oprStartTime), "writeChunk", 3000)
-//	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
-//	return cnt, nextKey, nil
-//}
-
 func (w *txnCommitWorker) CommitTXN(rr *RowRecords) (count int, errInTxn error) {
-	//var taskCtx backfillTaskContext
-	//var handleRange reorgBackfillTask
 	rowRecords := rr.Chunk
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
-		//taskCtx.addedCount = 0
-		//taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)
 
 		// Because TiCDC do not want this kind of change,
@@ -326,13 +286,6 @@ func (w *txnCommitWorker) CommitTXN(rr *RowRecords) (count int, errInTxn error) 
 		}
 		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
-		//rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
-		//if err != nil {
-		//	return errors.Trace(err)
-		//}
-		//taskCtx.nextKey = nextKey
-		//taskCtx.done = taskDone
-
 		// Optimize for few warnings!
 		warningsMap := make(map[errors.ErrorID]*terror.Error, 2)
 		warningsCountMap := make(map[errors.ErrorID]int64, 2)
@@ -353,10 +306,6 @@ func (w *txnCommitWorker) CommitTXN(rr *RowRecords) (count int, errInTxn error) 
 				}
 			}
 		}
-
-		// Collect the warnings.
-		//taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
-
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
@@ -400,12 +349,6 @@ func NewKVScanOperator(
 	tbl table.PhysicalTable,
 ) *KVScanOperator {
 	totalCount := new(atomic.Int64)
-	//jc := reorgInfo.NewJobContext()
-	//bCtx, err := newBackfillCtx(445566, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
-	//
-	//if err != nil {
-	//	panic(err)
-	//}
 	decodeColMap, err := makeupDecodeColMap(reorgInfo.dbInfo.Name, tbl)
 	if err != nil {
 		panic(err)
@@ -520,10 +463,6 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 			failpoint.Return(errors.New("mock scan record error"))
 		})
 		failpoint.InjectCall("scanRecordExec", w.reorgMeta)
-		//rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
-		//if err != nil {
-		//	return err
-		//}
 		if w.cpOp != nil {
 			w.cpOp.AddChunk(task.ID, task.End)
 		}
@@ -540,17 +479,10 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 		for !done {
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
-			//done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
-			//if err != nil || w.ctx.Err() != nil {
-			//	w.recycleChunk(srcChk)
-			//	terror.Call(rs.Close)
-			//	return err
-			//}
 
 			rowRecords, nextKey, taskDone, err := w.fetchRowColVals(startTS, handleRange, srcChk)
 			if err != nil {
 				w.recycleChunk(srcChk)
-				//terror.Call(rs.Close)
 				return err
 			}
 
@@ -565,7 +497,6 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 			handleRange.startKey = nextKey
 			done = taskDone
 		}
-		//return rs.Close()
 		return nil
 	})
 	if err != nil {
