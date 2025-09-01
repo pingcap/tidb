@@ -458,6 +458,7 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
 	var idxResults []RowRecords
+	t := time.Now()
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
@@ -499,6 +500,12 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 		}
 		return nil
 	})
+	logutil.Logger(w.ctx).Info("scanRecords",
+		zap.Int("chunkNum", len(idxResults)),
+		zap.Duration("takeTime", time.Since(t)),
+		zap.Duration("avgTimePerChunk", time.Since(t)/time.Duration(len(idxResults))),
+	)
+
 	if err != nil {
 		w.ctx.onError(err)
 	}
