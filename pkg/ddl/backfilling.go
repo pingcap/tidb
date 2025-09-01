@@ -882,24 +882,24 @@ func (dc *ddlCtx) modifyColumnInPipeline(
 	//}
 
 	var (
-		//cfg *local.BackendConfig
-		//bd  *local.Backend
+		cfg *local.BackendConfig
+		bd  *local.Backend
 		err error
 	)
-	//if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-	//	cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
-	//	if err != nil {
-	//		return errors.Trace(err)
-	//	}
-	//	defer bd.Close()
-	//}
-	//bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
-	//	WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
-	//	Build(cfg, bd)
-	//if err != nil {
-	//	return errors.Trace(err)
-	//}
-	//defer bcCtx.Close()
+	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer bd.Close()
+	}
+	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
+		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
+		Build(cfg, bd)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer bcCtx.Close()
 
 	reorgCtx := dc.getReorgCtx(job.ID)
 	rowCntListener := &localRowCntCollector{
@@ -928,7 +928,7 @@ func (dc *ddlCtx) modifyColumnInPipeline(
 		opCtx,
 		dc.store,
 		sessPool,
-		nil, //bcCtx,
+		bcCtx,
 		nil, //engines,
 		job.ID,
 		t,
@@ -1094,6 +1094,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 	if bfWorkerType == typeUpdateColumnWorker && reorgInfo.TableName == "t1" {
 		logutil.DDLLogger().Info("use modify column pipeline")
+		ts := time.Now()
+		defer func() {
+			logutil.DDLLogger().Info("modify column pipeline took time",
+				zap.Time("end time", time.Now()),
+				zap.Duration("pipeline takes time", time.Since(ts)))
+		}()
 		return dc.modifyColumnInPipeline(ctx, sessPool, t, reorgInfo)
 	}
 

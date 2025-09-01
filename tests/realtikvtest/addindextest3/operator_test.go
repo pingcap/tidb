@@ -472,6 +472,8 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	//tk.MustExec("alter table t1 add index idx(c2);")
 
+	tk.MustExec("set @@global.modify_column_reader_cnt = 7")
+	tk.MustExec("set @@global.modify_column_writer_cnt = 9")
 	tk.MustExec("alter table t1 modify column c2 varchar(30);")
 	tk.MustExec("alter table t1 modify column c2 bigint;")
 	tk.MustExec("admin check table t1;")

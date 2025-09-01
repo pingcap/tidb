@@ -157,10 +157,11 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, c
 	resGroupName := job.ReorgMeta.ResourceGroupName
 	concurrency := job.ReorgMeta.GetConcurrency()
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
-	hasUnique, err := hasUniqueIndex(job)
-	if err != nil {
-		return nil, nil, err
-	}
+	//hasUnique, err := hasUniqueIndex(job)
+	//if err != nil {
+	//	return nil, nil, err
+	//}
+	hasUnique := false
 	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
 	if adjustedWorkerConcurrency > 0 {
 		cfg.WorkerConcurrency = adjustedWorkerConcurrency

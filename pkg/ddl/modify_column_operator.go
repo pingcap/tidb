@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,7 +75,9 @@ func NewModifyColumnTxnPipeline(
 		return nil, err
 	}
 	srcChkPool := createChkPool(reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	//readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	readerCnt := int(vardef.DDLModifyColumnReaderCnt.Load())
+	writerCnt := int(vardef.DDLModifyColumnWriterCnt.Load())
 
 	failpoint.InjectCall("beforeAddIndexScan")
 
@@ -199,10 +202,14 @@ type txnCommitWorker struct {
 }
 
 func (w *txnCommitWorker) HandleTask(ck RowRecords, send func(IndexWriteResult)) {
+	t := time.Now()
 	defer func() {
 		if ck.Chunk != nil {
 			w.srcChunkPool.Put(ck.Chunk)
 		}
+		ddllogutil.DDLLogger().Info("txn commit worker handle task",
+			zap.Duration("takeTime", time.Since(t)),
+		)
 	}()
 	failpoint.Inject("injectPanicForIndexIngest", func() {
 		panic("mock panic")
@@ -446,7 +453,7 @@ func NewKVScanOperator(
 // Close implements operator.Operator interface.
 func (o *KVScanOperator) Close() error {
 	defer func() {
-		o.logger.Info("table scan operator total count", zap.Int64("count", o.totalCount.Load()))
+		o.logger.Info("kv scan operator total count", zap.Int64("count", o.totalCount.Load()))
 	}()
 	return o.AsyncOperator.Close()
 }
@@ -476,6 +483,12 @@ type kvScanWorker struct {
 }
 
 func (w *kvScanWorker) HandleTask(task TableScanTask, sender func(RowRecords)) {
+	t := time.Now()
+	defer func() {
+		ddllogutil.DDLLogger().Info("table scan worker handle task",
+			zap.Duration("takeTime", time.Since(t)),
+		)
+	}()
 	failpoint.Inject("injectPanicForTableScan", func() {
 		panic("mock panic")
 	})
