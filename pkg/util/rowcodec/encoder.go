@@ -106,7 +106,7 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 	for i, colID := range encoder.tempColIDs {
 		if i >= len(encoder.values) {
 			fmt.Println("panic in reformatCols", encoder.tempColIDs, encoder.values)
-			panic("index out of range")
+			//panic("index out of range")
 		}
 		if encoder.values[i].IsNull() {
 			if r.large() {
@@ -168,6 +168,10 @@ func (encoder *Encoder) encodeRowCols(loc *time.Location, numCols, notNullIdx in
 		if r.large() {
 			r.offsets32[i] = uint32(len(r.data))
 		} else {
+			if i >= len(r.offsets) {
+				fmt.Println("panic in encodeRowCols", len(r.offsets), i, r.offsets, r.data)
+				//panic("index out of range")
+			}
 			r.offsets[i] = uint16(len(r.data))
 		}
 	}

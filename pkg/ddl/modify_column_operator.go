@@ -127,11 +127,11 @@ func NewTXNCommitOperator(
 ) *TXNCommitOperator {
 	//writerCfg := getLocalWriterConfig(len(indexes), concurrency)
 	//var writerIDAlloc atomic.Int32
-	jc := reorgInfo.NewJobContext()
-	bCtx, err := newBackfillCtx(112233, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
-	if err != nil {
-		panic(err)
-	}
+	//jc := reorgInfo.NewJobContext()
+	//bCtx, err := newBackfillCtx(112233, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
+	//if err != nil {
+	//	panic(err)
+	//}
 
 	pool := workerpool.NewWorkerPool(
 		"txnCommitOperator",
@@ -149,7 +149,11 @@ func NewTXNCommitOperator(
 			//	}
 			//	writers = append(writers, writer)
 			//}
-
+			jc := reorgInfo.NewJobContext()
+			bCtx, err := newBackfillCtx(112233, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
+			if err != nil {
+				panic(err)
+			}
 			return &txnCommitWorker{
 				ctx:     ctx,
 				tbl:     tbl,
@@ -389,11 +393,12 @@ func NewKVScanOperator(
 	tbl table.PhysicalTable,
 ) *KVScanOperator {
 	totalCount := new(atomic.Int64)
-	jc := reorgInfo.NewJobContext()
-	bCtx, err := newBackfillCtx(445566, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
-	if err != nil {
-		panic(err)
-	}
+	//jc := reorgInfo.NewJobContext()
+	//bCtx, err := newBackfillCtx(445566, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
+	//
+	//if err != nil {
+	//	panic(err)
+	//}
 	decodeColMap, err := makeupDecodeColMap(reorgInfo.dbInfo.Name, tbl)
 	if err != nil {
 		panic(err)
@@ -406,7 +411,11 @@ func NewKVScanOperator(
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[TableScanTask, RowRecords] {
-
+			jc := reorgInfo.NewJobContext()
+			bCtx, err := newBackfillCtx(445566, reorgInfo, reorgInfo.SchemaName, tbl, jc, metrics.LblUpdateColRate, true)
+			if err != nil {
+				panic(err)
+			}
 			return &kvScanWorker{
 				ctx:           ctx,
 				copCtx:        copCtx,
