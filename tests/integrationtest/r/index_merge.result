@@ -53,7 +53,7 @@ Sort	root		index_merge.t1.c1
 └─IndexMerge	root		type: union
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5<-(ScalarQueryCol#10))))
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5<-ScalarQueryCol#10)))
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#10
 └─MaxOneRow	root		
@@ -117,7 +117,7 @@ Sort	root		index_merge.t1.c1
 └─IndexMerge	root		type: union
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5<-(ScalarQueryCol#20))))
+  └─Selection(Probe)	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), eq(index_merge.t1.c3, 5<-ScalarQueryCol#20)))
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#20
 └─MaxOneRow	root		
@@ -201,7 +201,7 @@ c1	c2	c3
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
-└─Projection	root		index_merge.t1.c1, (ScalarQueryCol#25)->Column#26
+└─Projection	root		index_merge.t1.c1, ScalarQueryCol#25->Column#26
   └─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
     ├─StreamAgg(Build)	root		funcs:max(Column#13)->Column#14, funcs:sum(0)->Column#15, funcs:count(1)->Column#16
     │ └─StreamAgg	root		funcs:count(Column#39)->Column#13

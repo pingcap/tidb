@@ -153,7 +153,7 @@ func (expr *Constant) ExplainInfo(ctx EvalContext) string {
 	// Add subquery reference if available (same logic as StringWithCtx)
 	if expr.SubqueryRefID > 0 {
 		refStr := fmt.Sprintf("ScalarQueryCol#%d", expr.SubqueryRefID)
-		return fmt.Sprintf("%s<-(%s)", valueStr, refStr)
+		return fmt.Sprintf("%s<-%s", valueStr, refStr)
 	}
 
 	if redact == errors.RedactLogMarker {
@@ -203,9 +203,7 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 			// For Projection operators, show only the subquery reference without the constant value
 			if expr.SubqueryRefID > 0 {
 				refStr := fmt.Sprintf("ScalarQueryCol#%d", expr.SubqueryRefID)
-				builder.WriteString("(")
 				builder.WriteString(refStr)
-				builder.WriteString(")")
 			} else {
 				v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
 				redact.WriteRedact(builder, v, redactMode)

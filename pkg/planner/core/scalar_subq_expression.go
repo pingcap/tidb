@@ -72,11 +72,6 @@ func (ssctx *ScalarSubqueryEvalCtx) selfEval() error {
 	return nil
 }
 
-// ScalarSubQuery returns the physical plan of the subquery
-func (ssctx *ScalarSubqueryEvalCtx) ScalarSubQuery() base.PhysicalPlan {
-	return ssctx.scalarSubQuery
-}
-
 // ScalarSubQueryExpr is a expression placeholder for the non-correlated scalar subqueries which can be evaluated during optimizing phase.
 // TODO: The methods related with evaluate the function will be revised in next step.
 type ScalarSubQueryExpr struct {

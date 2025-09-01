@@ -204,7 +204,7 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 	// Add subquery reference if available
 	if c.SubqueryRefID > 0 {
 		refStr := fmt.Sprintf("ScalarQueryCol#%d", c.SubqueryRefID)
-		return fmt.Sprintf("%s<-(%s)", valueStr, refStr)
+		return fmt.Sprintf("%s<-%s", valueStr, refStr)
 	}
 	return valueStr
 }

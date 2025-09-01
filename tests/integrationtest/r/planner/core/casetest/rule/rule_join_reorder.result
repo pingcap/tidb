@@ -4737,7 +4737,7 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#11)->Column#12
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#11->Column#12
 └─IndexReader	root		index:IndexFullScan
   └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#11
@@ -4749,7 +4749,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#11
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5805,7 +5805,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
         └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5821,7 +5821,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5840,7 +5840,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5856,7 +5856,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5875,7 +5875,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5894,7 +5894,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5913,7 +5913,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -7392,7 +7392,7 @@ HashJoin	root		right outer join, left side:Projection, equal:[eq(planner__core__
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
@@ -7407,7 +7407,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
@@ -7425,7 +7425,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
@@ -7440,7 +7440,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 left join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─MergeJoin	root		left outer join, left side:IndexReader, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
@@ -7458,7 +7458,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 right join t3 on t1.a = t3.a;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, (ScalarQueryCol#14)->Column#15
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14->Column#15
 └─MergeJoin	root		right outer join, left side:IndexReader, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo

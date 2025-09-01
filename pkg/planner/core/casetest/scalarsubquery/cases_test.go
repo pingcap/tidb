@@ -98,12 +98,10 @@ func TestSubqueryInExplainAnalyze(t *testing.T) {
 			input []struct {
 				SQL              string
 				IsExplainAnalyze bool
-				HasErr           bool
 			}
 			output []struct {
-				SQL   string
-				Plan  []string
-				Error string
+				SQL  string
+				Plan []string
 			}
 		)
 		planSuiteData := GetPlanSuiteData()
@@ -139,34 +137,22 @@ func TestSubqueryInExplainAnalyze(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts.SQL
-				if ts.HasErr {
-					err := testKit.ExecToErr(ts.SQL)
-					require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
-					output[i].Error = err.Error()
-					output[i].Plan = nil
-				} else {
-					rows := testKit.MustQuery(ts.SQL).Rows()
-					if ts.IsExplainAnalyze {
-						rows = cutExecutionInfoFromExplainAnalyzeOutput(rows)
-					}
-					output[i].Plan = testdata.ConvertRowsToStrings(rows)
-					output[i].Error = ""
-				}
-			})
-			if ts.HasErr {
-				err := testKit.ExecToErr(ts.SQL)
-				require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
-			} else {
 				rows := testKit.MustQuery(ts.SQL).Rows()
 				if ts.IsExplainAnalyze {
 					rows = cutExecutionInfoFromExplainAnalyzeOutput(rows)
 				}
-				require.Equal(t,
-					testdata.ConvertRowsToStrings(testkit.Rows(output[i].Plan...)),
-					testdata.ConvertRowsToStrings(rows),
-					fmt.Sprintf("Failed at case #%d, SQL: %v", i, ts.SQL),
-				)
+				output[i].Plan = testdata.ConvertRowsToStrings(rows)
+			})
+
+			rows := testKit.MustQuery(ts.SQL).Rows()
+			if ts.IsExplainAnalyze {
+				rows = cutExecutionInfoFromExplainAnalyzeOutput(rows)
 			}
+			require.Equal(t,
+				testdata.ConvertRowsToStrings(testkit.Rows(output[i].Plan...)),
+				testdata.ConvertRowsToStrings(rows),
+				fmt.Sprintf("Failed at case #%d, SQL: %v", i, ts.SQL),
+			)
 		}
 	})
 }

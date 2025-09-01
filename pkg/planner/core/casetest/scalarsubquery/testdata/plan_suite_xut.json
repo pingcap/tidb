@@ -150,9 +150,9 @@
       {
         "SQL": "explain analyze select *,(select a from t2 limit 1) from t1 where a = (select a from t2 limit 1)",
         "Plan": [
-          "Projection_43 root test.t1.a, test.t1.b, test.t1.c, test.t1.d, test.t1.e, test.t1.f, test.t1.g, test.t1.h, test.t1.i, test.t1.j, test.t1.k, test.t1.l, test.t1.m, test.t1.n, test.t1.o, test.t1.p, test.t1.q, test.t1.r, test.t1.s, test.t1.t, test.t1.u, test.t1.v, test.t1.w, test.t1.x, test.t1.y, (ScalarQueryCol#124)->Column#125",
+          "Projection_43 root test.t1.a, test.t1.b, test.t1.c, test.t1.d, test.t1.e, test.t1.f, test.t1.g, test.t1.h, test.t1.i, test.t1.j, test.t1.k, test.t1.l, test.t1.m, test.t1.n, test.t1.o, test.t1.p, test.t1.q, test.t1.r, test.t1.s, test.t1.t, test.t1.u, test.t1.v, test.t1.w, test.t1.x, test.t1.y, ScalarQueryCol#124->Column#125",
           "└─TableReader_46 root data:Selection_45",
-          "  └─Selection_45 cop[tikv] eq(test.t1.a, 127<-(ScalarQueryCol#91))",
+          "  └─Selection_45 cop[tikv] eq(test.t1.a, 127<-ScalarQueryCol#91)",
           "    └─TableFullScan_44 cop[tikv] keep order:false, stats:pseudo",
           "ScalarSubQuery_22 root Output: ScalarQueryCol#91",
           "└─MaxOneRow_10 root ",
@@ -166,13 +166,12 @@
           "    └─TableReader_39 root data:Limit_38",
           "      └─Limit_38 cop[tikv] offset:0, count:1",
           "        └─TableFullScan_37 cop[tikv] keep order:false, stats:pseudo"
-        ],
-        "Error": ""
+        ]
       },
       {
         "SQL": "explain analyze select a, (select max(b) from t2 where t2.a ) as max_b, (select count(*) from t3 where t3.a) as count_t3 from t1",
         "Plan": [
-          "Projection_78 root test.t1.a, (ScalarQueryCol#123)->Column#124, (ScalarQueryCol#159)->Column#160",
+          "Projection_78 root test.t1.a, ScalarQueryCol#123->Column#124, ScalarQueryCol#159->Column#160",
           "└─TableReader_81 root data:TableFullScan_80",
           "  └─TableFullScan_80 cop[tikv] keep order:false, stats:pseudo",
           "ScalarSubQuery_47 root Output: ScalarQueryCol#123",
@@ -190,8 +189,7 @@
           "      └─StreamAgg_60 cop[tikv] funcs:count(1)->Column#158",
           "        └─Selection_70 cop[tikv] test.t3.a",
           "          └─TableFullScan_69 cop[tikv] keep order:false, stats:pseudo"
-        ],
-        "Error": ""
+        ]
       },
       {
         "SQL": "explain analyze select * from t1 where a = (select a from t2 where b = (select b from t3 where c = (select c from t4 where a = 1)))",
@@ -209,8 +207,7 @@
           "ScalarSubQuery_39 root Output: ScalarQueryCol#129",
           "└─MaxOneRow_34 root ",
           "  └─TableDual_37 root rows:0"
-        ],
-        "Error": ""
+        ]
       },
       {
         "SQL": "explain analyze with cte1 as (select a, b from t1 where c > (select avg(c) from t2)), cte2 as (select a, b from t2 where a in (select a from t3 where b > 20)) select cte1.*, cte2.* from cte1 join cte2 on cte1.a = cte2.a",
@@ -223,7 +220,7 @@
           "│       └─TableFullScan_139 cop[tikv] keep order:false, stats:pseudo",
           "└─HashJoin_116(Probe) root inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "  ├─TableReader_119(Build) root data:Selection_118",
-          "  │ └─Selection_118 cop[tikv] gt(test.t1.c, 8388607.0000<-(ScalarQueryCol#193)), not(isnull(test.t1.a))",
+          "  │ └─Selection_118 cop[tikv] gt(test.t1.c, 8388607.0000<-ScalarQueryCol#193), not(isnull(test.t1.a))",
           "  │   └─TableFullScan_117 cop[tikv] keep order:false, stats:pseudo",
           "  └─Projection_122(Probe) root test.t2.a, test.t2.b, cast(test.t2.a, double BINARY)->Column#259",
           "    └─TableReader_126 root data:Selection_125",
@@ -241,14 +238,13 @@
           "    └─TableReader_60 root data:StreamAgg_51",
           "      └─StreamAgg_51 cop[tikv] funcs:count(test.t2.c)->Column#191, funcs:sum(test.t2.c)->Column#192",
           "        └─TableFullScan_58 cop[tikv] keep order:false, stats:pseudo"
-        ],
-        "Error": ""
+        ]
       },
       {
         "SQL": "explain analyze select * from t1 where a > (select count(*) from t2) and b < (select max(b) from t3) and c = (select avg(c) from t4)",
         "Plan": [
           "TableReader_99 root data:Selection_98",
-          "└─Selection_98 cop[tikv] eq(cast(test.t1.c, double BINARY), 456.78900146484375<-(ScalarQueryCol#138)), gt(test.t1.a, 1<-(ScalarQueryCol#62)), lt(test.t1.b, 790<-(ScalarQueryCol#95))",
+          "└─Selection_98 cop[tikv] eq(cast(test.t1.c, double BINARY), 456.78900146484375<-ScalarQueryCol#138), gt(test.t1.a, 1<-ScalarQueryCol#62), lt(test.t1.b, 790<-ScalarQueryCol#95)",
           "  └─TableFullScan_97 cop[tikv] keep order:false, stats:pseudo",
           "ScalarSubQuery_27 root Output: ScalarQueryCol#62",
           "└─MaxOneRow_7 root ",
@@ -270,14 +266,13 @@
           "    └─TableReader_90 root data:StreamAgg_81",
           "      └─StreamAgg_81 cop[tikv] funcs:count(test.t4.c)->Column#136, funcs:sum(test.t4.c)->Column#137",
           "        └─TableFullScan_88 cop[tikv] keep order:false, stats:pseudo"
-        ],
-        "Error": ""
+        ]
       },
       {
         "SQL": "explain analyze select * from t1 where a + (select max(a) from t2) > (select avg(b) from t3)",
         "Plan": [
           "TableReader_74 root data:Selection_73",
-          "└─Selection_73 cop[tikv] gt(plus(test.t1.a, 127<-(ScalarQueryCol#60)), 789<-(ScalarQueryCol#97))",
+          "└─Selection_73 cop[tikv] gt(plus(test.t1.a, 127<-ScalarQueryCol#60), 789<-ScalarQueryCol#97)",
           "  └─TableFullScan_72 cop[tikv] keep order:false, stats:pseudo",
           "ScalarSubQuery_44 root Output: ScalarQueryCol#60",
           "└─MaxOneRow_11 root ",
@@ -293,8 +288,7 @@
           "    └─TableReader_65 root data:StreamAgg_56",
           "      └─StreamAgg_56 cop[tikv] funcs:count(test.t3.b)->Column#95, funcs:sum(test.t3.b)->Column#96",
           "        └─TableFullScan_63 cop[tikv] keep order:false, stats:pseudo"
-        ],
-        "Error": ""
+        ]
       },
       {
         "SQL": "explain analyze select * from t1 where a > (select a from t2 where b = (select b from t3 where c = (select c from t4 where aa = 255))) and b < (select bb from t2 where cc = (select dd from t3 where ee = (select ff from t4 where gg = 32767)))",
@@ -310,7 +304,7 @@
           "└─MaxOneRow_24 root ",
           "  └─TableReader_33 root data:Projection_27",
           "    └─Projection_27 cop[tikv] test.t3.b",
-          "      └─Selection_32 cop[tikv] eq(cast(test.t3.c, double BINARY), 456.789<-(ScalarQueryCol#127))",
+          "      └─Selection_32 cop[tikv] eq(cast(test.t3.c, double BINARY), 456.789<-ScalarQueryCol#127)",
           "        └─TableFullScan_31 cop[tikv] keep order:false, stats:pseudo",
           "ScalarSubQuery_43 root Output: ScalarQueryCol#131",
           "└─MaxOneRow_38 root ",
@@ -321,8 +315,7 @@
           "    └─Projection_55 cop[tikv] test.t4.ff",
           "      └─Selection_60 cop[tikv] eq(test.t4.gg, 32767)",
           "        └─TableFullScan_59 cop[tikv] keep order:false, stats:pseudo"
-        ],
-        "Error": ""
+        ]
       }
     ]
   }
