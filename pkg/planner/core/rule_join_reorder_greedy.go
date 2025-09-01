@@ -99,14 +99,15 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
 		bestCost := math.MaxFloat64
-		bestIdx, whateverValidOneIdx := -1, -1
+		bestIdx, whateverValidOneIdx, bestIsCartesian := -1, -1, false
 		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
 		var bestJoin, whateverValidOne base.LogicalPlan
 		for i, node := range s.curJoinGroup {
-			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
+			newJoin, remainOthers, numJoinKeys := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
 			if newJoin == nil {
 				continue
 			}
+			isCartesian := numJoinKeys == 0
 			_, _, err := newJoin.RecursiveDeriveStats(nil)
 			if err != nil {
 				return nil, err
@@ -116,11 +117,26 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			remainOthersOfWhateverValidOne = remainOthers
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
 			tracer.appendLogicalJoinCost(newJoin, curCost)
-			if bestCost > curCost {
+
+			// Cartesian join is risky but skip it brutally may lead to bad join orders, see #63290.
+			// To trade-off the risk and the quality of join order, we introduce a cartesianRiskRatio to control
+			// the preference of non-cartesian join over cartesian join.
+			curIsBetter := false
+			cartesianRiskRatio := 100.0 // TODO: make it configurable?
+			if !bestIsCartesian && isCartesian {
+				curIsBetter = curCost*cartesianRiskRatio < bestCost
+			} else if bestIsCartesian && !isCartesian {
+				curIsBetter = curCost < bestCost*cartesianRiskRatio
+			} else {
+				curIsBetter = curCost < bestCost
+			}
+
+			if curIsBetter {
 				bestCost = curCost
 				bestJoin = newJoin
 				bestIdx = i
 				finalRemainOthers = remainOthers
+				bestIsCartesian = isCartesian
 			}
 		}
 		// If we could find more join node, meaning that the sub connected graph have been totally explored.
@@ -146,10 +162,8 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression, int) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
-	if len(usedEdges) == 0 {
-		return nil, nil
-	}
-	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
+	join, otherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
+	return join, otherConds, len(usedEdges)
 }
