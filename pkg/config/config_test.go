@@ -1435,4 +1435,8 @@ func TestKeyspaceName(t *testing.T) {
 	require.ErrorContains(t, conf.Valid(), "is invalid")
 	conf.KeyspaceName = "abc"
 	require.NoError(t, conf.Valid())
+	conf.KeyspaceName = "18446744073709551615" // max uint64
+	require.NoError(t, conf.Valid())
+	conf.KeyspaceName = "a18446744073709551615"
+	require.ErrorContains(t, conf.Valid(), "invalid keyspace name")
 }
