@@ -569,6 +569,13 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	if err != nil {
 		return nil, err
 	}
+	if len(kvReqs) == 0 {
+		kvReq, err := e.buildKVReq(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		kvReqs = append(kvReqs, kvReq)
+	}
 	e.kvRanges = getKVRangesFromReqs(kvReqs)
 	results := make([]distsql.SelectResult, 0, len(kvReqs))
 	for _, kvReq := range kvReqs {
@@ -580,13 +587,6 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	}
 	if len(results) == 1 {
 		return results[0], nil
-	}
-	if len(results) == 0 {
-		result, err := e.SelectResult(ctx, e.dctx, nil, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
-		if err != nil {
-			return nil, err
-		}
-		return result, nil
 	}
 
 	// Use sorted results if we have byItems to sort by
