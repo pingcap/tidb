@@ -1125,6 +1125,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
 	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
+	lhsFullMatch := isFullIndexMatch(lhs)
+	rhsFullMatch := isFullIndexMatch(rhs)
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
@@ -1150,31 +1152,15 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// bound was applied, etc.)
 	sum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
 
-	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
-	// TO-DO: Consider a separate set of rules for global indexes.
+	pseudoResult := 0
+	// Determine winner if one index doesn't have statistics and another has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
-		// If one index has statistics and the other does not, choose the index with statistics if it
-		// has the same or higher number of equal/IN predicates.
-		if !lhsPseudo && sum >= 0 &&
-			(eqOrInResult > 0 || (lhs.path.EqOrInCondCount > 0 && lhsEqOrInCount >= rhsEqOrInCount)) {
-			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
+		if pseudoResult > 0 && sum >= 0 {
+			return pseudoResult, lhsPseudo
 		}
-		if !rhsPseudo && sum <= 0 &&
-			(eqOrInResult < 0 || (rhs.path.EqOrInCondCount > 0 && rhsEqOrInCount >= lhsEqOrInCount)) {
-			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
-		}
-		if preferRange {
-			// keep an index without statistics if that index has more equal/IN predicates, AND:
-			// 1) there are at least 2 equal/INs
-			// 2) OR - it's a full index match for all index predicates
-			if lhsPseudo && eqOrInResult > 0 && sum >= 0 &&
-				(lhsEqOrInCount > 1 || isFullIndexMatch(lhs)) {
-				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
-			}
-			if rhsPseudo && eqOrInResult < 0 && sum <= 0 &&
-				(rhsEqOrInCount > 1 || isFullIndexMatch(rhs)) {
-				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
-			}
+		if pseudoResult < 0 && sum <= 0 {
+			return pseudoResult, rhsPseudo
 		}
 	}
 
@@ -1239,6 +1225,32 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 		}
 	}
 	return lhsPseudo, rhsPseudo
+}
+
+func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int, preferRange bool) int {
+	// TO-DO: Consider a separate set of rules for global indexes.
+	// If one index has statistics and the other does not, choose the index with statistics if it
+	// has the same or higher number of equal/IN predicates.
+	if !lhsPseudo && lhsEqOrInCount > 0 && eqOrInResult >= 0 {
+		return 1 // left wins
+	}
+	if !rhsPseudo && rhsEqOrInCount > 0 && eqOrInResult <= 0 {
+		return -1 // right wins
+	}
+	if preferRange {
+		// keep an index without statistics if that index has more equal/IN predicates, AND:
+		// 1) there are at least 2 equal/INs
+		// 2) OR - it's a full index match for all index predicates
+		if lhsPseudo && eqOrInResult > 0 &&
+			(lhsEqOrInCount > 1 || lhsFullMatch) {
+			return 1 // left wins
+		}
+		if rhsPseudo && eqOrInResult < 0 &&
+			(rhsEqOrInCount > 1 || rhsFullMatch) {
+			return -1 // right wins
+		}
+	}
+	return 0
 }
 
 // Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
