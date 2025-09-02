@@ -385,73 +385,6 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range) ([]*kv.Request, error) {
-	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(e.dctx, ranges)
-	if err != nil {
-		return nil, err
-	}
-	kvReqs := make([]*kv.Request, 0, len(kvRanges))
-	for i, kvRange := range kvRanges {
-		if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
-			return nil, err
-		}
-		var builder distsql.RequestBuilder
-		reqBuilder := builder.SetKeyRanges(kvRange)
-		kvReq, err := reqBuilder.
-			SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetTxnScope(e.txnScope).
-			SetReadReplicaScope(e.readReplicaScope).
-			SetFromSessionVars(e.dctx).
-			SetFromInfoSchema(e.GetInfoSchema()).
-			SetMemTracker(e.memTracker).
-			SetStoreType(e.storeType).
-			SetPaging(e.paging).
-			SetAllowBatchCop(e.batchCop).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
-			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-			Build()
-		if err != nil {
-			return nil, err
-		}
-		kvReqs = append(kvReqs, kvReq)
-	}
-	return kvReqs, nil
-}
-
-func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) ([]*kv.Request, error) {
-	var kvReqs []*kv.Request
-	for _, ranges := range groupedRanges {
-		if e.kvRangeBuilder != nil && e.byItems != nil {
-			reqs, err := e.buildKVReqSeparately(ctx, ranges)
-			if err != nil {
-				return nil, err
-			}
-			kvReqs = append(kvReqs, reqs...)
-		} else {
-			kvReq, err := e.buildKVReq(ctx, ranges)
-			if err != nil {
-				return nil, err
-			}
-			kvReqs = append(kvReqs, kvReq)
-		}
-	}
-	return kvReqs, nil
-}
-
-func getKVRangesFromReqs(kvReqs []*kv.Request) []kv.KeyRange {
-	kvRanges := make([]kv.KeyRange, 0, len(kvReqs))
-	for _, kvReq := range kvReqs {
-		kvRanges = kvReq.KeyRanges.AppendSelfTo(kvRanges)
-	}
-	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
-		return bytes.Compare(i.StartKey, j.StartKey)
-	})
-	return kvRanges
-}
-
 func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) (distsql.SelectResult, error) {
 	// Special handling for single group that represents original ranges
 	if len(groupedRanges) == 1 && len(e.groupedRanges) == 0 && e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
@@ -485,7 +418,6 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 			return nil, err
 		}
 		return result, nil
-
 	}
 
 	// Original grouped ranges logic
@@ -520,6 +452,73 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	}
 	// If no sorting is needed, use serial results
 	return distsql.NewSerialSelectResults(results), nil
+}
+
+func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) ([]*kv.Request, error) {
+	var kvReqs []*kv.Request
+	for _, ranges := range groupedRanges {
+		if e.kvRangeBuilder != nil && e.byItems != nil {
+			reqs, err := e.buildKVReqSeparately(ctx, ranges)
+			if err != nil {
+				return nil, err
+			}
+			kvReqs = append(kvReqs, reqs...)
+		} else {
+			kvReq, err := e.buildKVReq(ctx, ranges)
+			if err != nil {
+				return nil, err
+			}
+			kvReqs = append(kvReqs, kvReq)
+		}
+	}
+	return kvReqs, nil
+}
+
+func getKVRangesFromReqs(kvReqs []*kv.Request) []kv.KeyRange {
+	kvRanges := make([]kv.KeyRange, 0, len(kvReqs))
+	for _, kvReq := range kvReqs {
+		kvRanges = kvReq.KeyRanges.AppendSelfTo(kvRanges)
+	}
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
+	})
+	return kvRanges
+}
+
+func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range) ([]*kv.Request, error) {
+	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(e.dctx, ranges)
+	if err != nil {
+		return nil, err
+	}
+	kvReqs := make([]*kv.Request, 0, len(kvRanges))
+	for i, kvRange := range kvRanges {
+		if err := internalutil.UpdateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
+			return nil, err
+		}
+		var builder distsql.RequestBuilder
+		reqBuilder := builder.SetKeyRanges(kvRange)
+		kvReq, err := reqBuilder.
+			SetDAGRequest(e.dagPB).
+			SetStartTS(e.startTS).
+			SetDesc(e.desc).
+			SetKeepOrder(e.keepOrder).
+			SetTxnScope(e.txnScope).
+			SetReadReplicaScope(e.readReplicaScope).
+			SetFromSessionVars(e.dctx).
+			SetFromInfoSchema(e.GetInfoSchema()).
+			SetMemTracker(e.memTracker).
+			SetStoreType(e.storeType).
+			SetPaging(e.paging).
+			SetAllowBatchCop(e.batchCop).
+			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
+			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
+			Build()
+		if err != nil {
+			return nil, err
+		}
+		kvReqs = append(kvReqs, kvReq)
+	}
+	return kvReqs, nil
 }
 
 func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
