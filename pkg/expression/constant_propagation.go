@@ -19,6 +19,8 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -279,6 +281,13 @@ func (s *propConstSolver) Clear() {
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
 // d = 4 & 2 = c & false & b = 1 & a = 4, we propagate c = 2 and d = 4, and do constant folding: c = d + 2 will be folded as false.
 func (s *propConstSolver) propagateConstantEQ() {
+	if tmpCtx, ok := s.ctx.(*exprctx.ConstantPropagateCheckContext); ok {
+		if tmpCtx1, ok1 := tmpCtx.ExprContext.(*sessionexpr.ExprContext); ok1 {
+			if !tmpCtx1.IsInternal() {
+				logutil.BgLogger().Info("gjt")
+			}
+		}
+	}
 	intest.Assert(len(s.eqMapper) == 0 && s.eqMapper != nil)
 	visited := make([]bool, len(s.conditions))
 	cols := make([]*Column, 0, 4)
@@ -425,7 +434,13 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			return nil
 		}
 		if updated {
-			retMapper[s.getColID(col)] = con
+			newExpr := BuildCastFunction(s.ctx, con, col.GetType(s.ctx.GetEvalCtx()))
+			newCon, ok := newExpr.(*Constant)
+			if !ok {
+				logutil.BgLogger().Info("gjt2")
+			}
+			retMapper[s.getColID(col)] = newCon
+			// retMapper[s.getColID(col)] = con
 		}
 	}
 	return

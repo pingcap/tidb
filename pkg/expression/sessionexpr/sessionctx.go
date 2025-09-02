@@ -58,6 +58,10 @@ func NewExprContext(sctx sessionctx.Context) *ExprContext {
 	}
 }
 
+func (ctx *ExprContext) IsInternal() bool {
+	return ctx.sctx.GetSessionVars().InRestrictedSQL
+}
+
 // GetEvalCtx returns the EvalContext.
 func (ctx *ExprContext) GetEvalCtx() exprctx.EvalContext {
 	return ctx.EvalContext
