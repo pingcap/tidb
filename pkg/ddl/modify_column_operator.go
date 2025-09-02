@@ -530,6 +530,7 @@ func (w *kvScanWorker) fetchRowColVals(startTS uint64, taskRange reorgBackfillTa
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
+	encDecDur := time.Duration(0)
 	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, taskRange.physicalTable.RecordPrefix(),
 		startTS, taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
@@ -541,10 +542,11 @@ func (w *kvScanWorker) fetchRowColVals(startTS uint64, taskRange reorgBackfillTa
 			if taskDone || len(w.rowRecords) >= w.hintBatchSize {
 				return false, nil
 			}
-
+			t := time.Now()
 			if err1 := w.getRowRecord(handle, recordKey, rawRow); err1 != nil {
 				return false, errors.Trace(err1)
 			}
+			encDecDur += time.Since(t)
 			lastAccessedHandle = recordKey
 			if recordKey.Cmp(taskRange.endKey) > 0 {
 				taskDone = true
@@ -560,7 +562,9 @@ func (w *kvScanWorker) fetchRowColVals(startTS uint64, taskRange reorgBackfillTa
 	ddllogutil.DDLLogger().Debug("txn fetches handle info",
 		zap.Uint64("txnStartTS", startTS),
 		zap.String("taskRange", taskRange.String()),
-		zap.Duration("takeTime", time.Since(startTime)))
+		zap.Duration("takeTime", time.Since(startTime)),
+		zap.Duration("encodeDecodeCastTime", encDecDur),
+	)
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
