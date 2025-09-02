@@ -1752,6 +1752,21 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession, 
+		Name: vardef.DefaultCollationForUTF8, 
+		Value: mysql.UTF8DefaultCollation, 
+		Validation: func(
+			vars *SessionVars, normalizedValue string, originalValue string, 
+			scope vardef.ScopeFlag,
+		) (string, error) {
+			coll, err := checkDefaultCollationForUTF8(vars, normalizedValue, originalValue, scope)
+			return coll, err
+		}, 
+		SetSession: func(s *SessionVars, val string) error {
+			s.DefaultCollationForUTF8 = val
+			return nil
+		}},
+	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.TimeZone,
 		Value:                   "SYSTEM",

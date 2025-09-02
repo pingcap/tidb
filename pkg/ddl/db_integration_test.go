@@ -3035,6 +3035,55 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */"))
 }
 
+func TestDefaultCollationForUTF8(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set @@session.default_collation_for_utf8='utf8_general_ci';")
+	tk.MustExec("drop table if exists t2, t3, t4")
+	tk.MustExec("create table t4 (b char(1) default null) engine=InnoDB default charset=utf8")
+	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
+		"  `b` char(1) COLLATE utf8_general_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"))
+	// test alter table ... character set
+	tk.MustExec("create table t2 (b char(1) default null) engine=InnoDB default charset=utf8 COLLATE utf8_unicode_ci")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `b` char(1) COLLATE utf8_unicode_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"))
+	tk.MustExec("alter table t2 default character set utf8;")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `b` char(1) COLLATE utf8_unicode_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"))
+	tk.MustExec("alter table t2 add column c char(1);")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `b` char(1) COLLATE utf8_unicode_ci DEFAULT NULL,\n" +
+		"  `c` char(1) COLLATE utf8_general_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"))
+	// test alter table ... convert to character set
+	tk.MustExec("create table t3 (b char(1) default null) engine=InnoDB default charset=utf8 COLLATE utf8_unicode_ci")
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `b` char(1) COLLATE utf8_unicode_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"))
+	tk.MustExec("alter table t3 convert to character set utf8;")
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `b` char(1) COLLATE utf8_general_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"))
+
+	// test database character set
+	tk.MustExec("drop database if exists dbx;")
+	tk.MustExec("drop database if exists dby;")
+	tk.MustExec("create database dbx DEFAULT CHARSET=utf8;")
+	tk.MustQuery("show create database dbx").Check(testkit.Rows(
+		"dbx CREATE DATABASE `dbx` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */"))
+	tk.MustExec("create database dby DEFAULT CHARSET=utf8 COLLATE utf8_unicode_ci;")
+	tk.MustQuery("show create database dby").Check(testkit.Rows(
+		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_unicode_ci */"))
+	tk.MustExec("ALTER DATABASE dby CHARACTER SET = 'utf8'")
+	tk.MustQuery("show create database dby").Check(testkit.Rows(
+		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */"))
+}
+
 func TestOptimizeTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 	tk := testkit.NewTestKit(t, store)

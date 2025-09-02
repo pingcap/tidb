@@ -153,6 +153,11 @@ func (ctx *Context) GetDefaultCollationForUTF8MB4() string {
 	return ctx.exprCtx.GetDefaultCollationForUTF8MB4()
 }
 
+// GetDefaultCollationForUTF8 returns the default collation for utf8.
+func (ctx *Context) GetDefaultCollationForUTF8() string {
+	return ctx.exprCtx.GetDefaultCollationForUTF8()
+}
+
 // GetSQLMode returns the SQL mode.
 func (ctx *Context) GetSQLMode() mysql.SQLMode {
 	return ctx.exprCtx.GetEvalCtx().SQLMode()

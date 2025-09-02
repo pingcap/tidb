@@ -241,6 +241,15 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 			},
 		},
 		{
+			name:  "default_collation_for_utf8",
+			val:   "utf8_general_ci",
+			field: "$.defaultCollationForUTF8",
+			assert: func(ctx *ExprContext, vars *variable.SessionVars) {
+				require.Equal(t, "utf8_general_ci", ctx.GetDefaultCollationForUTF8())
+				require.Equal(t, vars.DefaultCollationForUTF8, ctx.GetDefaultCollationForUTF8())
+			},
+		},
+		{
 			name:  strings.ToUpper("tidb_sysdate_is_now"), // test for settings an upper case variable
 			val:   "1",
 			field: "$.sysDateIsNow",

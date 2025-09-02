@@ -295,6 +295,11 @@ func IsDefaultCollationForUTF8MB4(collate string) bool {
 	return collate == "utf8mb4_bin" || collate == "utf8mb4_general_ci" || collate == "utf8mb4_0900_ai_ci"
 }
 
+// IsDefaultCollationForUTF8 returns if the collation is DefaultCollationForUTF8.
+func IsDefaultCollationForUTF8(collate string) bool {
+	return collate == "utf8_bin" || collate == "utf8_general_ci" || collate == "utf8_unicode_ci"
+}
+
 // IsCICollation returns if the collation is case-insensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||

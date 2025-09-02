@@ -46,6 +46,7 @@ var (
 	ErrFunctionsNoopImpl                 = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
 	ErrVariableNoLongerSupported         = dbterror.ClassVariable.NewStd(mysql.ErrVariableNoLongerSupported)
 	ErrInvalidDefaultUTF8MB4Collation    = dbterror.ClassVariable.NewStd(mysql.ErrInvalidDefaultUTF8MB4Collation)
+	ErrInvalidDefaultUTF8Collation       = dbterror.ClassVariable.NewStd(mysql.ErrInvalidDefaultUTF8Collation)
 	ErrWarnDeprecatedSyntaxNoReplacement = dbterror.ClassVariable.NewStdErr(mysql.ErrWarnDeprecatedSyntaxNoReplacement, pmysql.Message("Updating '%s' is deprecated. It will be made read-only in a future release.", nil))
 	ErrWarnDeprecatedSyntaxSimpleMsg     = dbterror.ClassVariable.NewStdErr(mysql.ErrWarnDeprecatedSyntaxNoReplacement, pmysql.Message("%s is deprecated and will be removed in a future release.", nil))
 )

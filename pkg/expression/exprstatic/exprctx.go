@@ -37,6 +37,7 @@ type exprCtxState struct {
 	charset                    string
 	collation                  string
 	defaultCollationForUTF8MB4 string
+	defaultCollationForUTF8    string
 	blockEncryptionMode        string
 	sysDateIsNow               bool
 	noopFuncsMode              int
@@ -71,6 +72,13 @@ func WithCharset(charset, collation string) ExprCtxOption {
 func WithDefaultCollationForUTF8MB4(collation string) ExprCtxOption {
 	return func(s *exprCtxState) {
 		s.defaultCollationForUTF8MB4 = collation
+	}
+}
+
+// WithDefaultCollationForUTF8 sets the default collation for utf8 for `ExprContext`.
+func WithDefaultCollationForUTF8(collation string) ExprCtxOption {
+	return func(s *exprCtxState) {
+		s.defaultCollationForUTF8 = collation
 	}
 }
 
@@ -158,6 +166,7 @@ func NewExprContext(opts ...ExprCtxOption) *ExprContext {
 			charset:                    cs.Name,
 			collation:                  cs.DefaultCollation,
 			defaultCollationForUTF8MB4: mysql.DefaultCollationName,
+			defaultCollationForUTF8:    mysql.UTF8DefaultCollation,
 			blockEncryptionMode:        vardef.DefBlockEncryptionMode,
 			sysDateIsNow:               vardef.DefSysdateIsNow,
 			noopFuncsMode:              variable.TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
@@ -221,6 +230,11 @@ func (ctx *ExprContext) GetCharsetInfo() (string, string) {
 // GetDefaultCollationForUTF8MB4 implements the `ExprContext.GetDefaultCollationForUTF8MB4`.
 func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 	return ctx.defaultCollationForUTF8MB4
+}
+
+// GetDefaultCollationForUTF8 implements the `ExprContext.GetDefaultCollationForUTF8`.
+func (ctx *ExprContext) GetDefaultCollationForUTF8() string {
+	return ctx.defaultCollationForUTF8
 }
 
 // GetBlockEncryptionMode implements the `ExprContext.GetBlockEncryptionMode`.
@@ -314,6 +328,7 @@ func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *ExprContex
 		WithEvalCtx(staticEvalContext),
 		WithCharset(ctx.GetCharsetInfo()),
 		WithDefaultCollationForUTF8MB4(ctx.GetDefaultCollationForUTF8MB4()),
+		WithDefaultCollationForUTF8(ctx.GetDefaultCollationForUTF8()),
 		WithBlockEncryptionMode(ctx.GetBlockEncryptionMode()),
 		WithSysDateIsNow(ctx.GetSysdateIsNow()),
 		WithNoopFuncsMode(ctx.GetNoopFuncsMode()),
@@ -348,6 +363,8 @@ func (ctx *ExprContext) loadSessionVarsInternal(
 			opts = append(opts, WithCharset(sessionVars.GetCharsetInfo()))
 		case vardef.DefaultCollationForUTF8MB4:
 			opts = append(opts, WithDefaultCollationForUTF8MB4(sessionVars.DefaultCollationForUTF8MB4))
+		case vardef.DefaultCollationForUTF8:
+			opts = append(opts, WithDefaultCollationForUTF8(sessionVars.DefaultCollationForUTF8))
 		case vardef.BlockEncryptionMode:
 			blockMode, ok := sessionVars.GetSystemVar(vardef.BlockEncryptionMode)
 			intest.Assert(ok)
