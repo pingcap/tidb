@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -420,59 +421,17 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	return kvReqs, nil
 }
 
-// buildKVReqForRanges builds KV request for given ranges, handling both kvRangeBuilder and regular cases.
-func (e *TableReaderExecutor) buildKVReqForRanges(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
-	// Regular table case
-	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetHandleRanges(e.dctx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
-	if e.table != nil && e.table.Type().IsClusterTable() {
-		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)
-		if copDestination == infoschema.DDLOwner {
-			serverInfo, err := e.GetDDLOwner(ctx)
-			if err != nil {
-				return nil, err
-			}
-			reqBuilder.SetTiDBServerID(serverInfo.ServerIDGetter())
-		}
-	}
-	return reqBuilder.
-		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetTxnScope(e.txnScope).
-		SetReadReplicaScope(e.readReplicaScope).
-		SetIsStaleness(e.isStaleness).
-		SetFromSessionVars(e.dctx).
-		SetFromInfoSchema(e.GetInfoSchema()).
-		SetMemTracker(e.memTracker).
-		SetStoreType(e.storeType).
-		SetAllowBatchCop(e.batchCop).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
-		SetPaging(e.paging).
-		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-		Build()
-}
-
 func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) ([]*kv.Request, error) {
 	var kvReqs []*kv.Request
 	for _, ranges := range groupedRanges {
-		if e.kvRangeBuilder != nil {
-			if e.byItems != nil {
-				reqs, err := e.buildKVReqSeparately(ctx, ranges)
-				if err != nil {
-					return nil, err
-				}
-				kvReqs = append(kvReqs, reqs...)
-			} else {
-				kvReq, err := e.buildKVReq(ctx, ranges)
-				if err != nil {
-					return nil, err
-				}
-				kvReqs = append(kvReqs, kvReq)
+		if e.kvRangeBuilder != nil && e.byItems != nil {
+			reqs, err := e.buildKVReqSeparately(ctx, ranges)
+			if err != nil {
+				return nil, err
 			}
+			kvReqs = append(kvReqs, reqs...)
 		} else {
-			kvReq, err := e.buildKVReqForRanges(ctx, ranges)
+			kvReq, err := e.buildKVReq(ctx, ranges)
 			if err != nil {
 				return nil, err
 			}
@@ -495,40 +454,38 @@ func getKVRangesFromReqs(kvReqs []*kv.Request) []kv.KeyRange {
 
 func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) (distsql.SelectResult, error) {
 	// Special handling for single group that represents original ranges
-	if len(groupedRanges) == 1 && len(e.groupedRanges) == 0 {
+	if len(groupedRanges) == 1 && len(e.groupedRanges) == 0 && e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
 		// This is the case where we converted []Range to [][]Range, use original buildResp logic
 		ranges := groupedRanges[0]
-
-		if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
-			if !e.batchCop {
-				// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
-				kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+		if !e.batchCop {
+			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
+			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+			if err != nil {
+				return nil, err
+			}
+			e.kvRanges = getKVRangesFromReqs(kvReqs)
+			var results []distsql.SelectResult
+			for _, kvReq := range kvReqs {
+				result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 				if err != nil {
 					return nil, err
 				}
-				e.kvRanges = getKVRangesFromReqs(kvReqs)
-				var results []distsql.SelectResult
-				for _, kvReq := range kvReqs {
-					result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
-					if err != nil {
-						return nil, err
-					}
-					results = append(results, result)
-				}
-				return distsql.NewSerialSelectResults(results), nil
+				results = append(results, result)
 			}
-			// Use PartitionTable Scan
-			kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges)
-			if err != nil {
-				return nil, err
-			}
-			e.kvRanges = getKVRangesFromReqs([]*kv.Request{kvReq})
-			result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
-			if err != nil {
-				return nil, err
-			}
-			return result, nil
+			return distsql.NewSerialSelectResults(results), nil
 		}
+		// Use PartitionTable Scan
+		kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		e.kvRanges = getKVRangesFromReqs([]*kv.Request{kvReq})
+		result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+
 	}
 
 	// Original grouped ranges logic
@@ -556,6 +513,7 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 		return results[0], nil
 	}
 
+	intest.Assert(len(e.byItems) > 0, "if there are more than one result, len(e.byItems) must be > 0")
 	// Use sorted results if we have byItems to sort by
 	if len(e.byItems) > 0 {
 		return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
