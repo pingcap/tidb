@@ -918,6 +918,13 @@ func (e *ShowExec) fetchShowCharset() error {
 				return err
 			}
 		}
+		if desc.Name == charset.CharsetUTF8 {
+			var err error
+			defaultCollation, err = sessVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.DefaultCollationForUTF8)
+			if err != nil {
+				return err
+			}
+		}
 		e.appendRow([]any{
 			desc.Name,
 			desc.Desc,
@@ -1707,6 +1714,21 @@ func isUTF8MB4AndDefaultCollation(sessVars *variable.SessionVars, cs, co string)
 	return true, false, nil
 }
 
+// isUTF8AndDefaultCollation returns if the cs is utf8 and the co is DefaultCollationForUTF8.
+func isUTF8AndDefaultCollation(sessVars *variable.SessionVars, cs, co string) (isUTF8 bool, isDefault bool, err error) {
+	if cs != charset.CharsetUTF8 {
+		return false, false, nil
+	}
+	defaultCollation, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.DefaultCollationForUTF8)
+	if err != nil {
+		return false, false, err
+	}
+	if co == defaultCollation {
+		return true, true, nil
+	}
+	return true, false, nil
+}
+
 func (e *ShowExec) fetchShowCollation() error {
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -1721,13 +1743,19 @@ func (e *ShowExec) fetchShowCollation() error {
 	collations := collate.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
-		isUTF8MB4, isDefaultCollation, err := isUTF8MB4AndDefaultCollation(sessVars, v.CharsetName, v.Name)
+		isUTF8MB4, isUTF8MB4DefaultCollation, err := isUTF8MB4AndDefaultCollation(sessVars, v.CharsetName, v.Name)
 		if err != nil {
 			return err
 		}
-		if isUTF8MB4 && isDefaultCollation {
+		isUTF8, isUTF8DefaultCollation, err := isUTF8AndDefaultCollation(sessVars, v.CharsetName, v.Name)
+		if err != nil {
+			return err
+		}
+		if isUTF8MB4 && isUTF8MB4DefaultCollation {
 			isDefault = "Yes"
-		} else if !isUTF8MB4 && v.IsDefault {
+		} else if isUTF8 && isUTF8DefaultCollation {
+			isDefault = "Yes"
+		} else if (!isUTF8MB4 && !isUTF8) && v.IsDefault {
 			isDefault = "Yes"
 		}
 		if fieldFilter != "" && strings.ToLower(v.Name) != fieldFilter {

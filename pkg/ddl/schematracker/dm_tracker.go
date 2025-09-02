@@ -78,7 +78,11 @@ func (d *SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDat
 	if ctx != nil {
 		utf8MB4DefaultColl = ctx.GetSessionVars().DefaultCollationForUTF8MB4
 	}
-	chs, coll, err := ddl.ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt}, utf8MB4DefaultColl)
+	utf8DefaultColl := ""
+	if ctx != nil {
+		utf8DefaultColl = ctx.GetSessionVars().DefaultCollationForUTF8
+	}
+	chs, coll, err := ddl.ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt}, utf8MB4DefaultColl, utf8DefaultColl)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,7 +157,7 @@ func (d *SchemaTracker) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatab
 		}
 	}
 	if toCollate == "" {
-		if toCollate, err = ddl.GetDefaultCollation(toCharset, ctx.GetSessionVars().DefaultCollationForUTF8MB4); err != nil {
+		if toCollate, err = ddl.GetDefaultCollation(toCharset, ctx.GetSessionVars().DefaultCollationForUTF8MB4, ctx.GetSessionVars().DefaultCollationForUTF8); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -962,7 +966,7 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4, sctx.GetSessionVars().DefaultCollationForUTF8)
 					if err != nil {
 						return err
 					}

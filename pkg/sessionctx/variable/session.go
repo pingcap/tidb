@@ -1107,6 +1107,9 @@ type SessionVars struct {
 	// DefaultCollationForUTF8MB4 indicates the default collation of UTF8MB4.
 	DefaultCollationForUTF8MB4 string
 
+	// DefaultCollationForUTF8 indicates the default collation of UTF8.
+	DefaultCollationForUTF8 string
+
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
@@ -2303,6 +2306,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+		DefaultCollationForUTF8:       mysql.UTF8DefaultCollation,
 		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:               vardef.DefTiDBRedactLog,
 		EnableWindowFunction:          vardef.DefEnableWindowFunction,

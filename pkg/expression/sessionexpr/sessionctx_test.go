@@ -290,6 +290,7 @@ func TestSessionBuildContext(t *testing.T) {
 	err = vars.SetSystemVar("collation_connection", "gbk_chinese_ci")
 	require.NoError(t, err)
 	vars.DefaultCollationForUTF8MB4 = "utf8mb4_0900_ai_ci"
+	vars.DefaultCollationForUTF8 = "utf8_unicode_ci"
 
 	charset, collate := impl.GetCharsetInfo()
 	require.Equal(t, "gbk", charset)
