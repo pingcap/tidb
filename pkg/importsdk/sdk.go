@@ -207,7 +207,7 @@ func (sdk *ImportSDK) CreateSchemasAndTables(ctx context.Context) error {
 	return nil
 }
 
-// GetTableMeta implements the CloudImportSDK interface
+// GetTableMetas implements the CloudImportSDK interface
 func (sdk *ImportSDK) GetTableMetas(context.Context) ([]*TableMeta, error) {
 	dbMetas := sdk.loader.GetDatabases()
 	allFiles := sdk.loader.GetAllFiles()
