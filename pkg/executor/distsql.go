@@ -639,8 +639,17 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		}
 		kvRanges = append(kvRanges, kvRange...)
 	}
+
 	if len(kvRanges) > 1 {
+		// If there are more than one kv ranges, it must come from the partitioned table, or GroupedRanges, or both.
 		intest.Assert(e.partitionTableMode || len(e.GroupedRanges) > 0)
+	}
+	// Theoretically, we only need `if len(kvRanges) > 1` here, and we can use `e.kvRanges` when
+	// `len(kvRanges) == 1 && e.partitionTableMode`.
+	// However, the assumption in UnionScan code is that, if `e.partitionTableMode` is true, kv ranges must be set to
+	// `e.partitionKVRanges` (see (*memIndexLookUpReader).getMemRowsIter()).
+	// So we use `if len(kvRanges) > 1 || e.partitionTableMode` here to satisfy the assumption.
+	if len(kvRanges) > 1 || e.partitionTableMode {
 		e.partitionKVRanges = kvRanges
 	} else if len(kvRanges) == 1 {
 		e.kvRanges = kvRanges[0]
