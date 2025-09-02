@@ -1145,3 +1145,26 @@ a	c
 5	9
 deallocate prepare stmt1;
 deallocate prepare stmt2;
+create table t3(a int, b int, primary key(a,b) clustered);
+insert into t3 value(1,1),(7,3),(5,5);
+select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
+a	b
+7	3
+5	5
+begin pessimistic;
+insert into t3 value(6,5),(3,2),(4,3);
+select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
+a	b
+3	2
+4	3
+6	5
+7	3
+5	5
+commit;
+select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
+a	b
+3	2
+7	3
+4	3
+5	5
+6	5
