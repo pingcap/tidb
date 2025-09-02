@@ -337,7 +337,7 @@ func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 // TestUpgrade tests upgrading
 func TestUpgrade(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -436,7 +436,7 @@ func TestUpgrade(t *testing.T) {
 
 func TestIssue17979_1(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -475,7 +475,7 @@ func TestIssue17979_1(t *testing.T) {
 
 func TestIssue17979_2(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -521,7 +521,7 @@ func TestIssue17979_2(t *testing.T) {
 
 func TestIssue20900_2(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -628,7 +628,7 @@ func TestStmtSummary(t *testing.T) {
 
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -723,7 +723,7 @@ func TestReferencesPrivilegeOnColumn(t *testing.T) {
 
 func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -802,7 +802,7 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 
 func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -857,7 +857,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 // And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
 func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	testIndexMergeUpgradeFrom400To540(t, true)
@@ -865,7 +865,7 @@ func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
 
 func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 	testIndexMergeUpgradeFrom400To540(t, false)
 }
@@ -964,7 +964,7 @@ func TestTiDBEnablePagingVariable(t *testing.T) {
 
 func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1026,7 +1026,7 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 
 func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1140,7 +1140,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 
 func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1194,7 +1194,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 
 func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	for i := range 2 {
@@ -1268,7 +1268,7 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 
 func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1326,7 +1326,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 
 func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1384,7 +1384,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 
 func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1442,7 +1442,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 
 func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1510,7 +1510,7 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 
 func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	for i := range 2 {
@@ -1584,7 +1584,7 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 
 func TestTiDBUpgradeToVer136(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, do := CreateStoreAndBootstrap(t)
@@ -1627,7 +1627,7 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 
 func TestTiDBUpgradeToVer140(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, do := CreateStoreAndBootstrap(t)
@@ -1677,7 +1677,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 
 func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1741,7 +1741,7 @@ func TestTiDBNonPrepPlanCacheUpgradeFrom540To700(t *testing.T) {
 
 func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1799,7 +1799,7 @@ func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 
 func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1854,7 +1854,7 @@ func TestTiDBTiDBOptTiDBOptimizerEnableNAAJWhenUpgradingToVer138(t *testing.T) {
 
 func TestTiDBUpgradeToVer143(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, do := CreateStoreAndBootstrap(t)
@@ -1889,7 +1889,7 @@ func TestTiDBUpgradeToVer143(t *testing.T) {
 
 func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1947,7 +1947,7 @@ func TestTiDBLoadBasedReplicaReadThresholdUpgradingToVer141(t *testing.T) {
 
 func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -1999,7 +1999,7 @@ func TestTiDBPlanCacheInvalidationOnFreshStatsWhenUpgradingToVer144(t *testing.T
 
 func TestTiDBUpgradeToVer145(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, do := CreateStoreAndBootstrap(t)
@@ -2034,7 +2034,7 @@ func TestTiDBUpgradeToVer145(t *testing.T) {
 
 func TestTiDBUpgradeToVer170(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, do := CreateStoreAndBootstrap(t)
@@ -2068,7 +2068,7 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 
 func TestTiDBUpgradeToVer176(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, do := CreateStoreAndBootstrap(t)
@@ -2103,7 +2103,7 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 
 func TestTiDBUpgradeToVer177(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, do := CreateStoreAndBootstrap(t)
@@ -2161,7 +2161,7 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 
 func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -2211,7 +2211,7 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 
 func TestTiDBUpgradeToVer179(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -2303,7 +2303,7 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 
 func TestTiDBUpgradeToVer209(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -2387,7 +2387,7 @@ func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
 
 func TestTiDBUpgradeToVer211(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -2464,7 +2464,7 @@ func TestTiDBHistoryTableConsistent(t *testing.T) {
 
 func TestTiDBUpgradeToVer212(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	store, dom := CreateStoreAndBootstrap(t)
@@ -2652,6 +2652,9 @@ func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
 
 func TestTiDBUpgradeToVer240(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -2698,7 +2701,7 @@ func TestTiDBUpgradeToVer240(t *testing.T) {
 
 func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
@@ -2758,7 +2761,7 @@ func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
 
 func TestBindInfoUniqueIndex(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because all primary key are clustered in next-gen")
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
 	ctx := context.Background()
