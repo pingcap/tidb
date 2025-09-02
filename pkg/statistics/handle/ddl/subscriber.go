@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
