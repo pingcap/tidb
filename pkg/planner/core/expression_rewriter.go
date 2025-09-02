@@ -2674,18 +2674,15 @@ func (er *expressionRewriter) hasLimit(plan base.LogicalPlan) bool {
 	if plan == nil {
 		return false
 	}
-
 	// Check if this is a LogicalLimit
 	if _, ok := plan.(*logicalop.LogicalLimit); ok {
 		return true
 	}
-
 	// Recursively check children
 	for _, child := range plan.Children() {
 		if er.hasLimit(child) {
 			return true
 		}
 	}
-
 	return false
 }

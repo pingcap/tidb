@@ -2402,7 +2402,7 @@ func TestAddLimitForCorrelatedExistsSubquery(t *testing.T) {
 			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Limit}->Projection",
 		},
 		{ // Second query should NOT add LIMIT because it is NOT an EXISTS subquery
-			sql:  "select * from t t1 where b in (select /*+ NO_DECORRELATE() */ 1 from t t2 where t1.a = t2.a)",
+			sql:  "select * from t t1 where b in (select /*+ NO_DECORRELATE() */ b from t t2 where t1.a = t2.a)",
 			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection",
 		},
 	}
