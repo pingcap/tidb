@@ -50,7 +50,6 @@ func TestMergeConfigItems(t *testing.T) {
 	newConf.Performance.MaxProcs = 123
 	newConf.Performance.MaxMemory = 123
 	newConf.Performance.CrossJoin = false
-	newConf.Performance.PseudoEstimateRatio = 123
 	newConf.TiKVClient.StoreLimit = 123
 
 	// rejected
@@ -74,7 +73,6 @@ func TestMergeConfigItems(t *testing.T) {
 	require.Equal(t, newConf.Performance.MaxProcs, oldConf.Performance.MaxProcs)
 	require.Equal(t, newConf.Performance.MaxMemory, oldConf.Performance.MaxMemory)
 	require.Equal(t, newConf.Performance.CrossJoin, oldConf.Performance.CrossJoin)
-	require.Equal(t, newConf.Performance.PseudoEstimateRatio, oldConf.Performance.PseudoEstimateRatio)
 	require.Equal(t, newConf.TiKVClient.StoreLimit, oldConf.TiKVClient.StoreLimit)
 	require.Equal(t, newConf.Instance.SlowThreshold, oldConf.Instance.SlowThreshold)
 
