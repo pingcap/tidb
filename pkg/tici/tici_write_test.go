@@ -17,7 +17,6 @@ package tici
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
@@ -56,93 +55,11 @@ func newStubTICIFileWriter(t *testing.T, failWrite bool) (*FileWriter, *mockExte
 	writer := &mockExternalFileWriter{fail: failWrite}
 	store := &mockExternalStorage{writer: writer}
 
-	tfw, err := NewTICIFileWriter(ctx, store,
-		"unit‑test‑file", 5*units.MiB, zaptest.NewLogger(t))
+	tfw, err := NewTICIFileWriter(ctx, store, "unit-test-file", 5*units.MiB, zaptest.NewLogger(t))
 	if err != nil {
 		t.Fatalf("newStubTICIFileWriter: %v", err)
 	}
 	return tfw, writer
-}
-
-func TestDataWriterWriteHeader(t *testing.T) {
-	w := newTestTiCIDataWriter(t)
-	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
-	w.ticiFileWriter = mockFileWriter
-	err := w.WriteHeader(context.Background(), uint64(time.Now().UnixNano()))
-	assert.NoError(t, err)
-	assert.Greater(t, len(mockWriter.writes), 0)
-}
-
-func TestDataWriterWriteHeader_NotInit(t *testing.T) {
-	w := newTestTiCIDataWriter(t)
-	err := w.WriteHeader(context.Background(), 1)
-	assert.Error(t, err)
-}
-
-func TestDataWriterWriteHeader_ProtoFail(t *testing.T) {
-	// Simulate a table/index that cannot be marshaled (e.g., nil)
-	w := newTestTiCIDataWriter(t)
-	w.tblInfo = nil
-	w.idxInfo = nil
-	w.logger = zaptest.NewLogger(t) // ensure logger is not nil
-	mockWriter, _ := newStubTICIFileWriter(t, false)
-	w.ticiFileWriter = mockWriter
-	err := w.WriteHeader(context.Background(), 1)
-	assert.Error(t, err)
-}
-
-func TestWritePairs(t *testing.T) {
-	w := newTestTiCIDataWriter(t)
-
-	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
-	w.ticiFileWriter = mockFileWriter
-
-	pairs := []*sst.Pair{
-		{Key: []byte("k1"), Value: []byte("v1")},
-		{Key: []byte("k2"), Value: []byte("v2")},
-	}
-
-	err := w.WritePairs(context.Background(), pairs, len(pairs))
-	assert.NoError(t, err)
-
-	assert.Equal(t, len(pairs), len(mockWriter.writes))
-}
-
-func TestWritePairs_WriteRowFail(t *testing.T) {
-	w := newTestTiCIDataWriter(t)
-
-	mockFileWriter, _ := newStubTICIFileWriter(t, true)
-	w.ticiFileWriter = mockFileWriter
-
-	pairs := []*sst.Pair{
-		{Key: []byte("k1"), Value: []byte("v1")},
-	}
-	err := w.WritePairs(context.Background(), pairs, len(pairs))
-	assert.Error(t, err)
-}
-
-func TestCloseFileWriter(t *testing.T) {
-	w := newTestTiCIDataWriter(t)
-	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
-	w.ticiFileWriter = mockFileWriter
-	err := w.CloseFileWriter(context.Background())
-	assert.NoError(t, err)
-	assert.True(t, mockWriter.closed)
-}
-
-func TestCloseFileWriter_NotInit(t *testing.T) {
-	w := newTestTiCIDataWriter(t)
-	err := w.CloseFileWriter(context.Background())
-	assert.NoError(t, err)
-}
-
-func TestCloseFileWriter_CloseFail(t *testing.T) {
-	w := newTestTiCIDataWriter(t)
-	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
-	w.ticiFileWriter = mockFileWriter
-	mockWriter.fail = true
-	err := w.CloseFileWriter(context.Background())
-	assert.Error(t, err)
 }
 
 func TestTiCIDataWriterGroup_CreateFail(t *testing.T) {

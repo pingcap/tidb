@@ -48,16 +48,6 @@ func GetFulltextIndexes(tbl *model.TableInfo) []*model.IndexInfo {
 	return result
 }
 
-// GetPrimaryIndex returns the primary key IndexInfo of the table, or nil if not found.
-func GetPrimaryIndex(tbl *model.TableInfo) *model.IndexInfo {
-	for _, idx := range tbl.Indices {
-		if idx.Primary {
-			return idx
-		}
-	}
-	return nil
-}
-
 // DataWriter handles S3 path management and upload notifications via TiCI Meta Service.
 type DataWriter struct {
 	tidbTaskID string // TiDB task ID for this writer
@@ -129,16 +119,11 @@ func (w *DataWriter) CreateTICIFileWriter(ctx context.Context, logger *zap.Logge
 		logger = logutil.Logger(ctx)
 	}
 
-	// Keep track of the S3 path actually store data
-	baseURL := storage.FormatBackendURL(storeBackend) // throw away the options
-	s3Path := baseURL.String() + "/" + filename
-	logger.Info("TiCI cloud storage path", zap.String("s3Path", s3Path))
-
-	// FIXME: s3Path is kind of duplicated with store + filename?
-	writer, err := NewTICIFileWriter(ctx, store, filename, s3Path, TiCIMinUploadPartSize, logger)
+	writer, err := NewTICIFileWriter(ctx, store, filename, TiCIMinUploadPartSize, logger)
 	if err != nil {
 		return nil, err
 	}
+	logger.Info("TiCI FileWriter created", zap.String("filename", filename))
 	return writer, nil
 }
 
@@ -392,7 +377,7 @@ func (g *DataWriterGroup) FinishPartitionUpload(
 	}
 	for idx, w := range g.writers {
 		fileW := fileWriters[idx]
-		if err := w.FinishPartitionUpload(ctx, g.mgrCtx, lowerBound, upperBound, fileW.s3Path); err != nil {
+		if err := w.FinishPartitionUpload(ctx, g.mgrCtx, lowerBound, upperBound, fileW.URI()); err != nil {
 			return err
 		}
 	}

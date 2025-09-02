@@ -56,7 +56,6 @@ const (
 // FileWriter writes data to a fixed S3 location.
 type FileWriter struct {
 	store         storage.ExternalStorage
-	s3Path        string
 	dataFile      string
 	dataWriter    storage.ExternalFileWriter
 	kvBuffer      *membuf.Buffer
@@ -70,7 +69,7 @@ type FileWriter struct {
 
 // NewTICIFileWriter creates a new TICIFileWriter.
 // dataFile is the file name we are writing into.
-func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataFile string, s3Path string, partSize int64, logger *zap.Logger) (*FileWriter, error) {
+func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataFile string, partSize int64, logger *zap.Logger) (*FileWriter, error) {
 	dataWriter, err := store.Create(ctx, dataFile, &storage.WriterOption{
 		// TODO: maxUploadWorkersPerThread is subject to change up to the test results and performance tuning with TiCI worker.
 		// For now, we set it to maxUploadWorkersPerThread by default.
@@ -84,13 +83,16 @@ func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataF
 	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(int(DefaultBlockSize)))
 	return &FileWriter{
 		store:      store,
-		s3Path:     s3Path,
 		dataFile:   dataFile,
 		dataWriter: dataWriter,
 		kvBuffer:   p.NewBuffer(membuf.WithBufferMemoryLimit(ticiFileWriterMemSizeLimit)),
 		logger:     logger,
 		partSize:   partSize,
 	}, nil
+}
+
+func (w *FileWriter) URI() string {
+	return w.store.URI() + "/" + w.dataFile
 }
 
 // WriteRow writes a key-value pair to the S3 file.

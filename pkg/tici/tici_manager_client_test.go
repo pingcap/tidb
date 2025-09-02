@@ -131,8 +131,6 @@ func TestFinishPartitionUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
 	taskID := "tidb-task-123"
-	tableID := int64(1)
-	indexID := int64(2)
 	lower, upper := []byte("a"), []byte("z")
 
 	// 1st call – success

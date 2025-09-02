@@ -354,7 +354,7 @@ func (t *ManagerCtx) FinishIndexUpload(
 	return nil
 }
 
-// FinishIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
+// AbortIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
 // TiCI will clean up all the related data belonging to the tidbTaskID.
 func (t *ManagerCtx) AbortIndexUpload(
 	ctx context.Context,
