@@ -777,41 +777,13 @@ func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv
 }
 
 // deleteDDLReorgHandle deletes the handle for ddl reorg.
-func removeDDLReorgHandle(se *sess.Session, job *model.Job, elements []*meta.Element) error {
+func removeDDLReorgHandle(se *sess.Session, jobID int64, elements []*meta.Element) error {
 	if len(elements) == 0 {
 		return nil
 	}
-	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
 	return se.RunInTxn(func(se *sess.Session) error {
 		_, err := se.Execute(context.Background(), sql, "remove_handle")
-		return err
-	})
-}
-
-// removeDDLReorgCheckpoint deletes the checkpoint for ddl reorg.
-func removeDDLReorgCheckpoint(se *sess.Session, job *model.Job) error {
-	selectSQL := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	updateTemplate := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d;"
-	return se.RunInTxn(func(se *sess.Session) error {
-		rows, err := se.Execute(context.Background(), selectSQL, "get_handle")
-		if err != nil {
-			return err
-		}
-		if len(rows) == 0 || rows[0].IsNull(0) {
-			return nil
-		}
-		rawReorgMeta := rows[0].GetBytes(0)
-		var reorgMeta ingest.JobReorgMeta
-		if err = json.Unmarshal(rawReorgMeta, &reorgMeta); err != nil {
-			return err
-		}
-		reorgMeta.Checkpoint = nil
-		rawReorgMeta, err = json.Marshal(reorgMeta)
-		if err != nil {
-			return err
-		}
-		updateSQL := fmt.Sprintf(updateTemplate, util.WrapKey2String(rawReorgMeta), job.ID)
-		_, err = se.Execute(context.Background(), updateSQL, "update_checkpoint")
 		return err
 	})
 }

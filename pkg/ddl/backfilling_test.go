@@ -67,25 +67,24 @@ func TestPickBackfillType(t *testing.T) {
 	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
 	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 	mockJob := &model.Job{
-		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
 			ReorgTp: model.ReorgTypeTxn,
 		},
 	}
 	mockJob.ReorgMeta.IsFastReorg = true
-	tp, err := pickBackfillType(mockJob)
+	tp, err := pickBackfillType(mockJob.ReorgMeta)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxn)
 
 	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
 	ingest.LitInitialized = false
-	tp, err = pickBackfillType(mockJob)
+	tp, err = pickBackfillType(mockJob.ReorgMeta)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxnMerge)
 
 	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
 	ingest.LitInitialized = true
-	tp, err = pickBackfillType(mockJob)
+	tp, err = pickBackfillType(mockJob.ReorgMeta)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
 	ingest.LitInitialized = false
