@@ -581,6 +581,13 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	if len(results) == 1 {
 		return results[0], nil
 	}
+	if len(results) == 0 {
+		result, err := e.SelectResult(ctx, e.dctx, nil, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
 
 	// Use sorted results if we have byItems to sort by
 	if len(e.byItems) > 0 {
