@@ -181,8 +181,11 @@ type txnCommitWorker struct {
 	*backfillCtx
 	jobID    int64
 	priority int
+
 	totalDur time.Duration
 	totalNum int
+
+	totalDurCommit time.Duration
 }
 
 func (w *txnCommitWorker) HandleTask(ck RowRecords, send func(IndexWriteResult)) {
@@ -214,6 +217,7 @@ func (w *txnCommitWorker) HandleTask(ck RowRecords, send func(IndexWriteResult))
 		w.ctx.onError(err)
 		return
 	}
+	w.totalDurCommit += time.Since(t)
 	if count == 0 {
 		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
 		return
@@ -249,8 +253,10 @@ func (w *txnCommitWorker) Close() {
 	// writer.
 	ddllogutil.DDLLogger().Info("txnCommitWorker handle task",
 		zap.Int("totalNum", w.totalNum),
-		zap.Duration("totalDur", w.totalDur),
-		zap.Duration("avgTimePerChunk", w.totalDur/time.Duration(w.totalNum)),
+		zap.Duration("totalDur_commit+send", w.totalDur),
+		zap.Duration("avgTimePerChunk_commit+send", w.totalDur/time.Duration(w.totalNum)),
+		zap.Duration("totalDur_commit", w.totalDurCommit),
+		zap.Duration("avgTimePerChunk_commit", w.totalDurCommit/time.Duration(w.totalNum)),
 	)
 	for i, writer := range w.writers {
 		ew, ok := writer.(*external.Writer)
