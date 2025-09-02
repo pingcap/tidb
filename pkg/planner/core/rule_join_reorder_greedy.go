@@ -165,7 +165,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 
 func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression, bool) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
-	if len(usedEdges) == 0 && !s.allInnerJoin {
+	if len(usedEdges) == 0 && // cartesian join
+		(!s.allInnerJoin || // not all joins are inner joins
+			s.ctx.GetSessionVars().RiskCartesianJoinOrderRatio <= 0) { // cartesian join is disabled
 		// For outer joins like `t1 left join t2 left join t3`, we have to ensure t1 participates join before
 		// t2 and t3, and cartesian join between t2 and t3 might lead to incorrect results.
 		// For safety we don't allow cartesian outer join here.
