@@ -91,7 +91,7 @@ const (
 	MemQuotaLbl = "memQuota"
 )
 
-func setPointGetPlanCostDetail(p *PointGetPlan, opt *optimizetrace.PhysicalOptimizeOp,
+func setPointGetPlanCostDetail(p *physicalop.PointGetPlan, opt *optimizetrace.PhysicalOptimizeOp,
 	rowSize, networkFactor, seekFactor float64) {
 	if opt == nil {
 		return
@@ -104,7 +104,7 @@ func setPointGetPlanCostDetail(p *PointGetPlan, opt *optimizetrace.PhysicalOptim
 	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setBatchPointGetPlanCostDetail(p *BatchPointGetPlan, opt *optimizetrace.PhysicalOptimizeOp,
+func setBatchPointGetPlanCostDetail(p *physicalop.BatchPointGetPlan, opt *optimizetrace.PhysicalOptimizeOp,
 	rowCount, rowSize, networkFactor, seekFactor float64, scanConcurrency int) {
 	if opt == nil {
 		return

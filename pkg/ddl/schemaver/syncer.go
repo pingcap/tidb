@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -282,7 +283,7 @@ func (s *etcdSyncer) Restart(ctx context.Context) error {
 	}
 	s.storeSession(session)
 
-	childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
+	childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 	defer cancel()
 	err = util.PutKVToEtcd(childCtx, s.etcdCli, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.loadSession().Lease()))
@@ -342,7 +343,7 @@ func (s *etcdSyncer) removeSelfVersionPath() error {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerClear, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	err = util.DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli, keyOpDefaultRetryCnt, util.KeyOpDefaultTimeout)
+	err = etcd.DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli, keyOpDefaultRetryCnt, etcd.KeyOpDefaultTimeout)
 	return errors.Trace(err)
 }
 

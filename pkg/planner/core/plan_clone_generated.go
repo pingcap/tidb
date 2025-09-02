@@ -17,65 +17,9 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PointGetPlan)
-	*cloned = *op
-	cloned.Plan = *op.Plan.CloneWithNewCtx(newCtx)
-	if op.PartitionIdx != nil {
-		cloned.PartitionIdx = new(int)
-		*cloned.PartitionIdx = *op.PartitionIdx
-	}
-	if op.Handle != nil {
-		cloned.Handle = op.Handle.Copy()
-	}
-	if op.HandleConstant != nil {
-		if op.HandleConstant.SafeToShareAcrossSession() {
-			cloned.HandleConstant = op.HandleConstant
-		} else {
-			cloned.HandleConstant = op.HandleConstant.Clone().(*expression.Constant)
-		}
-	}
-	cloned.IndexValues = util.CloneDatums(op.IndexValues)
-	cloned.IndexConstants = cloneConstantsForPlanCache(op.IndexConstants, nil)
-	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions, nil)
-	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(BatchPointGetPlan)
-	*cloned = *op
-	cloned.SimpleSchemaProducer = *op.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
-	probeParents, ok := physicalop.ClonePhysicalPlansForPlanCache(newCtx, op.probeParents)
-	if !ok {
-		return nil, false
-	}
-	cloned.probeParents = probeParents
-	cloned.ctx = newCtx
-	cloned.Handles = util.CloneHandles(op.Handles)
-	cloned.HandleParams = cloneConstantsForPlanCache(op.HandleParams, nil)
-	cloned.IndexValues = util.CloneDatum2D(op.IndexValues)
-	cloned.IndexValueParams = cloneConstant2DForPlanCache(op.IndexValueParams)
-	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions, nil)
-	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
-	copy(cloned.PartitionIdxs, op.PartitionIdxs)
-	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
-	return cloned, true
-}
 
 // CloneForPlanCache implements the base.Plan interface.
 func (op *Update) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {

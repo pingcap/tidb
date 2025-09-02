@@ -23,7 +23,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/parser/util"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
@@ -40,7 +40,8 @@ func GenHash64Equals4LogicalOps() ([]byte, error) {
 		logicalop.LogicalExpand{}, logicalop.LogicalLimit{}, logicalop.LogicalMaxOneRow{}, logicalop.DataSource{},
 		logicalop.LogicalMemTable{}, logicalop.LogicalUnionAll{}, logicalop.LogicalPartitionUnionAll{}, logicalop.LogicalProjection{},
 		logicalop.LogicalSelection{}, logicalop.LogicalSequence{}, logicalop.LogicalShow{}, logicalop.LogicalShowDDLJobs{},
-		logicalop.LogicalSort{}, logicalop.LogicalTableDual{}, logicalop.LogicalTopN{}, logicalop.LogicalUnionScan{}, logicalop.LogicalWindow{},
+		logicalop.LogicalSort{}, logicalop.LogicalTableDual{}, logicalop.LogicalTopN{}, logicalop.LogicalUnionScan{},
+		logicalop.LogicalWindow{}, logicalop.LogicalLock{},
 	}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
@@ -56,7 +57,7 @@ func GenHash64Equals4LogicalOps() ([]byte, error) {
 
 // IHashEquals is the interface for hash64 and equals inside parser pkg.
 type IHashEquals interface {
-	Hash64(h types.IHasher)
+	Hash64(h util.IHasher)
 	Equals(other any) bool
 }
 
@@ -155,6 +156,8 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeUnionScan"
 	case "LogicalWindow":
 		return "plancodec.TypeWindow"
+	case "LogicalLock":
+		return "plancodec.TypeLock"
 	default:
 		return ""
 	}
@@ -191,7 +194,7 @@ func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 		c.write("if %v != %v {return false}", lhs, rhs)
 	default:
 		if fType.Implements(hashEqualsType) || fType.Implements(iHashEqualsType) ||
-			reflect.PtrTo(fType).Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(iHashEqualsType) {
+			reflect.PointerTo(fType).Implements(hashEqualsType) || reflect.PointerTo(fType).Implements(iHashEqualsType) {
 			if fType.Kind() == reflect.Struct {
 				rhs = "&" + rhs
 			}
@@ -226,7 +229,7 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 		c.write("h.HashFloat64(float64(%v))", callName)
 	default:
 		if fType.Implements(hashEqualsType) || fType.Implements(iHashEqualsType) ||
-			reflect.PtrTo(fType).Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(iHashEqualsType) {
+			reflect.PointerTo(fType).Implements(hashEqualsType) || reflect.PointerTo(fType).Implements(iHashEqualsType) {
 			c.write("%v.Hash64(h)", callName)
 			return
 		}

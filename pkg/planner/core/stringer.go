@@ -349,14 +349,14 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
 	case *physicalop.PhysicalShuffleReceiverStub:
 		str = fmt.Sprintf("PartitionReceiverStub(%s)", x.ExplainInfo())
-	case *PointGetPlan:
+	case *physicalop.PointGetPlan:
 		str = "PointGet("
 		if x.IndexInfo != nil {
 			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handle)
 		}
-	case *BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		str = "BatchPointGet("
 		if x.IndexInfo != nil {
 			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
