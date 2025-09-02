@@ -1304,10 +1304,12 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		failpoint.InjectCall("mockImportDataSize", &totalSize)
 		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
 		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
+		e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 		e.logger.Info("set import thread count for nextgen kernel",
 			zap.Int("thread count", e.ThreadCnt),
 			zap.Int("max node count", e.MaxNodeCnt),
 			zap.Int("target node cpu count", targetNodeCPUCnt),
+			zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
 			zap.String("total file size", units.BytesSize(float64(totalSize))))
 	}
 	return nil
@@ -1612,6 +1614,3 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	}
 	return handle.GetCPUCountOfNode(ctx)
 }
-
-// TestSyncCh is used in unit test to synchronize the execution.
-var TestSyncCh = make(chan struct{})
