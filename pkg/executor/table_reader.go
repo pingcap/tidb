@@ -281,10 +281,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	} else if len(e.ranges) > 0 {
 		// Convert []Range to [][]Range (single group)
 		currentGroupedRanges = [][]*ranger.Range{e.ranges}
-	} else {
-		// No ranges to process
-		e.resultHandler.open(nil, nil)
-		return nil
 	}
 
 	firstPartGroupedRanges, secondPartGroupedRanges := distsql.SplitGroupedRangesAcrossInt64Boundary(currentGroupedRanges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
@@ -326,11 +322,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	var firstResult distsql.SelectResult
-	if len(firstPartGroupedRanges) > 0 {
-		firstResult, err = e.buildRespForGroupedRanges(ctx, firstPartGroupedRanges)
-		if err != nil {
-			return err
-		}
+	firstResult, err = e.buildRespForGroupedRanges(ctx, firstPartGroupedRanges)
+	if err != nil {
+		return err
 	}
 	if len(secondPartGroupedRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
