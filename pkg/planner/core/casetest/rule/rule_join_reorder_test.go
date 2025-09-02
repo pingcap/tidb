@@ -77,7 +77,7 @@ func TestCartesianJoinOrder(t *testing.T) {
     select a, b, c from x
 ) tt`)
 		tk.MustExec(`analyze table t1, t2, t3 all columns`)
-		runJoinReorderTestData(t, tk, "TestCartesianJoinOrder")
+		runJoinReorderTestData(t, tk, caller)
 	})
 }
 
