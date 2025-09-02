@@ -1091,7 +1091,7 @@ SwitchIndexState:
 	case model.StateNone:
 		// none -> delete only
 		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(job)
+		reorgTp, err = pickBackfillType(job.ReorgMeta)
 		if err != nil {
 			if !isRetryableJobError(err, job.ErrorCount) {
 				job.State = model.JobStateCancelled
@@ -1412,32 +1412,32 @@ func checkIfTempIndexIsEmptyForPhysicalTable(
 
 // pickBackfillType determines which backfill process will be used. The result is
 // both stored in job.ReorgMeta.ReorgTp and returned.
-func pickBackfillType(job *model.Job) (model.ReorgType, error) {
-	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
+func pickBackfillType(reorgMeta *model.DDLReorgMeta) (model.ReorgType, error) {
+	if reorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't change the backfill type.
-		return job.ReorgMeta.ReorgTp, nil
+		return reorgMeta.ReorgTp, nil
 	}
-	if !job.ReorgMeta.IsFastReorg {
-		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	if !reorgMeta.IsFastReorg {
+		reorgMeta.ReorgTp = model.ReorgTypeTxn
 		return model.ReorgTypeTxn, nil
 	}
 	if ingest.LitInitialized {
-		if job.ReorgMeta.UseCloudStorage {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+		if reorgMeta.UseCloudStorage {
+			reorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
 		if err := ingest.LitDiskRoot.PreCheckUsage(); err != nil {
 			logutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
 			return model.ReorgTypeNone, err
 		}
-		job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+		reorgMeta.ReorgTp = model.ReorgTypeLitMerge
 		return model.ReorgTypeLitMerge, nil
 	}
 	// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 	logutil.DDLLogger().Info("fallback to txn-merge backfill process",
 		zap.Bool("lightning env initialized", ingest.LitInitialized))
-	job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
+	reorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 	return model.ReorgTypeTxnMerge, nil
 }
 
@@ -1471,7 +1471,7 @@ func doReorgWorkForCreateIndex(
 	allIndexInfos []*model.IndexInfo,
 ) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
-	reorgTp, err = pickBackfillType(job)
+	reorgTp, err = pickBackfillType(job.ReorgMeta)
 	if err != nil {
 		return false, ver, err
 	}
@@ -1666,7 +1666,7 @@ func runReorgJobAndHandleErr(
 		if !isRetryableJobError(err, job.ErrorCount) {
 			logutil.DDLLogger().Warn("run add index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), allIndexInfos, err)
-			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			if err1 := rh.RemoveDDLReorgHandle(job.ID, reorgInfo.elements); err1 != nil {
 				logutil.DDLLogger().Warn("run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.Stringer("job", job), zap.Error(err1))
 			}
 		}
@@ -1998,16 +1998,8 @@ func newAddIndexTxnWorker(
 	decodeColMap map[int64]decoder.Column,
 	t table.PhysicalTable,
 	bfCtx *backfillCtx,
-	job *model.Job,
 	elements []*meta.Element,
-	currElement *meta.Element,
 ) (*addIndexTxnWorker, error) {
-	if !bytes.Equal(currElement.TypeKey, meta.IndexElementKey) {
-		logutil.DDLLogger().Error("Element type for addIndexTxnWorker incorrect",
-			zap.Int64("job ID", job.ID), zap.ByteString("element type", currElement.TypeKey), zap.Int64("element ID", elements[0].ID))
-		return nil, errors.Errorf("element type is not index, typeKey: %v", currElement.TypeKey)
-	}
-
 	allIndexes := make([]table.Index, 0, len(elements))
 	for _, elem := range elements {
 		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
@@ -2016,6 +2008,10 @@ func newAddIndexTxnWorker(
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 		allIndexes = append(allIndexes, index)
+	}
+	if len(allIndexes) == 0 {
+		intest.Assert(false, "No index to be backfilled")
+		return nil, errors.Errorf("No index to be backfilled")
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 

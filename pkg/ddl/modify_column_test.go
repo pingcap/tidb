@@ -59,6 +59,8 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, index idx(c2), index idx1(c1, c2));")
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = off;")
 
 	sql := "alter table t1 change c2 c2 mediumint;"
 	// defaultBatchSize is equal to ddl.defaultBatchSize
@@ -71,14 +73,13 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t1")
 
 	// Check insert null before job first update.
-	var checkErr error
 	var currJob *model.Job
 	var elements []*meta.Element
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID || checkErr != nil || job.SchemaState != model.StateWriteReorganization {
+		if tbl.Meta().ID != job.TableID || job.SchemaState != model.StateWriteReorganization {
 			return
 		}
 		if job.Type == model.ActionModifyColumn {
@@ -99,7 +100,6 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/modifyColumnTypeWithData", func(job *model.Job, args model.JobArgs) {
 		if tbl.Meta().ID == job.TableID &&
-			checkErr == nil &&
 			job.SchemaState == model.StateDeleteOnly &&
 			job.Type == model.ActionModifyColumn {
 			currJob = job
@@ -111,11 +111,10 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
 	err := tk.ExecToErr(sql)
 	require.EqualError(t, err, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
-	require.NoError(t, checkErr)
 	// Check whether the reorg information is cleaned up when executing "modify column" failed.
-	checkReorgHandle := func(gotElements, expectedElements []*meta.Element) {
-		require.Equal(t, len(expectedElements), len(gotElements))
-		for i, e := range gotElements {
+	checkReorgHandle := func(actualElements, expectedElements []*meta.Element) {
+		require.Equal(t, len(expectedElements), len(actualElements))
+		for i, e := range actualElements {
 			require.Equal(t, expectedElements[i], e)
 		}
 		// check the consistency of the tables.

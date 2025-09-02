@@ -932,6 +932,8 @@ func TestModifyColumnWithIndex(t *testing.T) {
 		index idx7 (a, b), index idx8 (a, b), index idx9 (a, b));`)
 	tk.MustExec("insert into t values (1, 1)")
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1")
+	tk.MustExec("set global tidb_enable_dist_task = off")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = off")
 
 	cnt := 0
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/addIndexTxnWorkerBackfillData", func(idxRecordNum int) {
