@@ -279,6 +279,7 @@ func TestIssue53872(t *testing.T) {
 		`Hannah 0`,
 		`Ivy 0`,
 		`Jack 0`))
+	tk.MustQuery("show warnings").Check(testkit.Rows(`Warning 1105 skip prepared plan-cache: query has 'group by ?' is un-cacheable`))
 	tk.MustExec(`set @a="abc", @b="abc";`)
 	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
 		`<nil> abc`,
@@ -292,6 +293,9 @@ func TestIssue53872(t *testing.T) {
 		`Hannah abc`,
 		`Ivy abc`,
 		`Jack abc`))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		`Warning 1105 skip prepared plan-cache: query has 'group by ?' is un-cacheable`,
+		`Warning 1292 Truncated incorrect DOUBLE value: 'abc'`))
 }
 
 func TestIssue38269(t *testing.T) {
