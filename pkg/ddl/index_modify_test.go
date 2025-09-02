@@ -1138,19 +1138,24 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	// add index
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_ddl_analyze = 1")
-	tk.MustExec("create table t(a int NOT NULL DEFAULT 10)")
+	tk.MustExec("create table t(a int NOT NULL DEFAULT 10, b int, index idx_b(b))")
 	for i := range 50 {
-		tk.MustExec("insert into t values (?)", i)
+		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("ALTER TABLE t ADD index idx(a)")
 	tk.MustQuery("select * from t use index(idx) where a >1")
+	tk.MustQuery("select * from t use index(idx_b) where b >1")
 	// get meta elements
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	aInfo := tbl.Meta().FindPublicColumnByName("a")
 	require.NotNil(t, aInfo)
+	bInfo := tbl.Meta().FindPublicColumnByName("b")
+	require.NotNil(t, bInfo)
 	idxInfo := tbl.Meta().FindIndexByName("idx")
 	require.NotNil(t, idxInfo)
+	idxBInfo := tbl.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxBInfo)
 	// check the stats handle
 	statsTable, ok := dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
 	require.True(t, ok)
@@ -1159,12 +1164,23 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxInfo.ID, true))
 	require.NotNil(t, statsTable.HistColl.GetCol(aInfo.ID))
 	require.NotNil(t, statsTable.HistColl.GetIdx(idxInfo.ID))
-	colStatsVer := statsTable.HistColl.GetCol(aInfo.ID).Histogram.LastUpdateVersion
-	indexStatsVer := statsTable.HistColl.GetIdx(idxInfo.ID).Histogram.LastUpdateVersion
-	require.Equal(t, colStatsVer, indexStatsVer)
+	colAStatsVer := statsTable.HistColl.GetCol(aInfo.ID).Histogram.LastUpdateVersion
+	indexAStatsVer := statsTable.HistColl.GetIdx(idxInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colAStatsVer, indexAStatsVer)
+	// for other columns and indexes, they are also analyzed.
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(bInfo.ID, false))
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxBInfo.ID, true))
+	require.NotNil(t, statsTable.HistColl.GetCol(bInfo.ID))
+	require.NotNil(t, statsTable.HistColl.GetIdx(idxBInfo.ID))
+	colBStatsVer := statsTable.HistColl.GetCol(bInfo.ID).Histogram.LastUpdateVersion
+	indexBStatsVer := statsTable.HistColl.GetIdx(idxBInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colBStatsVer, indexBStatsVer)
+	require.Equal(t, indexAStatsVer, indexBStatsVer)
+
 	// test alter column
 	tk.MustExec("ALTER TABLE t modify column a varchar(10)")
 	tk.MustQuery("select * from t use index(idx) where a >1")
+	tk.MustQuery("select * from t use index(idx_b) where b >1")
 	// reload the schema info
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -1180,11 +1196,22 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxInfo.ID, true))
 	require.NotNil(t, statsTable.HistColl.GetCol(aInfo.ID))
 	require.NotNil(t, statsTable.HistColl.GetIdx(idxInfo.ID))
-	colStatsVer2 := statsTable.HistColl.GetCol(aInfo.ID).Histogram.LastUpdateVersion
-	indexStatsVer2 := statsTable.HistColl.GetIdx(idxInfo.ID).Histogram.LastUpdateVersion
-	require.Equal(t, colStatsVer2, indexStatsVer2)
-	// colsStatsVer2 is not same as colStatsVer2
-	require.True(t, colStatsVer != colStatsVer2)
+	colAStatsVer2 := statsTable.HistColl.GetCol(aInfo.ID).Histogram.LastUpdateVersion
+	indexAStatsVer2 := statsTable.HistColl.GetIdx(idxInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colAStatsVer2, indexAStatsVer2)
+	// colsAStatsVer2 is not same as colAStatsVer
+	require.True(t, colAStatsVer != colAStatsVer2)
+	// for other columns and indexes, they are also analyzed.
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(bInfo.ID, false))
+	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idxBInfo.ID, true))
+	require.NotNil(t, statsTable.HistColl.GetCol(bInfo.ID))
+	require.NotNil(t, statsTable.HistColl.GetIdx(idxBInfo.ID))
+	colBStatsVer2 := statsTable.HistColl.GetCol(bInfo.ID).Histogram.LastUpdateVersion
+	indexBStatsVer2 := statsTable.HistColl.GetIdx(idxBInfo.ID).Histogram.LastUpdateVersion
+	require.Equal(t, colAStatsVer2, colBStatsVer2)
+	require.Equal(t, indexAStatsVer2, indexBStatsVer2)
+	// colsAStatsVer2 is not same as colAStatsVer
+	require.True(t, colBStatsVer != colBStatsVer2)
 
 	// for partition table, add index with analyze should be banned.
 	tk.MustExec("CREATE TABLE pt(id INT NOT NULL, stu_id INT NOT NULL) " +
