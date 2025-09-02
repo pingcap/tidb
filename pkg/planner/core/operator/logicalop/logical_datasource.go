@@ -651,22 +651,26 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		}
 	}
 	var matchedIdx *model.IndexInfo
-	var matchedFunc *expression.ScalarFunction
-	var matchedCondPos int
-	matchedColumns := make([]*expression.Column, 0, 2)
-	for i, cond := range ds.PushedDownConds {
+	matchedFuncs := make(map[*expression.ScalarFunction]struct{}, 2)
+	for _, cond := range ds.PushedDownConds {
 		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok || sf.FuncName.L != ast.FTSMatchWord {
-			if expression.ContainsFullTextSearchFn(cond) {
-				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
-			}
+		// Not a scalar function, go to next one.
+		if !ok {
 			continue
 		}
-		idSetForCheck.Clear()
-		for i := 1; i < len(sf.GetArgs()); i++ {
-			col := sf.GetArgs()[i].(*expression.Column)
-			idSetForCheck.Insert(int(col.ID))
+		_, isSingleFTS := expression.FTSFuncMap[sf.FuncName.L]
+		if !isSingleFTS {
+			containsFTS := expression.ContainsFullTextSearchFn(cond)
+			if !containsFTS {
+				continue
+			}
+			onlyLogicOpAndFTS := expression.ExprOnlyContainsLogicOpAndFTS(cond)
+			if containsFTS && !onlyLogicOpAndFTS {
+				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
+			}
 		}
+		idSetForCheck.Clear()
+		expression.CollectColumnIDForFTS(sf, &idSetForCheck)
 		// Check TiCI version first.
 		var currentIndex *model.IndexInfo
 		for idx, set := range ticiIdx2FastCheck {
@@ -682,17 +686,11 @@ func (ds *DataSource) analyzeFTSFunc() error {
 			return errors.New("Full text search can only be used with a matching fulltext index and a columnar storage")
 		}
 		// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
-		if matchedIdx != nil {
+		if matchedIdx != nil && matchedIdx.ID != currentIndex.ID {
 			return errors.New("Current TiDB doesn't support multiple fulltext search functions used with multiple index calls")
 		}
 		matchedIdx = currentIndex
-		matchedFunc = sf
-		matchedCondPos = i
-		matchedColumns = matchedColumns[:0]
-		for i := 1; i < len(sf.GetArgs()); i++ {
-			col := sf.GetArgs()[i].(*expression.Column)
-			matchedColumns = append(matchedColumns, col)
-		}
+		matchedFuncs[sf] = struct{}{}
 	}
 
 	if matchedIdx == nil {
@@ -704,14 +702,21 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		return nil
 	}
 
-	// Remove the matched condition from PushedDownConds.
-	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
-	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc)
+	// Remove the matched conditions from PushedDownConds.
+	ds.PushedDownConds = slices.DeleteFunc(ds.PushedDownConds, func(cond expression.Expression) bool {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		_, ok = matchedFuncs[sf]
+		return ok
+	})
+	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFuncs)
 }
 
 func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	index *model.IndexInfo,
-	ftsFunc *expression.ScalarFunction,
+	ftsFuncs map[*expression.ScalarFunction]struct{},
 ) error {
 	// Fulltext index must be used. So we prune all other possible access paths.
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
@@ -721,10 +726,14 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
-	pbExpr := pbConverter.ExprToPB(ftsFunc)
-	if pbExpr == nil {
-		// If the expression is not converted to PB, we should return an error.
-		return errors.New("Failed to convert FTS function to PB expression")
+	pbExprs := make([]tipb.Expr, 0, len(ftsFuncs))
+	for ftsFunc := range ftsFuncs {
+		pbExpr := pbConverter.ExprToPB(ftsFunc)
+		if pbExpr == nil {
+			// If the expression is not converted to PB, we should return an error.
+			return errors.New("Failed to convert FTS function to PB expression")
+		}
+		pbExprs = append(pbExprs, *pbExpr)
 	}
 
 	// Build tipb protobuf info for the matched index.
@@ -732,9 +741,11 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		QueryType:      tipb.FTSQueryType_FTSQueryTypeNoScore,
 		IndexId:        index.ID,
 		QueryTokenizer: string(index.FullTextInfo.ParserType),
-		MatchExpr:      []tipb.Expr{*pbExpr},
+		MatchExpr:      pbExprs,
 	}
 
-	ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
+	for ftsFunc := range ftsFuncs {
+		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
+	}
 	return nil
 }

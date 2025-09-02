@@ -76,9 +76,9 @@ func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/MockCreateTiCIndexSuccess", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIndexSuccess", `return(true)`)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/MockCreateTiCIndexSuccess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIndexSuccess"))
 	}()
 
 	tk.MustExec("create table t(title TEXT, body TEXT)")
@@ -105,7 +105,6 @@ func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body) OR id > 10", "Currently 'FTS_MATCH_WORD()' must be used alone")
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) OR id > 10", "Currently 'FTS_MATCH_WORD()' must be used alone")
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) > 0", "Currently 'FTS_MATCH_WORD()' must be used alone")
-	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) AND fts_match_word('hello body', title)", "Current TiDB doesn't support multiple fulltext search functions used with multiple index call")
 
 	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
 	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
