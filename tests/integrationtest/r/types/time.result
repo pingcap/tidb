@@ -212,10 +212,6 @@ id	ts	UNIX_TIMESTAMP(ts)
 Level	Code	Message
 Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
 Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
-Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
-Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
-Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
-Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
 SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
 id	ts	UNIX_TIMESTAMP(ts)
 1	2025-03-30 01:59:59	1743296399
@@ -257,10 +253,6 @@ ALTER TABLE t ADD INDEX idx_ts (ts);
 SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
 id	ts	UNIX_TIMESTAMP(ts)
 Level	Code	Message
-Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
-Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
-Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
-Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
 Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
 Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
 Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
