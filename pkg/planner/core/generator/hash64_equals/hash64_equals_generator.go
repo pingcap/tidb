@@ -23,7 +23,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/parser/util"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
@@ -40,7 +40,8 @@ func GenHash64Equals4LogicalOps() ([]byte, error) {
 		logicalop.LogicalExpand{}, logicalop.LogicalLimit{}, logicalop.LogicalMaxOneRow{}, logicalop.DataSource{},
 		logicalop.LogicalMemTable{}, logicalop.LogicalUnionAll{}, logicalop.LogicalPartitionUnionAll{}, logicalop.LogicalProjection{},
 		logicalop.LogicalSelection{}, logicalop.LogicalSequence{}, logicalop.LogicalShow{}, logicalop.LogicalShowDDLJobs{},
-		logicalop.LogicalSort{}, logicalop.LogicalTableDual{}, logicalop.LogicalTopN{}, logicalop.LogicalUnionScan{}, logicalop.LogicalWindow{},
+		logicalop.LogicalSort{}, logicalop.LogicalTableDual{}, logicalop.LogicalTopN{}, logicalop.LogicalUnionScan{},
+		logicalop.LogicalWindow{}, logicalop.LogicalLock{},
 	}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
@@ -56,7 +57,7 @@ func GenHash64Equals4LogicalOps() ([]byte, error) {
 
 // IHashEquals is the interface for hash64 and equals inside parser pkg.
 type IHashEquals interface {
-	Hash64(h types.IHasher)
+	Hash64(h util.IHasher)
 	Equals(other any) bool
 }
 
@@ -155,6 +156,8 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeUnionScan"
 	case "LogicalWindow":
 		return "plancodec.TypeWindow"
+	case "LogicalLock":
+		return "plancodec.TypeLock"
 	default:
 		return ""
 	}

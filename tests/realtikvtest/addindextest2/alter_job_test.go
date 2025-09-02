@@ -86,6 +86,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("split table t1 between (3) and (8646911284551352360) regions 50;")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
+	tk.MustExec(`set @@global.tidb_cloud_storage_uri = ""`)
 	if kerneltype.IsClassic() {
 		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 16")
 		t.Cleanup(func() {
