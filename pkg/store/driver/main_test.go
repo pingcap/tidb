@@ -20,18 +20,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
-	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
-	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -96,17 +91,7 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 }
 
 func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
-	var keyspaceMeta *keyspacepb.KeyspaceMeta
-	var keyspaceName string
-	if kerneltype.IsNextGen() {
-		testenv.UpdateConfigForNextgen(t)
-		keyspaceMeta = &keyspacepb.KeyspaceMeta{
-			Id:   uint32(0xFFFFFF) - 1,
-			Name: keyspace.System,
-		}
-		keyspaceName = keyspace.System
-	}
-	client, pdClient, cluster, err := unistore.New("", nil, keyspaceMeta)
+	client, pdClient, cluster, err := unistore.New("", nil, nil)
 	require.NoError(t, err)
 
 	unistore.BootstrapWithSingleStore(cluster)
@@ -116,7 +101,7 @@ func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
 	coprStore, err := copr.NewStore(kvStore, nil)
 	require.NoError(t, err)
 
-	store := &tikvStore{KVStore: kvStore, coprStore: coprStore, keyspace: keyspaceName}
+	store := &tikvStore{KVStore: kvStore, coprStore: coprStore}
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
@@ -124,9 +109,6 @@ func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
 		dom.Close()
 		require.NoError(t, store.Close())
 	})
-	if kerneltype.IsNextGen() && store.GetKeyspace() == keyspace.System {
-		kvstore.SetSystemStorage(store)
-	}
 
 	return store, dom
 }
