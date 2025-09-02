@@ -451,10 +451,6 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// Only used for the ingest mode job.
 		return nil
 	}
-	if reorgInfo.mergingTmpIdx {
-		// Merging the temporary index uses txn mode, so we don't need to consider the checkpoint.
-		return nil
-	}
 	if job.ReorgMeta.IsDistReorg {
 		// The global checkpoint is not used in distributed tasks.
 		return nil
@@ -1112,12 +1108,8 @@ func (r *reorgHandler) RemoveReorgElementFailPoint(job *model.Job) error {
 }
 
 // RemoveDDLReorgHandle removes the job reorganization related handles.
-func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
-	return removeDDLReorgHandle(r.s, job, elements)
-}
-
-func (r *reorgHandler) ResetCheckpoint(job *model.Job) error {
-	return removeDDLReorgCheckpoint(r.s, job)
+func (r *reorgHandler) RemoveDDLReorgHandle(jobID int64, elements []*meta.Element) error {
+	return removeDDLReorgHandle(r.s, jobID, elements)
 }
 
 // cleanupDDLReorgHandles removes the job reorganization related handles.
