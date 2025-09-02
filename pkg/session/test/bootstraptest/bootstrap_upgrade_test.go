@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -112,6 +113,10 @@ func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 }
 
 func TestUpgradeVersion66(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because all primary key are clustered in next-gen")
+	}
+
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -149,6 +154,10 @@ func TestUpgradeVersion66(t *testing.T) {
 }
 
 func TestUpgradeVersion74(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because all primary key are clustered in next-gen")
+	}
+
 	ctx := context.Background()
 
 	cases := []struct {
@@ -308,6 +317,10 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 
 // TestUpgradeVersionWithUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ with HTTP op.
 func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because all primary key are clustered in next-gen")
+	}
+
 	mock := true
 	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
@@ -358,6 +371,10 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 
 // TestUpgradeVersionWithoutUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ without HTTP op.
 func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because all primary key are clustered in next-gen")
+	}
+
 	mock := true
 	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
