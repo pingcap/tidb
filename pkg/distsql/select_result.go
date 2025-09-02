@@ -352,7 +352,11 @@ type selectResult struct {
 	iter *selectResultIter
 }
 
-func (r *selectResult) fetchResp(ctx context.Context, intermediateOutputTypes [][]*types.FieldType) error {
+func (r *selectResult) fetchResp(ctx context.Context) error {
+	return r.fetchRespWithIntermediateResults(ctx, nil)
+}
+
+func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, intermediateOutputTypes [][]*types.FieldType) error {
 	defer func() {
 		if r.stats != nil {
 			// Ignore internal sql.
@@ -474,7 +478,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	chk.Reset()
 	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
-		err := r.fetchResp(ctx, nil)
+		err := r.fetchResp(ctx)
 		if err != nil {
 			return err
 		}
@@ -526,7 +530,7 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for !chk.IsFull() {
 		if r.respChkIdx == len(r.selectResp.Chunks) {
-			err := r.fetchResp(ctx, nil)
+			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
 				return err
 			}
@@ -552,7 +556,7 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 
 	for !chk.IsFull() {
 		if r.respChkIdx == len(r.selectResp.Chunks) {
-			err := r.fetchResp(ctx, nil)
+			err := r.fetchResp(ctx)
 			if err != nil || r.selectResp == nil {
 				return err
 			}
@@ -909,7 +913,7 @@ func newSelectResultIter(result *selectResult, intermediateOutputTypes [][]*type
 func (iter *selectResultIter) Next(ctx context.Context) (SelectResultRow, error) {
 	for {
 		if r := iter.result; r.selectResp == nil {
-			if err := r.fetchResp(ctx, iter.intermediateOutputTypes); err != nil {
+			if err := r.fetchRespWithIntermediateResults(ctx, iter.intermediateOutputTypes); err != nil {
 				return SelectResultRow{}, err
 			}
 
@@ -931,6 +935,9 @@ func (iter *selectResultIter) Next(ctx context.Context) (SelectResultRow, error)
 		}
 
 		for len(iter.channels) > 0 {
+			// here we read the channel in reverse order to make sure the "more complete" data should be read first.
+			// For example, if a cop-request contains IndexLookUp, we should read the final rows first (with the biggest channel index),
+			// and then read the index rows (with smaller channel index) that have not been looked up.
 			lastPos := len(iter.channels) - 1
 			channel := iter.channels[lastPos]
 			row, err := channel.Next()
