@@ -1308,8 +1308,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		e.logger.Info("set import thread count for nextgen kernel",
 			zap.Int("thread count", e.ThreadCnt),
 			zap.Int("max node count", e.MaxNodeCnt),
-			zap.Int("target node cpu count", targetNodeCPUCnt),
 			zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
+			zap.Int("target node cpu count", targetNodeCPUCnt),
 			zap.String("total file size", units.BytesSize(float64(totalSize))))
 	}
 	return nil
