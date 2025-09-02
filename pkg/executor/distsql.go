@@ -337,9 +337,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 
 // buildKVRangesForIndexReader builds kvRanges for IndexReaderExecutor considering both partitions and GroupedRanges.
 func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, error) {
-	var kvRanges []kv.KeyRange
-
-	var tableIDs []int64
+	tableIDs := make([]int64, 0, len(e.partitions))
 	for _, p := range e.partitions {
 		tableIDs = append(tableIDs, p.GetPhysicalID())
 	}
@@ -352,6 +350,7 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 		groupedRanges = [][]*ranger.Range{e.ranges}
 	}
 
+	kvRanges := make([]kv.KeyRange, 0, len(groupedRanges))
 	for _, ranges := range groupedRanges {
 		kvRange, err := e.buildKeyRanges(e.dctx, ranges, tableIDs)
 		if err != nil {
@@ -359,7 +358,6 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 		}
 		kvRanges = append(kvRanges, kvRange...)
 	}
-
 	return kvRanges, nil
 }
 
