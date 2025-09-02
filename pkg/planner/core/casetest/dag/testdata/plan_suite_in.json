@@ -67,6 +67,73 @@
     ]
   },
   {
+    "name": "TestDAGPlanBuilderSimpleCaseForNextGen",
+    "cases":[
+      // Test index hint.
+      "select * from t t1 use index(c_d_e)",
+      "select f from t use index() where f = 1",
+      // Test ts + Sort vs. DoubleRead + filter.
+      "select a from t where a between 1 and 2 order by c",
+      // Test DNF condition + Double Read.
+      "select * from t where (t.c > 0 and t.c < 2) or (t.c > 4 and t.c < 6) or (t.c > 8 and t.c < 10) or (t.c > 12 and t.c < 14) or (t.c > 16 and t.c < 18)",
+      "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
+      // Test TopN to table branch in double read.
+      "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
+      // Test Null Range
+      "select * from t where t.e_str is null",
+      // Test Null Range but the column has not null flag.
+      "select * from t where t.c is null",
+      // Test TopN to index branch in double read.
+      "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
+      // Test TopN to Limit in double read.
+      "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",
+      // Test TopN to Limit in index single read.
+      "select c from t where t.c = 1 and t.e = 1 order by t.d limit 1",
+      // Test TopN to Limit in table single read.
+      "select c from t order by t.a limit 1",
+      // Test TopN push down in table single read.
+      "select c from t order by t.a + t.b limit 1",
+      // Test Limit push down in table single read.
+      "select c from t  limit 1",
+      // Test Limit push down in index single read.
+      "select c from t where c = 1 limit 1",
+      // Test index single read and Selection.
+      "select c from t where c = 1",
+      // Test index single read and Sort.
+      "select c from t order by c",
+      // Test index single read and Sort.
+      "select c from t where c = 1 order by e",
+      // Test Limit push down in double single read.
+      "select c, b from t where c = 1 limit 1",
+      // Test Selection + Limit push down in double single read.
+      "select c, b from t where c = 1 and e = 1 and b = 1 limit 1",
+      // Test Order by multi columns.
+      "select c from t where c = 1 order by d, c",
+      // Test for index with length.
+      "select c_str from t where e_str = '1' order by d_str, c_str",
+      // Test PK in index single read.
+      "select c from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+      // Test composed index.
+      // FIXME: The TopN didn't be pushed.
+      "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
+      // Test PK in index double read.
+      "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+      // Test index filter condition push down.
+      "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
+      "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
+      "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
+      // Test embedded ORDER BY which imposes on different number of columns than outer query.
+      "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
+      "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
+      "select * from (select *, NULL as xxx from t) t order by xxx",
+      "select * from t use index(f) where f = 1 and a = 1",
+      "select * from t2 use index(b) where b = 1 and a = 1",
+      // Test inline project for Limit
+      "select f from t where a > 1",
+      "select f from t where a > 1 limit 10"
+    ]
+  },
+  {
     "name": "TestDAGPlanBuilderJoin",
     "cases": [
       "select * from t t1 join t t2 on t1.a = t2.c_str",

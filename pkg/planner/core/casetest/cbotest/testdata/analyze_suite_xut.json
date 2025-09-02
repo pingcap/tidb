@@ -113,6 +113,20 @@
     ]
   },
   {
+    "Name": "TestInconsistentEstimationForNextGen",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5",
+        "Plan": [
+          "IndexLookUp 1.00 root  ",
+          "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false, stats:partial[ab:unInitialized, ac:unInitialized]",
+          "└─Selection(Probe) 1.00 cop[tikv]  eq(test.t.c, 5)",
+          "  └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:partial[ab:unInitialized, ac:unInitialized]"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestLimitCrossEstimation",
     "Cases": [
       {
