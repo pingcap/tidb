@@ -181,6 +181,8 @@ type txnCommitWorker struct {
 	*backfillCtx
 	jobID    int64
 	priority int
+	totalDur time.Duration
+	totalNum int
 }
 
 func (w *txnCommitWorker) HandleTask(ck RowRecords, send func(IndexWriteResult)) {
@@ -192,6 +194,8 @@ func (w *txnCommitWorker) HandleTask(ck RowRecords, send func(IndexWriteResult))
 		ddllogutil.DDLLogger().Info("txn commit worker handle task",
 			zap.Duration("takeTime", time.Since(t)),
 		)
+		w.totalDur += time.Since(t)
+		w.totalNum++
 	}()
 	failpoint.Inject("injectPanicForIndexIngest", func() {
 		panic("mock panic")
@@ -243,6 +247,11 @@ func (w *txnCommitWorker) initSessCtx() {
 func (w *txnCommitWorker) Close() {
 	// TODO(lance6716): unify the real write action for engineInfo and external
 	// writer.
+	ddllogutil.DDLLogger().Info("txnCommitWorker handle task",
+		zap.Int("totalNum", w.totalNum),
+		zap.Duration("totalDur", w.totalDur),
+		zap.Duration("avgTimePerChunk", w.totalDur/time.Duration(w.totalNum)),
+	)
 	for i, writer := range w.writers {
 		ew, ok := writer.(*external.Writer)
 		if !ok {
@@ -424,6 +433,12 @@ type kvScanWorker struct {
 	newColInfo     *model.ColumnInfo
 	checksumNeeded bool
 	rowRecords     []*rowRecord
+
+	totalDur time.Duration
+	totalNum int
+
+	totalDurGet time.Duration
+	totalNumGet int
 }
 
 func (w *kvScanWorker) HandleTask(task TableScanTask, sender func(RowRecords)) {
@@ -449,6 +464,14 @@ func (w *kvScanWorker) HandleTask(task TableScanTask, sender func(RowRecords)) {
 }
 
 func (w *kvScanWorker) Close() {
+	ddllogutil.DDLLogger().Info("kvScanWorker handle task",
+		zap.Int("totalNum_Scan+Send", w.totalNum),
+		zap.Duration("totalDur_Scan+Send", w.totalDur),
+		zap.Duration("avgTimePerChunk_Scan+Send", w.totalDur/time.Duration(w.totalNum)),
+		zap.Int("totalNum_Scan", w.totalNumGet),
+		zap.Duration("totalDur_Scan", w.totalDurGet),
+		zap.Duration("avgTimePerChunk_Scan", w.totalDurGet/time.Duration(w.totalNumGet)),
+	)
 	if w.se != nil {
 		w.sessPool.Put(w.se.Context)
 	}
@@ -483,6 +506,7 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
 
+			t1 := time.Now()
 			rowRecords, nextKey, taskDone, err := w.fetchRowColVals(startTS, handleRange, srcChk)
 			if err != nil {
 				w.recycleChunk(srcChk)
@@ -503,6 +527,8 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 			w.totalCount.Add(int64(rowCnt))
 			sender(idxResult)
 			chunkNum++
+			w.totalDur += time.Since(t1)
+			w.totalNum++
 			//idxResults = append(idxResults, RowRecords{
 			//	ID:       task.ID,
 			//	Chunk:    rowRecords,
@@ -581,6 +607,8 @@ func (w *kvScanWorker) fetchRowColVals(startTS uint64, taskRange reorgBackfillTa
 		zap.Duration("takeTime", time.Since(startTime)),
 		zap.Duration("encodeDecodeCastTime", encDecDur),
 	)
+	w.totalDurGet += time.Since(startTime)
+	w.totalNumGet++
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
