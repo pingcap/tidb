@@ -123,9 +123,13 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 }
 
 func (s *mockGCSSuite) TestImportIntoStatsUpdate() {
+	var contentSB strings.Builder
+	for i := 0; i < 1000; i++ {
+		contentSB.WriteString(fmt.Sprintf("%d,foo%d,bar%d,%d\n", i, i, i, i))
+	}
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.csv"},
-		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+		Content:     []byte(contentSB.String()),
 	})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	s.prepareAndUseDB("gsort_basic")
@@ -142,8 +146,22 @@ func (s *mockGCSSuite) TestImportIntoStatsUpdate() {
 		require.Len(s.T(), r, 1)
 		rows, err := strconv.Atoi(r[0][0].(string))
 		require.NoError(s.T(), err)
-		return rows == 3
+		return rows == 1000
 	}, 30*time.Second, 100*time.Millisecond, "stats not updated after import into")
+
+	tableID, err := strconv.Atoi(result[0][fmap["TableID"]].(string))
+	require.NoError(s.T(), err)
+	require.Eventually(s.T(), func() bool {
+		r := s.tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id=%d", tableID)).Rows()
+		require.Len(s.T(), r, 1)
+		modified, err := strconv.Atoi(r[0][0].(string))
+		require.NoError(s.T(), err)
+		rows, err := strconv.Atoi(r[0][1].(string))
+		require.NoError(s.T(), err)
+		// import into will update both modify_count and count to 1000, after
+		// auto analyze, modify_count will be set to 0
+		return modified == 0 && rows == 1000
+	}, 30*time.Second, 100*time.Millisecond, "stats meta not updated after import into")
 }
 
 func (s *mockGCSSuite) TestBasicImportInto() {
