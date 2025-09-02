@@ -531,6 +531,20 @@ type Instance struct {
 	// StmtSummaryFileMaxBackups indicates the maximum number of files written
 	// by stmtsummary when StmtSummaryEnablePersistent is true.
 	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
+	// StmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	StmtSummaryMaxStmtCount uint64 `toml:"tidb_stmt_summary_max_stmt_count" json:"tidb_stmt_summary_max_stmt_count"`
+	// ServerMemoryLimit indicates the memory limit of the tidb-server instance.
+	ServerMemoryLimit string `toml:"tidb_server_memory_limit": json:"tidb_server_memory_limit"`
+	// ServerMemoryLimitGCTrigger indicates the gc percentage of the ServerMemoryLimit.
+	ServerMemoryLimitGCTrigger string `toml:"tidb_server_memory_limit_gc_trigger" json:"tidb_server_memory_limit_gc_trigger"`
+	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
+	InstancePlanCacheMaxMemSize string `toml:"tidb_instance_plan_cache_max_size" json:"tidb_instance_plan_cache_max_size"`
+	// StatsCacheMemQuota records stats cache quota.
+	StatsCacheMemQuota int64 `toml:"tidb_stats_cache_mem_quota" json:"tidb_stats_cache_mem_quota"`
+	// MemQuotaBindingCache indicates the memory quota for the bind cache.
+	MemQuotaBindingCache uint64 `toml:"tidb_mem_quota_binding_cache" json:"tidb_mem_quota_binding_cache"`
+	// SchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	SchemaCacheSize string `toml:"tidb_schema_cache_size" json:"tidb_schema_cache_size"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
