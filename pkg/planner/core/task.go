@@ -106,18 +106,21 @@ func (t *CopTask) finishIndexPlan() {
 }
 
 func (t *CopTask) getStoreType() kv.StoreType {
-	if t.tablePlan == nil {
-		return kv.TiKV
+	p := t.indexPlan
+	if t.tablePlan != nil {
+		p = t.tablePlan
 	}
-	tp := t.tablePlan
-	for len(tp.Children()) > 0 {
-		if len(tp.Children()) > 1 {
+	for len(p.Children()) > 0 {
+		if len(p.Children()) > 1 {
 			return kv.TiFlash
 		}
-		tp = tp.Children()[0]
+		p = p.Children()[0]
 	}
-	if ts, ok := tp.(*PhysicalTableScan); ok {
-		return ts.StoreType
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		return x.StoreType
+	case *PhysicalIndexScan:
+		return x.StoreType
 	}
 	return kv.TiKV
 }
@@ -749,7 +752,7 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 		if len(cop.idxMergePartPlans) == 0 {
 			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 			// because handles would be reordered before being sent to table scan.
-			if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
+			if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 && cop.getStoreType() != kv.TiCI {
 				// When limit is pushed down, we should remove its offset.
 				newCount := p.Offset + p.Count
 				childProfile := cop.Plan().StatsInfo()
