@@ -178,5 +178,66 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestStatsAnalyzedInDDL",
+    "Cases": [
+      {
+        "Query": "alter table t add index idx_c(c)",
+        "Result": null
+      },
+      {
+        "Query": "select * from t use index(idx_c) where c > 1",
+        "Result": [
+          "IndexLookUp 48.50 root  ",
+          "├─IndexRangeScan(Build) 48.50 cop[tikv] table:t, index:idx_c(c) range:(1,+inf], keep order:false",
+          "└─TableRowIDScan(Probe) 48.50 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "Query": "alter table t add index idx_bc(b,c)",
+        "Result": null
+      },
+      {
+        "Query": "select * from t use index(idx_bc) where b=1 and c <2",
+        "Result": [
+          "IndexReader 1.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1.00 cop[tikv] table:t, index:idx_bc(b, c) range:[1 -inf,1 2), keep order:false"
+        ]
+      },
+      {
+        "Query": "alter table t modify column b varchar(20)",
+        "Result": null
+      },
+      {
+        "Query": "select * from t use index(idx_bc) where b=1 and c <2",
+        "Result": [
+          "IndexReader 2.00 root  index:Selection",
+          "└─Selection 2.00 cop[tikv]  eq(cast(test.t.b, double BINARY), 1), lt(test.t.c, 2)",
+          "  └─IndexFullScan 50.00 cop[tikv] table:t, index:idx_bc(b, c) keep order:false"
+        ]
+      },
+      {
+        "Query": "alter table t modify column c varchar(20)",
+        "Result": null
+      },
+      {
+        "Query": "select * from t use index(idx_c) where c > 1",
+        "Result": [
+          "IndexLookUp 40.00 root  ",
+          "├─Selection(Build) 40.00 cop[tikv]  gt(cast(test.t.c, double BINARY), 1)",
+          "│ └─IndexFullScan 50.00 cop[tikv] table:t, index:idx_c(c) keep order:false",
+          "└─TableRowIDScan(Probe) 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "Query": "select * from t use index(idx_bc) where b=1 and c <2",
+        "Result": [
+          "IndexReader 40.00 root  index:Selection",
+          "└─Selection 40.00 cop[tikv]  eq(cast(test.t.b, double BINARY), 1), lt(cast(test.t.c, double BINARY), 2)",
+          "  └─IndexFullScan 50.00 cop[tikv] table:t, index:idx_bc(b, c) keep order:false"
+        ]
+      }
+    ]
   }
 ]
