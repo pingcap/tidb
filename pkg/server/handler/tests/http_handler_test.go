@@ -1333,6 +1333,10 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 }
 
 func TestUpgrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
