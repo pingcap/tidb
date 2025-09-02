@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -228,6 +229,14 @@ func TestIssue18042(t *testing.T) {
 }
 
 func TestIssue52592(t *testing.T) {
+	// it is for the next-gen
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_opt_fix_control = "52592:OFF"`) // affect hit counter in this ut
@@ -243,11 +252,11 @@ func TestIssue52592(t *testing.T) {
 	))
 	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
 		"Update N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1",
+		"└─Point_Get 1.00 root table:t handle:1, lock",
 	))
 	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
 		"Delete N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1",
+		"└─Point_Get 1.00 root table:t handle:1, lock",
 	))
 	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
 		"TableDual 0.00 root  rows:0",
@@ -263,13 +272,15 @@ func TestIssue52592(t *testing.T) {
 	))
 	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
 		"Update N/A root  N/A",
-		"└─TableReader 1.00 root  data:TableRangeScan",
-		"  └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+		`└─SelectLock 1.00 root  for update 0`,
+		`  └─TableReader 1.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`,
 	))
 	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
 		"Delete N/A root  N/A",
-		"└─TableReader 1.00 root  data:TableRangeScan",
-		"  └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+		`└─SelectLock 1.00 root  for update 0`,
+		`  └─TableReader 1.00 root  data:TableRangeScan`,
+		`    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`,
 	))
 	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
 		"TableDual 0.00 root  rows:0",

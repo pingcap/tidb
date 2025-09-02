@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -49,6 +50,14 @@ func assertSameHints(t *testing.T, expected, actual []*ast.TableOptimizerHint) {
 }
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
+	// it is for the next-gen
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("set tidb_opt_limit_push_down_threshold=0")

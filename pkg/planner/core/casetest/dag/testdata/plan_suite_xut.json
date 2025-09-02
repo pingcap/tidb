@@ -28,7 +28,7 @@
       },
       {
         "SQL": "select * from t where t.e_str is null",
-        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[NULL,NULL]], Table(t))"
+        "Best": "TableReader(Table(t)->Sel([isnull(test.t.e_str)]))"
       },
       {
         "SQL": "select * from t where t.c is null",
