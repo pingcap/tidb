@@ -534,7 +534,7 @@ type Instance struct {
 	// StmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
 	StmtSummaryMaxStmtCount uint64 `toml:"tidb_stmt_summary_max_stmt_count" json:"tidb_stmt_summary_max_stmt_count"`
 	// ServerMemoryLimit indicates the memory limit of the tidb-server instance.
-	ServerMemoryLimit string `toml:"tidb_server_memory_limit": json:"tidb_server_memory_limit"`
+	ServerMemoryLimit string `toml:"tidb_server_memory_limit" json:"tidb_server_memory_limit"`
 	// ServerMemoryLimitGCTrigger indicates the gc percentage of the ServerMemoryLimit.
 	ServerMemoryLimitGCTrigger string `toml:"tidb_server_memory_limit_gc_trigger" json:"tidb_server_memory_limit_gc_trigger"`
 	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
