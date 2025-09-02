@@ -226,14 +226,28 @@ func convertToIncorrectStringErr(err error, colName string) error {
 	return ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", res.String(), colName)
 }
 
-// handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
-// Currently only called from CastValue.
-// returns:
+// handleZeroDatetime handles zero and invalid value for Timestamp/Datetime/Date types.
+// Currently it's only used in CastValue.
+// Returns:
 //
 //	value (possibly adjusted)
 //	boolean; true if break error/warning handling in CastValue and return what was returned from this
 //	error
-func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
+func handleZeroDatetime(
+	ec errctx.Context, mode mysql.SQLMode,
+	col *model.ColumnInfo,
+	casted, origin types.Datum,
+	tmIsInvalid bool,
+) (types.Datum, bool, error) {
+	getStr := func() string {
+		str, err1 := origin.ToString()
+		if err1 != nil {
+			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", origin), zap.Error(err1))
+			str = origin.GetString()
+		}
+		return str
+	}
+
 	tm := casted.GetMysqlTime()
 
 	var (
@@ -272,7 +286,7 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.Column
 	// * **ST**: STRICT_TRANS_TABLES
 	// * **ELSE**: empty or NO_ZERO_IN_DATE_MODE
 	if tm.IsZero() && col.GetType() == mysql.TypeTimestamp {
-		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, str)
+		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, getStr())
 		if mode.HasStrictMode() && !ignoreErr && (tmIsInvalid || mode.HasNoZeroDateMode()) {
 			return types.NewDatum(zeroV), true, errors.Trace(innerErr)
 		}
@@ -283,7 +297,7 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.Column
 		return types.NewDatum(zeroV), true, nil
 	} else if tmIsInvalid && col.GetType() == mysql.TypeTimestamp {
 		// Prevent from being stored! Invalid timestamp!
-		warn := types.ErrWrongValue.FastGenByArgs(zeroT, str)
+		warn := types.ErrWrongValue.FastGenByArgs(zeroT, getStr())
 		if mode.HasStrictMode() {
 			return types.NewDatum(zeroV), true, errors.Trace(warn)
 		}
@@ -302,7 +316,7 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.Column
 			}
 		}
 
-		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, str)
+		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, getStr())
 		if mode.HasStrictMode() && !ignoreErr {
 			return types.NewDatum(zeroV), true, errors.Trace(innerErr)
 		}
@@ -351,12 +365,7 @@ func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode,
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
 	} else if !casted.IsNull() &&
 		(col.GetType() == mysql.TypeDate || col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp) {
-		str, err1 := val.ToString()
-		if err1 != nil {
-			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
-			str = val.GetString()
-		}
-		if innCasted, exit, innErr := handleZeroDatetime(ec, sqlMode, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
+		if innCasted, exit, innErr := handleZeroDatetime(ec, sqlMode, col, casted, val, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
 	} else if err != nil && charset.ErrInvalidCharacterString.Equal(err) {

@@ -70,11 +70,6 @@ const (
 	KVWriteBatchSize        = 16 * units.KiB
 	DefaultRangeConcurrency = 16
 
-	// For TiDB mode, inserting record to table may consume many memory,
-	// so we set a lower memory limit.
-	defaultMemoryUsageTiDB  = 40
-	defaultMemoryUsageLocal = 80
-
 	defaultDistSQLScanConcurrency     = 15
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20

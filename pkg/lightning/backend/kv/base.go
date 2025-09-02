@@ -185,9 +185,9 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 // GetOrCreateRecord returns a record slice from the cache if possible, otherwise creates a new one.
 func (e *BaseKVEncoder) GetOrCreateRecord() []types.Datum {
 	if e.recordCache != nil {
-		return e.recordCache
+		e.recordCache = make([]types.Datum, 0, len(e.Columns)+1)
 	}
-	return make([]types.Datum, 0, len(e.Columns)+1)
+	return e.recordCache[:0]
 }
 
 // Record2KV converts a row into a KV pair.
@@ -206,7 +206,6 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 		var encoded [9]byte // The max length of encoded int64 is 9.
 		kvPairs.Pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
 	}
-	e.recordCache = record[:0]
 	return kvPairs, nil
 }
 
@@ -232,23 +231,8 @@ func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDat
 		return value, err
 	}
 
-	if e.IsAutoRandomCol(col.ToInfo()) {
-		meta := e.table.Meta()
-		shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
-		// this allocator is the same as the allocator in table importer, i.e. PanickingAllocators. below too.
-		alloc := e.TableAllocators().Get(autoid.AutoRandomType)
-		if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
-			return value, errors.Trace(err)
-		}
-	}
-	if IsAutoIncCol(col.ToInfo()) {
-		// same as RowIDAllocType, since SepAutoInc is always false when initializing allocators of Table.
-		alloc := e.TableAllocators().Get(autoid.AutoIncrementType)
-		if err := alloc.Rebase(context.Background(), GetAutoRecordID(value, &col.FieldType), false); err != nil {
-			return value, errors.Trace(err)
-		}
-	}
-	return value, nil
+	err = e.RebaseAutoID(col, rowID, &value)
+	return value, err
 }
 
 func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatum *types.Datum, needCast bool) (types.Datum, error) {
@@ -258,11 +242,9 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	)
 
 	isBadNullValue := false
-	exprCtx := e.SessionCtx.GetExprCtx()
-	errCtx := exprCtx.GetEvalCtx().ErrCtx()
 	if inputDatum != nil {
 		if needCast {
-			value, err = table.CastColumnValue(exprCtx, *inputDatum, col.ToInfo(), false, false)
+			value, err = table.CastColumnValue(e.SessionCtx.GetExprCtx(), *inputDatum, col.ToInfo(), false, false)
 			if err != nil {
 				return value, err
 			}
@@ -274,6 +256,19 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		}
 		isBadNullValue = true
 	}
+
+	return e.HandleSpecialValue(col, rowID, isBadNullValue)
+}
+
+func (e *BaseKVEncoder) HandleSpecialValue(col *table.Column, rowID int64, isBadNullValue bool) (types.Datum, error) {
+	var (
+		value types.Datum
+		err   error
+	)
+
+	exprCtx := e.SessionCtx.GetExprCtx()
+	errCtx := exprCtx.GetEvalCtx().ErrCtx()
+
 	// handle special values
 	switch {
 	case IsAutoIncCol(col.ToInfo()):
@@ -299,6 +294,27 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		value, err = table.GetColDefaultValue(e.SessionCtx.GetExprCtx(), col.ToInfo())
 	}
 	return value, err
+}
+
+// RebaseAutoID rebase the auto id of the table
+func (e *BaseKVEncoder) RebaseAutoID(col *table.Column, rowID int64, value *types.Datum) error {
+	if e.IsAutoRandomCol(col.ToInfo()) {
+		meta := e.table.Meta()
+		shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
+		// this allocator is the same as the allocator in table importer, i.e. PanickingAllocators. below too.
+		alloc := e.TableAllocators().Get(autoid.AutoRandomType)
+		if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if IsAutoIncCol(col.ToInfo()) {
+		// same as RowIDAllocType, since SepAutoInc is always false when initializing allocators of Table.
+		alloc := e.TableAllocators().Get(autoid.AutoIncrementType)
+		if err := alloc.Rebase(context.Background(), GetAutoRecordID(*value, &col.FieldType), false); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // IsAutoRandomCol checks if the column is auto random column.
