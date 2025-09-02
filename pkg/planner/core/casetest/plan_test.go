@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -153,14 +152,6 @@ func TestPreferRangeScanForDNF(t *testing.T) {
 }
 
 func TestNormalizedPlan(t *testing.T) {
-	// it is for the next-gen
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(originCfg)
-	}()
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@tidb_partition_prune_mode='static';")
@@ -337,14 +328,6 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 }
 
 func TestJSONPlanInExplain(t *testing.T) {
-	// it is for the next-gen
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(originCfg)
-	}()
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t1, t2")
@@ -363,10 +346,6 @@ func TestJSONPlanInExplain(t *testing.T) {
 			resJSON := testKit.MustQuery(test).Rows()
 			var res []*core.ExplainInfoForEncode
 			require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), &res))
-			testdata.OnRecord(func() {
-				output[i].SQL = test
-				output[i].JSONPlan = res
-			})
 			for j, expect := range output[i].JSONPlan {
 				require.Equal(t, expect.ID, res[j].ID)
 				require.Equal(t, expect.EstRows, res[j].EstRows)
@@ -375,7 +354,6 @@ func TestJSONPlanInExplain(t *testing.T) {
 				require.Equal(t, expect.AccessObject, res[j].AccessObject)
 				require.Equal(t, expect.OperatorInfo, res[j].OperatorInfo)
 			}
-
 		}
 	})
 }
