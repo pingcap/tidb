@@ -529,39 +529,6 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 			}
 			return result, nil
 		}
-
-		// use sortedSelectResults here when pushDown limit for partition table.
-		if e.kvRangeBuilder != nil && e.byItems != nil {
-			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
-			if err != nil {
-				return nil, err
-			}
-			e.kvRanges = getKVRangesFromReqs(kvReqs)
-			var results []distsql.SelectResult
-			for _, kvReq := range kvReqs {
-				result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
-				if err != nil {
-					return nil, err
-				}
-				results = append(results, result)
-			}
-			if len(results) == 1 {
-				return results[0], nil
-			}
-			return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
-		}
-
-		kvReq, err := e.buildKVReq(ctx, ranges)
-		if err != nil {
-			return nil, err
-		}
-		e.kvRanges = getKVRangesFromReqs([]*kv.Request{kvReq})
-
-		result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
-		if err != nil {
-			return nil, err
-		}
-		return result, nil
 	}
 
 	// Original grouped ranges logic
