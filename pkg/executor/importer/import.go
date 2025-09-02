@@ -1318,7 +1318,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
 		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
 		e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
-		e.logger.Info("set import thread count for nextgen kernel",
+		e.logger.Info("auto calculate resource related params",
 			zap.Int("thread count", e.ThreadCnt),
 			zap.Int("max node count", e.MaxNodeCnt),
 			zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
