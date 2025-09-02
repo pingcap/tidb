@@ -206,7 +206,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
-	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil)
+	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil, int64(len(samples)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -223,17 +223,12 @@ func buildHist(
 	samples []*SampleItem,
 	count, ndv, numBuckets int64,
 	memTracker *memory.Tracker,
-	rangeChecker ...*SequentialRangeChecker, // optional range checker for skipping TopN indices
+	effectiveSampleNum int64, // number of samples that will actually be processed (excluding TopN)
+	rangeChecker *SequentialRangeChecker, // optional range checker for skipping TopN indices
 ) (corrXYSum float64, err error) {
-	// determine if we should skip certain indices based on TopN ranges
-	var checker *SequentialRangeChecker
-	if len(rangeChecker) > 0 {
-		checker = rangeChecker[0]
-	}
-
 	sampleNum := int64(len(samples))
-	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(count) / float64(sampleNum)
+	// use the passed effective sample count for correct sample factor calculation
+	sampleFactor := float64(count) / float64(effectiveSampleNum)
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
 	ndvFactor := min(float64(count)/float64(ndv), sampleFactor)
@@ -247,18 +242,20 @@ func buildHist(
 	corrXYSum = float64(0)
 
 	// find the first non-skipped sample to initialize the histogram
-	var firstSampleIdx int64
-	if checker != nil {
+	firstSampleIdx := int64(-1)
+	if rangeChecker != nil {
 		for i := range sampleNum {
-			if !checker.IsIndexInTopNRange(i) {
+			if !rangeChecker.IsIndexInTopNRange(i) {
 				firstSampleIdx = i
 				break
 			}
 		}
-		if firstSampleIdx >= sampleNum {
+		if firstSampleIdx == -1 {
 			// all samples are in TopN ranges, return empty histogram
 			return 0, nil
 		}
+	} else {
+		firstSampleIdx = 0
 	}
 
 	// The underlying idea is that when a value is sampled,
@@ -282,12 +279,12 @@ func buildHist(
 	// Note: Start from firstSampleIdx+1 because we have already processed the first non-skipped sample.
 	for i := firstSampleIdx + 1; i < sampleNum; i++ {
 		// Skip if this index is in a TopN range
-		if checker != nil && checker.IsIndexInTopNRange(i) {
+		if rangeChecker != nil && rangeChecker.IsIndexInTopNRange(i) {
 			continue
 		}
 
 		processedCount++
-		corrXYSum += float64(processedCount-1) * float64(samples[i].Ordinal)
+		corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		hg.UpperToDatum(bucketIdx, upper)
 		if memTracker != nil {
 			// tmp memory usage
@@ -489,19 +486,14 @@ func BuildHistAndTopN(
 		processTopNValue(topNHeap, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor)
 	}
 
-	// convert heap to sorted slice
+	// convert heap to sorted slice and apply pruning directly to heap items
 	heapItems := topNHeap.ToSortedSlice()
 
-	// extract TopNMeta for result
-	topNList := make([]TopNMeta, len(heapItems))
-	for i, item := range heapItems {
-		topNList[i] = item.TopNMeta
-	}
-
+	// apply pruning directly to heap items (preserving range information)
+	finalTopNRanges := heapItems
 	if allowPruning {
-		// Prune out any TopN values that have the same count as the remaining average.
-		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
-		if sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(topNList) >= int(sampleNDV) {
+		finalTopNRanges = pruneTopNItem(heapItems, ndv, nullCount, sampleNum, count)
+		if sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(finalTopNRanges) >= int(sampleNDV) {
 			// If we're sampling, and TopN contains everything in the sample - trim TopN so
 			// that buckets will be built. This can help address issues in optimizer
 			// cardinality estimation if TopN contains all values in the sample, but the
@@ -510,8 +502,14 @@ func BuildHistAndTopN(
 			// values are likely to added as the last value of a bucket such that skew will
 			// still be recognized.
 			keepTopN := max(1, sampleNDV-1)
-			topNList = topNList[:keepTopN]
+			finalTopNRanges = finalTopNRanges[:keepTopN]
 		}
+	}
+
+	// extract TopNMeta for result from final pruned items
+	topNList := make([]TopNMeta, len(finalTopNRanges))
+	for i, item := range finalTopNRanges {
+		topNList[i] = item.TopNMeta
 	}
 
 	topn := &TopN{TopN: topNList}
@@ -542,11 +540,19 @@ func BuildHistAndTopN(
 			numBuckets = int(min(max(1, remainingNDV/bucketNDVDivisor), int64(numBuckets)))
 		}
 
-		// create range checker for efficient TopN index skipping using heap items directly
-		rangeChecker := NewSequentialRangeChecker(heapItems)
+		// create range checker for efficient TopN index skipping using final TopN items only
+		rangeChecker := NewSequentialRangeChecker(finalTopNRanges)
+
+		// calculate effective sample count (samples not in TopN ranges)
+		effectiveSampleCount := int64(0)
+		for i := range sampleNum {
+			if !rangeChecker.IsIndexInTopNRange(i) {
+				effectiveSampleCount++
+			}
+		}
 
 		_, err = buildHist(sc, hg, samples,
-			count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker, rangeChecker)
+			count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker, effectiveSampleCount, rangeChecker)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -558,7 +564,7 @@ func BuildHistAndTopN(
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
 //
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
-func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
+func pruneTopNItem(topns []TopNWithRange, ndv, nullCount, sampleRows, totalRows int64) []TopNWithRange {
 	if totalRows <= 1 || int64(len(topns)) >= ndv || len(topns) <= 1 {
 		return topns
 	}
@@ -566,7 +572,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 	// storing later.
 	sumCount := uint64(0)
 	for i := range len(topns) - 1 {
-		sumCount += topns[i].Count
+		sumCount += topns[i].TopNMeta.Count
 	}
 	topNNum := len(topns)
 	for topNNum > 0 {
@@ -585,7 +591,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		}
 		totalRowsN := float64(totalRows)
 		n := float64(sampleRows)
-		k := totalRowsN * float64(topns[topNNum-1].Count) / n
+		k := totalRowsN * float64(topns[topNNum-1].TopNMeta.Count) / n
 		// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
 		// Thus the variance is the following formula.
 		variance := n * k * (totalRowsN - k) * (totalRowsN - n) / (totalRowsN * totalRowsN * (totalRowsN - 1))
@@ -593,7 +599,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		// We choose the bound that plus two stddev of the sample frequency, plus an additional 0.5 for the continuity correction.
 		//   Note:
 		//  	The mean + 2 * stddev is known as Wald confidence interval, plus 0.5 would be continuity-corrected Wald interval
-		if float64(topns[topNNum-1].Count) > selectivity*n+2*stddev+0.5 {
+		if float64(topns[topNNum-1].TopNMeta.Count) > selectivity*n+2*stddev+0.5 {
 			// Estimated selectivity of this item in the TopN is significantly higher than values not in TopN.
 			// So this value, and all other values in the TopN (selectivity of which is higher than this value) are
 			// worth being remained in the TopN list, and we stop pruning now.
@@ -604,7 +610,7 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		if topNNum == 0 {
 			break
 		}
-		sumCount -= topns[topNNum-1].Count
+		sumCount -= topns[topNNum-1].TopNMeta.Count
 	}
 	return topns[:topNNum]
 }
