@@ -458,7 +458,8 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
-	var idxResults []RowRecords
+	var idxResult RowRecords
+	chunkNum := 0
 	t := time.Now()
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		failpoint.Inject("mockScanRecordError", func() {
@@ -487,38 +488,53 @@ func (w *kvScanWorker) scanRecords(task TableScanTask, sender func(RowRecords)) 
 				w.recycleChunk(srcChk)
 				return err
 			}
-
-			idxResults = append(idxResults, RowRecords{
+			idxResult = RowRecords{
 				ID:       task.ID,
 				Chunk:    rowRecords,
 				Done:     taskDone,
 				ctx:      w.ctx,
 				NextKey:  nextKey,
 				TaskDone: taskDone,
-			})
+			}
+			rowCnt := len(idxResult.Chunk)
+			if w.cpOp != nil {
+				w.cpOp.UpdateChunk(task.ID, rowCnt, done)
+			}
+			w.totalCount.Add(int64(rowCnt))
+			sender(idxResult)
+			chunkNum++
+			//idxResults = append(idxResults, RowRecords{
+			//	ID:       task.ID,
+			//	Chunk:    rowRecords,
+			//	Done:     taskDone,
+			//	ctx:      w.ctx,
+			//	NextKey:  nextKey,
+			//	TaskDone: taskDone,
+			//})
 			handleRange.startKey = nextKey
 			done = taskDone
 		}
 		return nil
 	})
+
 	logutil.Logger(w.ctx).Info("scanRecords",
-		zap.Int("chunkNum", len(idxResults)),
+		zap.Int("chunkNum", chunkNum),
 		zap.Duration("takeTime", time.Since(t)),
-		zap.Duration("avgTimePerChunk", time.Since(t)/time.Duration(len(idxResults))),
+		zap.Duration("avgTimePerChunkRead&Send", time.Since(t)/time.Duration(chunkNum)),
 	)
 
 	if err != nil {
 		w.ctx.onError(err)
 	}
-	for i, idxResult := range idxResults {
-		sender(idxResult)
-		rowCnt := len(idxResult.Chunk)
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, rowCnt, done)
-		}
-		w.totalCount.Add(int64(rowCnt))
-	}
+	//for i, idxResult := range idxResults {
+	//	sender(idxResult)
+	//	rowCnt := len(idxResult.Chunk)
+	//	if w.cpOp != nil {
+	//		done := i == len(idxResults)-1
+	//		w.cpOp.UpdateChunk(task.ID, rowCnt, done)
+	//	}
+	//	w.totalCount.Add(int64(rowCnt))
+	//}
 }
 
 func (w *kvScanWorker) fetchRowColVals(startTS uint64, taskRange reorgBackfillTask, rowRecords []*rowRecord) ([]*rowRecord, kv.Key, bool, error) {
@@ -559,7 +575,7 @@ func (w *kvScanWorker) fetchRowColVals(startTS uint64, taskRange reorgBackfillTa
 		taskDone = true
 	}
 
-	ddllogutil.DDLLogger().Debug("txn fetches handle info",
+	ddllogutil.DDLLogger().Info("txn fetches handle info",
 		zap.Uint64("txnStartTS", startTS),
 		zap.String("taskRange", taskRange.String()),
 		zap.Duration("takeTime", time.Since(startTime)),
