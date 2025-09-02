@@ -1352,19 +1352,19 @@ func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
 }
 
 // PosFromPositionExpr generates a position value from PositionExpr.
-func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, error) {
+func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (pos int, isNull, isParameterizedPos bool, err error) {
 	if v.P == nil {
-		return v.N, false, nil
+		return v.N, false, false, nil
 	}
 	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr), false)
 	if err != nil {
-		return 0, true, err
+		return 0, true, true, err
 	}
-	pos, isNull, err := GetIntFromConstant(ctx.GetEvalCtx(), value)
+	pos, isNull, err = GetIntFromConstant(ctx.GetEvalCtx(), value)
 	if err != nil || isNull {
-		return 0, true, err
+		return 0, true, true, err
 	}
-	return pos, false, nil
+	return pos, false, true, nil
 }
 
 // GetStringFromConstant gets a string value from the Constant expression.
