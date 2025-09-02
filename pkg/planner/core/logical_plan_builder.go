@@ -117,7 +117,7 @@ func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 
 func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	if v, ok := inNode.(*ast.PositionExpr); ok {
-		pos, isNull, err := expression.PosFromPositionExpr(a.ctx.GetExprCtx(), v)
+		pos, isNull, _, err := expression.PosFromPositionExpr(a.ctx.GetExprCtx(), v)
 		if err != nil {
 			a.err = err
 		}
@@ -2917,12 +2917,23 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 	case *ast.PositionExpr:
-		pos, isNull, err := expression.PosFromPositionExpr(g.ctx.GetExprCtx(), v)
+		pos, isNull, isParameterizedPos, err := expression.PosFromPositionExpr(g.ctx.GetExprCtx(), v)
 		if err != nil {
 			g.err = plannererrors.ErrUnknown.GenWithStackByArgs()
 		}
 		if err != nil || isNull {
 			return inNode, false
+		}
+		if pos < 1 && isParameterizedPos {
+			pme := v.P.(*driver.ParamMarkerExpr)
+			for idx, field := range g.fields {
+				if expr, ok := field.Expr.(*driver.ParamMarkerExpr); ok {
+					if expr.ValueExpr.Equals(pme.ValueExpr.Datum) {
+						pos = idx
+						break
+					}
+				}
+			}
 		}
 		if pos < 1 || pos > len(g.fields) {
 			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", pos)

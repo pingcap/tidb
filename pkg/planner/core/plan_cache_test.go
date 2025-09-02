@@ -257,13 +257,41 @@ func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 func TestIssue53872(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table test(id int, col int)`)
 	tk.MustExec(`prepare stmt from "select id, ? as col1 from test where col=? group by id,col1"`)
 	tk.MustExec(`set @a=100, @b=100`)
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // no error
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+	tk.MustExec(`create table t1(id bigint primary key, name varchar(100));`)
+	tk.MustExec(`INSERT INTO t1 (id, name) VALUES (1, 'Alice'),(2, 'Bob'),(3, 'Charlie'),(4, 'David'),(5, 'Eve'),(6, 'Frank'),(7, 'Grace'),(8, 'Hannah'),(9, 'Ivy'),(10, 'Jack'),(11, null);`)
+	tk.MustExec(`prepare stmt from 'select name, ? from t1 group by name, ? order by name';`)
+	tk.MustExec(`set @a="0", @b="0";`)
+	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
+		`<nil> 0`,
+		`Alice 0`,
+		`Bob 0`,
+		`Charlie 0`,
+		`David 0`,
+		`Eve 0`,
+		`Frank 0`,
+		`Grace 0`,
+		`Hannah 0`,
+		`Ivy 0`,
+		`Jack 0`))
+	tk.MustExec(`set @a="abc", @b="abc";`)
+	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
+		`<nil> abc`,
+		`Alice abc`,
+		`Bob abc`,
+		`Charlie abc`,
+		`David abc`,
+		`Eve abc`,
+		`Frank abc`,
+		`Grace abc`,
+		`Hannah abc`,
+		`Ivy abc`,
+		`Jack abc`))
 }
 
 func TestIssue38269(t *testing.T) {
