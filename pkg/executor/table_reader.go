@@ -275,16 +275,23 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	e.resultHandler = &tableResultHandler{}
 
-	// Convert regular ranges to grouped ranges if needed to unify processing logic
-	var currentGroupedRanges [][]*ranger.Range
+	var groupedRanges [][]*ranger.Range
 	if len(e.groupedRanges) > 0 {
-		currentGroupedRanges = e.groupedRanges
+		groupedRanges = e.groupedRanges
 	} else if len(e.ranges) > 0 {
-		// Convert []Range to [][]Range (single group)
-		currentGroupedRanges = [][]*ranger.Range{e.ranges}
+		groupedRanges = [][]*ranger.Range{e.ranges}
 	}
 
-	firstPartGroupedRanges, secondPartGroupedRanges := distsql.SplitGroupedRangesAcrossInt64Boundary(currentGroupedRanges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+	var firstPartGroupedRanges, secondPartGroupedRanges [][]*ranger.Range
+	for _, ranges := range groupedRanges {
+		signedRanges, unsignedRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+		if len(signedRanges) > 0 {
+			firstPartGroupedRanges = append(firstPartGroupedRanges, signedRanges)
+		}
+		if len(unsignedRanges) > 0 {
+			secondPartGroupedRanges = append(secondPartGroupedRanges, unsignedRanges)
+		}
+	}
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
@@ -301,23 +308,19 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			// [9734095886065816709 9734095886065816708 9734095886065816707 65535 3  1] => rows reverse in UnionScan
 			firstPartGroupedRanges, secondPartGroupedRanges = secondPartGroupedRanges, firstPartGroupedRanges
 		}
-		if len(firstPartGroupedRanges) > 0 {
-			for _, ranges := range firstPartGroupedRanges {
-				kvReq, err := e.buildKVReq(ctx, ranges)
-				if err != nil {
-					return err
-				}
-				e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
+		for _, ranges := range firstPartGroupedRanges {
+			kvReq, err := e.buildKVReq(ctx, ranges)
+			if err != nil {
+				return err
 			}
+			e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		}
-		if len(secondPartGroupedRanges) > 0 {
-			for _, ranges := range secondPartGroupedRanges {
-				kvReq, err := e.buildKVReq(ctx, ranges)
-				if err != nil {
-					return err
-				}
-				e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
+		for _, ranges := range secondPartGroupedRanges {
+			kvReq, err := e.buildKVReq(ctx, ranges)
+			if err != nil {
+				return err
 			}
+			e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		}
 		return nil
 	}
