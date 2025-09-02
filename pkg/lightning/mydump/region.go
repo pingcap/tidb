@@ -364,18 +364,18 @@ func MakeSourceFileRegion(
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.RealSize)}, nil
 }
 
-// NeedPreciseRowCount determines whether the target table requires a precise row count, which is used to for
+// SkipReadRowCount determines whether the target table requires a precise row count, which is used to for
 // auto-increment and auto-random columns. If any unique/primary index contains these columns,
 // we should read the actual row count to prevent generating duplicate key. Otherwise, the row
 // count is not used, so we can skip reading the row count to improve performance.
-func NeedPreciseRowCount(tblInfo *model.TableInfo) bool {
+func SkipReadRowCount(tblInfo *model.TableInfo) bool {
 	// Some tests may not set the table info.
 	if tblInfo == nil {
-		return true
+		return false
 	}
 
 	if common.TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
-		return true
+		return false
 	}
 
 	for _, idx := range tblInfo.Indices {
@@ -385,18 +385,18 @@ func NeedPreciseRowCount(tblInfo *model.TableInfo) bool {
 		for _, col := range idx.Columns {
 			colInfo := tblInfo.Columns[col.Offset]
 			if mysql.HasAutoIncrementFlag(colInfo.GetFlag()) {
-				return true
+				return false
 			}
 		}
 	}
 
 	for _, col := range tblInfo.Columns {
 		if mysql.HasPriKeyFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(col.GetFlag()) {
-			return true
+			return false
 		}
 	}
 
-	return false
+	return true
 }
 
 // because parquet files can't seek efficiently, there is no benefit in split.

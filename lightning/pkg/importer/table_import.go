@@ -289,7 +289,7 @@ func (tr *TableImporter) Close() {
 func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
 	divideConfig := mydump.NewDataDivideConfig(rc.cfg, len(tr.tableInfo.Core.Columns), rc.ioWorkers, rc.store, tr.tableMeta)
-	divideConfig.SkipParquetRowCount = mydump.NeedPreciseRowCount(tr.tableInfo.Desired)
+	divideConfig.SkipParquetRowCount = mydump.SkipReadRowCount(tr.tableInfo.Desired)
 	tableRegions, err := mydump.MakeTableRegions(ctx, divideConfig)
 	if err == nil {
 		timestamp := time.Now().Unix()
