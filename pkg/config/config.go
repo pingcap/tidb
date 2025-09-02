@@ -540,7 +540,7 @@ type Instance struct {
 	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
 	InstancePlanCacheMaxMemSize string `toml:"tidb_instance_plan_cache_max_size" json:"tidb_instance_plan_cache_max_size"`
 	// StatsCacheMemQuota records stats cache quota.
-	StatsCacheMemQuota int64 `toml:"tidb_stats_cache_mem_quota" json:"tidb_stats_cache_mem_quota"`
+	StatsCacheMemQuota uint64 `toml:"tidb_stats_cache_mem_quota" json:"tidb_stats_cache_mem_quota"`
 	// MemQuotaBindingCache indicates the memory quota for the bind cache.
 	MemQuotaBindingCache uint64 `toml:"tidb_mem_quota_binding_cache" json:"tidb_mem_quota_binding_cache"`
 	// SchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
