@@ -279,20 +279,16 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 func (t *ManagerCtx) FinishPartitionUpload(
 	ctx context.Context,
 	tidbTaskID string,
-	tableID int64,
-	indexID int64,
 	lowerBound, upperBound []byte,
-	storagePath string,
+	storageUri string,
 ) error {
 	req := &FinishImportPartitionUploadRequest{
 		TidbTaskId: tidbTaskID,
-		TableId:    tableID,
-		IndexId:    indexID,
 		KeyRange: &KeyRange{
 			StartKey: lowerBound,
 			EndKey:   upperBound,
 		},
-		StoragePath: storagePath,
+		StorageUri: storageUri,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -306,12 +302,10 @@ func (t *ManagerCtx) FinishPartitionUpload(
 	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("FinishPartitionUpload failed",
 			zap.String("tidbTaskID", tidbTaskID),
-			zap.Int64("tableID", tableID),
-			zap.Int64("indexID", indexID),
 			zap.String("startKey", hex.EncodeToString(lowerBound)),
 			zap.String("endKey", hex.EncodeToString(upperBound)),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return fmt.Errorf("tici finish partition upload finished error: %s", resp.ErrorMessage)
+		return fmt.Errorf("tici FinishPartitionUpload error: %s", resp.ErrorMessage)
 	}
 	return nil
 }
@@ -320,13 +314,9 @@ func (t *ManagerCtx) FinishPartitionUpload(
 func (t *ManagerCtx) FinishIndexUpload(
 	ctx context.Context,
 	tidbTaskID string,
-	tableID int64,
-	indexID int64,
 ) error {
 	req := &FinishImportIndexUploadRequest{
 		TidbTaskId: tidbTaskID,
-		TableId:    tableID,
-		IndexId:    indexID,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -340,10 +330,8 @@ func (t *ManagerCtx) FinishIndexUpload(
 	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("FinishIndexUpload failed",
 			zap.String("tidbTaskID", tidbTaskID),
-			zap.Int64("tableID", tableID),
-			zap.Int64("indexID", indexID),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return fmt.Errorf("tici mark table upload finished error: %s", resp.ErrorMessage)
+		return fmt.Errorf("tici FinishIndexUpload error: %s", resp.ErrorMessage)
 	}
 	return nil
 }

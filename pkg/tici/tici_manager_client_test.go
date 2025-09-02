@@ -140,21 +140,21 @@ func TestFinishPartitionUpload(t *testing.T) {
 		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
-	assert.NoError(t, ctx.FinishPartitionUpload(context.Background(), taskID, tableID, indexID, lower, upper, "/s3/path"))
+	assert.NoError(t, ctx.FinishPartitionUpload(context.Background(), taskID, lower, upper, "/s3/path"))
 
 	// 2nd call – business error from TiCI
 	mockClient.
 		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
-	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, tableID, indexID, lower, upper, "/s3/path"))
+	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, lower, upper, "/s3/path"))
 
 	// 3rd call – RPC error
 	mockClient.
 		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
-	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, tableID, indexID, lower, upper, "/s3/path"))
+	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, lower, upper, "/s3/path"))
 
 	mockClient.AssertExpectations(t)
 }
@@ -163,27 +163,26 @@ func TestFinishIndexUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
 	taskID := "tidb-task-123"
-	tableID, indexID := int64(1), int64(2)
 
 	mockClient.
 		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
-	err := ctx.FinishIndexUpload(context.Background(), taskID, tableID, indexID)
+	err := ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.NoError(t, err)
 
 	mockClient.
 		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
-	err = ctx.FinishIndexUpload(context.Background(), taskID, tableID, indexID)
+	err = ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.Error(t, err)
 
 	mockClient.
 		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
-	err = ctx.FinishIndexUpload(context.Background(), taskID, tableID, indexID)
+	err = ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.Error(t, err)
 }
 

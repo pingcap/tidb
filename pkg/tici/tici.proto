@@ -16,16 +16,16 @@ syntax = "proto3";
 
 package tici;
 
-// import "gogoproto/gogo.proto";
-// import "rustproto.proto";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
 
-// option (gogoproto.sizer_all) = true;
-// option (gogoproto.marshaler_all) = true;
-// option (gogoproto.unmarshaler_all) = true;
-// option (gogoproto.goproto_unkeyed_all) = false;
-// option (gogoproto.goproto_unrecognized_all) = false;
-// option (gogoproto.goproto_sizecache_all) = false;
-// option (rustproto.lite_runtime_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.goproto_sizecache_all) = false;
+option (rustproto.lite_runtime_all) = true;
 
 enum ErrorCode {
   SUCCESS = 0;
@@ -37,6 +37,7 @@ enum ErrorCode {
   WORKER_NOT_FOUND = 13;
   SHARD_NOT_SCHEDULED = 14;
   COMPACTION_NOT_FOUND = 15;
+  FRAG_RANGE_MISMATCH = 16;
 }
 
 message WorkerNodeStatus {
@@ -62,11 +63,6 @@ message ReaderNodeStatus {
 message WorkerNodeShardStatus {
   bytes start_key = 1;
   bytes end_key = 2;
-  // TODO shard_id is unique across tables and indexes.
-  // We still need them because in meta service we are not currently maintain
-  // this correspondence.
-  int64 table_id = 3;
-  int64 index_id = 4;
   uint64 shard_id = 5;
   uint64 epoch = 6;
   uint64 seq = 7;
@@ -206,6 +202,7 @@ message DebugGetShardManifestResponse {
   int32 status = 1;
   repeated FragMeta frag_metas = 2;
   uint64 shard_id = 3;
+  uint64 seq = 4;
 }
 
 service MetaService {
@@ -373,6 +370,7 @@ message ShardManifestHeader {
   bytes start_key = 2;
   bytes end_key = 3;
   uint64 epoch = 4;
+  uint64 seq = 5;
 }
 
 message S3Location {
@@ -535,35 +533,42 @@ message GetIndexProgressResponse {
 // -----------------------------------------------------------------------------
 // TiCI Full-text index data import workflow during Import Into (with DXF):
 // -----------------------------------------------------------------------------
-// 1. TiDB requests a cloud storage object path ("file") from the TiCI Meta
-//    Service. It provides the table info, index info, and key range for the
-//    specific data shard. TiDB import code path expects a unique file path
-//    for each shard to write its key-value pairs. Currently, only S3 is
-//    supported as the cloud storage backend.
+// 1. TiDB requests a cloud storage object prefix from the TiCI Meta Service.
+//    It provides a unique tidb_task_id that specify a job in the TiDB side. A
+//    job means one Import Into or Create Index operation.
 //
-// 2. After import DXF has uploaded one partition data belonging to a baseline
-//    full text index, it calls `FinishPartitionUpload`. This allows
+// 2. Import DXF generate the files for partition data and upload them to the
+//    cloud storage prefix returned by TiCI. The files should contain the
+//    table info, indexes info and the key-value pairs within a specific
+//    key-range.
+//
+// 3. After import DXF has uploaded one partition data belonging to a baseline
+//    full text index, it calls `FinishImportPartitionUpload`. This allows
 //    TiCI to mark the partition as complete and make it available to downstream
 //    consumers.
 //
-// 3. After import DXF has uploaded all partitions data belonging to a baseline
-//    full text index on a table, it calls `FinishIndexUploadRequest`.
-//    This allows TiCI to mark the table as complete and make it available to
+// 4. After import DXF has uploaded all partitions data belonging to a baseline
+//    full text index on a job, it calls `FinishImportIndexUpload`.
+//    This allows TiCI to mark the job as complete and make it available to
 //    GC data after consumed by downstream consumers.
 // -----------------------------------------------------------------------------
 
 message GetImportStoragePrefixRequest {
-  // TiDB unique task ID for this Import Index job.
+  // TiDB unique task ID for this Import Into/Create Index job.
   string tidb_task_id = 1;
   // Table ID of the target table.
   int64 table_id = 2;
-  // Index ID of the target index.
   int64 index_id = 3;
+  // TODO: use repeated index_ids
+  // Index ID of the target index. If this is an Import Into job that relates
+  // to multiple indexes, this field should contain all the index IDs.
+  // repeated int64 index_ids = 3;
 }
 
 message GetImportStoragePrefixResponse {
   ErrorCode status = 1;
-  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  // Optional human‑readable diagnostics, only defined when status is not
+  // SUCCESS.
   string error_message = 2;
   // The import index job_id in TiCI
   uint64 job_id = 3;
@@ -573,13 +578,13 @@ message GetImportStoragePrefixResponse {
 }
 
 message FinishImportPartitionUploadRequest {
-  // TiDB unique task ID for this Import Index job.
+  // TiDB unique task ID for this Import Into/Create Index job.
   string tidb_task_id = 1;
-  int64 table_id = 2;
-  int64 index_id = 3;
   // Key range for the partition uploaded.
-  KeyRange key_range = 4;
-  string storage_path = 5;
+  KeyRange key_range = 2;
+  // The cloud storage path where the partition data is written.
+  // The format is "s3://bucket/prefix/filename".
+  string storage_uri = 3;
 }
 
 // - If the index is built successfully, the `status` field should be 0,
@@ -597,22 +602,25 @@ message FinishImportPartitionBuildRequest {
   ErrorCode status = 4;
   // The uploaded fragment metadata when status is 0.
   repeated FragMeta frag_metas = 5;
-  // The error message if the status is not 0.
+  // The error message if the status is not SUCCESS.
   string error_message = 6;
 }
 
 message FinishImportIndexUploadRequest {
-  // TiDB unique task ID for this Import Index job.
+  // TiDB unique task ID for this Import Into/Create Index job.
   string tidb_task_id = 1;
-  // Table ID of the target table.
-  int64 table_id = 2;
-  // Index ID of the target index.
-  int64 index_id = 3;
+  // If status is SUCCESS, the job is finished successfully.
+  // If status is not SUCCESS, the job is aborted or cancelled in TiDB side,
+  // and TiCI should clean up all the related data.
+  ErrorCode status = 2;
+  // The error_message if the status is not SUCCESS.
+  string error_message = 3;
 }
 
 message FinishImportResponse {
   ErrorCode status = 1;
-  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  // Optional human‑readable diagnostics, only defined when status is not
+  // SUCCESS.
   string error_message = 2;
 }
 

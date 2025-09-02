@@ -158,7 +158,7 @@ func (w *DataWriter) FinishPartitionUpload(
 		logger.Warn("no s3Path set for FinishPartitionUpload")
 		return nil // or return an error if s3Path is required
 	}
-	err := ticiMgr.FinishPartitionUpload(ctx, w.tidbTaskID, w.tblInfo.ID, w.idxInfo.ID, lowerBound, upperBound, s3Path)
+	err := ticiMgr.FinishPartitionUpload(ctx, w.tidbTaskID, lowerBound, upperBound, s3Path)
 	if err != nil {
 		logger.Error("failed to finish partition upload",
 			zap.String("startKey", hex.EncodeToString(lowerBound)),
@@ -180,7 +180,7 @@ func (w *DataWriter) FinishIndexUpload(
 	ticiMgr *ManagerCtx,
 ) error {
 	logger := w.logger
-	if err := ticiMgr.FinishIndexUpload(ctx, w.tidbTaskID, w.tblInfo.ID, w.idxInfo.ID); err != nil {
+	if err := ticiMgr.FinishIndexUpload(ctx, w.tidbTaskID); err != nil {
 		logger.Error("failed to finish index upload", zap.Error(err))
 		return err
 	}
