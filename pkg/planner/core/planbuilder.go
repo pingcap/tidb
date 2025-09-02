@@ -2357,7 +2357,9 @@ func getModifiedIndexesInfoForAnalyze(
 		// * we analyze the reorg state index.
 		// change column with covered index analyze:
 		// * we analyze the public state index.
-		if originIdx.State != model.StatePublic && !sCtx.GetSessionVars().EnableDDLAnalyze {
+		indexStateAnalyzable := originIdx.State == model.StatePublic ||
+			(originIdx.State == model.StateWriteReorganization && sCtx.GetSessionVars().EnableDDLAnalyze)
+		if !indexStateAnalyzable {
 			continue
 		}
 		if handleutil.IsSpecialGlobalIndex(originIdx, tblInfo) {

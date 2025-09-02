@@ -17,7 +17,6 @@ package planstats_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"slices"
 	"strings"
 	"testing"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/stretchr/testify/require"
 )
 
