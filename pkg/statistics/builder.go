@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -84,11 +85,11 @@ func (s *SequentialRangeChecker) IsIndexInTopNRange(idx int64) bool {
 	return false
 }
 
-// processTopNValueHeap handles the logic for a complete TopN value count using existing heap with range tracking.
-func processTopNValueHeap(topNHeap *TopNHeap[TopNWithRange], encoded []byte, curCnt float64,
+// processTopNValue handles the logic for a complete TopN value count using existing priority queue with range tracking.
+func processTopNValue(topNPriorityQueue *generic.PriorityQueue[TopNWithRange], encoded []byte, curCnt float64,
 	startIdx, endIdx int64, numTopN int, allowPruning bool, sampleFactor float64) {
 	// case 1: prune values with count of 1 under certain conditions
-	if curCnt == 1 && allowPruning && (topNHeap.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
+	if curCnt == 1 && allowPruning && (topNPriorityQueue.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
 		return
 	}
 
@@ -98,7 +99,7 @@ func processTopNValueHeap(topNHeap *TopNHeap[TopNWithRange], encoded []byte, cur
 		startIdx: startIdx,
 		endIdx:   endIdx,
 	}
-	topNHeap.Add(newItem)
+	topNPriorityQueue.Add(newItem)
 }
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -430,7 +431,7 @@ func BuildHistAndTopN(
 
 	// Step1: collect topn from samples using heap and track their index ranges
 	// use heap for efficient TopN maintenance - O(log N) insertions
-	topNHeap := NewTopNHeap(numTopN, func(a, b TopNWithRange) int {
+	topNHeap := generic.NewPriorityQueue(numTopN, func(a, b TopNWithRange) int {
 		if a.Count < b.Count {
 			return -1 // min-heap: smaller counts at root
 		} else if a.Count > b.Count {
@@ -472,7 +473,7 @@ func BuildHistAndTopN(
 		// case 2, meet a different value: counting for the "current" is complete
 		sampleNDV++
 		// process the completed value using heap with range tracking
-		processTopNValueHeap(topNHeap, cur, curCnt, curStartIdx, int64(i)-1, numTopN, allowPruning, sampleFactor)
+		processTopNValue(topNHeap, cur, curCnt, curStartIdx, i-1, numTopN, allowPruning, sampleFactor)
 
 		cur, curCnt = sampleBytes, 1
 		curStartIdx = i // new value group starts at current index
@@ -485,7 +486,7 @@ func BuildHistAndTopN(
 
 	// handle the counting for the last value
 	if numTopN != 0 {
-		processTopNValueHeap(topNHeap, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor)
+		processTopNValue(topNHeap, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor)
 	}
 
 	// convert heap to sorted slice
