@@ -140,6 +140,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
 		zap.Int("maxNodeCount", m.MaxNodeCount),
+		zap.Int64("tableSizeInBytes", tableSizeInBytes),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
 	)
