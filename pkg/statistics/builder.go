@@ -247,7 +247,7 @@ func buildHist(
 	corrXYSum = float64(0)
 
 	// find the first non-skipped sample to initialize the histogram
-	var firstSampleIdx int64 = 0
+	var firstSampleIdx int64
 	if checker != nil {
 		for i := range sampleNum {
 			if !checker.IsIndexInTopNRange(i) {
