@@ -98,6 +98,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
+	cartesianRiskRatio := s.ctx.GetSessionVars().RiskCartesianJoinOrderRatio
 	for {
 		bestCost := math.MaxFloat64
 		bestIdx, whateverValidOneIdx, bestIsCartesian := -1, -1, false
@@ -105,7 +106,8 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		var bestJoin, whateverValidOne base.LogicalPlan
 		for i, node := range s.curJoinGroup {
 			newJoin, remainOthers, isCartesian := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
-			if newJoin == nil {
+			if newJoin == nil || // can't yield a valid join
+				(cartesianRiskRatio <= 0 && isCartesian) { // disable cartesian join
 				continue
 			}
 			_, _, err := newJoin.RecursiveDeriveStats(nil)
@@ -118,11 +120,10 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
 			tracer.appendLogicalJoinCost(newJoin, curCost)
 
-			// Cartesian join is risky but skip it brutally may lead to bad join orders, see #63290.
-			// To trade-off the risk and the quality of join order, we introduce a cartesianRiskRatio to control
-			// the preference of non-cartesian join over cartesian join.
+			// Cartesian join is risky but skipping it brutally may lead to bad join orders, see #63290.
+			// To trade-off, we use a ratio as penalty to control the preference.
+			// Only select a cartesian join when cost(cartesian)*ratio < cost(non-cartesian).
 			curIsBetter := false
-			cartesianRiskRatio := 100.0 // TODO: make it configurable?
 			if !bestIsCartesian && isCartesian {
 				curIsBetter = curCost*cartesianRiskRatio < bestCost
 			} else if bestIsCartesian && !isCartesian {

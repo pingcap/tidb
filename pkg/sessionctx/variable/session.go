@@ -1032,6 +1032,12 @@ type SessionVars struct {
 	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
 	RiskGroupNDVSkewRatio float64
 
+	// RiskCartesianJoinOrderRatio controls whether to allow do Cartesian Join first in Join Reorder.
+	// This variable is used as a penalty to trade off the risk and join order quality.
+	// When 0: never do Cartesian Join first.
+	// When > 0: allow Cartesian Join if cost(cartesian join) * ratio < cost(non cartesian join).
+	RiskCartesianJoinOrderRatio float64
+
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -2202,6 +2208,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
 		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
+		RiskCartesianJoinOrderRatio:   vardef.DefOptRiskCartesianJoinOrderRatio,
 		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,

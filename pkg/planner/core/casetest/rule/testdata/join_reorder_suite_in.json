@@ -52,7 +52,8 @@
   {
     "name": "TestCartesianJoinOrder",
     "cases": [
-      "select 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b"
+      "select /*+ set_var(tidb_opt_risk_cartesian_join_order_ratio=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
+      "select /*+ set_var(tidb_opt_risk_cartesian_join_order_ratio=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b"
     ]
   },
   {
