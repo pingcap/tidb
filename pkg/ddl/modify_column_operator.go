@@ -92,7 +92,7 @@ func NewModifyColumnTxnPipeline(
 	operator.Compose(scanOp, ingestOp)
 	operator.Compose(ingestOp, sinkOp)
 
-	logutil.Logger(ctx).Info("build add index local storage operators",
+	logutil.Logger(ctx).Info("build modify column operators",
 		zap.Int64("jobID", jobID),
 		zap.Int("avgRowSize", avgRowSize),
 		zap.Int("reader", readerCnt),
@@ -191,7 +191,7 @@ func (w *txnCommitWorker) HandleTask(ck RowRecords, send func(IndexWriteResult))
 		if ck.Chunk != nil {
 			w.srcChunkPool.Put(ck.Chunk)
 		}
-		ddllogutil.DDLLogger().Info("txn commit worker handle task",
+		ddllogutil.DDLLogger().Debug("txn commit worker handle task",
 			zap.Duration("takeTime", time.Since(t)),
 		)
 		w.totalDur += time.Since(t)
@@ -601,7 +601,7 @@ func (w *kvScanWorker) fetchRowColVals(startTS uint64, taskRange reorgBackfillTa
 		taskDone = true
 	}
 
-	ddllogutil.DDLLogger().Info("txn fetches handle info",
+	ddllogutil.DDLLogger().Debug("txn fetches handle info",
 		zap.Uint64("txnStartTS", startTS),
 		zap.String("taskRange", taskRange.String()),
 		zap.Duration("takeTime", time.Since(startTime)),
