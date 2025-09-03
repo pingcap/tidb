@@ -1144,22 +1144,30 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
+	tableFilterResult := 0
+	if len(lhs.path.TableFilters) < len(rhs.path.TableFilters) {
+		tableFilterResult = 1
+	} else if len(lhs.path.TableFilters) > len(rhs.path.TableFilters) {
+		tableFilterResult = -1
+	}
 
-	// sum is the aggregate score of various comparison metrics between lhs and rhs. riskResult is excluded
-	// because more work is required.
+	// indexSum is the aggregate score of index predicate comparison metrics
+	// totalSum is the aggregate score of all comparison metrics
+	// riskResult is excluded because more work is required.
 	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
 	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
 	// bound was applied, etc.)
-	sum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
+	indexSum := accessResult + scanResult + eqOrInResult + tableFilterResult
+	totalSum := indexSum + matchResult + globalResult
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
 		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
-		if pseudoResult > 0 && sum >= 0 {
+		if pseudoResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
 		}
-		if pseudoResult < 0 && sum <= 0 {
+		if pseudoResult < 0 && totalSum <= 0 {
 			return pseudoResult, rhsPseudo
 		}
 	}
@@ -1191,16 +1199,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// (5): whether the path has more equal/IN predicates.
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
-	if !comparable1 {
+	if !comparable1 && !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if !comparable2 {
-		return 0, false // No winner (0). Do not return the pseudo result
-	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && sum > 0 {
+	if indexSum > 0 && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && sum < 0 {
+	if indexSum < 0 && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
@@ -1278,10 +1283,9 @@ func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqO
 
 func isFullIndexMatch(candidate *candidatePath) bool {
 	// Check if the DNF condition is a full match
-	if candidate.hasOnlyEqualPredicatesInDNF() {
-		return true
+	if candidate.path.IsDNFCond && candidate.hasOnlyEqualPredicatesInDNF() {
+		return candidate.path.MinAccessCondsForDNFCond == len(candidate.path.Index.Columns)
 	}
-	// Return the non-DNF full index match result
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
