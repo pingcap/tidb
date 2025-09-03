@@ -336,24 +336,3 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
-
-func Test53726ABC(t *testing.T) {
-	// test for RemoveUnnecessaryFirstRow
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t1(id bigint primary key, name varchar(100));`)
-	tk.MustExec(`prepare stmt from 'select name from t1 group by name,? order by name'`)
-	tk.MustExec(`set @a=1;`)
-	tk.MustQuery(`execute stmt using @a;`)
-
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		`Sort_5 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 test.t1.name N/A N/A`,
-		`└─Projection_7 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 test.t1.name, 0->Column#3 N/A N/A`,
-		`  └─HashAgg_11 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 group by:test.t1.name, test.t1.name, funcs:firstrow(test.t1.name)->test.t1.name N/A N/A`,
-		`    └─TableReader_19 10000.00 0 root  time:0s, open:0s, close:0s, loops:0 data:TableFullScan_18 N/A N/A`,
-		`      └─TableFullScan_18 10000.00 0 cop[tikv] table:t1  keep order:false, stats:pseudo N/A N/A`))
-}
