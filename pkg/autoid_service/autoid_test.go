@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -78,6 +79,12 @@ func TestConcurrent(t *testing.T) {
 
 	to := dest{dbID: dbInfo.ID, tblID: tbInfo.ID}
 
+	var keyspaceID uint32
+	if kerneltype.IsClassic() {
+		keyspaceID = uint32(tikv.NullspaceID)
+	} else {
+		keyspaceID = uint32(0xFFFFFF - 1)
+	}
 	const concurrency = 30
 	notify := make(chan struct{})
 	var wg sync.WaitGroup
@@ -86,18 +93,18 @@ func TestConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-notify
-			autoIDRequest(t, cli, to, false, 1, uint32(tikv.NullspaceID))
+			autoIDRequest(t, cli, to, false, 1, keyspaceID)
 		}()
 	}
 
 	// Rebase to some value
 	rebaseRequest(t, cli, to, true, 666).check("")
-	checkCurrValue(t, cli, to, 666, 666, uint32(tikv.NullspaceID))
+	checkCurrValue(t, cli, to, 666, 666, keyspaceID)
 	// And +1 concurrently for 30 times
 	close(notify)
 	wg.Wait()
 	// Check the result is increased by 30
-	checkCurrValue(t, cli, to, 666+concurrency, 666+concurrency, uint32(tikv.NullspaceID))
+	checkCurrValue(t, cli, to, 666+concurrency, 666+concurrency, keyspaceID)
 }
 
 type dest struct {
@@ -140,14 +147,17 @@ func rebaseRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 }
 
 func TestAPI(t *testing.T) {
-	// Testing scenarios without keyspace.
-	testAPIWithKeyspace(t, nil)
+	if kerneltype.IsClassic() {
+		// Testing scenarios without keyspace.
+		testAPIWithKeyspace(t, nil)
+	}
 
 	if kerneltype.IsNextGen() {
 		// Testing scenarios with keyspace.
-		keyspaceMeta := keyspacepb.KeyspaceMeta{}
-		keyspaceMeta.Id = 2
-		keyspaceMeta.Name = "test_ks_name2"
+		keyspaceMeta := keyspacepb.KeyspaceMeta{
+			Id:   uint32(0xFFFFFF) - 1,
+			Name: keyspace.System,
+		}
 		testAPIWithKeyspace(t, &keyspaceMeta)
 	}
 }
@@ -256,6 +266,12 @@ func TestGRPC(t *testing.T) {
 	grpcConn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	cli := autoid.NewAutoIDAllocClient(grpcConn)
+	var keyspaceID uint32
+	if kerneltype.IsClassic() {
+		keyspaceID = uint32(tikv.NullspaceID)
+	} else {
+		keyspaceID = uint32(0xFFFFFF - 1)
+	}
 	_, err = cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{
 		DbID:       0,
 		TblID:      0,
@@ -263,7 +279,7 @@ func TestGRPC(t *testing.T) {
 		Increment:  1,
 		Offset:     1,
 		IsUnsigned: false,
-		KeyspaceID: uint32(tikv.NullspaceID),
+		KeyspaceID: keyspaceID,
 	})
 	require.NoError(t, err)
 }
