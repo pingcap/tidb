@@ -2921,7 +2921,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		if err != nil {
 			g.err = plannererrors.ErrUnknown.GenWithStackByArgs()
 		}
-		if err != nil || isNull {
+		if err != nil || (isNull && !isParameterizedPos) {
 			return inNode, false
 		}
 		if pos < 1 && isParameterizedPos {
@@ -2929,10 +2929,14 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			for idx, field := range g.fields {
 				if expr, ok := field.Expr.(*driver.ParamMarkerExpr); ok {
 					if expr.ValueExpr.Equals(pme.ValueExpr.Datum) {
-						pos = idx
+						// pos starts from 1 now.
+						pos = idx + 1
 						break
 					}
 				}
+			}
+			if pos == 0 {
+				return inNode, false
 			}
 		}
 		if pos < 1 || pos > len(g.fields) {
