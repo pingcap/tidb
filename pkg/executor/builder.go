@@ -1522,6 +1522,16 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 				}
 			}
 		}
+		if len(x.byItems) == 0 {
+			for _, ic := range x.index.Columns {
+				for i, col := range x.columns {
+					if col.Name.L == ic.Name.L {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
+				}
+			}
+		}
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.partitionIDMap = x.partitionIDMap
@@ -1540,6 +1550,16 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 				if col.ID == c.ID {
 					us.usedIndex = append(us.usedIndex, i)
 					break
+				}
+			}
+		}
+		if len(x.byItems) == 0 {
+			for _, ic := range x.index.Columns {
+				for i, col := range x.columns {
+					if col.Name.L == ic.Name.L {
+						us.usedIndex = append(us.usedIndex, i)
+						break
+					}
 				}
 			}
 		}
