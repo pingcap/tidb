@@ -711,8 +711,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tuk where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-IndexReader_10	1.25	root		index:IndexRangeScan_9
-└─IndexRangeScan_9	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader_7	1.25	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b>0 and b<2;
 a	b	c
 NULL	1	NULL
@@ -780,8 +780,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-IndexReader_10	1.25	root		index:IndexRangeScan_9
-└─IndexRangeScan_9	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader_7	1.25	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tik where a<=>null and b>=1 and b<2;
 a	b	c
 NULL	1	NULL
@@ -1111,12 +1111,12 @@ Level	Code	Message
 Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 3 and g = 5;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_13	3.33	19531.97	root		
-├─IndexRangeScan_10(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
-└─Selection_12(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
-  └─TableRowIDScan_11	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_9	3.33	68078.81	root		
+├─Selection_8(Build)	3.33	924026.58	cop[tikv]		eq(planner__core__casetest__integration.t.g, 5)
+│ └─IndexRangeScan_6	3333.33	757693.25	cop[tikv]	table:t, index:f_g(f, g)	range:(3,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	3.33	923.53	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Note	1105	[f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
+Note	1105	[f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where g = 5 order by f;
 id	estRows	estCost	task	access object	operator info
 Sort_5	10.00	21321.97	root		planner__core__casetest__integration.t.f

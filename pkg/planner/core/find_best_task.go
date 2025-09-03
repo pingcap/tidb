@@ -1156,8 +1156,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	}
 	// Count the total number of filters for each path. We don't want to prioritize plans
 	// that only have 1 predicate. They should compete on cost.
-	lhsTotalIndexFilters := len(lhs.path.IndexFilters) + lhsEqOrInCount
-	rhsTotalIndexFilters := len(rhs.path.IndexFilters) + rhsEqOrInCount
+	lhsTotalIndexFilters := max(len(lhs.path.AccessConds), lhsEqOrInCount) + len(lhs.path.IndexFilters)
+	rhsTotalIndexFilters := max(len(rhs.path.AccessConds), rhsEqOrInCount) + len(rhs.path.IndexFilters)
 
 	// indexSum is the aggregate score of index predicate comparison metrics
 	// totalSum is the aggregate score of all comparison metrics
