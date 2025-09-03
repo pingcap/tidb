@@ -1125,8 +1125,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
 	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
-	lhsFullMatch := isFullIndexMatch(lhs)
-	rhsFullMatch := isFullIndexMatch(rhs)
+	lhsFullMatch := !lhsFullScan && isFullIndexMatch(lhs)
+	rhsFullMatch := !rhsFullScan && isFullIndexMatch(rhs)
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
@@ -1138,39 +1138,25 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// comparable1: whether the access conditions are comparable between LHS and RHS
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	// scanResult: comparison result of index back scan efficiency (1=LHS better, -1=RHS better, 0=equal)
+	//             scanResult will always be true for a table scan (because it is a single scan).
+	//             This has the effect of allowing the table scan plan to not be pruned.
 	// comparable2: whether the index back scan characteristics are comparable between LHS and RHS
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
-	// Count table filters - lowest wins. Do not count table filters if this is a table
-	// path, since that will inadvertently discourage a table path.
-	tableFilterResult := 0
-	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() {
-		if len(lhs.path.TableFilters) < len(rhs.path.TableFilters) {
-			tableFilterResult = 1
-		} else if len(lhs.path.TableFilters) > len(rhs.path.TableFilters) {
-			tableFilterResult = -1
-		}
-	}
-	// Count the total number of filters for each path. We don't want to prioritize plans
-	// that only have 1 predicate. They should compete on cost.
-	lhsTotalIndexFilters := max(len(lhs.path.AccessConds), lhsEqOrInCount) + len(lhs.path.IndexFilters)
-	rhsTotalIndexFilters := max(len(rhs.path.AccessConds), rhsEqOrInCount) + len(rhs.path.IndexFilters)
 
-	// indexSum is the aggregate score of index predicate comparison metrics
 	// totalSum is the aggregate score of all comparison metrics
 	// riskResult is excluded because more work is required.
 	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
 	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
 	// bound was applied, etc.)
-	indexSum := accessResult + scanResult + eqOrInResult + tableFilterResult
-	totalSum := indexSum + matchResult + globalResult
+	totalSum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
-	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
+	if (lhsPseudo || rhsPseudo) && !tablePseudo { // At least one index doesn't have statistics
 		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
 		if pseudoResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
@@ -1203,10 +1189,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
 	// Compare index and total comparison factors - but make sure we have more than 1 predicate
-	if indexSum > 0 && lhsTotalIndexFilters > 1 && totalSum > 0 {
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if indexSum < 0 && rhsTotalIndexFilters > 1 && totalSum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
@@ -1622,15 +1608,14 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			currentCandidate = getIndexCandidate(ds, path, prop)
 		}
-		pruned := false
+		pruned, missingStats := false, false
 		for i := len(candidates) - 1; i >= 0; i-- {
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
 			var result int
-			currentMissingStats := false
-			result, currentMissingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
-			if currentMissingStats {
+			result, missingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
+			if missingStats {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
 			if result == 1 {
@@ -1705,7 +1690,7 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 			return false
 		}
 
-		if sf.FuncName.L == ast.LogicOr {
+		if sf.FuncName.L == ast.LogicOr || sf.FuncName.L == ast.LogicAnd {
 			for _, arg := range sf.GetArgs() {
 				if !isEqualPredicateOrOr(arg) {
 					return false
