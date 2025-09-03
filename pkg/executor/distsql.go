@@ -246,8 +246,8 @@ type IndexReaderExecutor struct {
 	// Used by the temporary table, cached table.
 	dummy bool
 
-	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
-	GroupedRanges [][]*ranger.Range
+	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
+	groupedRanges [][]*ranger.Range
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -295,17 +295,16 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Rebuild GroupedRanges if it was originally set
-		if len(is.GroupByColIdxs) == 0 {
-			return nil
+		// Rebuild groupedRanges if it was originally set
+		if len(is.GroupByColIdxs) != 0 {
+			e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 		}
-		e.GroupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 	}
 
-	// Validate that partRangeMap and GroupedRanges don't appear together
-	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.GroupedRanges) > 0), "partRangeMap and GroupedRanges should not appear together")
+	// Validate that partRangeMap and groupedRanges don't appear together
+	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
 
-	// Build kvRanges considering both partitions and GroupedRanges
+	// Build kvRanges considering both partitions and groupedRanges
 	kvRanges, err := e.buildKVRangesForIndexReader()
 	if err != nil {
 		return err
@@ -314,7 +313,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	return e.open(ctx, kvRanges)
 }
 
-// buildKVRangesForIndexReader builds kvRanges for IndexReaderExecutor considering both partitions and GroupedRanges.
+// buildKVRangesForIndexReader builds kvRanges for IndexReaderExecutor considering both partitions and groupedRanges.
 func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, error) {
 	tableIDs := make([]int64, 0, len(e.partitions))
 	for _, p := range e.partitions {
@@ -324,7 +323,7 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 		tableIDs = append(tableIDs, e.physicalTableID)
 	}
 
-	groupedRanges := e.GroupedRanges
+	groupedRanges := e.groupedRanges
 	if len(groupedRanges) == 0 {
 		groupedRanges = [][]*ranger.Range{e.ranges}
 	}
@@ -393,7 +392,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	})
 
 	// Determine if we need merge sort
-	needMergeSort := shouldUseMergeSort(e.byItems, e.partitions, e.GroupedRanges, len(kvRanges))
+	needMergeSort := shouldUseMergeSort(e.byItems, e.partitions, e.groupedRanges, len(kvRanges))
 
 	if !needMergeSort {
 		// Use single SelectResult when no merge sort is needed
@@ -460,11 +459,13 @@ type IndexLookUpExecutor struct {
 	exec.BaseExecutorV2
 	indexUsageReporter *exec.IndexUsageReporter
 
-	table   table.Table
-	index   *model.IndexInfo
-	ranges  []*ranger.Range
-	dagPB   *tipb.DAGRequest
-	startTS uint64
+	table  table.Table
+	index  *model.IndexInfo
+	ranges []*ranger.Range
+	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
+	groupedRanges [][]*ranger.Range
+	dagPB         *tipb.DAGRequest
+	startTS       uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx       []int
 	handleCols      []*expression.Column
@@ -484,9 +485,8 @@ type IndexLookUpExecutor struct {
 	partitionTableMode bool                  // if this executor is accessing a local index with partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
-	groupedKVRanges    []*kvRangesWithPhysicalTblID // kvRanges with physical table IDs
-	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
-	GroupedRanges [][]*ranger.Range
+
+	groupedKVRanges []*kvRangesWithPhysicalTblID // kvRanges with physical table IDs
 
 	// All fields above are immutable.
 
@@ -569,11 +569,10 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Rebuild GroupedRanges if it was originally set
-		if len(is.GroupByColIdxs) == 0 {
-			return nil
+		// Rebuild groupedRanges if it was originally set
+		if len(is.GroupByColIdxs) != 0 {
+			e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 		}
-		e.GroupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 	}
 
 	if e.memTracker != nil {
@@ -582,7 +581,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
 	e.memTracker.AttachTo(e.stmtMemTracker)
-	intest.Assert(!(len(e.partitionRangeMap) > 0 && len(e.GroupedRanges) > 0), "partitionRangeMap and GroupedRanges should not appear together")
+	intest.Assert(!(len(e.partitionRangeMap) > 0 && len(e.groupedRanges) > 0), "partitionRangeMap and groupedRanges should not appear together")
 
 	err = e.buildTableKeyRanges()
 	if err != nil {
@@ -636,7 +635,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		tableIDs = append(tableIDs, getPhysicalTableID(e.table))
 	}
 
-	groupedRanges := e.GroupedRanges
+	groupedRanges := e.groupedRanges
 	if len(groupedRanges) == 0 {
 		groupedRanges = [][]*ranger.Range{e.ranges}
 	}
@@ -653,8 +652,8 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	}
 
 	if len(kvRanges) > 1 {
-		// If there are more than one kv ranges, it must come from the partitioned table, or GroupedRanges, or both.
-		intest.Assert(e.partitionTableMode || len(e.GroupedRanges) > 0)
+		// If there are more than one kv ranges, it must come from the partitioned table, or groupedRanges, or both.
+		intest.Assert(e.partitionTableMode || len(e.groupedRanges) > 0)
 	}
 	e.groupedKVRanges = make([]*kvRangesWithPhysicalTblID, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
@@ -865,7 +864,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			results = append(results, result)
 		}
-		if shouldUseMergeSort(e.byItems, e.prunedPartitions, e.GroupedRanges, len(results)) {
+		if shouldUseMergeSort(e.byItems, e.prunedPartitions, e.groupedRanges, len(results)) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}

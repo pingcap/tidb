@@ -152,11 +152,9 @@ type TableReaderExecutor struct {
 	// TODO: remove this field, use the kvRangeBuilder interface.
 	ranges []*ranger.Range
 
-	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
-	// If not empty, this field takes precedence over ranges field.
-	groupedRanges [][]*ranger.Range
-	// GroupByColIdxs stores the column indices used for grouping ranges when using merge-sort to satisfy physical property.
-	// This field is used to rebuild groupedRanges when corColInAccess is true.
+	// For groupedRanges and groupByColIdxs, please see comments in struct AccessPath.
+
+	groupedRanges  [][]*ranger.Range
 	groupByColIdxs []int
 
 	// kvRanges are only use for union scan.
@@ -270,11 +268,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Rebuild GroupedRanges if it was originally set
-		if len(e.groupByColIdxs) == 0 {
-			return nil
+		// Rebuild groupedRanges if it was originally set
+		if len(e.groupByColIdxs) != 0 {
+			e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, e.groupByColIdxs)
 		}
-		e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, e.groupByColIdxs)
 	}
 
 	e.resultHandler = &tableResultHandler{}
