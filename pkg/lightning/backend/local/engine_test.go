@@ -20,7 +20,6 @@ import (
 	"math"
 	"os"
 	"path"
-	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -44,7 +43,8 @@ func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "test"), opt)
 	require.NoError(t, err)
-	tmpPath := filepath.Join(dir, "test.sst")
+
+	tmpPath := engineSSTDir(dir, "test")
 	err = os.Mkdir(tmpPath, 0o755)
 	require.NoError(t, err)
 	return db, tmpPath
