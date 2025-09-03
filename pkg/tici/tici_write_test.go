@@ -29,7 +29,7 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-func newTestTiCIDataWriter(t *testing.T) *DataWriter {
+func newTestTiCIDataWriter(t *testing.T) *TiCIIndexMeta {
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{}}
 	idx := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx")}
 	logger := zaptest.NewLogger(t).With(
@@ -38,11 +38,13 @@ func newTestTiCIDataWriter(t *testing.T) *DataWriter {
 		zap.Int64("indexID", idx.ID),
 		zap.String("indexName", idx.Name.O),
 	)
-	return &DataWriter{
-		tblInfo: tbl,
-		idxInfo: idx,
-		schema:  "testdb",
-		logger:  logger,
+	return &TiCIIndexMeta{
+		tidbTaskID: "test-task",
+		tblInfo:    tbl,
+		schema:     "testdb",
+		ticiJobID:  uint64(10),
+		storeURI:   "s3://my-bucket/prefix",
+		logger:     logger,
 	}
 }
 
@@ -89,16 +91,13 @@ func TestTiCIDataWriterGroup_WriteHeader(t *testing.T) {
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
-	for _, w := range group.writers {
-		mockFileWriter, _ := newStubTICIFileWriter(t, false)
-		w.ticiFileWriter = mockFileWriter
-		// Ensure logger is not nil for safety
-		if w.logger == nil {
-			w.logger = zaptest.NewLogger(t)
-		}
+	mockFileWriter, _ := newStubTICIFileWriter(t, false)
+	// Ensure logger is not nil for safety
+	if group.indexMeta.logger == nil {
+		group.indexMeta.logger = zaptest.NewLogger(t)
 	}
 	group.writable.Store(true)
-	err := group.WriteHeader(ctx, 1)
+	err := group.WriteHeader(ctx, mockFileWriter, 1)
 	assert.NoError(t, err)
 }
 
@@ -114,16 +113,13 @@ func TestTiCIDataWriterGroup_WritePairs(t *testing.T) {
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
-	for _, w := range group.writers {
-		mockFileWriter, _ := newStubTICIFileWriter(t, false)
-		w.ticiFileWriter = mockFileWriter
-		if w.logger == nil {
-			w.logger = zaptest.NewLogger(t)
-		}
+	mockFileWriter, _ := newStubTICIFileWriter(t, false)
+	if group.indexMeta.logger == nil {
+		group.indexMeta.logger = zaptest.NewLogger(t)
 	}
 	group.writable.Store(true)
 	pairs := []*sst.Pair{{Key: []byte("k"), Value: []byte("v")}}
-	err := group.WritePairs(ctx, pairs, 1)
+	err := group.WritePairs(ctx, mockFileWriter, pairs, 1)
 	assert.NoError(t, err)
 }
 
@@ -139,17 +135,14 @@ func TestTiCIDataWriterGroup_WritePairs_Fail(t *testing.T) {
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
-	for _, w := range group.writers {
-		mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
-		mockWriter.fail = true
-		w.ticiFileWriter = mockFileWriter
-		if w.logger == nil {
-			w.logger = zaptest.NewLogger(t)
-		}
+	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
+	mockWriter.fail = true
+	if group.indexMeta.logger == nil {
+		group.indexMeta.logger = zaptest.NewLogger(t)
 	}
 	group.writable.Store(true)
 	pairs := []*sst.Pair{{Key: []byte("k"), Value: []byte("v")}}
-	err := group.WritePairs(ctx, pairs, 1)
+	err := group.WritePairs(ctx, mockFileWriter, pairs, 1)
 	assert.Error(t, err)
 }
 
@@ -177,7 +170,7 @@ func TestTiCIDataWriterGroup_CreateFileWriters_NotWritable(t *testing.T) {
 	ctx := context.Background()
 	group := &DataWriterGroup{}
 	group.writable.Store(false)
-	_, err := group.CreateFileWriters(ctx)
+	_, err := group.CreateFileWriter(ctx)
 	assert.NoError(t, err)
 }
 
@@ -195,7 +188,7 @@ func TestTiCIDataWriterGroup_FinishPartitionUpload_NotWritable(t *testing.T) {
 		Once()
 	group := &DataWriterGroup{mgrCtx: ticiMgr}
 	group.writable.Store(false)
-	err := group.FinishPartitionUpload(ctx, nil, nil)
+	err := group.FinishPartitionUpload(ctx, nil, nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -214,12 +207,8 @@ func TestTiCIDataWriterGroup_FinishIndexUpload(t *testing.T) {
 		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
-	for _, w := range group.writers {
-		mockFileWriter, _ := newStubTICIFileWriter(t, false)
-		w.ticiFileWriter = mockFileWriter
-		if w.logger == nil {
-			w.logger = zaptest.NewLogger(t)
-		}
+	if group.indexMeta.logger == nil {
+		group.indexMeta.logger = zaptest.NewLogger(t)
 	}
 
 	err := group.FinishIndexUpload(ctx)
@@ -230,6 +219,6 @@ func TestTiCIDataWriterGroup_CloseFileWriters_NotWritable(t *testing.T) {
 	ctx := context.Background()
 	group := &DataWriterGroup{}
 	group.writable.Store(false)
-	err := group.CloseFileWriters(ctx)
+	err := group.CloseFileWriters(ctx, nil)
 	assert.NoError(t, err)
 }

@@ -450,10 +450,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		allPeers = append(allPeers, peer)
 	}
 
-	ticiFileWriters := []*tici.FileWriter{}
+	var ticiFileWriter *tici.FileWriter
 	if local.ticiWriteGroup != nil {
 		// Initialize TICI file writers for each full-text index in the group.
-		if ticiFileWriters, err = local.ticiWriteGroup.CreateFileWriters(ctx); err != nil {
+		if ticiFileWriter, err = local.ticiWriteGroup.CreateFileWriter(ctx); err != nil {
 			return nil, errors.Annotate(err, fmt.Sprintf("ticiWriteGroup.CreateFileWriters failed, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey)))
 		}
 	}
@@ -481,7 +481,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 
 	if local.ticiWriteGroup != nil {
 		// Write headers for all tici file writers.
-		if err = local.ticiWriteGroup.WriteHeader(ctx, ticiFileWriters, dataCommitTS); err != nil {
+		if err = local.ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, dataCommitTS); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.WriteHeader failed")
 		}
 	}
@@ -557,7 +557,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 
 		// If TiCI is enabled, write the batch to all TiCI writers.
 		if local.ticiWriteGroup != nil {
-			if err := local.ticiWriteGroup.WritePairs(ctx, ticiFileWriters, pairs, count); err != nil {
+			if err := local.ticiWriteGroup.WritePairs(ctx, ticiFileWriter, pairs, count); err != nil {
 				return errors.Annotate(err, "ticiWriteGroup.WritePairs failed")
 			}
 		}
@@ -647,10 +647,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	}
 
 	if local.ticiWriteGroup != nil {
-		if err := local.ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriters); err != nil {
+		if err := local.ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.CloseFileWriters failed")
 		}
-		if err := local.ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriters, firstKey, lastKey); err != nil {
+		if err := local.ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.FinishPartitionUpload failed")
 		}
 	}

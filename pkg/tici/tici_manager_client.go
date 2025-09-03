@@ -237,13 +237,16 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	ctx context.Context,
 	tidbTaskID string,
 	tableID int64,
-	indexID int64,
+	indexIDs []int64,
 ) (string, uint64, error) {
 	// TODO: Can we set the start tso here?
+	if indexIDs == nil || len(indexIDs) == 0 || len(indexIDs) > 1 {
+		return "", 0, errors.New("indexIDs is invalid")
+	}
 	req := &GetImportStoragePrefixRequest{
 		TidbTaskId: tidbTaskID,
 		TableId:    tableID,
-		IndexId:    indexID,
+		IndexId:    indexIDs[0],
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -263,14 +266,14 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 		logutil.BgLogger().Error("GetCloudStoragePrefix failed",
 			zap.String("tidbTaskID", tidbTaskID),
 			zap.Int64("tableID", tableID),
-			zap.Int64("indexID", indexID),
+			zap.Int64s("indexID", indexIDs),
 			zap.String("errorMessage", resp.ErrorMessage))
 		return "", 0, fmt.Errorf("tici GetCloudStoragePrefix error: %s", resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("GetCloudStoragePrefix success",
 		zap.String("tidbTaskID", tidbTaskID),
 		zap.Int64("tableID", tableID),
-		zap.Int64("indexID", indexID),
+		zap.Int64s("indexID", indexIDs),
 		// log down the tici job ID for tracking
 		zap.Uint64("ticiJobID", resp.JobId),
 		zap.String("ticiStorageURI", resp.StorageUri),

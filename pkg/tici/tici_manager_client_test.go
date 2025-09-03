@@ -101,13 +101,13 @@ func TestGetImportStoragePrefix(t *testing.T) {
 	ctx := newTestTiCIManagerCtx(mockClient)
 	taskID := "tidb-task-123"
 	tblID := int64(1)
-	indexID := int64(2)
+	indexIDs := []int64{2, 3}
 
 	mockClient.
 		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
 		Once()
-	path, jobID, err := ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
+	path, jobID, err := ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
 	assert.Equal(t, uint64(100), jobID)
 	assert.NoError(t, err)
 	assert.Equal(t, "/s3/path?endpoint=http://127.0.0.1", path)
@@ -116,14 +116,14 @@ func TestGetImportStoragePrefix(t *testing.T) {
 		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
-	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
+	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
 	assert.Error(t, err)
 
 	mockClient.
 		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
 		Return(&GetImportStoragePrefixResponse{}, errors.New("rpc error")).
 		Once()
-	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
+	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
 	assert.Error(t, err)
 }
 
