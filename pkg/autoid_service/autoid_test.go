@@ -83,6 +83,7 @@ func TestConcurrent(t *testing.T) {
 	if kerneltype.IsClassic() {
 		keyspaceID = uint32(tikv.NullspaceID)
 	} else {
+		// use keyspace ID of SYSTEM
 		keyspaceID = uint32(0xFFFFFF - 1)
 	}
 	const concurrency = 30
@@ -270,6 +271,7 @@ func TestGRPC(t *testing.T) {
 	if kerneltype.IsClassic() {
 		keyspaceID = uint32(tikv.NullspaceID)
 	} else {
+		// use keyspace ID of SYSTEM
 		keyspaceID = uint32(0xFFFFFF - 1)
 	}
 	_, err = cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{
