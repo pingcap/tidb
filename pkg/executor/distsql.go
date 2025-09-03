@@ -481,7 +481,7 @@ type IndexLookUpExecutor struct {
 	partitionTableMode bool                  // if this executor is accessing a local index with partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
-	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
+	partitionKVRanges  []*groupedKVRanges // kvRanges with physical table IDs
 	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
 	GroupedRanges [][]*ranger.Range
 
@@ -530,6 +530,13 @@ type IndexLookUpExecutor struct {
 	// Used by the temporary table, cached table.
 	dummy bool
 }
+
+// groupedKVRanges represents key ranges for a specific physical table.
+type groupedKVRanges struct {
+	PhysicalTableID int64
+	KeyRanges       []kv.KeyRange
+}
+
 
 type getHandleType int8
 
@@ -632,25 +639,30 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	}
 
 	kvRanges := make([][]kv.KeyRange, 0, len(groupedRanges))
+	physicalTblIDsForPartitionKVRanges := make([]int64, 0, len(tableIDs)*len(groupedRanges))
 	for _, ranges := range groupedRanges {
 		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, e.memTracker)
 		if err != nil {
 			return err
 		}
 		kvRanges = append(kvRanges, kvRange...)
+		physicalTblIDsForPartitionKVRanges = append(physicalTblIDsForPartitionKVRanges, tableIDs...)
 	}
 
 	if len(kvRanges) > 1 {
 		// If there are more than one kv ranges, it must come from the partitioned table, or GroupedRanges, or both.
 		intest.Assert(e.partitionTableMode || len(e.GroupedRanges) > 0)
 	}
-	// Theoretically, we only need `if len(kvRanges) > 1` here, and we can use `e.kvRanges` when
-	// `len(kvRanges) == 1 && e.partitionTableMode`.
-	// However, the assumption in UnionScan code is that, if `e.partitionTableMode` is true, kv ranges must be set to
-	// `e.partitionKVRanges` (see (*memIndexLookUpReader).getMemRowsIter()).
-	// So we use `if len(kvRanges) > 1 || e.partitionTableMode` here to satisfy the assumption.
-	if len(kvRanges) > 1 || e.partitionTableMode {
-		e.partitionKVRanges = kvRanges
+	if len(kvRanges) > 1 {
+		// Build the new groupedKVRanges structure
+		e.partitionKVRanges = make([]*groupedKVRanges, 0, len(kvRanges))
+		for i, kvRange := range kvRanges {
+			partitionKVRange := &groupedKVRanges{
+				PhysicalTableID: physicalTblIDsForPartitionKVRanges[i],
+				KeyRanges:       kvRange,
+			}
+			e.partitionKVRanges = append(e.partitionKVRanges, partitionKVRange)
+		}
 	} else if len(kvRanges) == 1 {
 		e.kvRanges = kvRanges[0]
 	}
@@ -773,10 +785,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 
-	// if it's partition mode, or GroupedRanges is not empty, we need to use partitionKVRanges
 	kvRanges := [][]kv.KeyRange{e.kvRanges}
 	if len(e.partitionKVRanges) > 0 {
-		kvRanges = e.partitionKVRanges
+		kvRanges = make([][]kv.KeyRange, 0, len(e.partitionKVRanges))
+		for _, partitionRange := range e.partitionKVRanges {
+			kvRanges = append(kvRanges, partitionRange.KeyRanges)
+		}
 	}
 	// When len(kvrange) = 1, no sorting is required,
 	// so remove byItems and non-necessary output columns

@@ -1184,18 +1184,33 @@ a	b	c	d
 10	31	10	240
 10	23	11	250
 10	35	12	260
+10	1	25	390
+10	3	26	400
+10	5	27	410
+10	11	28	420
 20	13	5	190
 20	15	6	200
 20	21	7	210
 20	23	8	220
+20	1	21	350
+20	31	22	360
+20	33	23	370
+20	35	24	380
 30	1	1	150
 30	3	2	160
 30	5	3	170
 30	11	4	180
+30	13	17	310
+30	35	18	320
 40	21	13	270
 40	3	14	280
 40	5	15	290
+40	23	20	340
+40	13	29	430
 50	11	16	300
+50	15	30	440
+50	3	31	450
+50	23	32	460
 explain format = 'brief' select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
 id	estRows	task	access object	operator info
 Projection	20.00	root		planner__core__grouped_ranges_order_by.t.b, planner__core__grouped_ranges_order_by.t.c

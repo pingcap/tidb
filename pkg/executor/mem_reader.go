@@ -699,10 +699,7 @@ type memIndexLookUpReader struct {
 
 	idxReader *memIndexReader
 
-	// partition mode
-	partitionMode     bool                  // if this executor is accessing a local index with partition table
-	partitionTables   []table.PhysicalTable // partition tables to access
-	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
+	groupedKVRanges []*groupedKVRanges // kv ranges for these partition tables
 
 	cacheTable kv.MemBuffer
 
@@ -737,10 +734,8 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		schema:        us.Schema(),
 		idxReader:     memIdxReader,
 
-		partitionMode:     idxLookUpReader.partitionTableMode,
-		partitionKVRanges: idxLookUpReader.partitionKVRanges,
-		partitionTables:   idxLookUpReader.prunedPartitions,
-		cacheTable:        us.cacheTable,
+		groupedKVRanges: idxLookUpReader.partitionKVRanges,
+		cacheTable:      us.cacheTable,
 
 		keepOrder:   idxLookUpReader.keepOrder,
 		compareExec: us.compareExec,
@@ -749,19 +744,20 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 
 func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
 	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
-	tbls := []table.Table{m.table}
-	if m.partitionMode {
-		kvRanges = m.partitionKVRanges
-		tbls = tbls[:0]
-		for _, p := range m.partitionTables {
-			tbls = append(tbls, p)
+	physicalTableIDs := []int64{getPhysicalTableID(m.table)}
+	if len(m.groupedKVRanges) > 0 {
+		kvRanges = make([][]kv.KeyRange, 0, len(m.groupedKVRanges))
+		physicalTableIDs = make([]int64, 0, len(m.groupedKVRanges))
+		for _, partitionRange := range m.groupedKVRanges {
+			kvRanges = append(kvRanges, partitionRange.KeyRanges)
+			physicalTableIDs = append(physicalTableIDs, partitionRange.PhysicalTableID)
 		}
 	}
 
 	tblKVRanges := make([]kv.KeyRange, 0, 16)
 	numHandles := 0
-	for i, tbl := range tbls {
-		m.idxReader.kvRanges = kvRanges[i]
+	for i, ranges := range kvRanges {
+		m.idxReader.kvRanges = ranges
 		handles, err := m.idxReader.getMemRowsHandle()
 		if err != nil {
 			return nil, err
@@ -770,7 +766,8 @@ func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter,
 			continue
 		}
 		numHandles += len(handles)
-		ranges, _ := distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)
+		physicalTableID := physicalTableIDs[i]
+		ranges, _ := distsql.TableHandlesToKVRanges(physicalTableID, handles)
 		tblKVRanges = append(tblKVRanges, ranges...)
 	}
 	if numHandles == 0 {
