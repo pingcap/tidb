@@ -88,7 +88,7 @@ func (s *SequentialRangeChecker) IsIndexInTopNRange(idx int64) bool {
 // processTopNValue handles the logic for a complete TopN value count using existing priority queue with range tracking.
 func processTopNValue(topNPriorityQueue *generic.PriorityQueue[TopNWithRange], encoded []byte, curCnt float64,
 	startIdx, endIdx int64, numTopN int, allowPruning bool, sampleFactor float64) {
-	// case 1: prune values with count of 1 under certain conditions
+	// case 1: do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
 	if curCnt == 1 && allowPruning && (topNPriorityQueue.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
 		return
 	}
@@ -491,6 +491,7 @@ func BuildHistAndTopN(
 	// apply pruning directly to heap items (preserving range information)
 	finalTopNRanges := heapItems
 	if allowPruning {
+		// Prune out any TopN values that have the same count as the remaining average.
 		finalTopNRanges = pruneTopNItem(heapItems, ndv, nullCount, sampleNum, count)
 		if sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(finalTopNRanges) >= int(sampleNDV) {
 			// If we're sampling, and TopN contains everything in the sample - trim TopN so
@@ -532,7 +533,8 @@ func BuildHistAndTopN(
 	}
 
 	// Step3: build histogram excluding TopN values
-	if len(samples) > 0 && lenTopN < ndv {
+	samplesExcludingTopN := sampleNum - topNSampleCount
+	if samplesExcludingTopN > 0 {
 		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
 		if lenTopN < int64(numTopN) && numBuckets == defaultHistogramBuckets {
@@ -545,7 +547,7 @@ func BuildHistAndTopN(
 		rangeChecker := NewSequentialRangeChecker(finalTopNRanges)
 
 		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV,
-			int64(numBuckets), memTracker, sampleNum-topNSampleCount, rangeChecker)
+			int64(numBuckets), memTracker, samplesExcludingTopN, rangeChecker)
 		if err != nil {
 			return nil, nil, err
 		}
