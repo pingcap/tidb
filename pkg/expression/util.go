@@ -1352,7 +1352,7 @@ func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
 }
 
 // PosFromPositionExpr generates a position value from PositionExpr.
-func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (pos int, isNull, isParameterizedPos bool, err error) {
+func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (pos int, isNull, isParamMarkerExpr bool, err error) {
 	if v.P == nil {
 		return v.N, false, false, nil
 	}

@@ -2917,14 +2917,14 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 	case *ast.PositionExpr:
-		pos, isNull, isParameterizedPos, err := expression.PosFromPositionExpr(g.ctx.GetExprCtx(), v)
+		pos, isNull, isParamMarkerExpr, err := expression.PosFromPositionExpr(g.ctx.GetExprCtx(), v)
 		if err != nil {
 			g.err = plannererrors.ErrUnknown.GenWithStackByArgs()
 		}
-		if err != nil || (isNull && !isParameterizedPos) {
+		if err != nil || (isNull && !isParamMarkerExpr) {
 			return inNode, false
 		}
-		if pos < 1 && isParameterizedPos {
+		if pos < 1 && isParamMarkerExpr {
 			pme := v.P.(*driver.ParamMarkerExpr)
 			for idx, field := range g.fields {
 				if expr, ok := field.Expr.(*driver.ParamMarkerExpr); ok {
