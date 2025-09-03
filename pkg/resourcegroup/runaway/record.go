@@ -228,7 +228,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	batchSize := runawayRecordGCSelectBatchSize
 	deleteSize := runawayRecordGCBatchSize
 	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Second * 1
+		expiredDuration = time.Millisecond * 1
 		deleteSize = 2
 		batchSize = 5 * deleteSize
 	})
@@ -284,7 +284,9 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
-
+		failpoint.Inject("deleteExpiredRows", func() {
+			hasDeletedExpiredRows = true
+		})
 		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
 			endIndex := startIndex + deleteSize
 			if endIndex > len(leftRows) {
@@ -307,9 +309,6 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 					"delete SQL failed when deleting system table", zap.Error(err), zap.String("SQL", sql),
 				)
 			}
-			failpoint.Inject("deleteExpiredRows", func() {
-				hasDeletedExpiredRows = true
-			})
 		}
 	}
 }
