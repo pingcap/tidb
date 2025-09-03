@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -150,7 +151,7 @@ func createMockStore(t *testing.T) (store helper.Storage) {
 	server := mockPDHTTPServer()
 
 	pdAddrs := []string{"invalid_pd_address", server.URL[len("http://"):]}
-	s, err := mockstore.NewMockStore(
+	s, err := teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
 		}),

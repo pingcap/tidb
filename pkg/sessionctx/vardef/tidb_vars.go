@@ -330,6 +330,9 @@ const (
 	// TiDBOptRiskRangeSkewRatio controls the amount of skew that is applied to range predicate estimation when a range falls within a bucket or outside the histogram bucket range.
 	TiDBOptRiskRangeSkewRatio = "tidb_opt_risk_range_skew_ratio"
 
+	// TiDBOptRiskScaleNDVSkewRatio controls the NDV estimation risk strategy for scaling NDV estimation.
+	TiDBOptRiskScaleNDVSkewRatio = "tidb_opt_scale_ndv_skew_ratio"
+
 	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for multi-column operations
 	// including GROUP BY, JOIN, and DISTINCT operations.
 	// When 0: uses conservative estimate (max of individual column NDVs, production default)
@@ -1349,6 +1352,7 @@ const (
 	DefOptCorrelationExpFactor              = 1
 	DefOptRiskEqSkewRatio                   = 0.0
 	DefOptRiskRangeSkewRatio                = 0.0
+	DefOptRiskScaleNDVSkewRatio             = 1.0
 	DefOptRiskGroupNDVSkewRatio             = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
@@ -2166,4 +2170,14 @@ func IsMDLEnabled() bool {
 // SetEnableMDL sets the MDL enable status.
 func SetEnableMDL(enabled bool) {
 	enableMDL.Store(enabled)
+}
+
+// GetDefaultTxnAssertionLevel returns the default assertion level based on kernel type.
+// For next-gen, we use strict assertion level to prevent correctness risks.
+// For classic, we use off to maintain compatibility.
+func GetDefaultTxnAssertionLevel() string {
+	if kerneltype.IsNextGen() {
+		return AssertionStrictStr
+	}
+	return AssertionOffStr
 }
