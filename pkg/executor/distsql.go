@@ -537,7 +537,6 @@ type groupedKVRanges struct {
 	KeyRanges       []kv.KeyRange
 }
 
-
 type getHandleType int8
 
 const (
