@@ -2175,3 +2175,13 @@ func IsMDLEnabled() bool {
 func SetEnableMDL(enabled bool) {
 	enableMDL.Store(enabled)
 }
+
+// GetDefaultTxnAssertionLevel returns the default assertion level based on kernel type.
+// For next-gen, we use strict assertion level to prevent correctness risks.
+// For classic, we use off to maintain compatibility.
+func GetDefaultTxnAssertionLevel() string {
+	if kerneltype.IsNextGen() {
+		return AssertionStrictStr
+	}
+	return AssertionOffStr
+}

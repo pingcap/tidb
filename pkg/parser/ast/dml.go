@@ -14,12 +14,14 @@
 package ast
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 var (
@@ -630,6 +632,45 @@ type SelectLockInfo struct {
 	LockType SelectLockType
 	WaitSec  uint64
 	Tables   []*TableName
+}
+
+// Hash64 implements the cascades/base.Hasher.<0th> interface.
+func (n *SelectLockInfo) Hash64(h util.IHasher) {
+	h.HashInt(int(n.LockType))
+	h.HashUint64(n.WaitSec)
+	h.HashInt(len(n.Tables))
+	for _, one := range n.Tables {
+		// to make it simple, we just use lockInfo's addr.
+		h.HashUint64(uint64(reflect.ValueOf(one).Pointer()))
+	}
+}
+
+// Equals implements the cascades/base.Hasher.<1th> interface.
+func (n *SelectLockInfo) Equals(other any) bool {
+	n2, ok := other.(*SelectLockInfo)
+	if !ok {
+		return false
+	}
+	if n == nil {
+		return n2 == nil
+	}
+	if other == nil {
+		return false
+	}
+	ok = n.LockType == n2.LockType &&
+		n.WaitSec == n2.WaitSec
+	if !ok {
+		return false
+	}
+	if len(n.Tables) != len(n2.Tables) {
+		return false
+	}
+	for i, one := range n.Tables {
+		if one != n2.Tables[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // String implements fmt.Stringer.

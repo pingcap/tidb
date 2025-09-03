@@ -26,6 +26,7 @@ go_library(
         "//pkg/kv",
         "//pkg/lightning/log",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/cpu",
@@ -59,7 +60,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
