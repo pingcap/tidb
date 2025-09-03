@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -74,12 +73,6 @@ func NewJobSubmitterForTest() *JobSubmitter {
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
 	return s.ddlJobDoneChMap
-}
-
-func createMockStore(t *testing.T) kv.Storage {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	return store
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {

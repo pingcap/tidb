@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -354,11 +356,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[step] = metas
-		var importResult importer.Summary
-		if err := json.Unmarshal(taskMeta.TaskResult, &importResult); err != nil {
-			return nil, errors.Trace(err)
-		}
-		logger.Info("move to post-process step ", zap.Any("result", importResult))
+		logger.Info("move to post-process step", zap.Any("result", taskMeta.Summary))
 	case proto.StepDone:
 		return nil, nil
 	default:
@@ -530,25 +528,14 @@ func updateTaskSummary(
 	nextStep proto.Step,
 	p *LogicalPlan,
 ) error {
-	var (
-		importSummary importer.Summary
-		err           error
-	)
-
-	if len(taskMeta.TaskResult) > 0 {
-		if err = json.Unmarshal(taskMeta.TaskResult, &importSummary); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	// Process row count and data size
 	switch nextStep {
 	case proto.ImportStepEncodeAndSort, proto.ImportStepImport:
-		importSummary.EncodeSummary = p.summary
+		taskMeta.Summary.EncodeSummary = p.summary
 	case proto.ImportStepMergeSort:
-		importSummary.MergeSummary = p.summary
+		taskMeta.Summary.MergeSummary = p.summary
 	case proto.ImportStepWriteAndIngest:
-		importSummary.IngestSummary = p.summary
+		taskMeta.Summary.IngestSummary = p.summary
 	case proto.ImportStepPostProcess:
 		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
 		if err != nil {
@@ -556,12 +543,8 @@ func updateTaskSummary(
 		}
 
 		for _, subtaskSummary := range subtaskSummaries {
-			importSummary.ImportedRows += subtaskSummary.RowCnt.Load()
+			taskMeta.Summary.ImportedRows += subtaskSummary.RowCnt.Load()
 		}
-	}
-
-	if taskMeta.TaskResult, err = json.Marshal(importSummary); err != nil {
-		return errors.Trace(err)
 	}
 
 	return updateMeta(task, taskMeta)
@@ -611,30 +594,45 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	task *proto.Task, taskMeta *TaskMeta) error {
-	// we have already switch import-mode when switch to post-process step.
+	// we have already switched import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
 	}
 
-	summary := &importer.Summary{}
-	if len(taskMeta.TaskResult) > 0 {
-		if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
-			return errors.Trace(err)
-		}
+	tableStatsDelta := &statsstorage.DeltaUpdate{
+		Delta: variable.TableDelta{
+			Delta:    taskMeta.Summary.ImportedRows,
+			Count:    taskMeta.Summary.ImportedRows,
+			InitTime: time.Now(),
+			TableID:  taskMeta.Plan.TableInfo.ID,
+		},
+		TableID: taskMeta.Plan.TableInfo.ID,
 	}
-
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, summary.ImportedRows); err != nil {
+			return true, taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+				txn, err2 := se.Txn(true)
+				if err2 != nil {
+					return err2
+				}
+
+				// we only fill the delta change of the table when the task is
+				// done, and let auto-analyze to do analyzing. depending on the
+				// table size, analyze might take a long time, so we won't wait
+				// for it.
+				// auto analyze is triggered when the table have more than
+				// AutoAnalyzeMinCnt(1000) rows, and tidb_auto_analyze_ratio(0.5)
+				// portion of rows are changed, see NeedAnalyzeTable too.
+				// so if the table is small, there is no analyze triggered.
+				if err := statsstorage.UpdateStatsMeta(ctx, se, txn.StartTS(), tableStatsDelta); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()
-				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
+				return importer.FinishJob(ctx, exec, taskMeta.JobID, &taskMeta.Summary)
 			})
 		},
 	)
@@ -642,13 +640,6 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 
 func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
-	summary := &importer.Summary{}
-	if len(taskMeta.TaskResult) > 0 {
-		if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
@@ -661,7 +652,7 @@ func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
-				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg, summary)
+				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg, &taskMeta.Summary)
 			})
 		},
 	)

@@ -387,14 +387,14 @@ func TestProcessChunkWith(t *testing.T) {
 			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111, 3, 18171781844378606789),
 				*checksumMap[verify.DataKVGroupID])
 		} else if kerneltype.IsNextGen() {
-			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111+scanedRows*prefixLenForOneRow, 3, 9580998779111664884),
+			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111+scanedRows*prefixLenForOneRow, 3, 9366516372087212007),
 				*checksumMap[verify.DataKVGroupID])
 		}
 	})
 }
 
 func TestPopulateChunks(t *testing.T) {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tidbCfg := tidb.GetGlobalConfig()
