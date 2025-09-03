@@ -91,8 +91,9 @@ func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataF
 	}, nil
 }
 
+// URI returns the URI of the key stored in external storage.
 func (w *FileWriter) URI() string {
-	return w.store.URI() + "/" + w.dataFile
+	return w.store.URI() + w.dataFile
 }
 
 // WriteRow writes a key-value pair to the S3 file.

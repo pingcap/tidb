@@ -240,7 +240,7 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	indexIDs []int64,
 ) (string, uint64, error) {
 	// TODO: Can we set the start tso here?
-	if indexIDs == nil || len(indexIDs) == 0 || len(indexIDs) > 1 {
+	if len(indexIDs) == 0 {
 		return "", 0, errors.New("indexIDs is invalid")
 	}
 	req := &GetImportStoragePrefixRequest{
@@ -297,7 +297,7 @@ func (t *ManagerCtx) FinishPartitionUpload(
 	ctx context.Context,
 	tidbTaskID string,
 	lowerBound, upperBound []byte,
-	storageUri string,
+	storageURI string,
 ) error {
 	req := &FinishImportPartitionUploadRequest{
 		TidbTaskId: tidbTaskID,
@@ -305,7 +305,7 @@ func (t *ManagerCtx) FinishPartitionUpload(
 			StartKey: lowerBound,
 			EndKey:   upperBound,
 		},
-		StorageUri: storageUri,
+		StorageUri: storageURI,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()

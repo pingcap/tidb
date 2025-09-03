@@ -47,17 +47,17 @@ func GetFulltextIndexes(tbl *model.TableInfo) []*model.IndexInfo {
 	return result
 }
 
-// TiCIIndexMeta keep the metadata interacting with TiCI for DataWriterGroup
-type TiCIIndexMeta struct {
+// IndexMeta keep the metadata interacting with TiCI for DataWriterGroup
+type IndexMeta struct {
 	tidbTaskID string           // TiDB task ID for this writer
 	tblInfo    *model.TableInfo // table info
 	schema     string           // database name
 	ticiJobID  uint64           // TiCI job ID for this writer. For better traceability.
 	storeURI   string           // cloud store prefix for this writer, may also include the S3 options
-	logger     *zap.Logger      // logger with table/index fields
+
 }
 
-// NewTiCIIndexMeta creates a new TiCIIndexMeta.
+// NewTiCIIndexMeta creates a new IndexMeta.
 func NewTiCIIndexMeta(
 	ctx context.Context,
 	tblInfo *model.TableInfo,
@@ -65,34 +65,24 @@ func NewTiCIIndexMeta(
 	schema string,
 	tidbTaskID string,
 	ticiMgr *ManagerCtx,
-) (*TiCIIndexMeta, error) {
-	baseLogger := logutil.Logger(ctx)
-	logger := baseLogger.With(
-		zap.Int64("tableID", tblInfo.ID),
-		zap.Int64s("indexIDs", fulltextIndexIDs),
-	)
-	logger.Info("building TiCIDataWriter",
-		zap.String("tableName", tblInfo.Name.O),
-		zap.String("schema", schema),
-	)
+) (*IndexMeta, error) {
 	storeURI, ticiJobID, err := ticiMgr.GetCloudStoragePrefix(ctx, tidbTaskID, tblInfo.ID, fulltextIndexIDs)
 	if err != nil {
 		return nil, err
 	}
-	return &TiCIIndexMeta{
+	return &IndexMeta{
 		tidbTaskID: tidbTaskID,
 		tblInfo:    tblInfo,
 		schema:     schema,
 		ticiJobID:  ticiJobID,
 		storeURI:   storeURI,
-		// add the ticiJobID to the logger for better traceability
-		logger: logger.With(zap.Uint64("ticiJobID", ticiJobID)),
 	}, nil
 }
 
 // DataWriterGroup manages a group of TiCIDataWriter, each responsible for a fulltext index in a table.
 type DataWriterGroup struct {
-	indexMeta  *TiCIIndexMeta
+	indexMeta  *IndexMeta
+	logger     *zap.Logger // logger with table/ticiJobID fields
 	writable   atomic.Bool
 	mgrCtx     *ManagerCtx
 	etcdClient *etcd.Client
@@ -119,12 +109,10 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 		fulltextIndexIDs = append(fulltextIndexIDs, idx.ID)
 	}
 
-	logger := logutil.Logger(ctx)
+	logger := logutil.Logger(ctx).With(zap.String("tidbTaskID", tidbTaskID), zap.Int64("tableID", tblInfo.ID))
 	logger.Info("building TiCIDataWriterGroup",
-		zap.Int64("tableID", tblInfo.ID),
 		zap.String("schema", schema),
-		zap.Int("fulltextIndexCount", len(fulltextIndexes)),
-		zap.String("tidbTaskID", tidbTaskID),
+		zap.Int64s("fulltextIndexIDs", fulltextIndexIDs),
 	)
 
 	etcdClient, err := getEtcdClient()
@@ -141,8 +129,11 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 		return nil, err
 	}
 
+	// add the ticiJobID to the logger for better traceability
+	logger = logger.With(zap.Uint64("ticiJobID", indexMeta.ticiJobID))
 	g := &DataWriterGroup{
 		indexMeta:  indexMeta,
+		logger:     logger,
 		mgrCtx:     mgrCtx,
 		etcdClient: etcdClient,
 	}
@@ -161,11 +152,10 @@ func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblI
 		fulltextIndexIDs = append(fulltextIndexIDs, idx.ID)
 	}
 
-	logger := logutil.Logger(ctx)
+	logger := logutil.Logger(ctx).With(zap.Int64("tableID", tblInfo.ID))
 	logger.Info("building TiCIDataWriterGroup",
-		zap.Int64("tableID", tblInfo.ID),
 		zap.String("schema", schema),
-		zap.Int("fulltextIndexCount", len(fulltextIndexes)),
+		zap.Int64s("fulltextIndexIDs", fulltextIndexIDs),
 	)
 
 	// We ignore the error in the test setup,
@@ -176,6 +166,7 @@ func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblI
 
 	g := &DataWriterGroup{
 		indexMeta: indexMeta,
+		logger:    logger,
 		mgrCtx:    mgrCtx,
 	}
 	g.writable.Store(true)
@@ -295,23 +286,22 @@ func (g *DataWriterGroup) FinishPartitionUpload(
 	if fileWriter == nil {
 		return errors.New("TICIFileWriter is not initialized")
 	}
-	logger := g.indexMeta.logger
 	uri := fileWriter.URI()
 	if uri == "" {
-		logger.Warn("no uri set for FinishPartitionUpload")
+		g.logger.Warn("no uri set for FinishPartitionUpload")
 		return nil // or return an error if uri is required
 	}
 
 	err := g.mgrCtx.FinishPartitionUpload(ctx, g.indexMeta.tidbTaskID, lowerBound, upperBound, uri)
 	if err != nil {
-		logger.Error("failed to finish partition upload",
+		g.logger.Error("failed to finish partition upload",
 			zap.String("uri", uri),
 			zap.String("startKey", hex.EncodeToString(lowerBound)),
 			zap.String("endKey", hex.EncodeToString(upperBound)),
 			zap.Error(err),
 		)
 	} else {
-		logger.Info("successfully finish partition upload",
+		g.logger.Info("successfully finish partition upload",
 			zap.String("uri", uri),
 			zap.String("startKey", hex.EncodeToString(lowerBound)),
 			zap.String("endKey", hex.EncodeToString(upperBound)),
@@ -327,12 +317,11 @@ func (g *DataWriterGroup) FinishIndexUpload(
 	if !g.writable.Load() {
 		return nil
 	}
-	logger := g.indexMeta.logger
 	if err := g.mgrCtx.FinishIndexUpload(ctx, g.indexMeta.tidbTaskID); err != nil {
-		logger.Error("failed to finish index upload", zap.Error(err))
+		g.logger.Error("failed to finish index upload", zap.Error(err))
 		return err
 	}
-	logger.Info("successfully finish index upload")
+	g.logger.Info("successfully finish index upload")
 	return nil
 }
 

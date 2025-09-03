@@ -23,6 +23,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_docker_go_units//:go-units",
+        "@com_github_gogo_protobuf//gogoproto",
         "@com_github_golang_protobuf//proto",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
@@ -47,7 +48,7 @@ go_test(
     ],
     embed = [":tici"],
     flaky = True,
-    shard_count = 33,
+    shard_count = 25,
     deps = [
         "//br/pkg/storage",
         "//pkg/kv",
@@ -62,7 +63,6 @@ go_test(
         "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
-        "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zaptest",
     ],
 )
