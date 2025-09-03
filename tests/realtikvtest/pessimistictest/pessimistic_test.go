@@ -3681,6 +3681,7 @@ func TestForShareWithPromotionPlanCache(t *testing.T) {
 	tk.MustExec(`execute st using @pk`)
 	tk.MustExec(fmt.Sprintf("set @@tidb_enable_shared_lock_promotion = %v", 1))
 	tk.MustExec(`execute st using @pk`)
+	// TODO(lance6716): fix it
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
