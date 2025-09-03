@@ -1145,10 +1145,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 	tableFilterResult := 0
-	if len(lhs.path.TableFilters) < len(rhs.path.TableFilters) {
-		tableFilterResult = 1
-	} else if len(lhs.path.TableFilters) > len(rhs.path.TableFilters) {
-		tableFilterResult = -1
+	// Count table filters - lowest wins. Do not count table filters if this is a table
+	// path, since that will inadvertently discourage a table path.
+	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() {
+		if len(lhs.path.TableFilters) < len(rhs.path.TableFilters) {
+			tableFilterResult = 1
+		} else if len(lhs.path.TableFilters) > len(rhs.path.TableFilters) {
+			tableFilterResult = -1
+		}
 	}
 
 	// indexSum is the aggregate score of index predicate comparison metrics
@@ -1283,9 +1287,12 @@ func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqO
 
 func isFullIndexMatch(candidate *candidatePath) bool {
 	// Check if the DNF condition is a full match
+	// TO-DO: Implement full index match logic for DNF conditions, since this code may
+	// incorrectly identify predicates that are not index predicates.
 	if candidate.path.IsDNFCond && candidate.hasOnlyEqualPredicatesInDNF() {
-		return candidate.path.MinAccessCondsForDNFCond == len(candidate.path.Index.Columns)
+		return candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns)
 	}
+	// Check if the index covers all access conditions for non-DNF conditions
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
