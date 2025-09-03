@@ -87,9 +87,13 @@ func (s *SequentialRangeChecker) IsIndexInTopNRange(idx int64) bool {
 
 // processTopNValue handles the logic for a complete TopN value count using existing priority queue with range tracking.
 func processTopNValue(topNPriorityQueue *generic.PriorityQueue[TopNWithRange], encoded []byte, curCnt float64,
-	startIdx, endIdx int64, numTopN int, allowPruning bool, sampleFactor float64) {
+	startIdx, endIdx int64, numTopN int, allowPruning bool, sampleFactor float64, lastValue bool) {
 	// case 1: do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
-	if curCnt == 1 && allowPruning && (topNPriorityQueue.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
+	// Note: adding lastValue corner case handling just to make consistent behavior with previous code version,
+	// it is not necessary to special handle last value but a lot of current tests hardcoded the output of the last
+	// version and making change will involve a lot of test changes.
+	if !lastValue && curCnt == 1 && allowPruning &&
+		(topNPriorityQueue.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
 		return
 	}
 
@@ -468,7 +472,7 @@ func BuildHistAndTopN(
 		// case 2, meet a different value: counting for the "current" is complete
 		sampleNDV++
 		// process the completed value using heap with range tracking
-		processTopNValue(topNPriorityQueue, cur, curCnt, curStartIdx, i-1, numTopN, allowPruning, sampleFactor)
+		processTopNValue(topNPriorityQueue, cur, curCnt, curStartIdx, i-1, numTopN, allowPruning, sampleFactor, false)
 
 		cur, curCnt = sampleBytes, 1
 		curStartIdx = i // new value group starts at current index
@@ -480,8 +484,11 @@ func BuildHistAndTopN(
 	}
 
 	// handle the counting for the last value
-	if numTopN != 0 {
-		processTopNValue(topNPriorityQueue, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor)
+	// Note: not necessary to add the condition (!allowPruning || (sampleFactor <= 1 || curCnt > 1)), it can be handled
+	// inside processTopNValue but just to make it consistent with previous behavior...
+	if numTopN != 0 && (!allowPruning || (sampleFactor <= 1 || curCnt > 1)) {
+		processTopNValue(topNPriorityQueue, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor,
+			true)
 	}
 
 	// convert priority queue to sorted slice
