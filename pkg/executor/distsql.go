@@ -296,7 +296,10 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild GroupedRanges if it was originally set
-		e.GroupedRanges = rebuildGroupedRanges(e.ranges, is.GroupByColIdxs)
+		if len(is.GroupByColIdxs) == 0 {
+			return nil
+		}
+		e.GroupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 	}
 
 	// Validate that partRangeMap and GroupedRanges don't appear together
@@ -481,7 +484,7 @@ type IndexLookUpExecutor struct {
 	partitionTableMode bool                  // if this executor is accessing a local index with partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
-	partitionKVRanges  []*groupedKVRanges // kvRanges with physical table IDs
+	groupedKVRanges    []*kvRangesWithPhysicalTblID // kvRanges with physical table IDs
 	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
 	GroupedRanges [][]*ranger.Range
 
@@ -530,8 +533,7 @@ type IndexLookUpExecutor struct {
 	dummy bool
 }
 
-// groupedKVRanges represents key ranges for a specific physical table.
-type groupedKVRanges struct {
+type kvRangesWithPhysicalTblID struct {
 	PhysicalTableID int64
 	KeyRanges       []kv.KeyRange
 }
@@ -568,7 +570,10 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild GroupedRanges if it was originally set
-		e.GroupedRanges = rebuildGroupedRanges(e.ranges, is.GroupByColIdxs)
+		if len(is.GroupByColIdxs) == 0 {
+			return nil
+		}
+		e.GroupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 	}
 
 	if e.memTracker != nil {
@@ -651,13 +656,13 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		// If there are more than one kv ranges, it must come from the partitioned table, or GroupedRanges, or both.
 		intest.Assert(e.partitionTableMode || len(e.GroupedRanges) > 0)
 	}
-	e.partitionKVRanges = make([]*groupedKVRanges, 0, len(kvRanges))
+	e.groupedKVRanges = make([]*kvRangesWithPhysicalTblID, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
-		partitionKVRange := &groupedKVRanges{
+		partitionKVRange := &kvRangesWithPhysicalTblID{
 			PhysicalTableID: physicalTblIDsForPartitionKVRanges[i],
 			KeyRanges:       kvRange,
 		}
-		e.partitionKVRanges = append(e.partitionKVRanges, partitionKVRange)
+		e.groupedKVRanges = append(e.groupedKVRanges, partitionKVRange)
 	}
 
 	return nil
@@ -779,8 +784,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 
-	kvRanges := make([][]kv.KeyRange, 0, len(e.partitionKVRanges))
-	for _, partitionRange := range e.partitionKVRanges {
+	kvRanges := make([][]kv.KeyRange, 0, len(e.groupedKVRanges))
+	for _, partitionRange := range e.groupedKVRanges {
 		kvRanges = append(kvRanges, partitionRange.KeyRanges)
 	}
 
@@ -1736,19 +1741,6 @@ func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 	return planIDs
 }
 
-// rebuildGroupedRanges rebuilds GroupedRanges after rebuilding ranges for correlated columns.
-func rebuildGroupedRanges(ranges []*ranger.Range, groupByColIdxs []int) [][]*ranger.Range {
-	if len(groupByColIdxs) == 0 {
-		return nil
-	}
-	return plannercore.GroupRangesByCols(ranges, groupByColIdxs)
-}
-
-// shouldUseMergeSort determines if merge sort is needed based on byItems, partitions, and GroupedRanges.
-func shouldUseMergeSort(byItems []*plannerutil.ByItems, partitions []table.PhysicalTable, groupedRanges [][]*ranger.Range, kvRangesCount int) bool {
-	// Use merge sort if:
-	// 1. byItems is present and there are multiple partitions, OR
-	// 2. GroupedRanges is present and there are multiple kvRanges
-	return (len(byItems) > 0 && len(partitions) > 1) ||
-		(len(groupedRanges) > 0 && kvRangesCount > 1)
+func shouldUseMergeSort(byItems []*plannerutil.ByItems, _ []table.PhysicalTable, _ [][]*ranger.Range, kvRangesCount int) bool {
+	return len(byItems) > 0 && kvRangesCount > 1
 }

@@ -5072,7 +5072,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		if err != nil {
 			return nil, err
 		}
-		e.partitionKVRanges = []*groupedKVRanges{{
+		e.groupedKVRanges = []*kvRangesWithPhysicalTblID{{
 			PhysicalTableID: getPhysicalTableID(e.table),
 			KeyRanges:       kvRange,
 		}}

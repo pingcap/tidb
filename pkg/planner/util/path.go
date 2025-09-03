@@ -129,10 +129,16 @@ type AccessPath struct {
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
 
-	// GroupedRanges stores the result of grouping ranges by columns in case 3 of isMatchProp.
+	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
+	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
+	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
+
+	// GroupedRanges stores the result of grouping ranges by columns.
 	GroupedRanges [][]*ranger.Range
-	// GroupByColIdxs stores the column indices used for grouping ranges when using merge-sort to satisfy physical property.
-	// This field is used to rebuild GroupedRanges in plan cache.
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
+	// property.
+	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
+	// It's used in plan cache or Apply.
 	GroupByColIdxs []int
 }
 

@@ -699,7 +699,7 @@ type memIndexLookUpReader struct {
 
 	idxReader *memIndexReader
 
-	groupedKVRanges []*groupedKVRanges // kv ranges for these partition tables
+	groupedKVRanges []*kvRangesWithPhysicalTblID // kv ranges for these partition tables
 
 	cacheTable kv.MemBuffer
 
@@ -732,7 +732,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		schema:        us.Schema(),
 		idxReader:     memIdxReader,
 
-		groupedKVRanges: idxLookUpReader.partitionKVRanges,
+		groupedKVRanges: idxLookUpReader.groupedKVRanges,
 		cacheTable:      us.cacheTable,
 
 		keepOrder:   idxLookUpReader.keepOrder,

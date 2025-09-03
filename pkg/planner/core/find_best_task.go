@@ -1293,7 +1293,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
 			return property.SortPropNotSatisfied
 		}
-		return property.SortPropSatisfiedUnconditionally
+		return property.SortPropSatisfied
 	}
 	var matchResult property.SortPropMatchResult
 	if path.IsIntHandlePath {
@@ -1303,7 +1303,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 				if path.StoreType == kv.TiFlash && prop.SortItems[0].Desc {
 					return property.SortPropNotSatisfied
 				}
-				return property.SortPropSatisfiedUnconditionally
+				return property.SortPropSatisfied
 			}
 		}
 		return property.SortPropNotSatisfied
@@ -1325,7 +1325,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// matches the sort order. Hence, we use `path.ConstCols` to deal with the above situations.
 	groupByColIdxs := make([]int, 0)
 	if !prop.IsSortItemEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
-		matchResult = property.SortPropSatisfiedUnconditionally
+		matchResult = property.SortPropSatisfied
 		i := 0
 		for _, sortItem := range prop.SortItems {
 			found := false
@@ -1376,18 +1376,18 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 			}
 		}
 	}
-	if len(groupByColIdxs) > 0 && matchResult == property.SortPropSatisfiedUnconditionally {
+	if len(groupByColIdxs) > 0 && matchResult == property.SortPropSatisfied {
 		groups := GroupRangesByCols(path.Ranges, groupByColIdxs)
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
-			return property.SortPropSatisfiedByMergeSort
+			return property.SortPropSatisfiedNeedMergeSort
 		}
 	}
 	return matchResult
 }
 
-// GroupRangesByCols xxx
+// GroupRangesByCols groups the ranges by the values of the columns specified by groupByColIdxs.
 func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) [][]*ranger.Range {
 	groups := make(map[string][]*ranger.Range)
 	for _, ran := range ranges {
@@ -1399,7 +1399,6 @@ func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) [][]*ranger
 		keyBytes, err := codec.EncodeValue(time.UTC, nil, datums...)
 		intest.AssertNoError(err)
 		if err != nil {
-			// make it simple, just skip the error here.
 			continue
 		}
 		key := string(keyBytes)
@@ -1493,7 +1492,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// if there is some sort items and this path doesn't match this prop, continue.
 			match := true
 			for _, oneAccessPath := range oneAlternative {
-				if !noSortItem && matchProperty(ds, oneAccessPath, prop) != property.SortPropSatisfiedUnconditionally {
+				if !noSortItem && matchProperty(ds, oneAccessPath, prop) != property.SortPropSatisfied {
 					match = false
 				}
 			}
@@ -1579,7 +1578,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// countAfterAccess, here the returned matchProperty should be SortPropNotSatisfied.
 		return indexMergePath, property.SortPropNotSatisfied
 	}
-	return indexMergePath, property.SortPropSatisfiedUnconditionally
+	return indexMergePath, property.SortPropSatisfied
 }
 
 func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.SortPropMatchResult {
@@ -1592,11 +1591,11 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 		return property.SortPropNotSatisfied
 	}
 	for _, partialPath := range path.PartialIndexPaths {
-		if matchProperty(ds, partialPath, prop) != property.SortPropSatisfiedUnconditionally {
+		if matchProperty(ds, partialPath, prop) != property.SortPropSatisfied {
 			return property.SortPropNotSatisfied
 		}
 	}
-	return property.SortPropSatisfiedUnconditionally
+	return property.SortPropSatisfied
 }
 
 func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
@@ -2232,7 +2231,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	// lift the limitation of that double read can not build index merge **COP** task with intersection.
 	// that means we can output a cop task here without encapsulating it as root task, for the convenience of attaching limit to its table side.
 
-	intest.Assert(candidate.isMatchProp != property.SortPropSatisfiedByMergeSort, "index merge should not match property using merge sort")
+	intest.Assert(candidate.isMatchProp != property.SortPropSatisfiedNeedMergeSort, "index merge should not match property using merge sort")
 
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp.Matched() {
 		return base.InvalidTask, nil
@@ -2291,7 +2290,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
 	}
-	ts, remainingFilters2, moreColumn, err := buildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.isMatchProp == property.SortPropSatisfiedUnconditionally)
+	ts, remainingFilters2, moreColumn, err := buildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.isMatchProp == property.SortPropSatisfied)
 	if err != nil {
 		return base.InvalidTask, err
 	}
@@ -2299,7 +2298,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		return base.InvalidTask, nil
 	}
 	globalRemainingFilters = append(globalRemainingFilters, remainingFilters2...)
-	cop.keepOrder = candidate.isMatchProp == property.SortPropSatisfiedUnconditionally || candidate.isMatchProp == property.SortPropSatisfiedByMergeSort
+	cop.keepOrder = candidate.isMatchProp == property.SortPropSatisfied || candidate.isMatchProp == property.SortPropSatisfiedNeedMergeSort
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.idxMergeIsIntersection = path.IndexMergeIsIntersection
@@ -2673,8 +2672,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	path := candidate.path
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.isMatchProp.Matched(), candidate.path.IsSingleScan)
-	// merge-sort 匹配时设置 ByItems 和 GroupedRanges
-	if candidate.isMatchProp == property.SortPropSatisfiedByMergeSort {
+	if candidate.isMatchProp == property.SortPropSatisfiedNeedMergeSort {
 		byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 		for _, si := range prop.SortItems {
 			byItems = append(byItems, &util.ByItems{
@@ -2903,8 +2901,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	ts, _ := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.isMatchProp.Matched())
-	// merge-sort 匹配时设置 ByItems 和 GroupedRanges
-	if candidate.isMatchProp == property.SortPropSatisfiedByMergeSort {
+	if candidate.isMatchProp == property.SortPropSatisfiedNeedMergeSort {
 		byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 		for _, si := range prop.SortItems {
 			byItems = append(byItems, &util.ByItems{
@@ -3164,8 +3161,8 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 
 func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
 	// For batch point get, we don't try to satisfy the sort property with an extra merge sort,
-	// so only SortPropSatisfiedUnconditionally is allowed.
-	if !prop.IsSortItemEmpty() && candidate.isMatchProp != property.SortPropSatisfiedUnconditionally {
+	// so only SortPropSatisfied is allowed.
+	if !prop.IsSortItemEmpty() && candidate.isMatchProp != property.SortPropSatisfied {
 		return base.InvalidTask
 	}
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||

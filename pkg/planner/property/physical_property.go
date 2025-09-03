@@ -224,17 +224,17 @@ const (
 type SortPropMatchResult int
 
 const (
-	// SortPropNotSatisfied xxx
+	// SortPropNotSatisfied means the access path cannot satisfy the required order.
 	SortPropNotSatisfied SortPropMatchResult = iota
-	// SortPropSatisfiedUnconditionally xxx
-	SortPropSatisfiedUnconditionally
-	// SortPropSatisfiedByMergeSort xxx
-	SortPropSatisfiedByMergeSort
+	// SortPropSatisfied means the access path can satisfy the required order directly.
+	SortPropSatisfied
+	// SortPropSatisfiedNeedMergeSort means the access path can satisfy the required order, but a merge sort is needed.
+	SortPropSatisfiedNeedMergeSort
 )
 
-// Matched xxx
+// Matched returns true if the required order can be satisfied.
 func (r SortPropMatchResult) Matched() bool {
-	return r == SortPropSatisfiedUnconditionally || r == SortPropSatisfiedByMergeSort
+	return r == SortPropSatisfied || r == SortPropSatisfiedNeedMergeSort
 }
 
 // PhysicalProperty stands for the required physical property by parents.

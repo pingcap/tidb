@@ -38,6 +38,7 @@ import (
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -269,8 +270,11 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Rebuild groupedRanges if it was originally set
-		e.groupedRanges = rebuildGroupedRanges(e.ranges, e.groupByColIdxs)
+		// Rebuild GroupedRanges if it was originally set
+		if len(e.groupByColIdxs) == 0 {
+			return nil
+		}
+		e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, e.groupByColIdxs)
 	}
 
 	e.resultHandler = &tableResultHandler{}
