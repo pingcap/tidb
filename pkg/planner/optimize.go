@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,19 +72,20 @@ func isReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVa
 }
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
-func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
+func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmt, isStmtNode := node.Node.(ast.StmtNode)
 	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
-		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
+		!isStmtNode ||
 		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
 		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
-		sctx.GetSessionVars().InMultiStmts || // in multi-stmt
-		(stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache) { // in explain internal
+		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
 		return nil, nil, false, nil
 	}
+
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 	if !ok {
 		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
@@ -155,6 +157,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	defer func() {
 		if retErr == nil {
 			// Override the resource group if the hint is set.
+			// resource group name is case-insensitive. so we need to convert it to lower case.
+			lowerRgName := strings.ToLower(sessVars.StmtCtx.StmtHints.ResourceGroup)
 			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
 				if vardef.EnableResourceControl.Load() {
 					hasPriv := true
@@ -168,7 +172,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 						}
 					}
 					if hasPriv {
-						sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+						sessVars.StmtCtx.ResourceGroupName = lowerRgName
 						// if we are in a txn, should update the txn resource name to let the txn
 						// commit with the hint resource group.
 						if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
@@ -201,15 +205,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		return p, names, err
 	}
 
+	return optimizeCache(ctx, sctx, node, is)
+}
+
+func optimizeCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
 	// Call into the non-prepared plan cache.
-	if stmtNode, isStmtNode := node.Node.(ast.StmtNode); sessVars.EnableNonPreparedPlanCache && isStmtNode {
-		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
-		if err != nil {
-			return nil, nil, err
-		}
-		if ok {
-			return cachedPlan, names, nil
-		}
+	cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, node, is)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ok {
+		return cachedPlan, names, nil
 	}
 
 	return optimizeNoCache(ctx, sctx, node, is)
@@ -231,6 +237,10 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
+	}
+
+	if sessVars.StmtCtx.StmtHints.IgnorePlanCache {
+		sessVars.StmtCtx.SetSkipPlanCache("ignore_plan_cache hint used in SQL query")
 	}
 
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -299,6 +309,10 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
+
+			if sessVars.StmtCtx.StmtHints.IgnorePlanCache {
+				sessVars.StmtCtx.SetSkipPlanCache("ignore_plan_cache hint used in SQL binding")
+			}
 
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
@@ -704,7 +718,7 @@ func planIDFunc(plan any) (planID int, ok bool) {
 }
 
 func init() {
-	core.OptimizeAstNode = Optimize
+	core.OptimizeAstNode = optimizeCache
 	core.OptimizeAstNodeNoCache = optimizeNoCache
 	core.IsReadOnly = IsReadOnly
 	indexadvisor.QueryPlanCostHook = queryPlanCost

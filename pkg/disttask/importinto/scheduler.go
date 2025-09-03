@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -37,11 +38,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -57,13 +61,14 @@ const (
 var NewTaskRegisterWithTTL = utils.NewTaskRegisterWithTTL
 
 type taskInfo struct {
+	store  kv.Storage
 	taskID int64
 
 	// operation on taskInfo is run inside detect-task goroutine, so no need to synchronize.
 	lastRegisterTime time.Time
 
 	// initialized lazily in register()
-	etcdClient   *etcd.Client
+	etcdClient   *clientv3.Client
 	taskRegister utils.TaskRegister
 }
 
@@ -77,13 +82,13 @@ func (t *taskInfo) register(ctx context.Context) {
 	}
 	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister == nil {
-		client, err := importer.GetEtcdClient()
+		client, err := store.NewEtcdCli(t.store)
 		if err != nil {
 			logger.Warn("get etcd client failed", zap.Error(err))
 			return
 		}
 		t.etcdClient = client
-		t.taskRegister = NewTaskRegisterWithTTL(client.GetClient(), registerTaskTTL,
+		t.taskRegister = NewTaskRegisterWithTTL(client, registerTaskTTL,
 			utils.RegisterImportInto, strconv.FormatInt(t.taskID, 10))
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
@@ -150,22 +155,24 @@ func NewImportScheduler(
 	ctx context.Context,
 	task *proto.Task,
 	param scheduler.Param,
-	store kv.Storage,
 ) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := &importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
-		store:         store,
+		store:         param.Store,
 		taskKS:        task.Keyspace,
 	}
 	return sch
 }
 
 // NewImportSchedulerForTest creates a new import scheduler for test.
-func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
+func NewImportSchedulerForTest(globalSort bool, task *proto.Task, param scheduler.Param, store kv.Storage) scheduler.Scheduler {
 	return &importScheduler{
-		GlobalSort: globalSort,
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), task, param),
+		GlobalSort:    globalSort,
+		store:         store,
+		taskKS:        tidb.GetGlobalKeyspaceName(),
 	}
 }
 
@@ -182,7 +189,7 @@ func (sch *importScheduler) Init() (err error) {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
-	if task.Keyspace != tidb.GetGlobalKeyspaceName() {
+	if task.Keyspace != sch.store.GetKeyspace() {
 		if err = sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
 			var err2 error
 			sch.taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(task.Keyspace)
@@ -253,7 +260,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{taskID: task.ID})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
@@ -272,13 +279,20 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
-) (
-	resSubtaskMeta [][]byte, err error) {
+) (resSubtaskMeta [][]byte, err error) {
+	nodeCnt := len(execIDs)
+	if kerneltype.IsNextGen() {
+		// in nextgen, node resource are scaled out automatically, we only consider
+		// the max allowed node for the task, and ignore how many node currently
+		// available.
+		nodeCnt = task.MaxNodeCount
+	}
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
+		zap.Int("node-count", nodeCnt),
 	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
@@ -336,17 +350,13 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
-		// we need get metas where checksum is stored.
-		if err := updateResult(taskHandle, task, taskMeta, sch.GlobalSort); err != nil {
-			return nil, err
-		}
 		step := getStepOfEncode(sch.GlobalSort)
 		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, step)
 		if err != nil {
 			return nil, err
 		}
 		previousSubtaskMetas[step] = metas
-		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
+		logger.Info("move to post-process step", zap.Any("result", taskMeta.Summary))
 	case proto.StepDone:
 		return nil, nil
 	default:
@@ -359,8 +369,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      len(execIDs),
+		ExecuteNodesCnt:      nodeCnt,
 		Store:                sch.store,
+		ThreadCnt:            task.Concurrency,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
@@ -372,6 +383,10 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	}
 	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, nextStep)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := updateTaskSummary(taskHandle, task, taskMeta, nextStep, logicalPlan); err != nil {
 		return nil, err
 	}
 
@@ -504,16 +519,32 @@ func getStepOfEncode(globalSort bool) proto.Step {
 	return proto.ImportStepImport
 }
 
-// we will update taskMeta in place and make task.Meta point to the new taskMeta.
-func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
-	stepOfEncode := getStepOfEncode(globalSort)
-	summaries, err := handle.GetPreviousSubtaskSummary(task.ID, stepOfEncode)
-	if err != nil {
-		return err
-	}
+// Store task summary in task meta.
+// We will update it in place and make task.Meta point to the new taskMeta.
+func updateTaskSummary(
+	handle storage.TaskHandle,
+	task *proto.Task,
+	taskMeta *TaskMeta,
+	nextStep proto.Step,
+	p *LogicalPlan,
+) error {
+	// Process row count and data size
+	switch nextStep {
+	case proto.ImportStepEncodeAndSort, proto.ImportStepImport:
+		taskMeta.Summary.EncodeSummary = p.summary
+	case proto.ImportStepMergeSort:
+		taskMeta.Summary.MergeSummary = p.summary
+	case proto.ImportStepWriteAndIngest:
+		taskMeta.Summary.IngestSummary = p.summary
+	case proto.ImportStepPostProcess:
+		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-	for _, summary := range summaries {
-		taskMeta.Result.LoadedRowCnt += uint64(summary.RowCnt.Load())
+		for _, subtaskSummary := range subtaskSummaries {
+			taskMeta.Summary.ImportedRows += subtaskSummary.RowCnt.Load()
+		}
 	}
 
 	return updateMeta(task, taskMeta)
@@ -563,23 +594,45 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	task *proto.Task, taskMeta *TaskMeta) error {
-	// we have already switch import-mode when switch to post-process step.
+	// we have already switched import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
 	}
-	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
+
+	tableStatsDelta := &statsstorage.DeltaUpdate{
+		Delta: variable.TableDelta{
+			Delta:    taskMeta.Summary.ImportedRows,
+			Count:    taskMeta.Summary.ImportedRows,
+			InitTime: time.Now(),
+			TableID:  taskMeta.Plan.TableInfo.ID,
+		},
+		TableID: taskMeta.Plan.TableInfo.ID,
+	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, int64(taskMeta.Result.LoadedRowCnt)); err != nil {
+			return true, taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+				txn, err2 := se.Txn(true)
+				if err2 != nil {
+					return err2
+				}
+
+				// we only fill the delta change of the table when the task is
+				// done, and let auto-analyze to do analyzing. depending on the
+				// table size, analyze might take a long time, so we won't wait
+				// for it.
+				// auto analyze is triggered when the table have more than
+				// AutoAnalyzeMinCnt(1000) rows, and tidb_auto_analyze_ratio(0.5)
+				// portion of rows are changed, see NeedAnalyzeTable too.
+				// so if the table is small, there is no analyze triggered.
+				if err := statsstorage.UpdateStatsMeta(ctx, se, txn.StartTS(), tableStatsDelta); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()
-				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
+				return importer.FinishJob(ctx, exec, taskMeta.JobID, &taskMeta.Summary)
 			})
 		},
 	)
@@ -599,7 +652,7 @@ func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
-				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
+				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg, &taskMeta.Summary)
 			})
 		},
 	)
@@ -625,9 +678,9 @@ func (sch *importScheduler) cancelJob(ctx context.Context, task *proto.Task,
 	)
 }
 
-func (sch *importScheduler) getTaskMgrForAccessingImportJob() (*storage.TaskManager, error) {
-	if sch.taskKS == tidb.GetGlobalKeyspaceName() {
-		return storage.GetTaskManager()
+func (sch *importScheduler) getTaskMgrForAccessingImportJob() (scheduler.TaskManager, error) {
+	if sch.taskKS == sch.store.GetKeyspace() {
+		return sch.GetTaskMgr(), nil
 	}
 	return storage.NewTaskManager(sch.taskKSSessPool), nil
 }

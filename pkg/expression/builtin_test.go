@@ -16,6 +16,7 @@ package expression
 
 import (
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -264,8 +265,7 @@ func newFunctionForTest(ctx BuildContext, funcName string, args ...Expression) (
 	if !ok {
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
-	funcArgs := make([]Expression, len(args))
-	copy(funcArgs, args)
+	funcArgs := slices.Clone(args)
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, err

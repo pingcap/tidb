@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +41,7 @@ func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
 func (ds *mockDataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
-	p := PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
+	p := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
 	task := &RootTask{
 		p: p,
 	}
@@ -140,7 +141,7 @@ func (p *mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
 }
 
 func TestCostOverflow(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -157,7 +158,7 @@ func TestCostOverflow(t *testing.T) {
 }
 
 func TestEnforcedProperty(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -194,7 +195,7 @@ func TestEnforcedProperty(t *testing.T) {
 }
 
 func TestHintCannotFitProperty(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()

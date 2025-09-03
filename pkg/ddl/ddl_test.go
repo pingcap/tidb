@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -74,12 +73,6 @@ func NewJobSubmitterForTest() *JobSubmitter {
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
 	return s.ddlJobDoneChMap
-}
-
-func createMockStore(t *testing.T) kv.Storage {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	return store
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {
@@ -401,17 +394,17 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	d.etcdCli = &clientv3.Client{}
 	mockGetAllServerInfo := func(t *testing.T, versions ...string) {
-		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
+		serverInfos := make(map[string]*serverinfo.ServerInfo, len(versions))
 		for i, v := range versions {
-			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
-				StaticServerInfo: infosync.StaticServerInfo{
-					ServerVersionInfo: infosync.ServerVersionInfo{Version: v},
+			serverInfos[fmt.Sprintf("node%d", i)] = &serverinfo.ServerInfo{
+				StaticInfo: serverinfo.StaticInfo{
+					VersionInfo: serverinfo.VersionInfo{Version: v},
 				}}
 		}
 		bytes, err := json.Marshal(serverInfos)
 		require.NoError(t, err)
 		inTerms := fmt.Sprintf("return(`%s`)", string(bytes))
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", inTerms)
 	}
 
 	t.Run("all support v2, even with pre-release label", func(t *testing.T) {

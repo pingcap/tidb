@@ -117,5 +117,5 @@ INSERT INTO t1(c0, c1) VALUES (true, 2);
 SELECT v0.c0 FROM v0;
 SELECT (v0.c0)NOT LIKE(BINARY v0.c0) FROM v0;
 SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
-desc format='brief' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
+explain format='plan_tree' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
 

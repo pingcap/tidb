@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -56,12 +57,18 @@ type Builder struct {
 	bundleInfoBuilder
 	infoData *Data
 	store    kv.Storage
+	crossKS  bool
+}
+
+// SetSchemaVersion sets the schema version of the InfoSchema.
+func (b *Builder) SetSchemaVersion(ver int64) {
+	b.schemaMetaVersion = ver
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
-	b.schemaMetaVersion = diff.Version
+	b.SetSchemaVersion(diff.Version)
 	switch diff.Type {
 	case model.ActionCreateSchema:
 		return nil, applyCreateSchema(b, m, diff)
@@ -150,11 +157,12 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 		// Schema doesn't exist in kv, drop it from infoschema.
 		if dbInfo == nil {
 			schemaDiff := &model.SchemaDiff{
-				Version:     diff.Version,
-				Type:        model.ActionDropSchema,
-				SchemaID:    schemaID,
-				OldSchemaID: oldSchemaID,
-				OldTableID:  oldTableID,
+				Version:       diff.Version,
+				Type:          model.ActionDropSchema,
+				SchemaID:      schemaID,
+				OldSchemaID:   oldSchemaID,
+				OldTableID:    oldTableID,
+				IsRefreshMeta: true,
 			}
 			return applyDropSchema(b, schemaDiff), nil
 		}
@@ -162,11 +170,12 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 		// Schema exists in kv but not in infoschema, create it to infoschema
 		if _, ok := b.schemaByID(schemaID); !ok {
 			schemaDiff := &model.SchemaDiff{
-				Version:     diff.Version,
-				Type:        model.ActionCreateSchema,
-				SchemaID:    schemaID,
-				OldSchemaID: oldSchemaID,
-				OldTableID:  oldTableID,
+				Version:       diff.Version,
+				Type:          model.ActionCreateSchema,
+				SchemaID:      schemaID,
+				OldSchemaID:   oldSchemaID,
+				OldTableID:    oldTableID,
+				IsRefreshMeta: true,
 			}
 			if err := applyCreateSchema(b, m, schemaDiff); err != nil {
 				return nil, errors.Trace(err)
@@ -179,11 +188,12 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 
 			if needsCharsetUpdate {
 				charsetDiff := &model.SchemaDiff{
-					Version:     diff.Version,
-					Type:        model.ActionModifySchemaCharsetAndCollate,
-					SchemaID:    schemaID,
-					OldSchemaID: oldSchemaID,
-					OldTableID:  oldTableID,
+					Version:       diff.Version,
+					Type:          model.ActionModifySchemaCharsetAndCollate,
+					SchemaID:      schemaID,
+					OldSchemaID:   oldSchemaID,
+					OldTableID:    oldTableID,
+					IsRefreshMeta: true,
 				}
 				if err := applyModifySchemaCharsetAndCollate(b, m, charsetDiff); err != nil {
 					return nil, errors.Trace(err)
@@ -192,11 +202,12 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 
 			if needsPlacementUpdate {
 				placementDiff := &model.SchemaDiff{
-					Version:     diff.Version,
-					Type:        model.ActionModifySchemaDefaultPlacement,
-					SchemaID:    schemaID,
-					OldSchemaID: oldSchemaID,
-					OldTableID:  oldTableID,
+					Version:       diff.Version,
+					Type:          model.ActionModifySchemaDefaultPlacement,
+					SchemaID:      schemaID,
+					OldSchemaID:   oldSchemaID,
+					OldTableID:    oldTableID,
+					IsRefreshMeta: true,
 				}
 				if err := applyModifySchemaDefaultPlacement(b, m, placementDiff); err != nil {
 					return nil, errors.Trace(err)
@@ -221,23 +232,25 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 	// Table not exists in kv, drop it from infoschema
 	if tableInfo == nil {
 		schemaDiff := &model.SchemaDiff{
-			Version:     diff.Version,
-			Type:        model.ActionDropTable,
-			SchemaID:    schemaID,
-			TableID:     tableID,
-			OldSchemaID: oldSchemaID,
-			OldTableID:  oldTableID,
+			Version:       diff.Version,
+			Type:          model.ActionDropTable,
+			SchemaID:      schemaID,
+			TableID:       tableID,
+			OldSchemaID:   oldSchemaID,
+			OldTableID:    oldTableID,
+			IsRefreshMeta: true,
 		}
 		return applyDropTableOrPartition(b, m, schemaDiff)
 	}
 	// default update table
 	schemaDiff := &model.SchemaDiff{
-		Version:     diff.Version,
-		Type:        model.ActionCreateTable,
-		SchemaID:    schemaID,
-		TableID:     tableID,
-		OldSchemaID: oldSchemaID,
-		OldTableID:  oldTableID,
+		Version:       diff.Version,
+		Type:          model.ActionCreateTable,
+		SchemaID:      schemaID,
+		TableID:       tableID,
+		OldSchemaID:   oldSchemaID,
+		OldTableID:    oldTableID,
+		IsRefreshMeta: true,
 	}
 	return applyDefaultAction(b, m, schemaDiff)
 }
@@ -475,6 +488,12 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
+		// directly return if this action is initiated by refreshMeta DDL (only used by BR). In the BR case, we don't
+		// care about ON DELETE/UPDATE CASCADE so doesn't need to go through the below logic. The most important
+		// thing in BR is that we might not have DB key so if we go through, m.GetTable will error out.
+		if diff.IsRefreshMeta {
+			return
+		}
 
 		// Still keep the table in infoschema until when the state of table reaches StateNone. This is because
 		// the `ON DELETE/UPDATE CASCADE` function of foreign key may need to find the table in infoschema. Not
@@ -825,6 +844,17 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 
+	allIndexPublic := true
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			allIndexPublic = false
+			break
+		}
+	}
+	if allIndexPublic {
+		metrics.DDLResetTempIndexWrite(tblInfo.ID)
+	}
+
 	if !b.enableV2 {
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
 		tableNames.tables[tblInfo.Name.L] = tbl
@@ -975,6 +1005,10 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 }
 
 func (b *Builder) initVirtualTables(schemaVersion int64) error {
+	if b.crossKS {
+		// cross keyspace sessions are not allowed to access virtual tables.
+		return nil
+	}
 	// Initialize virtual tables.
 	for _, driver := range drivers {
 		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
@@ -1163,6 +1197,12 @@ func NewBuilder(r autoid.Requirement, schemaCacheSize uint64, factory func() (po
 // WithStore attaches the given store to builder.
 func (b *Builder) WithStore(s kv.Storage) *Builder {
 	b.store = s
+	return b
+}
+
+// WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
+func (b *Builder) WithCrossKS(crossKS bool) *Builder {
+	b.crossKS = crossKS
 	return b
 }
 

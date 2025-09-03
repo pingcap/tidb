@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -266,6 +267,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 	if err != nil {
 		return nil, err
 	}
+	keyspace := helper.GetTiKVCodec().GetKeyspace()
 
 	return &TableImporter{
 		LoadDataController: e,
@@ -276,6 +278,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
 		},
+		keyspace:      keyspace,
 		encTable:      tbl,
 		dbID:          e.DBID,
 		logger:        e.logger.With(zap.String("import-id", id)),
@@ -426,7 +429,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
 	}
-	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
+	makeEngineCtx := logutil.WithLogger(ctx, e.logger)
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
@@ -859,6 +862,9 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 
 	failpoint.Inject("waitCtxDone", func() {
 		<-ctx.Done()
+	})
+	failpoint.Inject("retryableError", func() {
+		failpoint.Return(common.ErrWriteTooSlow)
 	})
 
 	remoteChecksum, err := getRemoteChecksumFn()

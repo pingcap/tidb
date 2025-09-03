@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/bits"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -332,16 +334,7 @@ func removeChangingColAndIdxs(tblInfo *model.TableInfo, changingColID int64) {
 	tblInfo.Columns = restCols
 }
 
-func replaceOldColumn(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
-	newName ast.CIStr) *model.ColumnInfo {
-	tblInfo.MoveColumnInfo(changingCol.Offset, len(tblInfo.Columns)-1)
-	changingCol = updateChangingCol(changingCol, newName, oldCol.Offset)
-	tblInfo.Columns[oldCol.Offset] = changingCol
-	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
-	return changingCol
-}
-
-func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo) {
+func removeOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo) {
 	// Remove the changing indexes.
 	for i, idx := range tblInfo.Indices {
 		for _, cIdx := range changingIdxs {
@@ -358,18 +351,6 @@ func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo
 		}
 	}
 	tblInfo.Indices = tmp
-	// Replace the old indexes with changing indexes.
-	for _, cIdx := range changingIdxs {
-		// The index name should be changed from '_Idx$_name' to 'name'.
-		idxName := getChangingIndexOriginName(cIdx)
-		for i, idx := range tblInfo.Indices {
-			if strings.EqualFold(idxName, idx.Name.O) {
-				cIdx.Name = ast.NewCIStr(idxName)
-				tblInfo.Indices[i] = cIdx
-				break
-			}
-		}
-	}
 }
 
 // updateNewIdxColsNameOffset updates the name&offset of the index column.
@@ -384,38 +365,90 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 	}
 }
 
-// filterIndexesToRemove filters out the indexes that can be removed.
-func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName ast.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
-	indexesToRemove := make([]*model.IndexInfo, 0, len(changingIdxs))
-	for _, idx := range changingIdxs {
-		var hasOtherChangingCol bool
-		for _, col := range idx.Columns {
-			if col.Name.L == colName.L {
-				continue // ignore the current modifying column.
-			}
-			if !hasOtherChangingCol {
-				hasOtherChangingCol = tblInfo.Columns[col.Offset].ChangeStateInfo != nil
-			}
-		}
-		// For the indexes that still contains other changing column, skip removing it now.
-		// We leave the removal work to the last modify column job.
-		if !hasOtherChangingCol {
-			indexesToRemove = append(indexesToRemove, idx)
-		}
-	}
-	return indexesToRemove
-}
-
-func updateChangingCol(col *model.ColumnInfo, newName ast.CIStr, newOffset int) *model.ColumnInfo {
-	col.Name = newName
-	col.ChangeStateInfo = nil
-	col.Offset = newOffset
+func updateModifyingCols(oldCol, changingCol *model.ColumnInfo) {
+	changingCol.ChangeStateInfo = nil
 	// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
 	// so that there is no error in getting the default value from OriginDefaultValue.
 	// Besides, nil data that was not backfilled in the "add column" is backfilled after the column is changed.
 	// So it can set OriginDefaultValue to nil.
-	col.OriginDefaultValue = nil
-	return col
+	changingCol.OriginDefaultValue = nil
+	oldCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: changingCol.Offset}
+}
+
+func moveChangingColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
+	// Swap the old column with new column position.
+	oldOffset := oldCol.Offset
+	changingOffset := changingCol.Offset
+	tblInfo.MoveColumnInfo(oldOffset, changingOffset)
+	tblInfo.MoveColumnInfo(changingCol.Offset, oldOffset)
+	// Move the new column to a correct offset.
+	// The validation of the position is done in `validatePosition`.
+	destOffset, err := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
+	intest.AssertNoError(err)
+	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
+}
+
+// moveOldColumnInfo is used to make sure the columns in TableInfo
+// are in correct order after the old column is changed to non-public state.
+func moveOldColumnInfo(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
+	order := []model.SchemaState{
+		model.StatePublic,
+		model.StateWriteReorganization,
+		model.StateWriteOnly,
+		model.StateDeleteReorganization,
+		model.StateDeleteOnly,
+		model.StateNone,
+	}
+	for len(order) > 0 && order[len(order)-1] != oldCol.State {
+		order = order[:len(order)-1]
+	}
+	dest := len(tblInfo.Columns) - 1
+	for i, col := range tblInfo.Columns {
+		if col.ID == oldCol.ID {
+			continue
+		}
+		if !slices.Contains(order, col.State) {
+			dest = i
+			break
+		}
+	}
+	tblInfo.MoveColumnInfo(oldCol.Offset, dest)
+}
+
+func moveIndexInfoToDest(tblInfo *model.TableInfo, changingCol *model.ColumnInfo,
+	oldIdxInfos, changingIdxInfos []*model.IndexInfo) {
+	for i, cIdx := range changingIdxInfos {
+		hasOtherChangingCol := false
+		for _, ic := range cIdx.Columns {
+			idxCol := tblInfo.Columns[ic.Offset]
+			if idxCol.ID == changingCol.ID {
+				continue // ignore current modifying column.
+			}
+			if idxCol.ChangeStateInfo != nil {
+				hasOtherChangingCol = true
+				break
+			}
+		}
+		// For the indexes that still contains other changing column, skip swaping it now.
+		// We leave the swaping work to the last modify column job.
+		if !hasOtherChangingCol {
+			swapIndexInfoByID(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
+		}
+	}
+}
+
+func swapIndexInfoByID(tblInfo *model.TableInfo, idxIDA, idxIDB int64) {
+	offsetA := 0
+	offsetB := 0
+	for i, idx := range tblInfo.Indices {
+		switch idx.ID {
+		case idxIDA:
+			offsetA = i
+		case idxIDB:
+			offsetB = i
+		}
+	}
+	tblInfo.Indices[offsetA], tblInfo.Indices[offsetB] = tblInfo.Indices[offsetB], tblInfo.Indices[offsetA]
 }
 
 func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.IndexInfo {
@@ -425,6 +458,18 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 			indexInfos = append(indexInfos, idx)
 		}
 	}
+	// In multi-schema change, if more than one column of an index is being modified,
+	// the added hidden index will be changed(including index ID) in place by the latter modified column subjob.
+	// We need to sort by index ID to ensure the order of changing indexes equals to the old indexes.
+	slices.SortFunc(indexInfos, func(idxA, idxB *model.IndexInfo) int {
+		if idxA.ID < idxB.ID {
+			return -1
+		}
+		if idxA.ID > idxB.ID {
+			return 1
+		}
+		return 0
+	})
 	return indexInfos
 }
 
@@ -728,6 +773,11 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
+var (
+	// testCheckReorgTimeout is used to mock timeout when reorg data.
+	testCheckReorgTimeout = int32(0)
+)
+
 func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
 	sysTZ := w.loc
 	_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, handle, rawRow, sysTZ, w.rowMap)
@@ -771,7 +821,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
+			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&testCheckReorgTimeout, 0, 1) {
 				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
 			}
 		}
@@ -834,7 +884,7 @@ func (w *updateColumnWorker) cleanRowMap() {
 }
 
 // BackfillData will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
-func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -899,10 +949,63 @@ func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 	return
 }
 
-func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
-	changingCol.State = schemaState
-	for _, idx := range changingIdxs {
-		idx.State = schemaState
+func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) error {
+	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
+		// For cases like `modify column b after b`, it should report this error.
+		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
+	}
+	_, err := LocateOffsetToMove(oldCol.Offset, pos, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
+	publicName := newColName
+	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+
+	renameColumnTo(oldCol, oldIdxs, removingName)
+	renameColumnTo(changingCol, changingIdxs, publicName)
+	for i := range oldIdxs {
+		oldIdxName := oldIdxs[i].Name.O
+		publicName := ast.NewCIStr(getRemovingObjOriginName(oldIdxName))
+		removingName := ast.NewCIStr(getRemovingObjName(oldIdxName))
+
+		changingIdxs[i].Name = publicName
+		oldIdxs[i].Name = removingName
+	}
+}
+
+func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdxs []*model.IndexInfo) []int64 {
+	tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
+	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+	var removedIdxIDs []int64
+	if len(oldIdxs) > 0 {
+		removedIdxIDs = make([]int64, 0, len(oldIdxs))
+		for _, idx := range oldIdxs {
+			removedIdxIDs = append(removedIdxIDs, idx.ID)
+		}
+		removeOldIndexes(tblInfo, oldIdxs)
+	}
+	return removedIdxIDs
+}
+
+func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName ast.CIStr) {
+	for _, idx := range idxInfos {
+		for _, idxCol := range idx.Columns {
+			if idxCol.Name.L == col.Name.L {
+				idxCol.Name = newName
+			}
+		}
+	}
+	col.Name = newName
+}
+
+func updateObjectState(col *model.ColumnInfo, idxs []*model.IndexInfo, state model.SchemaState) {
+	col.State = state
+	for _, idx := range idxs {
+		idx.State = state
 	}
 }
 
@@ -1341,4 +1444,15 @@ func getExpressionIndexOriginName(originalName ast.CIStr) string {
 		return columnName
 	}
 	return columnName[:pos]
+}
+
+func getRemovingObjName(name string) string {
+	if strings.HasPrefix(name, removingObjPrefix) {
+		return name
+	}
+	return fmt.Sprintf("%s%s", removingObjPrefix, name)
+}
+
+func getRemovingObjOriginName(idxName string) string {
+	return strings.TrimPrefix(idxName, removingObjPrefix)
 }

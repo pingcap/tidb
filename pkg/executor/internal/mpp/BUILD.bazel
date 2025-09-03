@@ -38,6 +38,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
@@ -49,8 +50,8 @@ go_test(
     srcs = ["local_mpp_coordinator_test.go"],
     embed = [":mpp"],
     flaky = True,
+    shard_count = 2,
     deps = [
-        "//pkg/planner/core",
         "//pkg/planner/core/operator/physicalop",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",

@@ -59,7 +59,7 @@ type ShowContents struct {
 	Limit       *ast.Limit // Used for limit Result Set row number.
 
 	ImportJobID       *int64 // Used for SHOW LOAD DATA JOB <jobID>
-	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
+	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 	DistributionJobID *int64 // Used for SHOW DISTRIBUTION JOB <JobID>
 }
 

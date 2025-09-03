@@ -37,7 +37,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	tblInfo := &model.TableInfo{}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -45,8 +45,8 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	tableScan.SetSchema(schema)
 
 	// table reader
-	tableReader := &PhysicalTableReader{
-		tablePlan:  tableScan,
+	tableReader := &physicalop.PhysicalTableReader{
+		TablePlan:  tableScan,
 		TablePlans: []base.PhysicalPlan{tableScan},
 		StoreType:  kv.TiKV,
 	}
@@ -58,7 +58,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	sel = sel.Init(ctx, stats, 0)
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col}}
+	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}
 	proj = proj.Init(ctx, stats, 0)
 	proj.SetSchema(schema)
 
@@ -71,25 +71,25 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	}
 
 	// mock a union-scan and attach to task.
-	unionScan := &PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
+	unionScan := &physicalop.PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
 	unionScan.Attach2Task(task)
 
 	// assert the child task's p is unchanged.
 	require.Equal(t, task.p, sel)
 	require.Equal(t, task.p.Children()[0], proj)
 	require.Equal(t, task.p.Children()[0].Children()[0], tableReader)
-	require.Equal(t, task.p.Children()[0].Children()[0].(*PhysicalTableReader).TablePlans[0], tableScan)
+	require.Equal(t, task.p.Children()[0].Children()[0].(*physicalop.PhysicalTableReader).TablePlans[0], tableScan)
 
 	task2 := &RootTask{
 		p: proj,
 	}
 	// mock a union-scan and attach to task.
-	unionScan2 := &PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
+	unionScan2 := &physicalop.PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
 	unionScan2.Self = unionScan2
 	unionScan2.Attach2Task(task2)
 
 	// assert the child task's p is unchanged.
 	require.Equal(t, task2.p, proj)
 	require.Equal(t, task2.p.Children()[0], tableReader)
-	require.Equal(t, task2.p.Children()[0].(*PhysicalTableReader).TablePlans[0], tableScan)
+	require.Equal(t, task2.p.Children()[0].(*physicalop.PhysicalTableReader).TablePlans[0], tableScan)
 }

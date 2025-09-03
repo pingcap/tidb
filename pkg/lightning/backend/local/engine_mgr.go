@@ -263,7 +263,7 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 		dupDetectOpt:       em.DuplicateDetectOpt,
 		duplicateDB:        em.duplicateDB,
 		keyAdapter:         em.keyAdapter,
-		logger:             log.FromContext(ctx),
+		logger:             log.Wrap(logutil.Logger(ctx)),
 	})
 	engine := e.(*Engine)
 	engine.lock(importMutexStateOpen)
@@ -315,6 +315,7 @@ func (em *engineManager) closeEngine(
 			ts = oracle.ComposeTS(physical, logical)
 		}
 		externalEngine := external.NewExternalEngine(
+			ctx,
 			store,
 			externalCfg.DataFiles,
 			externalCfg.StatFiles,
@@ -352,7 +353,7 @@ func (em *engineManager) closeEngine(
 			duplicateDetection: em.DupeDetectEnabled,
 			dupDetectOpt:       em.DuplicateDetectOpt,
 			duplicateDB:        em.duplicateDB,
-			logger:             log.FromContext(ctx),
+			logger:             log.Wrap(logutil.Logger(ctx)),
 		}
 		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
@@ -422,7 +423,7 @@ func (em *engineManager) resetEngine(
 			return extEngine.Reset()
 		}
 
-		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer localEngine.unlock()
@@ -475,7 +476,7 @@ func (em *engineManager) cleanupEngine(ctx context.Context, engineUUID uuid.UUID
 			delete(em.externalEngine, engineUUID)
 			return retErr
 		}
-		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer localEngine.unlock()

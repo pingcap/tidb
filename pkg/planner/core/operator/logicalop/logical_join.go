@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -103,10 +104,9 @@ func (tp JoinType) String() string {
 type LogicalJoin struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	JoinType      JoinType `hash64-equals:"true"`
-	Reordered     bool
-	CartesianJoin bool
-	StraightJoin  bool
+	JoinType     JoinType `hash64-equals:"true"`
+	Reordered    bool
+	StraightJoin bool
 
 	// HintInfo stores the join algorithm hint information specified by client.
 	HintInfo            *utilhint.PlanHints
@@ -150,6 +150,9 @@ type LogicalJoin struct {
 
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
+
+	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
+	allJoinLeaf []*expression.Schema
 }
 
 // Init initializes LogicalJoin.
@@ -206,12 +209,13 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
-	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
+	p.allJoinLeaf = getAllJoinLeaf(p)
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		predicates = p.outerJoinPropConst(predicates)
+		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, false, nil)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -230,7 +234,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
-		predicates = p.outerJoinPropConst(predicates)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, nil)
+		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForRightOuterJoin)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -256,7 +261,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
+		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -271,7 +276,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
+		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true,
+			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -305,8 +312,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	if err != nil {
 		return nil, nil, err
 	}
-	addSelection(p, lCh, leftRet, 0, opt)
-	addSelection(p, rCh, rightRet, 1, opt)
+	AddSelection(p, lCh, leftRet, 0, opt)
+	AddSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	return ret, p.Self(), nil
@@ -894,17 +901,13 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(equivFromApply [][]intset.FastIntSet
 	var opt funcdep.ArgOpts
 	if equivAcrossNum > 0 {
 		// find the equivalence FD across left and right cols.
-		var outConditionCols []*expression.Column
+		outerConditionUniqueIDs := intset.NewFastIntSet()
 		if len(outerCondition) != 0 {
-			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, outerCondition, nil)...)
+			expression.ExtractColumnsSetFromExpressions(&outerConditionUniqueIDs, nil, outerCondition...)
 		}
 		if len(p.OtherConditions) != 0 {
 			// other condition may contain right side cols, it doesn't affect the judgement of intersection of non-left-equiv cols.
-			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, p.OtherConditions, nil)...)
-		}
-		outerConditionUniqueIDs := intset.NewFastIntSet()
-		for _, col := range outConditionCols {
-			outerConditionUniqueIDs.Insert(int(col.UniqueID))
+			expression.ExtractColumnsSetFromExpressions(&outerConditionUniqueIDs, nil, p.OtherConditions...)
 		}
 		// judge whether left filters is on non-left-equiv cols.
 		if outerConditionUniqueIDs.Intersects(outerCols.Difference(equivOuterUniqueIDs)) {
@@ -1081,6 +1084,53 @@ func (p *LogicalJoin) AppendJoinConds(eq []*expression.ScalarFunction, left, rig
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
 	p.OtherConditions = append(other, p.OtherConditions...)
+}
+
+func (p *LogicalJoin) isAllUniqueIDInTheSameLeaf(cond expression.Expression) bool {
+	colset := slices.Collect(
+		maps.Keys(expression.ExtractColumnsMapFromExpressions(nil, cond)),
+	)
+	if len(colset) == 1 {
+		return true
+	}
+
+	for _, schema := range p.allJoinLeaf {
+		inTheSameSchema := true
+		// if we find a column in the table, the other is not in the same table.
+		// They are impossible in the same table. we can directly return.
+		findedSchema := false
+		for _, unique := range colset {
+			if !slices.ContainsFunc(schema.Columns, func(c *expression.Column) bool {
+				return c.UniqueID == unique
+			}) {
+				inTheSameSchema = false
+				break
+			}
+			findedSchema = true
+		}
+		if inTheSameSchema {
+			return true
+		} else if findedSchema {
+			return false
+		}
+	}
+	return false
+}
+
+// getAllJoinLeaf is to get all datasource's schema
+func getAllJoinLeaf(plan base.LogicalPlan) []*expression.Schema {
+	switch p := plan.(type) {
+	case *DataSource, *LogicalAggregation, *LogicalProjection:
+		// Because sometimes we put the output of the aggregation into the schema,
+		// we can consider it as a new table.
+		return []*expression.Schema{p.Schema()}
+	default:
+		result := make([]*expression.Schema, 0, len(p.Children()))
+		for _, child := range p.Children() {
+			result = append(result, getAllJoinLeaf(child)...)
+		}
+		return result
+	}
 }
 
 // ExtractJoinKeys extract join keys as a schema for child with childIdx.
@@ -1264,6 +1314,58 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 		}
 	}
 	return false
+}
+
+// This function is only used with inner join and semi join.
+func (p *LogicalJoin) isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin(expr expression.Expression) bool {
+	return p.isVaildConstantPropagationExpression(expr, true, true, true, true)
+}
+
+// This function is only used in LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, AntiSemiJoin
+func (p *LogicalJoin) isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin(expr expression.Expression) bool {
+	return p.isVaildConstantPropagationExpression(expr, false, false, false, true)
+}
+
+// This function is only used in RightOuterJoin
+func (p *LogicalJoin) isVaildConstantPropagationExpressionForRightOuterJoin(expr expression.Expression) bool {
+	return p.isVaildConstantPropagationExpression(expr, false, false, true, false)
+}
+
+// isVaildConstantPropagationExpression is to judge whether the expression is created by PropagationContant is vaild.
+//
+// Some expressions are not suitable for constant propagation. After constant propagation,
+// these expressions will only become a projection, increasing the computational load without
+// being able to filter data directly from the data source.
+//
+// `deriveLeft` and `driveRight` are used in conjunction with `extractOnCondition`.
+//
+// `canLeftPushDown` and `canRightPushDown` are used to mark that for some joins,
+// the left or right condition will not be pushed down. For these conditions that cannot be pushed down,
+// we can reject the new expressions from constant propagation.
+func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expression, deriveLeft, deriveRight, canLeftPushDown, canRightPushDown bool) bool {
+	_, leftCond, rightCond, otherCond := p.extractOnCondition([]expression.Expression{cond}, deriveLeft, deriveRight)
+	if len(otherCond) > 0 {
+		// a new expression which is created by constant propagation, is a other condtion, we don't put it
+		// into our final result.
+		return false
+	}
+	intest.Assert(len(leftCond) == 0 || len(rightCond) == 0, "An expression cannot be both a left and a right condition at the same time.")
+	// When the expression is a left/right condition, we want it to filter more of the underlying data.
+	if len(leftCond) > 0 {
+		// If this expression's columns is in the same table. We will push it down.
+		if canLeftPushDown && p.isAllUniqueIDInTheSameLeaf(cond) {
+			return true
+		}
+		return false
+	}
+	if len(rightCond) > 0 {
+		// If this expression's columns is in the same table. We will push it down.
+		if canRightPushDown && p.isAllUniqueIDInTheSameLeaf(cond) {
+			return true
+		}
+		return false
+	}
+	return true
 }
 
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
@@ -1681,10 +1783,11 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	return proj
 }
 
-// outerJoinPropConst propagates constant equal and column equal conditions over outer join.
-func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []expression.Expression {
-	outerTable := p.Children()[0]
-	innerTable := p.Children()[1]
+// joinPropConst propagates constant equal and column equal conditions over outer join or anti semi join.
+func (p *LogicalJoin) joinPropConst(predicates []expression.Expression, vaildExprFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
+	children := p.Children()
+	innerTable := children[1]
+	outerTable := children[0]
 	if p.JoinType == RightOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
 	}
@@ -1700,8 +1803,12 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.LeftConditions = nil
 	p.RightConditions = nil
 	p.OtherConditions = nil
-	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
-	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
+	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiSemiJoin
+	exprCtx := p.SCtx().GetExprCtx()
+	outerTableSchema := outerTable.Schema()
+	innerTableSchema := innerTable.Schema()
+	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema,
+		innerTableSchema, nullSensitive, vaildExprFunc)
 	p.AttachOnConds(joinConds)
 	return predicates
 }

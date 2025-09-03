@@ -937,7 +937,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer printRestoreMetrics()
 
 	// build restore registry
-	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	restoreRegistry, err := registry.NewRestoreRegistry(c, g, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1378,7 +1378,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR)
+	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
 	// some more checks once we get tables and files information
@@ -1917,7 +1917,7 @@ func filterRestoreFiles(
 		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
-		if !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
+		if !loadStatsPhysical && !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
 			continue
 		}
 		dbMap[db.Info.ID] = db
@@ -2558,8 +2558,9 @@ func createDBsAndTables(
 	return createdTables, nil
 }
 
-func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool) {
-	if cfg.ExplicitFilter && isPiTR {
+func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool,
+	isIncremental bool) {
+	if cfg.ExplicitFilter && isPiTR && !isIncremental {
 		for i, table := range tables {
 			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
 			if table.Info.IsSequence() {
@@ -2581,6 +2582,11 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
+
+	// update keyspace to be user specified
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
@@ -2632,7 +2638,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	}
 
 	// build restore registry
-	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	restoreRegistry, err := registry.NewRestoreRegistry(ctx, g, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}

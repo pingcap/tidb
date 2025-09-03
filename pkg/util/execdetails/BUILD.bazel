@@ -2,7 +2,12 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "execdetails",
-    srcs = ["execdetails.go"],
+    srcs = [
+        "execdetails.go",
+        "runtime_stats.go",
+        "tiflash_stats.go",
+        "util.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/execdetails",
     visibility = ["//visibility:public"],
     deps = [

@@ -117,8 +117,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
-	sqlExec := newSCtx.GetSQLExecutor()
-	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
 	}
 
@@ -201,7 +200,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}); err != nil {
 		return err
 	}
-	FillOneImportJobInfo(req, info, unknownImportedRowCount)
+	FillOneImportJobInfo(req, info, nil)
 	return nil
 }
 
@@ -250,8 +249,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}
 	defer CloseSession(newSCtx)
 
-	sqlExec := newSCtx.GetSQLExecutor()
-	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
 	}
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {

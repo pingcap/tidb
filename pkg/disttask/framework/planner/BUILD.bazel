@@ -25,6 +25,7 @@ go_test(
         "planner_test.go",
     ],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":planner",
         "//pkg/disttask/framework/mock",

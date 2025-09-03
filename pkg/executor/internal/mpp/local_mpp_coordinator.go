@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -505,13 +506,13 @@ func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, fou
 	switch x := plan.(type) {
 	case *physicalop.PhysicalLimit:
 		return needReportExecutionSummary(x.Children()[0], destTablePlanID, true)
-	case *plannercore.PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		if foundLimit {
 			return x.GetTablePlan().ID() == destTablePlanID
 		}
-	case *plannercore.PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		return needReportExecutionSummary(x.DataSource, destTablePlanID, foundLimit)
-	case *plannercore.PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		if needReportExecutionSummary(x.SeedPlan, destTablePlanID, foundLimit) {
 			return true
 		}
@@ -674,7 +675,17 @@ func (c *localMppCoordinator) cancelMppTasks() {
 }
 
 func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta, bo *backoff.Backoffer) {
-	stream, err := c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta})
+	var stream *tikvrpc.MPPStreamResponse
+	var err error
+	var retry bool
+	for {
+		stream, retry, err = c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta, Bo: bo.TiKVBackoffer()})
+		if retry {
+			logutil.BgLogger().Warn("establish mpp connection meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+			continue
+		}
+		break
+	}
 	if err != nil {
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
@@ -909,7 +920,7 @@ func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error)
 // Execute implements MppCoordinator interface
 func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.KeyRange, error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
-	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
+	sender := c.originalPlan.(*physicalop.PhysicalExchangeSender)
 	sctx := c.sessionCtx
 	frags, kvRanges, nodeInfo, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {

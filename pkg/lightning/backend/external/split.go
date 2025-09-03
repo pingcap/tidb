@@ -164,8 +164,12 @@ func NewRangeSplitter(
 // Close release the resources of RangeSplitter.
 func (r *RangeSplitter) Close() error {
 	err := r.propIter.Close()
-	r.logger.Info("close range splitter", zap.Error(err))
-	return err
+	if err != nil {
+		r.logger.Error("close range splitter error", zap.Error(err))
+		return err
+	}
+	r.logger.Info("close range splitter")
+	return nil
 }
 
 // SplitOneRangesGroup splits one ranges group may contain multiple range jobs

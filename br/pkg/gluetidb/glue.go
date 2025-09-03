@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -56,12 +56,12 @@ type Glue struct {
 	startDomainMu *sync.Mutex
 }
 
-func WrapSession(se sessiontypes.Session) glue.Session {
+func WrapSession(se sessionapi.Session) glue.Session {
 	return &tidbSession{se: se}
 }
 
 type tidbSession struct {
-	se sessiontypes.Session
+	se sessionapi.Session
 }
 
 // GetDomain implements glue.Glue.
@@ -118,7 +118,7 @@ func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	return dom.Start(ddl.Normal)
 }
 
-func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {
+func (g Glue) createTypesSession(store kv.Storage) (sessionapi.Session, error) {
 	if err := g.startDomainAsNeeded(store); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -301,6 +301,7 @@ func (gs *tidbSession) RefreshMeta(
 	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
 	d := domain.GetDomain(gs.se).DDLExecutor()
 	gs.se.SetValue(sessionctx.QueryString,
-		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d", args.SchemaID, args.TableID))
+		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d INVOLVED_DB=%s INVOLVED_TABLE=%s",
+			args.SchemaID, args.TableID, args.InvolvedDB, args.InvolvedTable))
 	return d.RefreshMeta(gs.se, args)
 }

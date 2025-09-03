@@ -505,6 +505,10 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
 	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	defer tracker.Detach()
+
+	// Delay copying until we know what needs to be modified
+	needsCopy := true
+
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
@@ -513,24 +517,35 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			HistColl:              histColl,
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 		}
-	} else {
-		// We copy it before writing to avoid race.
-		table = table.Copy()
+		needsCopy = false
 	}
-	table.Pseudo = false
 
-	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
+	realtimeCount, modifyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 	if err != nil || isNull {
 		return nil, err
 	}
-	table.ModifyCount = modidyCount
-	table.RealtimeCount = realtimeCount
 
 	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %?", tableID)
 	if err != nil {
 		return nil, err
 	}
-	// Check table has no index/column stats.
+
+	if needsCopy {
+		if len(rows) == 0 {
+			// Only metadata update needed
+			table = table.CopyAs(statistics.MetaOnly)
+		} else {
+			// Indexes and Columns maps potentially get updated
+			table = table.CopyAs(statistics.BothMapsWritable)
+		}
+	}
+
+	// Update metadata
+	table.Pseudo = false
+	table.ModifyCount = modifyCount
+	table.RealtimeCount = realtimeCount
+
+	// Early return if no histogram data to process
 	if len(rows) == 0 {
 		return table, nil
 	}
@@ -569,7 +584,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 	}
 	table.ColAndIdxExistenceMap.SetChecked()
-	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
+	return ExtendedStatsFromStorage(sctx, table.CopyAs(statistics.ExtendedStatsWritable), tableID, loadAll)
 }
 
 // LoadHistogram will load histogram from storage.
@@ -699,7 +714,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
 			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
-			statsTbl = statsTbl.Copy()
+			statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 			statsTbl.SetCol(col.ID, fakeCol)
 			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 				Updated: []*statistics.Table{statsTbl},
@@ -763,7 +778,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		)
 		return nil
 	}
-	statsTbl = statsTbl.Copy()
+	statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 	if colHist.StatsAvailable() {
 		if fullLoad {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
@@ -876,7 +891,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		)
 		return nil
 	}
-	tbl = tbl.Copy()
+	tbl = tbl.CopyAs(statistics.IndexMapWritable)
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)

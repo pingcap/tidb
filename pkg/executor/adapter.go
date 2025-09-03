@@ -50,6 +50,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -64,7 +65,6 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -369,7 +369,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			a.PsStmt.PointGet.Executor = nil
 		} else {
 			// CachedPlan type is already checked in last step
-			pointGetPlan := a.Plan.(*plannercore.PointGetPlan)
+			pointGetPlan := a.Plan.(*physicalop.PointGetPlan)
 			exec.Recreated(pointGetPlan, a.Ctx)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
@@ -411,7 +411,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
-			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+			sctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
 	}
 
@@ -484,13 +484,13 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 
 // IsFastPlan exports for testing.
 func IsFastPlan(p base.Plan) bool {
-	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
+	if proj, ok := p.(*physicalop.PhysicalProjection); ok {
 		p = proj.Children()[0]
 	}
 	switch p.(type) {
-	case *plannercore.PointGetPlan:
+	case *physicalop.PointGetPlan:
 		return true
-	case *plannercore.PhysicalTableDual:
+	case *physicalop.PhysicalTableDual:
 		// Plan of following SQL is PhysicalTableDual:
 		// select 1;
 		// select @@autocommit;
@@ -635,7 +635,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
 		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
 		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
@@ -825,8 +825,13 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 // prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
 // cascade behaviour and this ExecStmt is in transaction.
 func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
-	exec, ok := e.(WithForeignKeyTrigger)
-	if !ok || !exec.HasFKCascades() {
+	var execWithFKTrigger WithForeignKeyTrigger
+	if explain, ok := e.(*ExplainExec); ok {
+		execWithFKTrigger = explain.getAnalyzeExecWithForeignKeyTrigger()
+	} else {
+		execWithFKTrigger, _ = e.(WithForeignKeyTrigger)
+	}
+	if execWithFKTrigger == nil || !execWithFKTrigger.HasFKCascades() {
 		return
 	}
 	sessVar := a.Ctx.GetSessionVars()
@@ -927,7 +932,7 @@ func isNoResultPlan(p base.Plan) bool {
 		if raw.CalculateNoDelay {
 			return true
 		}
-	case *plannercore.PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		if raw.CalculateNoDelay {
 			return true
 		}
@@ -1546,6 +1551,14 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
 		case "Update":
 			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		case "NTDML-Delete":
+			metrics.AffectedRowsCounterNTDMLDelete.Add(float64(affectedRows))
+		case "NTDML-Update":
+			metrics.AffectedRowsCounterNTDMLUpdate.Add(float64(affectedRows))
+		case "NTDML-Insert":
+			metrics.AffectedRowsCounterNTDMLInsert.Add(float64(affectedRows))
+		case "NTDML-Replace":
+			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
 		}
 	}
 }
@@ -1652,8 +1665,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
-	sql := FormatSQL(a.GetTextToLog(true))
-	_, digest := stmtCtx.SQLDigest()
 
 	var indexNames string
 	if len(stmtCtx.IndexNames) > 0 {
@@ -1675,25 +1686,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		buf.WriteByte(']')
 		indexNames = buf.String()
 	}
-	var stmtDetail execdetails.StmtExecDetails
-	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
-	if stmtDetailRaw != nil {
-		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-	}
-	var tikvExecDetail util.ExecDetails
-	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
-	if tikvExecDetailRaw != nil {
-		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
-	}
-	ruDetails := util.NewRUDetails()
-	if ruDetailsVal := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
-		ruDetails = ruDetailsVal.(*util.RUDetails)
-	}
 
+	stmtDetail, tikvExecDetail, ruDetails := execdetails.GetExecDetailsFromContext(a.GoCtx)
 	execDetail := stmtCtx.GetExecDetails()
-	copTaskInfo := stmtCtx.CopTasksDetails()
-	memMax := sessVars.MemTracker.MaxConsumed()
-	diskMax := sessVars.DiskTracker.MaxConsumed()
+	sql := FormatSQL(a.GetTextToLog(true))
+	_, digest := stmtCtx.SQLDigest()
 	_, planDigest := GetPlanDigest(stmtCtx)
 
 	binaryPlan := ""
@@ -1704,13 +1701,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 	}
 
-	resultRows := stmtCtx.GetResultRowsCount()
-
-	var (
-		keyspaceName string
-		keyspaceID   uint32
-	)
-	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	var keyspaceID uint32
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
@@ -1726,15 +1718,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		SQL:               sql.String(),
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
-		TimeParse:         sessVars.DurationParse,
-		TimeCompile:       sessVars.DurationCompile,
-		TimeOptimize:      sessVars.DurationOptimization,
-		TimeWaitTS:        sessVars.DurationWaitTS,
 		IndexNames:        indexNames,
-		CopTasks:          copTaskInfo,
+		CopTasks:          stmtCtx.CopTasksDetails(),
 		ExecDetail:        execDetail,
-		MemMax:            memMax,
-		DiskMax:           diskMax,
+		MemMax:            sessVars.MemTracker.MaxConsumed(),
+		DiskMax:           sessVars.DiskTracker.MaxConsumed(),
 		Succ:              succ,
 		Plan:              getPlanTree(stmtCtx),
 		PlanDigest:        planDigest.String(),
@@ -1746,18 +1734,18 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		RewriteInfo:       sessVars.RewritePhaseInfo,
 		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
-		ResultRows:        resultRows,
+		ResultRows:        stmtCtx.GetResultRowsCount(),
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
-		Warnings:          collectWarningsForSlowLog(stmtCtx),
+		Warnings:          variable.CollectWarningsForSlowLog(stmtCtx),
 		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
-		RRU:               ruDetails.RRU(),
-		WRU:               ruDetails.WRU(),
-		WaitRUDuration:    ruDetails.RUWaitDuration(),
+		RUDetails:         ruDetails,
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
+		StorageKV:         stmtCtx.IsTiKV.Load(),
+		StorageMPP:        stmtCtx.IsTiFlash.Load(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1806,7 +1794,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 				Digest:     digest.String(),
 				Start:      sessVars.StartTime,
 				Duration:   costTime,
-				Detail:     stmtCtx.GetExecDetails(),
+				Detail:     execDetail,
 				Succ:       succ,
 				ConnID:     sessVars.ConnectionID,
 				SessAlias:  sessVars.SessionAlias,
@@ -1819,33 +1807,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			})
 		}
 	}
-}
-
-func extractMsgFromSQLWarn(sqlWarn *contextutil.SQLWarn) string {
-	// Currently, this function is only used in collectWarningsForSlowLog.
-	// collectWarningsForSlowLog can make sure SQLWarn is not nil so no need to add a nil check here.
-	warn := errors.Cause(sqlWarn.Err)
-	if x, ok := warn.(*terror.Error); ok && x != nil {
-		sqlErr := terror.ToSQLError(x)
-		return sqlErr.Message
-	}
-	return warn.Error()
-}
-
-func collectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []variable.JSONSQLWarnForSlowLog {
-	warnings := stmtCtx.GetWarnings()
-	extraWarnings := stmtCtx.GetExtraWarnings()
-	res := make([]variable.JSONSQLWarnForSlowLog, len(warnings)+len(extraWarnings))
-	for i := range warnings {
-		res[i].Level = warnings[i].Level
-		res[i].Message = extractMsgFromSQLWarn(&warnings[i])
-	}
-	for i := range extraWarnings {
-		res[len(warnings)+i].Level = extraWarnings[i].Level
-		res[len(warnings)+i].Message = extractMsgFromSQLWarn(&extraWarnings[i])
-		res[len(warnings)+i].IsExtra = true
-	}
-	return res
 }
 
 func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
@@ -1877,14 +1838,13 @@ func (a *ExecStmt) updateMPPNetworkTraffic() bool {
 	if tiflashNetworkStats == nil {
 		return false
 	}
-	var tikvExecDetail *util.ExecDetails
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw == nil {
 		tikvExecDetailRaw = &util.ExecDetails{}
 		a.GoCtx = context.WithValue(a.GoCtx, util.ExecDetailsKey, tikvExecDetailRaw)
 	}
 
-	tikvExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+	tikvExecDetail := tikvExecDetailRaw.(*util.ExecDetails)
 	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 	return true
 }
@@ -1946,11 +1906,6 @@ func GetPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	return normalized, planDigest
 }
 
-// GetEncodedPlan returned same as getEncodedPlan
-func GetEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
-	return getEncodedPlan(stmtCtx, genHint)
-}
-
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
 func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
 	var hintSet bool
@@ -2005,7 +1960,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := sessVars.GetTotalCostDuration()
@@ -2035,20 +1990,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	var stmtDetail execdetails.StmtExecDetails
-	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
-	if stmtDetailRaw != nil {
-		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-	}
-	var tikvExecDetail util.ExecDetails
-	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
-	if tikvExecDetailRaw != nil {
-		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
-	}
-	var ruDetail *util.RUDetails
-	if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
-		ruDetail = ruDetailRaw.(*util.RUDetails)
-	}
+	stmtDetail, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
 		if execDetail.BackoffSleep == nil {
@@ -2059,13 +2001,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 
-	resultRows := stmtCtx.GetResultRowsCount()
-
-	var (
-		keyspaceName string
-		keyspaceID   uint32
-	)
-	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	var keyspaceID uint32
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
@@ -2098,7 +2035,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
 	stmtExecInfo.ExecRetryCount = a.retryCount
 	stmtExecInfo.StmtExecDetails = stmtDetail
-	stmtExecInfo.ResultRows = resultRows
+	stmtExecInfo.ResultRows = stmtCtx.GetResultRowsCount()
 	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName
@@ -2391,7 +2328,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,
 	}
-	dumpTask.EncodedPlan, _ = GetEncodedPlan(stmtCtx, false)
+	dumpTask.EncodedPlan, _ = getEncodedPlan(stmtCtx, false)
 	if execStmtAst, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		planCacheStmt, err := plannercore.GetPreparedStmt(execStmtAst, sctx.GetSessionVars())
 		if err != nil {

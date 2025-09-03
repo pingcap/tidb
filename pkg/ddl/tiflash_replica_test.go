@@ -26,6 +26,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,11 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -147,7 +150,7 @@ func TestSetTableFlashReplica(t *testing.T) {
 }
 
 // setUpRPCService setup grpc server to handle cop request for test.
-func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.SessionManager) (*grpc.Server, string) {
+func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm sessmgr.Manager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
@@ -228,6 +231,48 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
 }
 
+func TestSetTiFlashReplicaForAddGBKColumn(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// GBK
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("alter table t set tiflash replica 1;")
+	tbl := external.GetTableByName(t, tk, "test", "t")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustContainErrMsg("alter table t add column c1 varchar(10) character set gbk;", "[ddl:8200]unsupported add column 'c1' when altering 't' with TiFlash replicas and gbk encoding")
+	tk.MustGetErrCode("alter table t add column c1 varchar(10) character set gbk, add column c2 varchar(10) character set gbk;", errno.ErrUnsupportedDDLOperation)
+
+	tk.MustExec("create table tgbk (id int) charset = gbk;")
+	tk.MustExec("alter table tgbk set tiflash replica 1;")
+	tbl = external.GetTableByName(t, tk, "test", "tgbk")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustGetErrCode("alter table tgbk add column c1 varchar(10);", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table tgbk add column c1 varchar(10), add column c2 varchar(10);", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table tgbk add column c1 varchar(10) character set utf8;")
+
+	// GB18030
+	tk.MustExec("create table t1 (id int);")
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tbl = external.GetTableByName(t, tk, "test", "t1")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustContainErrMsg("alter table t1 add column c1 varchar(10) character set GB18030;", "[ddl:8200]unsupported add column 'c1' when altering 't1' with TiFlash replicas and gb18030 encoding")
+	tk.MustGetErrCode("alter table t1 add column c1 varchar(10) character set GB18030, add column c2 varchar(10) character set GB18030;", errno.ErrUnsupportedDDLOperation)
+
+	tk.MustExec("create table tgb18030 (id int) charset = GB18030;")
+	tk.MustExec("alter table tgb18030 set tiflash replica 1;")
+	tbl = external.GetTableByName(t, tk, "test", "tgb18030")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustGetErrCode("alter table tgb18030 add column c1 varchar(10);", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table tgb18030 add column c1 varchar(10), add column c2 varchar(10);", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table tgb18030 add column c1 varchar(10) character set utf8;")
+}
+
 func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease)
 
@@ -260,6 +305,9 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 }
 
 func TestSkipSchemaChecker(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
@@ -409,6 +457,8 @@ func TestCreateTableWithLike2(t *testing.T) {
 }
 
 func TestTruncateTable2(t *testing.T) {
+	t.Logf("IsEmulatorGCEnable = %v", util.IsEmulatorGCEnable())
+	util.EmulatorGCEnable()
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -432,7 +482,7 @@ func TestTruncateTable2(t *testing.T) {
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
-	for range waitForCleanDataRound {
+	require.Eventually(t, func() bool {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err1 := txn.Iter(tablePrefix, nil)
@@ -448,12 +498,8 @@ func TestTruncateTable2(t *testing.T) {
 			return nil
 		})
 		require.NoError(t, err)
-		if !hasOldTableData {
-			break
-		}
-		time.Sleep(waitForCleanDataInterval)
-	}
-	require.False(t, hasOldTableData)
+		return !hasOldTableData
+	}, 30*time.Second, 100*time.Millisecond)
 
 	// Test for truncate table should clear the tiflash available status.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))

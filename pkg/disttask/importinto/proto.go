@@ -19,7 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -31,14 +31,17 @@ import (
 // All the field should be serializable.
 type TaskMeta struct {
 	// IMPORT INTO job id, see mysql.tidb_import_jobs.
-	JobID  int64
-	Plan   importer.Plan
-	Stmt   string
-	Result Result
+	JobID int64
+	Plan  importer.Plan
+	Stmt  string
+
+	// Summary is the summary of the whole import task.
+	Summary importer.Summary
+
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
 	// running on the instance that initiate the IMPORT INTO.
-	EligibleInstances []*infosync.ServerInfo
+	EligibleInstances []*serverinfo.ServerInfo
 	// the file chunks to import, when import from server file, we need to pass those
 	// files to the framework scheduler which might run on another instance.
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
@@ -177,10 +180,4 @@ type Checksum struct {
 	Sum  uint64
 	KVs  uint64
 	Size uint64
-}
-
-// Result records the metrics information.
-// This portion of the code may be implemented uniformly in the framework in the future.
-type Result struct {
-	LoadedRowCnt uint64
 }
