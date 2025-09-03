@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -191,7 +192,7 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestOuterJoinSpillWithSel(t *testing.T) {
@@ -239,7 +240,7 @@ func TestOuterJoinSpillWithSel(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
@@ -295,7 +296,7 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 // Hash join executor may be repeatedly closed and opened
@@ -339,7 +340,7 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 		expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 		testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestFallBackAction(t *testing.T) {
@@ -350,7 +351,7 @@ func TestFallBackAction(t *testing.T) {
 	hashJoinExec := buildHashJoinV2Exec(info)
 	_ = executeHashJoinExec(t, hashJoinExec)
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestIssue59377(t *testing.T) {
@@ -371,7 +372,7 @@ func TestIssue59377(t *testing.T) {
 	err = hashJoinExec.Next(tmpCtx, chk)
 	require.True(t, err != nil)
 	_ = hashJoinExec.Close()
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestHashJoinRandomFail(t *testing.T) {
@@ -426,5 +427,5 @@ func TestHashJoinRandomFail(t *testing.T) {
 			}
 		}
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }

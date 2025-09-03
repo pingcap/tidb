@@ -17,6 +17,7 @@ package join
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -619,5 +620,5 @@ func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinSpill(t *testing.T, isAnti bool
 	for _, param := range params2 {
 		testSpill(t, ctx, joinType, leftDataSourceWithSel, rightDataSourceWithSel, param)
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }

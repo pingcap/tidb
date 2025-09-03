@@ -482,7 +482,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		waitGroup.Done()
 
 		// When error happens, some disk files may not be closed.
-		// We need to manully check and close it.
+		// We need to manully check and close them.
 		for i := range e.partialWorkers {
 			if len(e.partialWorkers[i].spilledChunksIO) > 0 {
 				for _, disk := range e.partialWorkers[i].spilledChunksIO {

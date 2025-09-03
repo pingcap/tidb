@@ -15,15 +15,11 @@
 package join
 
 import (
-	"fmt"
-	"io/fs"
-	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -248,25 +244,6 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, lef
 	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, param.memoryLimits[4])
 }
 
-func checkNoLeakFiles(t *testing.T) {
-	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
-
-	fileNum := 0
-	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		log.Info(fmt.Sprintf("name: %s", d.Name()))
-		if !d.IsDir() {
-			fileNum++
-		}
-		return nil
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, 1, fileNum)
-}
-
 func TestInnerJoinSpillBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -312,7 +289,7 @@ func TestInnerJoinSpillBasic(t *testing.T) {
 	for _, param := range params {
 		testSpill(t, ctx, logicalop.InnerJoin, leftDataSource, rightDataSource, param)
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
@@ -362,7 +339,7 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 	for _, param := range params {
 		testSpill(t, ctx, logicalop.InnerJoin, leftDataSource, rightDataSource, param)
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 // Hash join executor may be repeatedly closed and opened
@@ -399,5 +376,5 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 
 	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
