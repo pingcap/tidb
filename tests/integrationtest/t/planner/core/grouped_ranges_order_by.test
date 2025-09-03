@@ -278,11 +278,35 @@ select a,c from t where b in (1, 3, null) order by a, c;
 deallocate prepare stmt1;
 deallocate prepare stmt2;
 
+drop table if exists t, t3;
+create table t(a int, b int, c int, d int, index iabc(a,b,c));
+explain format = 'brief' select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and d > 100 order by a, c;
+explain format = 'brief' select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
+insert into t values
+(10, 35, 9, 230), (10, 31, 10, 240), (10, 23, 11, 250), (10, 35, 12, 260),
+(20, 13, 5, 190), (20, 15, 6, 200), (20, 21, 7, 210), (20, 23, 8, 220),
+(30, 1, 1, 150), (30, 3, 2, 160), (30, 5, 3, 170), (30, 11, 4, 180),
+(40, 21, 13, 270), (40, 3, 14, 280), (40, 5, 15, 290), (50, 11, 16, 300);
+begin pessimistic;
+insert into t values
+(10, 1, 25, 390), (10, 3, 26, 400), (10, 5, 27, 410), (10, 11, 28, 420),
+(20, 1, 21, 350), (20, 31, 22, 360), (20, 33, 23, 370), (20, 35, 24, 380),
+(30, 13, 17, 310), (30, 35, 18, 320), (30, 2, 19, 330), (40, 23, 20, 340),
+(40, 13, 29, 430), (50, 15, 30, 440), (50, 3, 31, 450), (50, 23, 32, 460);
+explain format = 'brief' select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and d > 100 order by a, c;
+select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and d > 100 order by a, c;
+explain format = 'brief' select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
+select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
+commit;
+select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and d > 100 order by a, c;
+select b,c from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) and c > 1 order by b, c;
+
 create table t3(a int, b int, primary key(a,b) clustered);
-insert into t3 value(1,1),(7,3),(5,5);
+insert into t3 value(1,1),(7,3),(5,5),(2,4),(4,6),(5,8);
 select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
 begin pessimistic;
-insert into t3 value(6,7),(3,2),(4,0);
+insert into t3 value(6,7),(3,2),(4,0),(6,9),(3,10);
+explain format = 'brief' select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
 select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
 commit;
 select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;

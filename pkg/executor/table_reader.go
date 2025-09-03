@@ -484,11 +484,11 @@ func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.C
 func sortAndGetKVRangesFromReqs(kvReqs []*kv.Request) []kv.KeyRange {
 	kvRanges := make([]kv.KeyRange, 0, len(kvReqs))
 	for _, kvReq := range kvReqs {
-		kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) int {
-			return bytes.Compare(i.StartKey, j.StartKey)
-		})
 		kvRanges = kvReq.KeyRanges.AppendSelfTo(kvRanges)
 	}
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
+	})
 	return kvRanges
 }
 
