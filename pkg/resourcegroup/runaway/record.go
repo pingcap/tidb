@@ -213,6 +213,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	return builder.String(), params
 }
 
+// hasDeletedExpiredRows just test mark for delete expired rows once.
 var hasDeletedExpiredRows = false
 
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
