@@ -3657,7 +3657,9 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case vardef.TiDBRowFormatVersion:
 		varVal = strconv.Itoa(vardef.DefTiDBRowFormatV2)
 	case vardef.TiDBTxnAssertionLevel:
-		if !kerneltype.IsNextGen() {
+		if kerneltype.IsNextGen() {
+			varVal = vardef.GetDefaultTxnAssertionLevel()
+		} else {
 			varVal = vardef.AssertionFastStr
 		}
 	case vardef.TiDBEnableMutationChecker:
