@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -1092,9 +1093,17 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a bigint primary key clustered, b int);")
+
 	// The subtask execution order is not guaranteed in distributed reorg. We need to disable it first.
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+
+	if kerneltype.IsClassic() {
+		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	}
+	if kerneltype.IsNextGen() {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/model/mock-concurrency-for-ddl-reorg", `return(1)`)
+	}
+
 	for i := 1; i <= 12; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}

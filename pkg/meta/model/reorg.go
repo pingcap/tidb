@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -84,6 +85,11 @@ type DDLReorgMeta struct {
 
 // GetConcurrency gets the concurrency from DDLReorgMeta.
 func (dm *DDLReorgMeta) GetConcurrency() int {
+	failpoint.Inject("mock-concurrency-for-ddl-reorg", func(v failpoint.Value) {
+		if concurrency, ok := v.(int); ok && concurrency > 0 {
+			failpoint.Return(concurrency)
+		}
+	})
 	concurrency := dm.Concurrency.Load()
 	if concurrency == 0 {
 		// when the job coming from old cluster, concurrency might not set
