@@ -3109,9 +3109,9 @@ IndexReader_11	2.00	root	partition:all	index:Selection_10
   └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no = 200000;
 id	estRows	task	access object	operator info
-IndexLookUp_8	2.00	root	partition:all	
-├─IndexRangeScan_6(Build)	2.00	cop[tikv]	table:test1, index:index_partition_no(PARTITION_NO)	range:[200000,200000], keep order:false
-└─TableRowIDScan_7(Probe)	2.00	cop[tikv]	table:test1	keep order:false
+IndexReader_11	2.00	root	partition:all	index:Selection_10
+└─Selection_10	2.00	cop[tikv]		eq(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no >= 200000;
 id	estRows	task	access object	operator info
 IndexReader_11	2.00	root	partition:all	index:Selection_10
@@ -3168,9 +3168,9 @@ IndexReader_11	2.00	root	partition:all	index:Selection_10
   └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no = 200000;
 id	estRows	task	access object	operator info
-IndexLookUp_8	2.00	root	partition:all	
-├─IndexRangeScan_6(Build)	2.00	cop[tikv]	table:test1, index:index_partition_no(PARTITION_NO)	range:[200000,200000], keep order:false
-└─TableRowIDScan_7(Probe)	2.00	cop[tikv]	table:test1	keep order:false
+IndexReader_11	2.00	root	partition:all	index:Selection_10
+└─Selection_10	2.00	cop[tikv]		eq(issue43459.test1.partition_no, 200000)
+  └─IndexFullScan_9	2.00	cop[tikv]	table:test1, index:PRIMARY(ID, PARTITION_NO, CREATE_TIME)	keep order:false
 explain select * from test1 where partition_no >= 200000;
 id	estRows	task	access object	operator info
 IndexReader_11	2.00	root	partition:all	index:Selection_10

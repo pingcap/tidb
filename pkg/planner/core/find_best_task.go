@@ -1144,9 +1144,9 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
-	tableFilterResult := 0
 	// Count table filters - lowest wins. Do not count table filters if this is a table
 	// path, since that will inadvertently discourage a table path.
+	tableFilterResult := 0
 	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() {
 		if len(lhs.path.TableFilters) < len(rhs.path.TableFilters) {
 			tableFilterResult = 1
@@ -1154,6 +1154,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			tableFilterResult = -1
 		}
 	}
+	// Count the total number of filters for each path. We don't want to prioritize plans
+	// that only have 1 predicate. They should compete on cost.
+	lhsTotalIndexFilters := len(lhs.path.IndexFilters) + lhsEqOrInCount
+	rhsTotalIndexFilters := len(rhs.path.IndexFilters) + rhsEqOrInCount
 
 	// indexSum is the aggregate score of index predicate comparison metrics
 	// totalSum is the aggregate score of all comparison metrics
@@ -1195,21 +1199,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	// Below compares the two candidate paths on four dimensions:
-	// (1): the set of columns that occurred in the access condition,
-	// (2): does it require a double scan,
-	// (3): whether or not it matches the physical property,
-	// (4): it's a global index path or not.
-	// (5): whether the path has more equal/IN predicates.
-	// If `x` is not worse than `y` at all factors,
-	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	if !comparable1 && !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if indexSum > 0 && totalSum > 0 {
+	// Compare index and total comparison factors - but make sure we have more than 1 predicate
+	if indexSum > 0 && lhsTotalIndexFilters > 1 && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if indexSum < 0 && totalSum < 0 {
+	if indexSum < 0 && rhsTotalIndexFilters > 1 && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result

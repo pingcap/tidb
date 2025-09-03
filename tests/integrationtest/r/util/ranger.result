@@ -292,19 +292,17 @@ id	t
 analyze table t2;
 explain format='plan_tree' select * from t2 where t='aaaa';
 id	task	access object	operator info
-IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:t(t)	range:["aaa","aaa"], keep order:false
-└─Selection(Probe)	cop[tikv]		eq(util__ranger.t2.t, "aaaa")
-  └─TableRowIDScan	cop[tikv]	table:t2	keep order:false
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(util__ranger.t2.t, "aaaa")
+  └─TableFullScan	cop[tikv]	table:t2	keep order:false
 select * from t2 where t='aaaa';
 id	t
 1	aaaa
 explain format='plan_tree' select * from t2 where t='aaaa' or t = 'a';
 id	task	access object	operator info
-IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:t(t)	range:["a","a"], ["aaa","aaa"], keep order:false
-└─Selection(Probe)	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
-  └─TableRowIDScan	cop[tikv]	table:t2	keep order:false
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
+  └─TableFullScan	cop[tikv]	table:t2	keep order:false
 select * from t2 where t='aaaa' or t = 'a';
 id	t
 1	aaaa
