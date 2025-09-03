@@ -109,6 +109,8 @@ const (
 	OptCheckDup
 )
 
+var x int = 0
+
 // FinishAndUnregisterEngines implements BackendCtx.
 func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	bc.unregisterMu.Lock()
@@ -125,6 +127,10 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 		for _, ei := range bc.engines {
 			if ei.unique {
 				err := bc.collectRemoteDuplicateRows(ei.indexID, bc.tbl)
+				if x == 0 {
+					x += 1
+					panic("test")
+				}
 				if err != nil {
 					return errors.Trace(err)
 				}
