@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -115,9 +114,6 @@ func TestTraceCE(t *testing.T) {
 }
 
 func TestTraceDebugSelectivity(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("If we want to use the test code for both next-gen and classic at the same time, it's a bit challenging.")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	statsHandle := dom.StatsHandle()
