@@ -69,6 +69,7 @@ github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20O
 github.com/DATA-DOG/go-sqlmock v1.5.0/go.mod h1:f/Ixk793poVmq4qj/V1dPUg2JEAKC73Q5eFN3EC/SaM=
 github.com/DataDog/zstd v1.5.5 h1:oWf5W7GtOLgp6bciQYDmhHHjdhYkALu6S/5Ni9ZgSvQ=
 github.com/DataDog/zstd v1.5.5/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwSAmyw=
+github.com/HaoW30/pd/client v0.0.0-20250828163307-b5a410ce9c04/go.mod h1:SicyvcZE0fzrGGWW3AEtZWWPRzGw/h5img4/6qiSYws=
 github.com/HdrHistogram/hdrhistogram-go v1.1.2 h1:5IcZpTvzydCQeHzK4Ef/D5rrSqwxob0t8PQPMybUNFM=
 github.com/HdrHistogram/hdrhistogram-go v1.1.2/go.mod h1:yDgFjdqOqDEKOvasDdhWNXYg9BVp4O+o5f6V/ehm6Oo=
 github.com/JohnCGriffin/overflow v0.0.0-20211019200055-46fa312c352c h1:RGWPOewvKIROun94nF7v2cua9qP+thov/7M50KEoeSU=
@@ -853,7 +854,8 @@ github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
 github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
 github.com/tikv/client-go/v2 v2.0.8-0.20250828075934-b794d681774f h1:gC8fYblbgsyc0PiFT1lU0fy9l4yMwHTP3Cd7MHtNvjc=
 github.com/tikv/client-go/v2 v2.0.8-0.20250828075934-b794d681774f/go.mod h1:5mywG89scAyV30i1B4Brhz6lOqmye0ArD6fah7U9paw=
-github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500 h1:ZUCeeEEU76I/jFUK3C9EV3dSSrtVZt3rwpHF6cT8V3k=
+github.com/tikv/pd/client v0.0.0-20250625073039-fb496b371ff3 h1:lAuYtEVeJQ+FaD1WrYEJhnMHl5YeREq39QSqCXGDk6s=
+github.com/tikv/pd/client v0.0.0-20250625073039-fb496b371ff3/go.mod h1:SicyvcZE0fzrGGWW3AEtZWWPRzGw/h5img4/6qiSYws=
 github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500/go.mod h1:SicyvcZE0fzrGGWW3AEtZWWPRzGw/h5img4/6qiSYws=
 github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67 h1:9LPGD+jzxMlnk5r6+hJnar67cgpDIz/iyD+rfl5r2Vk=
 github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
