@@ -95,7 +95,7 @@ Selection	root		or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Column#1, 
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config","ddl","slow_query"]
 explain format='plan_tree' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
 id	task	access object	operator info
-Selection	root		or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))
+Selection	root		in(Column#1, "config", "slow_query"), in(Column#3, "metric_name3", "metric_name1")
 └─MemTableScan	root	table:INSPECTION_SUMMARY	rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]
 explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
 id	task	access object	operator info

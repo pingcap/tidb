@@ -251,7 +251,7 @@ a	b
 explain format='plan_tree' select * from trange where a = 4 or a = 1;
 id	task	access object	operator info
 TableReader	root	partition:p0,p1	data:Selection
-└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 4), eq(executor__partition__partition_with_expression.trange.a, 1))
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.trange.a, 4, 1)
   └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 4 or a = 1;
 a	b
@@ -262,7 +262,7 @@ a	b
 explain format='plan_tree' select * from thash where a = 4 or a = 1;
 id	task	access object	operator info
 TableReader	root	partition:p0,p1	data:Selection
-└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 4), eq(executor__partition__partition_with_expression.thash.a, 1))
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.thash.a, 4, 1)
   └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 4 or a = 1;
 a	b
@@ -735,7 +735,7 @@ a	b
 explain format='plan_tree' select * from trange where a = 2 or a = 3;
 id	task	access object	operator info
 TableReader	root	partition:p0,p1	data:Selection
-└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), eq(executor__partition__partition_with_expression.trange.a, 3))
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.trange.a, 2, 3)
   └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2 or a = 3;
 a	b
@@ -744,7 +744,7 @@ a	b
 explain format='plan_tree' select * from thash where a = 2 or a = 3;
 id	task	access object	operator info
 TableReader	root	partition:p2,p3	data:Selection
-└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), eq(executor__partition__partition_with_expression.thash.a, 3))
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.thash.a, 2, 3)
   └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2 or a = 3;
 a	b
@@ -757,7 +757,7 @@ a	b
 explain format='plan_tree' select * from trange where a = 2 or a in (3);
 id	task	access object	operator info
 TableReader	root	partition:p0,p1	data:Selection
-└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), eq(executor__partition__partition_with_expression.trange.a, 3))
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.trange.a, 2, 3)
   └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2 or a in (3);
 a	b
@@ -766,7 +766,7 @@ a	b
 explain format='plan_tree' select * from thash where a = 2 or a in (3);
 id	task	access object	operator info
 TableReader	root	partition:p2,p3	data:Selection
-└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), eq(executor__partition__partition_with_expression.thash.a, 3))
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.thash.a, 2, 3)
   └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2 or a in (3);
 a	b

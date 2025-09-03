@@ -650,7 +650,7 @@ id	c
 explain select * from t1 where c in (NULL, '2022-01-23');
 id	estRows	task	access object	operator info
 TableReader_8	10.00	root	partition:p1	data:Selection_7
-└─Selection_7	10.00	cop[tikv]		in(planner__core__integration_partition.t1.c, NULL, 2022-01-23 00:00:00.000000)
+└─Selection_7	10.00	cop[tikv]		eq(planner__core__integration_partition.t1.c, 2022-01-23 00:00:00.000000)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where c in (NULL, '2022-01-23');
 id	c
@@ -998,7 +998,7 @@ TableReader	root	partition:p1,p2,p3,p4,p5,p6,p7,p8,p11,p12	data:Selection
 explain format='plan_tree' select * from t where a in (4,14) and b in (null,10);
 id	task	access object	operator info
 TableReader	root	partition:p5,p12	data:Selection
-└─Selection	cop[tikv]		in(rce.t.a, 4, 14), in(rce.t.b, NULL, 10)
+└─Selection	cop[tikv]		eq(rce.t.b, 10), in(rce.t.a, 4, 14)
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from tref where a in (4,14) and b in (null,10);
 a	b	c

@@ -1054,7 +1054,7 @@ Projection	root		planner__core__casetest__integration.t2.c
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
     └─IndexLookUp	root		
-      ├─Selection(Build)	cop[tikv]		or(eq(planner__core__casetest__integration.t2.b, 1), eq(planner__core__casetest__integration.t2.b, 2))
+      ├─Selection(Build)	cop[tikv]		in(planner__core__casetest__integration.t2.b, 1, 2)
       │ └─IndexRangeScan	cop[tikv]	table:t2, index:PRIMARY(a, b)	range: decided by [eq(planner__core__casetest__integration.t2.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
       └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
 set tidb_cost_model_version=2;
@@ -1506,7 +1506,7 @@ TableReader	root	partition:p0,p2	data:Selection
 explain format='plan_tree' select * from t where a in (17, null);
 id	task	access object	operator info
 TableReader	root	partition:p2	data:Selection
-└─Selection	cop[tikv]		in(planner__core__casetest__integration.t.a, 17, NULL)
+└─Selection	cop[tikv]		eq(planner__core__casetest__integration.t.a, 17)
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t where a in (16, 'abc');
 id	task	access object	operator info
