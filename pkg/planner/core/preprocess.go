@@ -252,6 +252,78 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
+type TableNameCollector struct {
+	TableSources []*ast.TableSource
+}
+
+// Enter implements ast.Visitor interface.
+// ref updatableTableListResolver
+func (t *TableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.TableSource:
+		t.TableSources = append(t.TableSources, node)
+	}
+	return in, false
+}
+
+func (t *TableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+type tableWithDBInfo struct {
+	Table *model.TableInfo
+	DB    *model.DBInfo
+}
+
+func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) map[*ast.TableSource]*tableWithDBInfo {
+	var m map[*ast.TableSource]*tableWithDBInfo
+	m = make(map[*ast.TableSource]*tableWithDBInfo)
+	t := TableNameCollector{
+		TableSources: make([]*ast.TableSource, 0),
+	}
+	node.Accept(&t)
+
+	for _, tbl := range t.TableSources {
+		name := tbl.Source.(*ast.TableName)
+		table, err := p.tableByName(name)
+		if err != nil {
+			p.err = err
+			return nil
+		}
+		if dbInfo, ok := infoschema.SchemaByTable(p.ensureInfoSchema(), table.Meta()); ok {
+			m[tbl] = &tableWithDBInfo{
+				Table: table.Meta().Clone(),
+				DB:    dbInfo.Clone(),
+			}
+		}
+	}
+	return m
+}
+
+func checkColNameValidAndGetDBInfo(col *ast.ColumnName, tableInfos map[*ast.TableSource]*tableWithDBInfo) (*model.TableInfo, *model.DBInfo, error) {
+	colExist := false
+	var (
+		db    *model.DBInfo
+		table *model.TableInfo
+	)
+	for tbl, tableInfo := range tableInfos {
+		for _, colName := range tableInfo.Table.Cols() {
+			if colName.Name.L == col.Name.L &&
+				(col.Schema.L == "" || col.Schema.L == tableInfo.Table.Name.L) &&
+				(col.Table.L == "" || col.Table.L == tableInfo.Table.Name.L || (tbl.AsName.L != "" && col.Table.L == tbl.AsName.L)) {
+
+				if colExist {
+					return nil, nil, errors.New("Column xxx in field list is ambiguous")
+				}
+				colExist = true
+				db = tableInfo.DB
+				table = tableInfo.Table
+			}
+		}
+	}
+	return table, db, nil
+}
+
 // extractTableName extracts the db name from the ast.Node for checking database read only.
 func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0, 1)
@@ -294,6 +366,59 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.LoadDataStmt:
 		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.InsertStmt:
+		for _, tbl := range p.resolveCtx.GetTableNames() {
+			if tbl.TableInfo.TempTableType == model.TempTableNone {
+				dbNames = append(dbNames, tbl.DBInfo.Name)
+			}
+		}
+	case *ast.DeleteStmt:
+		if node.Tables != nil {
+			for _, tbl := range node.Tables.Tables {
+				table, err := p.tableByName(tbl)
+				if err != nil {
+					p.err = err
+					break
+				}
+				if table.Meta().TempTableType == model.TempTableNone {
+					dbName := tbl.Schema
+					if dbName.L == "" {
+						dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+					}
+					dbNames = append(dbNames, dbName)
+				}
+			}
+		} else {
+			for _, db := range p.getAllDBInfos(node.TableRefs) {
+				if db.Table.TempTableType == model.TempTableNone {
+					dbNames = append(dbNames, db.DB.Name)
+				}
+			}
+		}
+	case *ast.UpdateStmt:
+		dbInfos := p.getAllDBInfos(node.TableRefs)
+		for _, set := range node.List {
+			if tableInfo, dbInfo, err := checkColNameValidAndGetDBInfo(set.Column, dbInfos); err != nil {
+				p.err = err
+			} else if tableInfo.TempTableType == model.TempTableNone {
+				dbNames = append(dbNames, dbInfo.Name)
+			}
+		}
+	case *ast.SelectStmt:
+		if node.LockInfo != nil {
+			if node.LockInfo.LockType == ast.SelectLockForUpdate ||
+				node.LockInfo.LockType == ast.SelectLockForUpdateNoWait ||
+				node.LockInfo.LockType == ast.SelectLockForUpdateWaitN ||
+				((node.LockInfo.LockType == ast.SelectLockForShare || node.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+					p.sctx.GetSessionVars().SharedLockPromotion) {
+				dbInfos := p.getAllDBInfos(node.From)
+				for _, tbl := range dbInfos {
+					if tbl.Table.TempTableType == model.TempTableNone {
+						dbNames = append(dbNames, tbl.DB.Name)
+					}
+				}
+			}
+		}
 	}
 	return dbNames
 }
