@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -44,7 +44,7 @@ func TestLogicalPlan(t *testing.T) {
 		JobID:             1,
 		Plan:              importer.Plan{},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
 		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
@@ -65,7 +65,7 @@ func TestToPhysicalPlan(t *testing.T) {
 			},
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
 		ChunkMap:          map[int32][]importer.Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
@@ -133,9 +133,10 @@ func TestToPhysicalPlan(t *testing.T) {
 		NextTaskStep: proto.ImportStepImport,
 		GlobalSort:   true,
 	}
+	logicalPlan.Plan.CloudStorageURI = "unknown://bucket"
 	_, err = logicalPlan.ToPhysicalPlan(planCtx)
 	// error when build controller plan
-	require.ErrorContains(t, err, "table tb can't be in none state")
+	require.ErrorContains(t, err, "provide a valid URI")
 }
 
 func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
@@ -179,10 +180,10 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 }
 
 func TestGenerateMergeSortSpecs(t *testing.T) {
-	stepBak := external.MergeSortFileCountStep
-	external.MergeSortFileCountStep = 2
+	stepBak := external.MaxMergeSortFileCountStep
+	external.MaxMergeSortFileCountStep = 2
 	t.Cleanup(func() {
-		external.MergeSortFileCountStep = stepBak
+		external.MaxMergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
@@ -196,6 +197,7 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
+		ThreadCnt: 16,
 	}
 	p := &LogicalPlan{
 		Plan: importer.Plan{
@@ -307,6 +309,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
+		ThreadCnt: 16,
 	}, &LogicalPlan{}, nil)
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
@@ -341,9 +344,11 @@ func TestSplitForOneSubtask(t *testing.T) {
 			multiFileStat = s.MultipleFilesStats
 		}).
 		Build(store, "/mock-test", "0")
-	_, _, err = external.MockExternalEngineWithWriter(
-		store, writer, "/mock-test", keys, values,
-	)
+	for i := range keys {
+		err := writer.WriteRow(ctx, keys[i], values[i], nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close(ctx))
 	require.NoError(t, err)
 	kvMeta := &external.SortedKVMeta{
 		StartKey:           keys[0],

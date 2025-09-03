@@ -258,10 +258,6 @@ type PhysicalProperty struct {
 	// Non-MPP tasks do not care about it.
 	SortItemsForPartition []SortItem
 
-	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
-	// Non-MPP tasks do not care about it.
-	RejectSort bool
-
 	CTEProducerStatus cteProducerStatus
 
 	VectorProp struct {
@@ -270,6 +266,10 @@ type PhysicalProperty struct {
 	}
 
 	IndexJoinProp *IndexJoinRuntimeProp
+
+	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	NoCopPushDown bool
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.
@@ -286,6 +286,11 @@ type IndexJoinRuntimeProp struct {
 	// deeper side like through join, the deeper DS's countAfterAccess should be
 	// thought twice.
 	AvgInnerRowCnt float64
+	// since tableRangeScan and indexRangeScan can't be told which one is better at
+	// copTask phase because of the latter attached operators into cop and the single
+	// and double reader cost consideration. Therefore, we introduce another bool to
+	// indicate prefer tableRangeScan or indexRangeScan each at a time.
+	TableRangeScan bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -487,6 +492,17 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = append(p.hashcode, col.HashCode()...)
 		}
 		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
+		if p.IndexJoinProp.TableRangeScan {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		}
+	}
+	// encode NoCopPushDown into physical prop's hashcode.
+	if p.NoCopPushDown {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
 	return p.hashcode
 }
@@ -506,8 +522,8 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		ExpectedCnt:           p.ExpectedCnt,
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
-		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		NoCopPushDown:         p.NoCopPushDown,
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}

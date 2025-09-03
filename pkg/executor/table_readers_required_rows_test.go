@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -66,7 +66,7 @@ func (r *requiredRowsSelectResult) Next(ctx context.Context, chk *chunk.Chunk) e
 		return nil
 	}
 	required := min(chk.RequiredRows(), r.totalRows-r.count)
-	for i := 0; i < required; i++ {
+	for range required {
 		chk.AppendRow(r.genOneRow())
 	}
 	r.count += required
@@ -142,7 +142,7 @@ func buildTableReader(sctx sessionctx.Context) exec.Executor {
 }
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
-	req, err := builder.ConstructDAGReq(sctx, []base.PhysicalPlan{&core.PhysicalTableScan{
+	req, err := builder.ConstructDAGReq(sctx, []base.PhysicalPlan{&physicalop.PhysicalTableScan{
 		Columns: []*model.ColumnInfo{},
 		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
 		Desc:    false,

@@ -245,7 +245,7 @@ func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
 	totalCount := rows[0].GetInt64(0)
 
 	loopCount := (totalCount + gcBatchSize - 1) / gcBatchSize
-	for i := int64(0); i < loopCount; i++ {
+	for range loopCount {
 		sql := fmt.Sprintf("DELETE FROM mysql.request_unit_by_group where end_time <= '%s' order by end_time limit %d", gcEndDate, gcBatchSize)
 		_, err = runaway.ExecRCRestrictedSQL(r.sessPool, sql, nil)
 		if err != nil {

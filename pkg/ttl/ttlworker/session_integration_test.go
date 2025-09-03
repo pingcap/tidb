@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -173,10 +174,10 @@ func (f *faultSessionPool) setFault(ft fault) {
 }
 
 func TestGetSessionWithFault(t *testing.T) {
-	origAttachStats, origDetachStats := ttlworker.AttachStatsCollector, ttlworker.DetachStatsCollector
+	origAttachStats, origDetachStats := statshandle.AttachStatsCollector, statshandle.DetachStatsCollector
 	defer func() {
-		ttlworker.AttachStatsCollector = origAttachStats
-		ttlworker.DetachStatsCollector = origDetachStats
+		statshandle.AttachStatsCollector = origAttachStats
+		statshandle.DetachStatsCollector = origDetachStats
 	}()
 
 	_, dom := testkit.CreateMockStoreAndDomain(t)
@@ -199,13 +200,13 @@ func TestGetSessionWithFault(t *testing.T) {
 	type mockAttached struct{ sqlexec.SQLExecutor }
 	var attached *mockAttached
 	var detached sqlexec.SQLExecutor
-	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.Nil(t, attached)
 		require.Nil(t, detached)
 		attached = &mockAttached{SQLExecutor: s}
 		return attached
 	}
-	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.NotNil(t, attached)
 		require.Same(t, attached, s)
 		require.Nil(t, detached)
@@ -390,6 +391,7 @@ func TestNewScanSession(t *testing.T) {
 					// NewScanSession should override @@dist_sql_scan_concurrency and @@tidb_enable_paging
 					require.Equal(t, 1, se.GetSessionVars().DistSQLScanConcurrency())
 					require.False(t, se.GetSessionVars().EnablePaging)
+					require.True(t, se.GetSessionVars().InternalSQLScanUserTable)
 					// restore should restore the session variables
 					restore()
 				} else {
@@ -401,6 +403,7 @@ func TestNewScanSession(t *testing.T) {
 				// Not matter returns an error or not, the session should be closed
 				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
 				require.True(t, se.GetSessionVars().EnablePaging)
+				require.False(t, se.GetSessionVars().InternalSQLScanUserTable)
 				return nil
 			}))
 			require.True(t, called)

@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -89,20 +90,18 @@ const (
 )
 
 // IsCheckpointDB checks whether the dbname is checkpoint database.
-func IsCheckpointDB(dbname ast.CIStr) bool {
-	return dbname.O == LogRestoreCheckpointDatabaseName ||
-		dbname.O == SnapshotRestoreCheckpointDatabaseName ||
-		dbname.O == CustomSSTRestoreCheckpointDatabaseName
+func IsCheckpointDB(dbname string) bool {
+	// Check if the database name starts with any of the checkpoint database name prefixes
+	return strings.HasPrefix(dbname, LogRestoreCheckpointDatabaseName) ||
+		strings.HasPrefix(dbname, SnapshotRestoreCheckpointDatabaseName) ||
+		strings.HasPrefix(dbname, CustomSSTRestoreCheckpointDatabaseName)
 }
 
 const CheckpointIdMapBlockSize int = 524288
 
 func chunkInsertCheckpointData(data []byte, fn func(segmentId uint64, chunk []byte) error) error {
 	for startIdx, segmentId := 0, uint64(0); startIdx < len(data); segmentId += 1 {
-		endIdx := startIdx + CheckpointIdMapBlockSize
-		if endIdx > len(data) {
-			endIdx = len(data)
-		}
+		endIdx := min(startIdx+CheckpointIdMapBlockSize, len(data))
 		if err := fn(segmentId, data[startIdx:endIdx]); err != nil {
 			return errors.Trace(err)
 		}

@@ -6,11 +6,11 @@ insert into tp values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2
 insert into t values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3);
 analyze table tp all columns;
 analyze table t all columns;
-explain format='brief' select * from tp where a != '2024-01-01 01:01:01';
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:all	data:Selection
-└─Selection	2.00	cop[tikv]		ne(executor__partition__partition_with_expression.tp.a, 2024-01-01 01:01:01.000000)
-  └─TableFullScan	3.00	cop[tikv]	table:tp	keep order:false
+explain format='plan_tree' select * from tp where a != '2024-01-01 01:01:01';
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ne(executor__partition__partition_with_expression.tp.a, 2024-01-01 01:01:01.000000)
+  └─TableFullScan	cop[tikv]	table:tp	keep order:false
 select * from tp where a != '2024-01-01 01:01:01';
 a	b
 2015-09-09 00:00:00	1
@@ -19,11 +19,11 @@ select * from t where a != '2024-01-01 01:01:01';
 a	b
 2015-09-09 00:00:00	1
 2020-08-08 19:00:01	2
-explain format='brief' select * from tp where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1,p2	data:Selection
-└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2015-09-09 00:00:00.000000), ne(executor__partition__partition_with_expression.tp.a, 2024-01-01 01:01:01.000000)
-  └─TableFullScan	3.00	cop[tikv]	table:tp	keep order:false
+explain format='plan_tree' select * from tp where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
+id	task	access object	operator info
+TableReader	root	partition:p1,p2	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2015-09-09 00:00:00.000000), ne(executor__partition__partition_with_expression.tp.a, 2024-01-01 01:01:01.000000)
+  └─TableFullScan	cop[tikv]	table:tp	keep order:false
 select * from tp where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
 a	b
 2020-08-08 19:00:01	2
@@ -39,33 +39,33 @@ insert into tp values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2
 insert into t values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0);
 analyze table tp all columns;
 analyze table t all columns;
-explain format='brief' select * from tp where a = '2020-08-17 00:00:00';
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p0	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.tp.a, 2020-08-17 00:00:00.000000)
-  └─TableFullScan	6.00	cop[tikv]	table:tp	keep order:false
+explain format='plan_tree' select * from tp where a = '2020-08-17 00:00:00';
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.tp.a, 2020-08-17 00:00:00.000000)
+  └─TableFullScan	cop[tikv]	table:tp	keep order:false
 select * from tp where a = '2020-08-17 00:00:00';
 a	b
 2020-08-17 00:00:00	1
 select * from t where a = '2020-08-17 00:00:00';
 a	b
 2020-08-17 00:00:00	1
-explain format='brief' select * from tp where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.tp.a, 2020-08-20 00:00:00.000000)
-  └─TableFullScan	6.00	cop[tikv]	table:tp	keep order:false
+explain format='plan_tree' select * from tp where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.tp.a, 2020-08-20 00:00:00.000000)
+  └─TableFullScan	cop[tikv]	table:tp	keep order:false
 select * from tp where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
 a	b
 2020-08-20 00:00:00	5
 select * from t where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
 a	b
 2020-08-20 00:00:00	5
-explain format='brief' select * from tp where a < '2020-08-19 00:00:00';
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:all	data:Selection
-└─Selection	2.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, 2020-08-19 00:00:00.000000)
-  └─TableFullScan	6.00	cop[tikv]	table:tp	keep order:false
+explain format='plan_tree' select * from tp where a < '2020-08-19 00:00:00';
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, 2020-08-19 00:00:00.000000)
+  └─TableFullScan	cop[tikv]	table:tp	keep order:false
 select * from tp where a < '2020-08-19 00:00:00';
 a	b
 2020-08-17 00:00:00	1
@@ -83,22 +83,22 @@ insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2
 insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
 analyze table tp all columns;
 analyze table t all columns;
-explain select * from tp where a > '2020-09-11 00:00:00';
-id	estRows	task	access object	operator info
-TableReader_7	1.00	root	partition:p2	data:Selection_6
-└─Selection_6	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2020-09-11 00:00:00.000000)
-  └─TableFullScan_5	4.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a > '2020-09-11 00:00:00';
 a	b
 2020-10-01 14:13:15	3
+explain select * from tp where a > '2020-09-11 00:00:00';
+id	estRows	task	access object	operator info
+TableReader_8	1.00	root	partition:p2	data:Selection_7
+└─Selection_7	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2020-09-11 00:00:00.000000)
+  └─TableFullScan_6	4.00	cop[tikv]	table:tp	keep order:false
+explain select * from tp where a < '2020-07-07 01:00:00';
+id	estRows	task	access object	operator info
+TableReader_8	1.00	root	partition:p0,p1	data:Selection_7
+└─Selection_7	1.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, 2020-07-07 01:00:00.000000)
+  └─TableFullScan_6	4.00	cop[tikv]	table:tp	keep order:false
 select * from t where a > '2020-09-11 00:00:00';
 a	b
 2020-10-01 14:13:15	3
-explain select * from tp where a < '2020-07-07 01:00:00';
-id	estRows	task	access object	operator info
-TableReader_7	1.00	root	partition:p0,p1	data:Selection_6
-└─Selection_6	1.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, 2020-07-07 01:00:00.000000)
-  └─TableFullScan_5	4.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a < '2020-07-07 01:00:00';
 a	b
 2020-01-01 19:00:00	1
@@ -116,9 +116,9 @@ analyze table tp all columns;
 analyze table t all columns;
 explain select * from tp where a > '2020-09-11 00:00:00';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root	partition:p2	data:Selection_6
-└─Selection_6	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2020-09-11 00:00:00.000000)
-  └─TableFullScan_5	4.00	cop[tikv]	table:tp	keep order:false
+TableReader_8	1.00	root	partition:p2	data:Selection_7
+└─Selection_7	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2020-09-11 00:00:00.000000)
+  └─TableFullScan_6	4.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a > '2020-09-11 00:00:00';
 a	b
 2020-10-01 14:13:15	3
@@ -127,9 +127,9 @@ a	b
 2020-10-01 14:13:15	3
 explain select * from tp where a < '2020-07-07 01:00:00';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root	partition:p0,p1	data:Selection_6
-└─Selection_6	1.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, 2020-07-07 01:00:00.000000)
-  └─TableFullScan_5	4.00	cop[tikv]	table:tp	keep order:false
+TableReader_8	1.00	root	partition:p0,p1	data:Selection_7
+└─Selection_7	1.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, 2020-07-07 01:00:00.000000)
+  └─TableFullScan_6	4.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a < '2020-07-07 01:00:00';
 a	b
 2020-01-01 19:00:00	1
@@ -147,9 +147,9 @@ analyze table tp all columns;
 analyze table t all columns;
 explain select * from tp where a < '2020-09-01 00:00:00';
 id	estRows	task	access object	operator info
-TableReader_7	2.00	root	partition:p0,p1	data:Selection_6
-└─Selection_6	2.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, 2020-09-01 00:00:00.000000)
-  └─TableFullScan_5	4.00	cop[tikv]	table:tp	keep order:false
+TableReader_8	2.00	root	partition:p0,p1	data:Selection_7
+└─Selection_7	2.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, 2020-09-01 00:00:00.000000)
+  └─TableFullScan_6	4.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a < '2020-09-01 00:00:00';
 a	b
 2020-01-01 12:00:00	1
@@ -160,9 +160,9 @@ a	b
 2020-08-22 10:00:00	2
 explain select * from tp where a > '2020-07-07 01:00:00';
 id	estRows	task	access object	operator info
-TableReader_7	3.00	root	partition:p1,p2	data:Selection_6
-└─Selection_6	3.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2020-07-07 01:00:00.000000)
-  └─TableFullScan_5	4.00	cop[tikv]	table:tp	keep order:false
+TableReader_8	3.00	root	partition:p1,p2	data:Selection_7
+└─Selection_7	3.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2020-07-07 01:00:00.000000)
+  └─TableFullScan_6	4.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a > '2020-07-07 01:00:00';
 a	b
 2020-08-22 10:00:00	2
@@ -184,18 +184,18 @@ analyze table tp all columns;
 analyze table t all columns;
 explain select * from tp where a < '10';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root	partition:p0	data:Selection_6
-└─Selection_6	1.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, "10")
-  └─TableFullScan_5	6.00	cop[tikv]	table:tp	keep order:false
+TableReader_8	1.00	root	partition:p0	data:Selection_7
+└─Selection_7	1.00	cop[tikv]		lt(executor__partition__partition_with_expression.tp.a, "10")
+  └─TableFullScan_6	6.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a < '10';
 a	b
 select * from t where a < '10';
 a	b
 explain select * from tp where a > 0;
 id	estRows	task	access object	operator info
-TableReader_7	4.80	root	partition:all	data:Selection_6
-└─Selection_6	4.80	cop[tikv]		gt(cast(executor__partition__partition_with_expression.tp.a, double BINARY), 0)
-  └─TableFullScan_5	6.00	cop[tikv]	table:tp	keep order:false
+TableReader_8	4.80	root	partition:all	data:Selection_7
+└─Selection_7	4.80	cop[tikv]		gt(cast(executor__partition__partition_with_expression.tp.a, double BINARY), 0)
+  └─TableFullScan_6	6.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a > 0;
 a	b
 10	6
@@ -204,9 +204,9 @@ a	b
 10	6
 explain select * from tp where a < 0;
 id	estRows	task	access object	operator info
-TableReader_7	4.80	root	partition:all	data:Selection_6
-└─Selection_6	4.80	cop[tikv]		lt(cast(executor__partition__partition_with_expression.tp.a, double BINARY), 0)
-  └─TableFullScan_5	6.00	cop[tikv]	table:tp	keep order:false
+TableReader_8	4.80	root	partition:all	data:Selection_7
+└─Selection_7	4.80	cop[tikv]		lt(cast(executor__partition__partition_with_expression.tp.a, double BINARY), 0)
+  └─TableFullScan_6	6.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a < 0;
 a	b
 select * from t where a < 0;
@@ -226,19 +226,19 @@ analyze table t all columns;
 SELECT * from t where a = 2;
 a	b
 2	1
-explain format='brief' select * from trange where a = 2;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p0	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = 2;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2;
 a	b
 2	1
-explain format='brief' select * from thash where a = 2;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p2	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = 2;
+id	task	access object	operator info
+TableReader	root	partition:p2	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2;
 a	b
 2	1
@@ -248,22 +248,22 @@ a	b
 1	NULL
 1	1
 4	3
-explain format='brief' select * from trange where a = 4 or a = 1;
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p1	data:Selection
-└─Selection	4.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 4), eq(executor__partition__partition_with_expression.trange.a, 1))
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = 4 or a = 1;
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 4), eq(executor__partition__partition_with_expression.trange.a, 1))
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 4 or a = 1;
 a	b
 1	NULL
 1	NULL
 1	1
 4	3
-explain format='brief' select * from thash where a = 4 or a = 1;
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p1	data:Selection
-└─Selection	4.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 4), eq(executor__partition__partition_with_expression.thash.a, 1))
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = 4 or a = 1;
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 4), eq(executor__partition__partition_with_expression.thash.a, 1))
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 4 or a = 1;
 a	b
 1	NULL
@@ -272,38 +272,38 @@ a	b
 4	3
 SELECT * from t where a = -1;
 a	b
-explain format='brief' select * from trange where a = -1;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p0	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.trange.a, -1)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = -1;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.trange.a, -1)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = -1;
 a	b
-explain format='brief' select * from thash where a = -1;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.thash.a, -1)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = -1;
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.thash.a, -1)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = -1;
 a	b
 SELECT * from t where a is NULL;
 a	b
 NULL	NULL
 NULL	1
-explain format='brief' select * from trange where a is NULL;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0	data:Selection
-└─Selection	2.00	cop[tikv]		isnull(executor__partition__partition_with_expression.trange.a)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a is NULL;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		isnull(executor__partition__partition_with_expression.trange.a)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a is NULL;
 a	b
 NULL	NULL
 NULL	1
-explain format='brief' select * from thash where a is NULL;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0	data:Selection
-└─Selection	2.00	cop[tikv]		isnull(executor__partition__partition_with_expression.thash.a)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a is NULL;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		isnull(executor__partition__partition_with_expression.thash.a)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a is NULL;
 a	b
 NULL	NULL
@@ -314,22 +314,22 @@ NULL	NULL
 1	NULL
 1	NULL
 10	NULL
-explain format='brief' select * from trange where b is NULL;
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:all	data:Selection
-└─Selection	4.00	cop[tikv]		isnull(executor__partition__partition_with_expression.trange.b)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where b is NULL;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		isnull(executor__partition__partition_with_expression.trange.b)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where b is NULL;
 a	b
 NULL	NULL
 1	NULL
 1	NULL
 10	NULL
-explain format='brief' select * from thash where b is NULL;
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:all	data:Selection
-└─Selection	4.00	cop[tikv]		isnull(executor__partition__partition_with_expression.thash.b)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where b is NULL;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		isnull(executor__partition__partition_with_expression.thash.b)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where b is NULL;
 a	b
 NULL	NULL
@@ -349,11 +349,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a > -1;
-id	estRows	task	access object	operator info
-TableReader	11.00	root	partition:all	data:Selection
-└─Selection	11.00	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, -1)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a > -1;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, -1)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a > -1;
 a	b
 1	NULL
@@ -367,11 +367,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a > -1;
-id	estRows	task	access object	operator info
-TableReader	11.00	root	partition:all	data:Selection
-└─Selection	11.00	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, -1)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a > -1;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, -1)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a > -1;
 a	b
 1	NULL
@@ -389,58 +389,58 @@ SELECT * from t where a >= 4 and a <= 5;
 a	b
 4	3
 5	5
-explain format='brief' select * from trange where a >= 4 and a <= 5;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p1,p2	data:Selection
-└─Selection	2.00	cop[tikv]		ge(executor__partition__partition_with_expression.trange.a, 4), le(executor__partition__partition_with_expression.trange.a, 5)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a >= 4 and a <= 5;
+id	task	access object	operator info
+TableReader	root	partition:p1,p2	data:Selection
+└─Selection	cop[tikv]		ge(executor__partition__partition_with_expression.trange.a, 4), le(executor__partition__partition_with_expression.trange.a, 5)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a >= 4 and a <= 5;
 a	b
 4	3
 5	5
-explain format='brief' select * from thash where a >= 4 and a <= 5;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		ge(executor__partition__partition_with_expression.thash.a, 4), le(executor__partition__partition_with_expression.thash.a, 5)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a >= 4 and a <= 5;
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		ge(executor__partition__partition_with_expression.thash.a, 4), le(executor__partition__partition_with_expression.thash.a, 5)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a >= 4 and a <= 5;
 a	b
 4	3
 5	5
 SELECT * from t where a > 10;
 a	b
-explain format='brief' select * from trange where a > 10;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:dual	data:Selection
-└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 10)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a > 10;
+id	task	access object	operator info
+TableReader	root	partition:dual	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 10)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a > 10;
 a	b
-explain format='brief' select * from thash where a > 10;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:all	data:Selection
-└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 10)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a > 10;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 10)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a > 10;
 a	b
 SELECT * from t where a >=2 and a <= 3;
 a	b
 2	1
 3	2
-explain format='brief' select * from trange where a >=2 and a <= 3;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		ge(executor__partition__partition_with_expression.trange.a, 2), le(executor__partition__partition_with_expression.trange.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a >=2 and a <= 3;
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		ge(executor__partition__partition_with_expression.trange.a, 2), le(executor__partition__partition_with_expression.trange.a, 3)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a >=2 and a <= 3;
 a	b
 2	1
 3	2
-explain format='brief' select * from thash where a >=2 and a <= 3;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p2,p3	data:Selection
-└─Selection	2.00	cop[tikv]		ge(executor__partition__partition_with_expression.thash.a, 2), le(executor__partition__partition_with_expression.thash.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a >=2 and a <= 3;
+id	task	access object	operator info
+TableReader	root	partition:p2,p3	data:Selection
+└─Selection	cop[tikv]		ge(executor__partition__partition_with_expression.thash.a, 2), le(executor__partition__partition_with_expression.thash.a, 3)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a >=2 and a <= 3;
 a	b
 2	1
@@ -449,20 +449,20 @@ SELECT * from t where a between 2 and 3;
 a	b
 2	1
 3	2
-explain format='brief' select * from trange where a between 2 and 3;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		ge(executor__partition__partition_with_expression.trange.a, 2), le(executor__partition__partition_with_expression.trange.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a between 2 and 3;
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		ge(executor__partition__partition_with_expression.trange.a, 2), le(executor__partition__partition_with_expression.trange.a, 3)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a between 2 and 3;
 a	b
 2	1
 3	2
-explain format='brief' select * from thash where a between 2 and 3;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p2,p3	data:Selection
-└─Selection	2.00	cop[tikv]		ge(executor__partition__partition_with_expression.thash.a, 2), le(executor__partition__partition_with_expression.thash.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a between 2 and 3;
+id	task	access object	operator info
+TableReader	root	partition:p2,p3	data:Selection
+└─Selection	cop[tikv]		ge(executor__partition__partition_with_expression.thash.a, 2), le(executor__partition__partition_with_expression.thash.a, 3)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a between 2 and 3;
 a	b
 2	1
@@ -472,21 +472,21 @@ a	b
 1	NULL
 1	NULL
 1	1
-explain format='brief' select * from trange where a < 2;
-id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0	data:Selection
-└─Selection	3.00	cop[tikv]		lt(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a < 2;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		lt(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a < 2;
 a	b
 1	NULL
 1	NULL
 1	1
-explain format='brief' select * from thash where a < 2;
-id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:all	data:Selection
-└─Selection	3.00	cop[tikv]		lt(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a < 2;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a < 2;
 a	b
 1	NULL
@@ -499,11 +499,11 @@ a	b
 1	1
 2	1
 3	2
-explain format='brief' select * from trange where a <= 3;
-id	estRows	task	access object	operator info
-TableReader	5.00	root	partition:p0,p1	data:Selection
-└─Selection	5.00	cop[tikv]		le(executor__partition__partition_with_expression.trange.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a <= 3;
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		le(executor__partition__partition_with_expression.trange.a, 3)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a <= 3;
 a	b
 1	NULL
@@ -511,11 +511,11 @@ a	b
 1	1
 2	1
 3	2
-explain format='brief' select * from thash where a <= 3;
-id	estRows	task	access object	operator info
-TableReader	5.00	root	partition:all	data:Selection
-└─Selection	5.00	cop[tikv]		le(executor__partition__partition_with_expression.thash.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a <= 3;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		le(executor__partition__partition_with_expression.thash.a, 3)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a <= 3;
 a	b
 1	NULL
@@ -527,20 +527,20 @@ SELECT * from t where a in (2, 3);
 a	b
 2	1
 3	2
-explain format='brief' select * from trange where a in (2, 3);
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		in(executor__partition__partition_with_expression.trange.a, 2, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a in (2, 3);
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.trange.a, 2, 3)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a in (2, 3);
 a	b
 2	1
 3	2
-explain format='brief' select * from thash where a in (2, 3);
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p2,p3	data:Selection
-└─Selection	2.00	cop[tikv]		in(executor__partition__partition_with_expression.thash.a, 2, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a in (2, 3);
+id	task	access object	operator info
+TableReader	root	partition:p2,p3	data:Selection
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.thash.a, 2, 3)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a in (2, 3);
 a	b
 2	1
@@ -551,22 +551,22 @@ a	b
 1	NULL
 1	1
 5	5
-explain format='brief' select * from trange where a in (1, 5);
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0,p2	data:Selection
-└─Selection	4.00	cop[tikv]		in(executor__partition__partition_with_expression.trange.a, 1, 5)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a in (1, 5);
+id	task	access object	operator info
+TableReader	root	partition:p0,p2	data:Selection
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.trange.a, 1, 5)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a in (1, 5);
 a	b
 1	NULL
 1	NULL
 1	1
 5	5
-explain format='brief' select * from thash where a in (1, 5);
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p1	data:Selection
-└─Selection	4.00	cop[tikv]		in(executor__partition__partition_with_expression.thash.a, 1, 5)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a in (1, 5);
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		in(executor__partition__partition_with_expression.thash.a, 1, 5)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a in (1, 5);
 a	b
 1	NULL
@@ -582,11 +582,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a not in (1, 5);
-id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		not(in(executor__partition__partition_with_expression.trange.a, 1, 5))
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a not in (1, 5);
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		not(in(executor__partition__partition_with_expression.trange.a, 1, 5))
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a not in (1, 5);
 a	b
 10	NULL
@@ -596,11 +596,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a not in (1, 5);
-id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		not(in(executor__partition__partition_with_expression.thash.a, 1, 5))
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a not in (1, 5);
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		not(in(executor__partition__partition_with_expression.thash.a, 1, 5))
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a not in (1, 5);
 a	b
 10	NULL
@@ -613,32 +613,32 @@ a	b
 SELECT * from t where a = 2 and a = 2;
 a	b
 2	1
-explain format='brief' select * from trange where a = 2 and a = 2;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p0	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = 2 and a = 2;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2 and a = 2;
 a	b
 2	1
-explain format='brief' select * from thash where a = 2 and a = 2;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p2	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = 2 and a = 2;
+id	task	access object	operator info
+TableReader	root	partition:p2	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2 and a = 2;
 a	b
 2	1
 SELECT * from t where a = 2 and a = 3;
 a	b
-explain format='brief' select * from trange where a = 2 and a = 3;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format='plan_tree' select * from trange where a = 2 and a = 3;
+id	task	access object	operator info
+TableDual	root		rows:0
 SELECT * from trange where a = 2 and a = 3;
 a	b
-explain format='brief' select * from thash where a = 2 and a = 3;
-id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+explain format='plan_tree' select * from thash where a = 2 and a = 3;
+id	task	access object	operator info
+TableDual	root		rows:0
 SELECT * from thash where a = 2 and a = 3;
 a	b
 SELECT * from t where a < 2 and a > 0;
@@ -646,21 +646,21 @@ a	b
 1	NULL
 1	NULL
 1	1
-explain format='brief' select * from trange where a < 2 and a > 0;
-id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0	data:Selection
-└─Selection	3.00	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 0), lt(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a < 2 and a > 0;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 0), lt(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a < 2 and a > 0;
 a	b
 1	NULL
 1	NULL
 1	1
-explain format='brief' select * from thash where a < 2 and a > 0;
-id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p1	data:Selection
-└─Selection	3.00	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 0), lt(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a < 2 and a > 0;
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 0), lt(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a < 2 and a > 0;
 a	b
 1	NULL
@@ -671,21 +671,21 @@ a	b
 1	NULL
 1	NULL
 1	1
-explain format='brief' select * from trange where a < 2 and a < 3;
-id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:p0	data:Selection
-└─Selection	3.00	cop[tikv]		lt(executor__partition__partition_with_expression.trange.a, 2), lt(executor__partition__partition_with_expression.trange.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a < 2 and a < 3;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		lt(executor__partition__partition_with_expression.trange.a, 2), lt(executor__partition__partition_with_expression.trange.a, 3)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a < 2 and a < 3;
 a	b
 1	NULL
 1	NULL
 1	1
-explain format='brief' select * from thash where a < 2 and a < 3;
-id	estRows	task	access object	operator info
-TableReader	3.00	root	partition:all	data:Selection
-└─Selection	3.00	cop[tikv]		lt(executor__partition__partition_with_expression.thash.a, 2), lt(executor__partition__partition_with_expression.thash.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a < 2 and a < 3;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(executor__partition__partition_with_expression.thash.a, 2), lt(executor__partition__partition_with_expression.thash.a, 3)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a < 2 and a < 3;
 a	b
 1	NULL
@@ -700,11 +700,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a > 1 and a > 2;
-id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:p1,p2	data:Selection
-└─Selection	7.00	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 1), gt(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a > 1 and a > 2;
+id	task	access object	operator info
+TableReader	root	partition:p1,p2	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 1), gt(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a > 1 and a > 2;
 a	b
 10	NULL
@@ -714,11 +714,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a > 1 and a > 2;
-id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 1), gt(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a > 1 and a > 2;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 1), gt(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a > 1 and a > 2;
 a	b
 10	NULL
@@ -732,20 +732,20 @@ SELECT * from t where a = 2 or a = 3;
 a	b
 2	1
 3	2
-explain format='brief' select * from trange where a = 2 or a = 3;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), eq(executor__partition__partition_with_expression.trange.a, 3))
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = 2 or a = 3;
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), eq(executor__partition__partition_with_expression.trange.a, 3))
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2 or a = 3;
 a	b
 2	1
 3	2
-explain format='brief' select * from thash where a = 2 or a = 3;
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p2,p3	data:Selection
-└─Selection	2.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), eq(executor__partition__partition_with_expression.thash.a, 3))
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = 2 or a = 3;
+id	task	access object	operator info
+TableReader	root	partition:p2,p3	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), eq(executor__partition__partition_with_expression.thash.a, 3))
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2 or a = 3;
 a	b
 2	1
@@ -754,20 +754,20 @@ SELECT * from t where a = 2 or a in (3);
 a	b
 2	1
 3	2
-explain format='brief' select * from trange where a = 2 or a in (3);
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p0,p1	data:Selection
-└─Selection	2.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), eq(executor__partition__partition_with_expression.trange.a, 3))
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = 2 or a in (3);
+id	task	access object	operator info
+TableReader	root	partition:p0,p1	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), eq(executor__partition__partition_with_expression.trange.a, 3))
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2 or a in (3);
 a	b
 2	1
 3	2
-explain format='brief' select * from thash where a = 2 or a in (3);
-id	estRows	task	access object	operator info
-TableReader	2.00	root	partition:p2,p3	data:Selection
-└─Selection	2.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), eq(executor__partition__partition_with_expression.thash.a, 3))
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = 2 or a in (3);
+id	task	access object	operator info
+TableReader	root	partition:p2,p3	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), eq(executor__partition__partition_with_expression.thash.a, 3))
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2 or a in (3);
 a	b
 2	1
@@ -781,11 +781,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a = 2 or a > 3;
-id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), gt(executor__partition__partition_with_expression.trange.a, 3))
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = 2 or a > 3;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), gt(executor__partition__partition_with_expression.trange.a, 3))
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2 or a > 3;
 a	b
 10	NULL
@@ -795,11 +795,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a = 2 or a > 3;
-id	estRows	task	access object	operator info
-TableReader	7.00	root	partition:all	data:Selection
-└─Selection	7.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), gt(executor__partition__partition_with_expression.thash.a, 3))
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = 2 or a > 3;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), gt(executor__partition__partition_with_expression.thash.a, 3))
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2 or a > 3;
 a	b
 10	NULL
@@ -815,22 +815,22 @@ a	b
 1	NULL
 1	1
 2	1
-explain format='brief' select * from trange where a = 2 or a <= 1;
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0	data:Selection
-└─Selection	4.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), le(executor__partition__partition_with_expression.trange.a, 1))
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = 2 or a <= 1;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), le(executor__partition__partition_with_expression.trange.a, 1))
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2 or a <= 1;
 a	b
 1	NULL
 1	NULL
 1	1
 2	1
-explain format='brief' select * from thash where a = 2 or a <= 1;
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:all	data:Selection
-└─Selection	4.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), le(executor__partition__partition_with_expression.thash.a, 1))
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = 2 or a <= 1;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), le(executor__partition__partition_with_expression.thash.a, 1))
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2 or a <= 1;
 a	b
 1	NULL
@@ -840,19 +840,19 @@ a	b
 SELECT * from t where a = 2 or a between 2 and 2;
 a	b
 2	1
-explain format='brief' select * from trange where a = 2 or a between 2 and 2;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p0	data:Selection
-└─Selection	1.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), and(ge(executor__partition__partition_with_expression.trange.a, 2), le(executor__partition__partition_with_expression.trange.a, 2)))
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a = 2 or a between 2 and 2;
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.trange.a, 2), and(ge(executor__partition__partition_with_expression.trange.a, 2), le(executor__partition__partition_with_expression.trange.a, 2)))
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a = 2 or a between 2 and 2;
 a	b
 2	1
-explain format='brief' select * from thash where a = 2 or a between 2 and 2;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p2	data:Selection
-└─Selection	1.00	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), and(ge(executor__partition__partition_with_expression.thash.a, 2), le(executor__partition__partition_with_expression.thash.a, 2)))
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a = 2 or a between 2 and 2;
+id	task	access object	operator info
+TableReader	root	partition:p2	data:Selection
+└─Selection	cop[tikv]		or(eq(executor__partition__partition_with_expression.thash.a, 2), and(ge(executor__partition__partition_with_expression.thash.a, 2), le(executor__partition__partition_with_expression.thash.a, 2)))
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a = 2 or a between 2 and 2;
 a	b
 2	1
@@ -868,11 +868,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a != 2;
-id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:all	data:Selection
-└─Selection	10.00	cop[tikv]		ne(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a != 2;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ne(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a != 2;
 a	b
 1	NULL
@@ -885,11 +885,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a != 2;
-id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:all	data:Selection
-└─Selection	10.00	cop[tikv]		ne(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a != 2;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ne(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a != 2;
 a	b
 1	NULL
@@ -909,11 +909,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a != 2 and a > 4;
-id	estRows	task	access object	operator info
-TableReader	5.00	root	partition:p2	data:Selection
-└─Selection	5.00	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 4), ne(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a != 2 and a > 4;
+id	task	access object	operator info
+TableReader	root	partition:p2	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 4), ne(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a != 2 and a > 4;
 a	b
 10	NULL
@@ -921,11 +921,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a != 2 and a > 4;
-id	estRows	task	access object	operator info
-TableReader	5.00	root	partition:all	data:Selection
-└─Selection	5.00	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 4), ne(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a != 2 and a > 4;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 4), ne(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a != 2 and a > 4;
 a	b
 10	NULL
@@ -944,11 +944,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a != 2 and a != 3;
-id	estRows	task	access object	operator info
-TableReader	9.00	root	partition:all	data:Selection
-└─Selection	9.00	cop[tikv]		ne(executor__partition__partition_with_expression.trange.a, 2), ne(executor__partition__partition_with_expression.trange.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a != 2 and a != 3;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ne(executor__partition__partition_with_expression.trange.a, 2), ne(executor__partition__partition_with_expression.trange.a, 3)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a != 2 and a != 3;
 a	b
 1	NULL
@@ -960,11 +960,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a != 2 and a != 3;
-id	estRows	task	access object	operator info
-TableReader	9.00	root	partition:all	data:Selection
-└─Selection	9.00	cop[tikv]		ne(executor__partition__partition_with_expression.thash.a, 2), ne(executor__partition__partition_with_expression.thash.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a != 2 and a != 3;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ne(executor__partition__partition_with_expression.thash.a, 2), ne(executor__partition__partition_with_expression.thash.a, 3)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a != 2 and a != 3;
 a	b
 1	NULL
@@ -979,19 +979,19 @@ a	b
 SELECT * from t where a != 2 and a = 3;
 a	b
 3	2
-explain format='brief' select * from trange where a != 2 and a = 3;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.trange.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a != 2 and a = 3;
+id	task	access object	operator info
+TableReader	root	partition:p1	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.trange.a, 3)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a != 2 and a = 3;
 a	b
 3	2
-explain format='brief' select * from thash where a != 2 and a = 3;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p3	data:Selection
-└─Selection	1.00	cop[tikv]		eq(executor__partition__partition_with_expression.thash.a, 3)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a != 2 and a = 3;
+id	task	access object	operator info
+TableReader	root	partition:p3	data:Selection
+└─Selection	cop[tikv]		eq(executor__partition__partition_with_expression.thash.a, 3)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a != 2 and a = 3;
 a	b
 3	2
@@ -1007,11 +1007,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where not (a = 2);
-id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:all	data:Selection
-└─Selection	10.00	cop[tikv]		ne(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where not (a = 2);
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ne(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where not (a = 2);
 a	b
 1	NULL
@@ -1024,11 +1024,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where not (a = 2);
-id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:all	data:Selection
-└─Selection	10.00	cop[tikv]		ne(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where not (a = 2);
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ne(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where not (a = 2);
 a	b
 1	NULL
@@ -1047,22 +1047,22 @@ a	b
 1	NULL
 1	1
 2	1
-explain format='brief' select * from trange where not (a > 2);
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:p0	data:Selection
-└─Selection	4.00	cop[tikv]		le(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where not (a > 2);
+id	task	access object	operator info
+TableReader	root	partition:p0	data:Selection
+└─Selection	cop[tikv]		le(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where not (a > 2);
 a	b
 1	NULL
 1	NULL
 1	1
 2	1
-explain format='brief' select * from thash where not (a > 2);
-id	estRows	task	access object	operator info
-TableReader	4.00	root	partition:all	data:Selection
-└─Selection	4.00	cop[tikv]		le(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where not (a > 2);
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		le(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where not (a > 2);
 a	b
 1	NULL
@@ -1079,11 +1079,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where not (a < 2);
-id	estRows	task	access object	operator info
-TableReader	8.00	root	partition:all	data:Selection
-└─Selection	8.00	cop[tikv]		ge(executor__partition__partition_with_expression.trange.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where not (a < 2);
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ge(executor__partition__partition_with_expression.trange.a, 2)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where not (a < 2);
 a	b
 10	NULL
@@ -1094,11 +1094,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where not (a < 2);
-id	estRows	task	access object	operator info
-TableReader	8.00	root	partition:all	data:Selection
-└─Selection	8.00	cop[tikv]		ge(executor__partition__partition_with_expression.thash.a, 2)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where not (a < 2);
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		ge(executor__partition__partition_with_expression.thash.a, 2)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where not (a < 2);
 a	b
 10	NULL
@@ -1117,11 +1117,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a + 1 > 4;
-id	estRows	task	access object	operator info
-TableReader	10.40	root	partition:all	data:Selection
-└─Selection	10.40	cop[tikv]		gt(plus(executor__partition__partition_with_expression.trange.a, 1), 4)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a + 1 > 4;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(plus(executor__partition__partition_with_expression.trange.a, 1), 4)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a + 1 > 4;
 a	b
 10	NULL
@@ -1130,11 +1130,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a + 1 > 4;
-id	estRows	task	access object	operator info
-TableReader	10.40	root	partition:all	data:Selection
-└─Selection	10.40	cop[tikv]		gt(plus(executor__partition__partition_with_expression.thash.a, 1), 4)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a + 1 > 4;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(plus(executor__partition__partition_with_expression.thash.a, 1), 4)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a + 1 > 4;
 a	b
 10	NULL
@@ -1153,11 +1153,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from trange where a - 1 > 0;
-id	estRows	task	access object	operator info
-TableReader	10.40	root	partition:all	data:Selection
-└─Selection	10.40	cop[tikv]		gt(minus(executor__partition__partition_with_expression.trange.a, 1), 0)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a - 1 > 0;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(minus(executor__partition__partition_with_expression.trange.a, 1), 0)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a - 1 > 0;
 a	b
 10	NULL
@@ -1168,11 +1168,11 @@ a	b
 6	7
 7	7
 7	7
-explain format='brief' select * from thash where a - 1 > 0;
-id	estRows	task	access object	operator info
-TableReader	10.40	root	partition:all	data:Selection
-└─Selection	10.40	cop[tikv]		gt(minus(executor__partition__partition_with_expression.thash.a, 1), 0)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a - 1 > 0;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(minus(executor__partition__partition_with_expression.thash.a, 1), 0)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a - 1 > 0;
 a	b
 10	NULL
@@ -1185,66 +1185,66 @@ a	b
 7	7
 SELECT * from t where a * 2 < 0;
 a	b
-explain format='brief' select * from trange where a * 2 < 0;
-id	estRows	task	access object	operator info
-TableReader	10.40	root	partition:all	data:Selection
-└─Selection	10.40	cop[tikv]		lt(mul(executor__partition__partition_with_expression.trange.a, 2), 0)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a * 2 < 0;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(mul(executor__partition__partition_with_expression.trange.a, 2), 0)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a * 2 < 0;
 a	b
-explain format='brief' select * from thash where a * 2 < 0;
-id	estRows	task	access object	operator info
-TableReader	10.40	root	partition:all	data:Selection
-└─Selection	10.40	cop[tikv]		lt(mul(executor__partition__partition_with_expression.thash.a, 2), 0)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a * 2 < 0;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(mul(executor__partition__partition_with_expression.thash.a, 2), 0)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a * 2 < 0;
 a	b
 SELECT * from t where a << 1 < 0;
 a	b
-explain format='brief' select * from trange where a << 1 < 0;
-id	estRows	task	access object	operator info
-TableReader	10.40	root	partition:all	data:Selection
-└─Selection	10.40	cop[tikv]		lt(leftshift(executor__partition__partition_with_expression.trange.a, 1), 0)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a << 1 < 0;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(leftshift(executor__partition__partition_with_expression.trange.a, 1), 0)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a << 1 < 0;
 a	b
-explain format='brief' select * from thash where a << 1 < 0;
-id	estRows	task	access object	operator info
-TableReader	10.40	root	partition:all	data:Selection
-└─Selection	10.40	cop[tikv]		lt(leftshift(executor__partition__partition_with_expression.thash.a, 1), 0)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a << 1 < 0;
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		lt(leftshift(executor__partition__partition_with_expression.thash.a, 1), 0)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a << 1 < 0;
 a	b
 SELECT * from t where a > '10';
 a	b
-explain format='brief' select * from trange where a > '10';
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:dual	data:Selection
-└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 10)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a > '10';
+id	task	access object	operator info
+TableReader	root	partition:dual	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 10)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a > '10';
 a	b
-explain format='brief' select * from thash where a > '10';
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:all	data:Selection
-└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 10)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a > '10';
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 10)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a > '10';
 a	b
 SELECT * from t where a > '10ab';
 a	b
-explain format='brief' select * from trange where a > '10ab';
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:dual	data:Selection
-└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 10)
-  └─TableFullScan	13.00	cop[tikv]	table:trange	keep order:false
+explain format='plan_tree' select * from trange where a > '10ab';
+id	task	access object	operator info
+TableReader	root	partition:dual	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.trange.a, 10)
+  └─TableFullScan	cop[tikv]	table:trange	keep order:false
 SELECT * from trange where a > '10ab';
 a	b
-explain format='brief' select * from thash where a > '10ab';
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:all	data:Selection
-└─Selection	1.00	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 10)
-  └─TableFullScan	13.00	cop[tikv]	table:thash	keep order:false
+explain format='plan_tree' select * from thash where a > '10ab';
+id	task	access object	operator info
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		gt(executor__partition__partition_with_expression.thash.a, 10)
+  └─TableFullScan	cop[tikv]	table:thash	keep order:false
 SELECT * from thash where a > '10ab';
 a	b
 set tidb_partition_prune_mode=default;

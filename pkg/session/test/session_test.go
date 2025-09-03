@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -44,13 +47,20 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
+	"go.uber.org/zap"
 )
 
 func TestSchemaCheckerSQL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	setTxnTk := testkit.NewTestKit(t, store)
@@ -146,10 +156,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`)
 	require.Error(t, domain.GetDomain(tk.Session()).Reload())
 
 	lease := domain.GetDomain(tk.Session()).GetSchemaLease()
@@ -167,7 +174,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, ver)
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"))
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -195,7 +202,7 @@ func TestWriteOnMultipleCachedTable(t *testing.T) {
 	}
 
 	cached := false
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		tk.MustQuery("select * from ct1")
 		if lastReadFromCache(tk) {
 			cached = true
@@ -480,7 +487,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 
 	tk.MustExec("rename table t to t2")
 	var meetErr bool
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, err := tk2.Exec("insert t values (1)")
 		if err != nil {
 			meetErr = true
@@ -491,7 +498,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 
 	tk.MustExec("rename table t2 to t")
 	var recoverErr bool
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, err := tk2.Exec("insert t values (1)")
 		if err == nil {
 			recoverErr = true
@@ -702,6 +709,10 @@ func TestRequestSource(t *testing.T) {
 				case *kvrpcpb.BatchGetRequest:
 					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
+				case *kvrpcpb.PessimisticLockRequest:
+					requestSource = r.GetContext().GetRequestSource()
+				default:
+					fmt.Printf("unexpected request type %T\n", r)
 				}
 				require.Equal(t, readType+source, requestSource)
 				return next(target, req)
@@ -1055,4 +1066,77 @@ func TestIssue60266(t *testing.T) {
 	tk.MustExec(`insert into t1 (id, a, c) values(2,1234567890123, 'ab\\c');`)
 	tk.MustQuery("select * from t1;").Sort().
 		Check(testkit.Rows("1 123456 123456 ab\\\\\\\\c", "2 1234567890123 aaaaa ab\\\\c"))
+}
+
+func expectTxnStart(t *testing.T, store kv.Storage, execute func(tk *testkit.TestKit), txnStart uint64) {
+	tk := testkit.NewTestKit(t, store)
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		execute(tk)
+	}()
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.Eventually(t, func() bool {
+		sm := tk2.Session().GetSessionManager()
+		if sm == nil {
+			return false
+		}
+
+		pl := sm.ShowProcessList()
+		for _, pi := range pl {
+			if pi.ID == tk.Session().GetSessionVars().ConnectionID {
+				if pi.CurTxnStartTS == txnStart {
+					return true
+				}
+
+				logutil.BgLogger().Info("ProcessInfo TxnStartTS for current process is not correct",
+					zap.Uint64("expected", txnStart),
+					zap.Uint64("actual", pi.CurTxnStartTS))
+				return false
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond, "ProcessInfo TxnStartTS for current process is not correct")
+
+	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	wg.Wait()
+}
+
+func TestProcessInfoForStaleReadAutoCommit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("begin")
+	tsStr := tk.MustQuery("select @@tidb_current_ts;").Rows()[0][0]
+	tk.MustExec("set global tidb_external_ts = @@tidb_current_ts;")
+	tk.MustExec("commit")
+
+	ts, err := strconv.Atoi(tsStr.(string))
+	require.NoError(t, err)
+	expectTxnStart(t, store, func(tk *testkit.TestKit) {
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_external_ts_read = ON;")
+		err := tk.QueryToErr("select *, sleep(1000) from t")
+		require.Contains(t, err.Error(), "Query execution was interrupted")
+	}, uint64(ts))
+
+	// increase the ts to make it strictly greater than the previous ts, to avoid that
+	// the `t` is still empty or it cannot find the schema of `t`
+	time.Sleep(time.Millisecond)
+	tsTime := oracle.GetTimeFromTS(uint64(ts)).In(tk.Session().GetSessionVars().Location()).Add(time.Millisecond)
+	// Convert to the ts again to avoid precision issue
+	ts = int(oracle.GoTimeToTS(tsTime))
+	expectTxnStart(t, store, func(tk *testkit.TestKit) {
+		tk.MustExec("use test")
+		err := tk.QueryToErr(fmt.Sprintf("select *, sleep(1000) from t as of timestamp '%s';",
+			tsTime))
+		require.Contains(t, err.Error(), "Query execution was interrupted")
+	}, uint64(ts))
 }

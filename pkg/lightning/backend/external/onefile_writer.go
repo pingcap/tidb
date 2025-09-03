@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	"math/rand"
 	"path/filepath"
 	"slices"
 
@@ -25,16 +26,25 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// defaultOneWriterMemSizeLimit is the memory size limit for one writer. OneWriter can write
-// data in stream, this memory limit is only used to avoid allocating too many times
-// for each KV pair.
-var defaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
+var (
+	// defaultOneWriterMemSizeLimit is the memory size limit for one writer. OneWriter can write
+	// data in stream, this memory limit is only used to avoid allocating too many times
+	// for each KV pair.
+	defaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
+	// DefaultOneWriterBlockSize is the default block size for one writer.
+	// TODO currently we don't have per-writer mem size limit, we always use the
+	// default mem size limit as the block size.
+	// it's ok for now, we can make it configurable in the future.
+	DefaultOneWriterBlockSize = int(defaultOneWriterMemSizeLimit)
+)
 
 // OneFileWriter is used to write data into external storage
 // with only one file for data and stat.
@@ -52,6 +62,7 @@ type OneFileWriter struct {
 	// file information.
 	writerID       string
 	filenamePrefix string
+	rnd            *rand.Rand
 	dataFile       string
 	statFile       string
 	dataWriter     storage.ExternalFileWriter
@@ -76,8 +87,9 @@ type OneFileWriter struct {
 	minKey []byte
 	maxKey []byte
 
-	logger   *zap.Logger
-	partSize int64
+	logger       *zap.Logger
+	partSize     int64
+	writtenBytes int64
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -87,14 +99,14 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 		return nil
 	}
 
-	dataFile := filepath.Join(w.filenamePrefix, "one-file")
+	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
 	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    w.partSize})
 	if err != nil {
 		return err
 	}
-	statFile := filepath.Join(w.filenamePrefix+statSuffix, "one-file")
+	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
 	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize})
@@ -117,7 +129,7 @@ func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
 		return nil
 	}
 
-	dupFile := filepath.Join(w.filenamePrefix+dupSuffix, "one-file")
+	dupFile := filepath.Join(w.getPartitionedPrefix()+dupSuffix, "one-file")
 	dupWriter, err := w.store.Create(ctx, dupFile, &storage.WriterOption{
 		// too many duplicates will cause duplicate resolution part very slow,
 		// we temporarily use 1 as we don't expect too many duplicates, if there
@@ -156,7 +168,8 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 	}
 	if slices.Compare(w.pivotKey, idxKey) == 0 {
 		w.currDupCnt++
-		if w.onDup == engineapi.OnDuplicateKeyRecord {
+		switch w.onDup {
+		case engineapi.OnDuplicateKeyRecord:
 			// record first 2 duplicate to data file, others to dup file.
 			if w.currDupCnt == 2 {
 				if err := w.doWriteRow(ctx, w.pivotKey, w.pivotValue); err != nil {
@@ -175,6 +188,8 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 				}
 				w.recordedDupCnt++
 			}
+		case engineapi.OnDuplicateKeyError:
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
 		}
 	} else {
 		return w.onNextPivot(ctx, idxKey, idxVal)
@@ -241,6 +256,11 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
+	w.writtenBytes += int64(length)
+	if w.writtenBytes >= 16*units.MiB {
+		metrics.MergeSortWriteBytes.Add(float64(w.writtenBytes))
+		w.writtenBytes = 0
+	}
 	return nil
 }
 
@@ -253,7 +273,10 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	w.logger.Info("close one file writer", zap.String("writerID", w.writerID))
+	w.logger.Info("close one file writer", zap.String("writerID", w.writerID),
+		zap.Uint64("totalCnt", w.totalCnt),
+		zap.Uint64("totalSize", w.totalSize),
+		zap.Int("recordedDupCnt", w.recordedDupCnt))
 
 	var minKey, maxKey []byte
 	mStats := make([]MultipleFilesStat, 0, 1)
@@ -324,6 +347,10 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		}
 	}
 	return nil
+}
+
+func (w *OneFileWriter) getPartitionedPrefix() string {
+	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
 }
 
 // caller should make sure the buf is large enough to hold the encoded data.

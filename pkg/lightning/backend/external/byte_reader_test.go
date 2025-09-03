@@ -214,17 +214,19 @@ func TestSwitchMode(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	st := storage.NewMemStorage()
 	// Prepare
+	var kvAndStat [2]string
 	ctx := context.Background()
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
+		SetOnCloseFunc(func(summary *WriterSummary) { kvAndStat = summary.MultipleFilesStats[0].Filenames[0] }).
 		BuildOneFile(st, "/test", "0")
 
 	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 	kvCnt := 1000000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
 		_, err := rand.Read(kvs[i].Key)
@@ -244,9 +246,9 @@ func TestSwitchMode(t *testing.T) {
 	require.NoError(t, err)
 	pool := membuf.NewPool()
 	ConcurrentReaderBufferSizePerConc = rand.Intn(100) + 1
-	kvReader, err := newKVReader(context.Background(), "/test/0/one-file", st, 0, 64*1024)
+	kvReader, err := NewKVReader(context.Background(), kvAndStat[0], st, 0, 64*1024)
 	require.NoError(t, err)
-	kvReader.byteReader.enableConcurrentRead(st, "/test/0/one-file", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
+	kvReader.byteReader.enableConcurrentRead(st, kvAndStat[0], 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
 	modeUseCon := false
 	i := 0
 	for {

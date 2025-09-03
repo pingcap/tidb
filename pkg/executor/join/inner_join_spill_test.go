@@ -169,7 +169,7 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
 	hashJoinExec := buildHashJoinV2Exec(info)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		leftDataSource.PrepareChunks()
 		rightDataSource.PrepareChunks()
 		result := getSortedResults(t, hashJoinExec, retTypes)

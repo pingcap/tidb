@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -69,7 +70,7 @@ func NewOptimizer(sctx sessionctx.Context) Optimizer {
 }
 
 func (opt *optimizerImpl) is() infoschema.InfoSchema {
-	return opt.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	return opt.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 }
 
 // IndexNameExist returns whether the specified index name exists in the specified table.
@@ -107,8 +108,7 @@ func (opt *optimizerImpl) TableColumns(schema, table string) ([]Column, error) {
 func (opt *optimizerImpl) PossibleColumns(schema, colName string) ([]Column, error) {
 	// filtering system schema
 	schema = strings.ToLower(schema)
-	if schema == "information_schema" || schema == "metrics_schema" ||
-		schema == "performance_schema" || schema == "mysql" {
+	if metadef.IsMemDB(schema) || metadef.IsSystemDB(schema) {
 		return nil, nil
 	}
 
@@ -250,7 +250,7 @@ func (opt *optimizerImpl) EstIndexSize(db, table string, cols ...string) (indexS
 		return 0, err
 	}
 	stats := domain.GetDomain(opt.sctx).StatsHandle()
-	tblStats := stats.GetTableStats(tbl.Meta())
+	tblStats := stats.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	for _, colName := range cols {
 		colStats := tblStats.ColumnByName(colName)
 		if colStats == nil { // might be not loaded

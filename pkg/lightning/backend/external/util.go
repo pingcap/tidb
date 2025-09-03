@@ -19,16 +19,17 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	"hash/fnv"
 	"io"
 	"path"
 	"reflect"
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -126,53 +128,74 @@ func seekPropsOffsets(
 	return offsetsPerKey, nil
 }
 
-// GetAllFileNames returns data file paths and stat file paths. Both paths are
-// sorted.
+// GetAllFileNames returns files with the same non-partitioned dir.
+//   - for intermediate KV/stat files we store them with a partitioned way to mitigate
+//     limitation on Cloud, see randPartitionedPrefix for how we partition the files.
+//   - for meta files, we store them directly under the non-partitioned dir.
+//
+// for example, if nonPartitionedDir is '30001', the files returned might be
+//   - 30001/6/meta.json
+//   - 30001/7/meta.json
+//   - 30001/plan/ingest/1/meta.json
+//   - 30001/plan/merge-sort/1/meta.json
+//   - p00110000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195_stat/one-file
+//   - p00000000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
 func GetAllFileNames(
 	ctx context.Context,
 	store storage.ExternalStorage,
-	subDir string,
-) ([]string, []string, error) {
+	nonPartitionedDir string,
+) ([]string, error) {
 	var data []string
-	var stats []string
 
 	err := store.WalkDir(ctx,
-		&storage.WalkOption{SubDir: subDir},
+		&storage.WalkOption{},
 		func(path string, size int64) error {
-			// path example: /subtask/0_stat/0
-
-			// extract the parent dir
+			// extract the first dir
 			bs := hack.Slice(path)
-			lastIdx := bytes.LastIndexByte(bs, '/')
-			secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
-			parentDir := path[secondLastIdx+1 : lastIdx]
+			firstIdx := bytes.IndexByte(bs, '/')
+			if firstIdx == -1 {
+				return nil
+			}
 
-			if strings.HasSuffix(parentDir, statSuffix) {
-				stats = append(stats, path)
-			} else {
+			firstDir := bs[:firstIdx]
+			if string(firstDir) == nonPartitionedDir {
+				data = append(data, path)
+				return nil
+			}
+
+			if !isValidPartition(firstDir) {
+				return nil
+			}
+			secondIdx := bytes.IndexByte(bs[firstIdx+1:], '/')
+			if secondIdx == -1 {
+				return nil
+			}
+			secondDir := path[firstIdx+1 : firstIdx+1+secondIdx]
+
+			if secondDir == nonPartitionedDir {
 				data = append(data, path)
 			}
 			return nil
 		})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// in case the external storage does not guarantee the order of walk
 	sort.Strings(data)
-	sort.Strings(stats)
-	return data, stats, nil
+	return data, nil
 }
 
-// CleanUpFiles delete all data and stat files under one subDir.
-func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, subDir string) error {
-	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
+// CleanUpFiles delete all data and stat files under the same non-partitioned dir.
+// see randPartitionedPrefix for how we partition the files.
+func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartitionedDir string) error {
+	failpoint.Inject("skipCleanUpFiles", func() {
+		failpoint.Return(nil)
+	})
+	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
 	if err != nil {
 		return err
 	}
-	allFiles := make([]string, 0, len(dataNames)+len(statNames))
-	allFiles = append(allFiles, dataNames...)
-	allFiles = append(allFiles, statNames...)
-	return store.DeleteFiles(ctx, allFiles)
+	return store.DeleteFiles(ctx, names)
 }
 
 // MockExternalEngine generates an external engine with the given keys and values.
@@ -181,25 +204,14 @@ func MockExternalEngine(
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
-	subDir := "/mock-test"
+	var summary *WriterSummary
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(10*(lengthBytes*2+10)).
 		SetBlockSize(10*(lengthBytes*2+10)).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
+		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
 		Build(storage, "/mock-test", "0")
-	return MockExternalEngineWithWriter(storage, writer, subDir, keys, values)
-}
-
-// MockExternalEngineWithWriter generates an external engine with the given
-// writer, keys and values.
-func MockExternalEngineWithWriter(
-	storage storage.ExternalStorage,
-	writer *Writer,
-	subDir string,
-	keys [][]byte,
-	values [][]byte,
-) (dataFiles []string, statsFiles []string, err error) {
 	ctx := context.Background()
 	for i := range keys {
 		err := writer.WriteRow(ctx, keys[i], values[i], nil)
@@ -211,7 +223,13 @@ func MockExternalEngineWithWriter(
 	if err != nil {
 		return nil, nil, err
 	}
-	return GetAllFileNames(ctx, storage, subDir)
+	for _, ms := range summary.MultipleFilesStats {
+		for _, f := range ms.Filenames {
+			dataFiles = append(dataFiles, f[0])
+			statsFiles = append(statsFiles, f[1])
+		}
+	}
+	return
 }
 
 // EndpointTp is the type of Endpoint.Key.
@@ -368,7 +386,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	}
 	t := v.Type()
 	var fields []reflect.StructField
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
@@ -388,7 +406,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	newType := reflect.StructOf(fields)
 	newVal := reflect.New(newType).Elem()
 	j := 0
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
@@ -527,4 +545,53 @@ func doRemoveDuplicates[E any](
 		pivot = key
 	}
 	return in[:fillIdx], removed, totalDup
+}
+
+// DivideMergeSortDataFiles divides the data files into multiple groups for
+// merge sort. Each group will be assigned to a node for sorting.
+// The number of files in each group is limited to MaxMergeSortFileCountStep.
+func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
+	if nodeCnt == 0 {
+		return nil, errors.Errorf("unsupported zero node count")
+	}
+	if len(dataFiles) == 0 {
+		return [][]string{}, nil
+	}
+	adjustedMergeSortFileCountStep := GetAdjustedMergeSortFileCountStep(mergeConc)
+	dataFilesCnt := len(dataFiles)
+	result := make([][]string, 0, nodeCnt)
+	batches := len(dataFiles) / adjustedMergeSortFileCountStep
+	rounds := batches / nodeCnt
+	for range rounds * nodeCnt {
+		result = append(result, dataFiles[:adjustedMergeSortFileCountStep])
+		dataFiles = dataFiles[adjustedMergeSortFileCountStep:]
+	}
+	remainder := dataFilesCnt - (nodeCnt * rounds * adjustedMergeSortFileCountStep)
+	if remainder == 0 {
+		return result, nil
+	}
+	// adjust node cnt for remainder files to avoid having too much target files.
+	adjustNodeCnt := nodeCnt
+	maxTargetFilesPerSubtask := max(MergeSortMaxSubtaskTargetFiles, mergeConc)
+	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(GetAdjustedMergeSortOverlapThreshold(mergeConc)) {
+		adjustNodeCnt--
+		if adjustNodeCnt == 0 {
+			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)
+		}
+	}
+	minimalFileCount := 32 // Each subtask should merge at least 32 files.
+	adjustNodeCnt = max(min(remainder/minimalFileCount, adjustNodeCnt), 1)
+	sizes := mathutil.Divide2Batches(remainder, adjustNodeCnt)
+	for _, s := range sizes {
+		result = append(result, dataFiles[:s])
+		dataFiles = dataFiles[s:]
+	}
+	return result, nil
+}
+
+func getHash(s string) int64 {
+	h := fnv.New64a()
+	// this hash function never return error
+	_, _ = h.Write([]byte(s))
+	return int64(h.Sum64())
 }

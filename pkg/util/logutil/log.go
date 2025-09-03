@@ -148,16 +148,26 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 		errVerboseLogger = logger
 	}
 
-	// init dedicated logger for slow query log
-	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
+	// init dedicated logger for slow query log,
+	// we should use same writeSyncer when filenames are equal.
+	if cfg.SlowQueryFile != "" && cfg.SlowQueryFile != cfg.File.Filename {
+		SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		SlowQueryLogger = newSlowQueryLoggerFromZapLogger(gl, props)
 	}
 
-	// init dedicated logger for general log
-	GeneralLogger, _, err = newGeneralLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
+	// init dedicated logger for general log,
+	// we should use same writeSyncer when filenames are equal.
+	if cfg.GeneralLogFile != "" && cfg.GeneralLogFile != cfg.File.Filename {
+		GeneralLogger, _, err = newGeneralLogger(cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		GeneralLogger = gl
 	}
 
 	initGRPCLogger(gl)
@@ -373,6 +383,14 @@ func WithFields(ctx context.Context, fields ...zap.Field) context.Context {
 		logger = logger.With(fields...)
 	}
 
+	return context.WithValue(ctx, CtxLogKey, logger)
+}
+
+// WithLogger attaches a logger to context.
+func WithLogger(ctx context.Context, logger *zap.Logger) context.Context {
+	if logger == nil {
+		logger = log.L()
+	}
 	return context.WithValue(ctx, CtxLogKey, logger)
 }
 

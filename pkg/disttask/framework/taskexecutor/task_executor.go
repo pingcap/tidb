@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -46,9 +47,6 @@ var (
 	// subtasks balance to/away from this node.
 	checkBalanceSubtaskInterval = 2 * time.Second
 
-	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
-	// subtask table.
-	updateSubtaskSummaryInterval = 3 * time.Second
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
@@ -70,15 +68,17 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
+	Store  kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string) Param {
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, store kv.Storage) Param {
 	return Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
+		Store:     store,
 	}
 }
 
@@ -113,11 +113,15 @@ type BaseTaskExecutor struct {
 // TODO: we can refactor this part to pass task base only, but currently ADD-INDEX
 // depends on it to init, so we keep it for now.
 func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *BaseTaskExecutor {
-	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
+	logger := logutil.ErrVerboseLogger().With(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.execID))
 	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
+	subCtx = logutil.WithLogger(subCtx, logger)
 	taskExecutorImpl := &BaseTaskExecutor{
 		Param:  param,
 		ctx:    subCtx,
@@ -192,12 +196,12 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 	checkCtx, runStepCtx context.Context, stepExec execute.StepExecutor) {
 	taskMgr := e.taskTable.(*storage.TaskManager)
-	ticker := time.NewTicker(updateSubtaskSummaryInterval)
+	ticker := time.NewTicker(execute.UpdateSubtaskSummaryInterval)
 	defer ticker.Stop()
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {
 		summary := stepExec.RealtimeSummary()
-		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
+		err := taskMgr.UpdateSubtaskSummary(runStepCtx, curSubtaskID, summary)
 		if err != nil {
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
@@ -437,6 +441,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
 	subtaskCtx, subtaskCancel := context.WithCancel(e.stepCtx)
+	subtaskCtx = logutil.WithLogger(subtaskCtx, logger)
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
 
@@ -463,7 +468,6 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	defer subtaskCancel()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
-
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
@@ -728,4 +732,9 @@ func (e *BaseTaskExecutor) failOneSubtask(ctx context.Context, taskID int64, sub
 		e.logger.Error("fail one subtask failed", zap.NamedError("subtaskErr", subtaskErr),
 			zap.Duration("takes", time.Since(start)), zap.Error(err1))
 	}
+}
+
+// GetTaskTable returns the TaskTable of the TaskExecutor.
+func (e *BaseTaskExecutor) GetTaskTable() TaskTable {
+	return e.taskTable
 }

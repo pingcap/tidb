@@ -38,7 +38,7 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	ctx.BindDomain(domain.NewMockDomain())
+	ctx.BindDomainAndSchValidator(domain.NewMockDomain(), nil)
 	return ctx
 }
 
@@ -78,7 +78,7 @@ func TestRequiredRows(t *testing.T) {
 				fields = append(fields, lfields...)
 				result := chunk.New(fields, maxChunkSize, maxChunkSize)
 
-				for i := 0; i < 10; i++ {
+				for range 10 {
 					required := rand.Int()%maxChunkSize + 1
 					result.SetRequiredRows(required, maxChunkSize)
 					result.Reset()

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/xitongsys/parquet-go/parquet"
 	preader "github.com/xitongsys/parquet-go/reader"
 	"github.com/xitongsys/parquet-go/source"
@@ -239,7 +240,7 @@ func NewParquetParser(
 		Reader:         reader,
 		columns:        columns,
 		columnMetas:    columnMetas,
-		logger:         log.FromContext(ctx),
+		logger:         log.Wrap(logutil.Logger(ctx)),
 		readSeekCloser: wrapper,
 	}, nil
 }
@@ -419,7 +420,7 @@ func (pp *ParquetParser) ReadRow() error {
 	} else {
 		pp.lastRow.Row = pp.lastRow.Row[:length]
 	}
-	for i := 0; i < length; i++ {
+	for i := range length {
 		pp.lastRow.Length += getDatumLen(v.Field(i))
 		if err := setDatumValue(&pp.lastRow.Row[i], v.Field(i), pp.columnMetas[i], pp.logger); err != nil {
 			return err
@@ -490,7 +491,7 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 func binaryToDecimalStr(rawBytes []byte, scale int) string {
 	negative := rawBytes[0] > 127
 	if negative {
-		for i := 0; i < len(rawBytes); i++ {
+		for i := range rawBytes {
 			rawBytes[i] = ^rawBytes[i]
 		}
 		for i := len(rawBytes) - 1; i >= 0; i-- {

@@ -212,7 +212,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	err = tk1.Session().PrepareTxnCtx(context.Background())
+	err = tk1.Session().PrepareTxnCtx(context.Background(), nil)
 	require.NoError(t, err)
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
@@ -355,13 +355,13 @@ func TestErrorRollback(t *testing.T) {
 	wg.Add(cnt)
 	num := 20
 
-	for i := 0; i < cnt; i++ {
+	for range cnt {
 		go func() {
 			defer wg.Done()
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
 			tk.MustExec("set @@session.tidb_retry_limit = 100")
-			for j := 0; j < num; j++ {
+			for range num {
 				_, _ = tk.Exec("insert into t_rollback values (1, 1)")
 				tk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
 			}
@@ -492,7 +492,7 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 	tk.MustExec("set session tidb_mem_quota_query=10240")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values(?)", key2)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		// The insert statement will fail because of the duplicate key error.
 		err := tk.ExecToErr("insert into t values(?), (?)", key1, key2)
 		require.Error(t, err)

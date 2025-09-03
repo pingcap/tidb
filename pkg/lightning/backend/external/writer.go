@@ -19,6 +19,9 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
+	"math"
+	"math/rand"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -36,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tikv/client-go/v2/tikv"
@@ -51,12 +55,18 @@ var (
 	// this value might not be optimal.
 	// TODO need data on AWS and other machine types
 	maxUploadWorkersPerThread = 8
+	// we use hex of 0-256 as partition prefix, it might duplicate with task ID,
+	// so we add a header to it.
+	partitionHeader     = "p"
+	partitionHeaderChar = partitionHeader[0]
 
-	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
-	// if the overlap ratio is greater than this threshold, we will merge the files.
-	MergeSortOverlapThreshold int64 = 4000
-	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
-	MergeSortFileCountStep = 4000
+	// maxMergeSortOverlapThreshold is the maximum threshold of overlap between sorted kv files.
+	// if the overlap ratio is greater than this threshold, we will merge the files. Note: Use GetAdjustedMergeSortOverlapThreshold() instead.
+	maxMergeSortOverlapThreshold int64 = 4000
+	// MaxMergeSortFileCountStep is the maximum step of file count when we split the sorted kv files. Note: Use GetAdjustedMergeSortFileCountStep() instead.
+	MaxMergeSortFileCountStep = 4000
+	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
+	MergeSortMaxSubtaskTargetFiles = 16
 )
 
 const (
@@ -66,21 +76,47 @@ const (
 	DefaultBlockSize = 16 * units.MiB
 )
 
-// GetAdjustedBlockSize gets the block size after alignment.
-func GetAdjustedBlockSize(memSizePerWriter uint64) int {
-	// the buf size is aligned to block size, and the target table might have many
-	// writers, one writer might take much more memory when the buf size
-	// is slightly larger than the N*block-size.
-	// such as when memSizePerWriter = 2M, block-size = 16M, the aligned size
-	// is 16M, it's 8 times larger.
-	// so we adjust the block size when the aligned size is larger than 1.1 times
-	// of memSizePerWriter, to avoid OOM.
-	blockSize := DefaultBlockSize
-	alignedSize := membuf.GetAlignedSize(memSizePerWriter, uint64(blockSize))
-	if float64(alignedSize)/float64(memSizePerWriter) > 1.1 {
-		return int(memSizePerWriter)
+func commonGetAdjustCount(isOverlapThreshold bool, concurrency int) int64 {
+	intest.Assert(concurrency > 0, "concurrency must be greater than 0, got %d", concurrency)
+	if concurrency <= 0 {
+		// Even though we check it use intest.Assert, it may still goto here in the prod environment with bug.
+		logutil.BgLogger().Error("concurrency is less than 0 or equal to 0, set to 1", zap.Int("concurrency", concurrency))
+		concurrency = 1
 	}
-	return blockSize
+	cnt := 250 * int64(concurrency)
+	if isOverlapThreshold {
+		cnt = min(cnt, maxMergeSortOverlapThreshold)
+	} else {
+		cnt = min(cnt, int64(MaxMergeSortFileCountStep))
+	}
+	return cnt
+}
+
+// GetAdjustedMergeSortOverlapThreshold adjusts the merge sort overlap threshold based on concurrency.
+// The bigger the threshold, the bigger the statistical bias. In CPU:Memory = 1:2 machine, if the concurrency
+// is less than 8, the memory can be used to load data is small, and may get blocked by the memory limiter.
+// So we lower the threshold here if concurrency too low.
+func GetAdjustedMergeSortOverlapThreshold(concurrency int) int64 {
+	return commonGetAdjustCount(true, concurrency)
+}
+
+// GetAdjustedMergeSortFileCountStep adjusts the merge sort file count step based on concurrency.
+func GetAdjustedMergeSortFileCountStep(concurrency int) int {
+	return int(commonGetAdjustCount(false, concurrency))
+}
+
+// GetAdjustedBlockSize gets the block size after alignment.
+func GetAdjustedBlockSize(totalBufSize uint64, defBlockSize int) int {
+	// In the case of table with many indexes, the buffer size may be much
+	// smaller than the block size, so aligning size to block size will make
+	// the memory size of each writer too large and cause OOM.
+	// So we adjust the block size when the aligned size is 1.1 times larger
+	// than memSizePerWriter to prevent OOM.
+	alignedSize := membuf.GetAlignedSize(totalBufSize, uint64(defBlockSize))
+	if float64(alignedSize)/float64(totalBufSize) > 1.1 {
+		return int(totalBufSize)
+	}
+	return defBlockSize
 }
 
 // rangePropertiesCollector collects range properties for each range. The zero
@@ -164,15 +200,14 @@ func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	groupOffset     int
-	memSizeLimit    uint64
-	blockSize       int
-	propSizeDist    uint64
-	propKeysDist    uint64
-	onClose         OnCloseFunc
-	keyDupeEncoding bool
-	tikvCodec       tikv.Codec
-	onDup           engineapi.OnDuplicateKey
+	groupOffset  int
+	memSizeLimit uint64
+	blockSize    int
+	propSizeDist uint64
+	propKeysDist uint64
+	onClose      OnCloseFunc
+	tikvCodec    tikv.Codec
+	onDup        engineapi.OnDuplicateKey
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -216,12 +251,6 @@ func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 	return b
 }
 
-// SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
-func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
-	b.keyDupeEncoding = val
-	return b
-}
-
 // SetBlockSize sets the block size of pre-allocated buf in the writer.
 func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	b.blockSize = blockSize
@@ -243,7 +272,7 @@ func (b *WriterBuilder) SetTiKVCodec(codec tikv.Codec) *WriterBuilder {
 	return b
 }
 
-// SetOnDup set the action when checkDup enabled and a duplicate key is found.
+// SetOnDup sets the action when checkDup enabled and a duplicate key is found.
 func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder {
 	b.onDup = onDup
 	return b
@@ -257,14 +286,11 @@ func (b *WriterBuilder) Build(
 	writerID string,
 ) *Writer {
 	filenamePrefix := filepath.Join(prefix, writerID)
-	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{}
-	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
 	)
+	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -277,7 +303,7 @@ func (b *WriterBuilder) Build(
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
-		keyAdapter:     keyAdapter,
+		rnd:            rnd,
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
@@ -302,6 +328,8 @@ func (b *WriterBuilder) BuildOneFile(
 	filenamePrefix := filepath.Join(prefix, writerID)
 	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
 
+	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
+
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -313,6 +341,7 @@ func (b *WriterBuilder) BuildOneFile(
 		store:          store,
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
+		rnd:            rnd,
 		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
@@ -400,7 +429,7 @@ type Writer struct {
 	groupOffset    int
 	currentSeq     int
 	filenamePrefix string
-	keyAdapter     common.KeyAdapter
+	rnd            *rand.Rand
 
 	rc *rangePropertiesCollector
 
@@ -438,14 +467,9 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	if w.tikvCodec != nil {
 		key = w.tikvCodec.EncodeKey(key)
 	}
-	keyAdapter := w.keyAdapter
 
-	var rowID []byte
-	if handle != nil {
-		rowID = handle.Encoded()
-	}
-	encodedKeyLen := keyAdapter.EncodedLen(key, rowID)
-	length := encodedKeyLen + len(val) + lengthBytes*2
+	keyLen := len(key)
+	length := keyLen + len(val) + lengthBytes*2
 	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
@@ -457,14 +481,14 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 	}
-	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
+	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(keyLen))
 	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
-	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], key, rowID)
-	copy(dataBuf[2*lengthBytes+encodedKeyLen:], val)
+	copy(dataBuf[2*lengthBytes:], key)
+	copy(dataBuf[2*lengthBytes+keyLen:], val)
 
 	w.kvLocations = append(w.kvLocations, loc)
 	// TODO: maybe we can unify the size calculation during write to store.
-	w.kvSize += int64(encodedKeyLen + len(val))
+	w.kvSize += int64(keyLen + len(val))
 	w.batchSize += uint64(length)
 	return nil
 }
@@ -531,11 +555,15 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
-	var dupFound bool
+	var (
+		dupFound bool
+		dupLoc   *membuf.SliceLocation
+	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
-		if res == 0 {
+		if res == 0 && !dupFound {
 			dupFound = true
+			dupLoc = &i
 		}
 		return res
 	})
@@ -560,8 +588,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
-			// not implemented yet, same as ignore.
-			// add-index might need this one later.
+			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
+			dupValue := slices.Clone(w.getValueByLoc(dupLoc))
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
 	}
 
@@ -754,6 +783,12 @@ func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
+func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes+keyLen:]
+}
+
 func (w *Writer) reCalculateKVSize() int64 {
 	s := int64(0)
 	for _, loc := range w.kvLocations {
@@ -767,7 +802,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	data, stats storage.ExternalFileWriter,
 	err error,
 ) {
-	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
+	dataPath := filepath.Join(w.getPartitionedPrefix(), strconv.Itoa(w.currentSeq))
 	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
@@ -775,7 +810,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	if err != nil {
 		return "", "", nil, nil, err
 	}
-	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
+	statPath := filepath.Join(w.getPartitionedPrefix()+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
@@ -788,12 +823,45 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 }
 
 func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalFileWriter, error) {
-	path := filepath.Join(w.filenamePrefix+dupSuffix, strconv.Itoa(w.currentSeq))
+	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
 	writer, err := w.store.Create(ctx, path, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
 	})
 	return path, writer, err
+}
+
+func (w *Writer) getPartitionedPrefix() string {
+	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
+}
+
+// when importing large mount of data, during merge-sort and ingest, it's possible
+// we need to read many files in parallel, but for Object Storage like S3, it will
+// partition all object keys by prefix and each partition have its own request
+// quota. Initially, each bucket only have one partition, and the auto-partition
+// of object storage is mostly slow, so we might be throttled for some time to wait
+// S3 server do auto-partition.
+// to mitigate this issue, we design the file prefix in a way which is easy to
+// be partitioned, and let the user file a ticket to let cloud provider partition
+// by prefix manually before import large dataset.
+//
+// the rule is: generate a random byte in range [0, 256) and encode to binary
+// string, and use it as the partitioned prefix.
+func randPartitionedPrefix(prefix string, rnd *rand.Rand) string {
+	partitionPrefix := fmt.Sprintf("%s%08b", partitionHeader, rnd.Intn(math.MaxUint8+1))
+	return filepath.Join(partitionPrefix, prefix)
+}
+
+func isValidPartition(in []byte) bool {
+	if len(in) != 9 || in[0] != partitionHeaderChar {
+		return false
+	}
+	for _, c := range in[1:] {
+		if c != '0' && c != '1' {
+			return false
+		}
+	}
+	return true
 }
 
 // EngineWriter implements backend.EngineWriter interface.

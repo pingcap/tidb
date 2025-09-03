@@ -65,7 +65,7 @@ func newTopNSpillerHelper(
 ) *topNSpillHelper {
 	lock := sync.Mutex{}
 	tmpSpillChunksChan := make(chan *chunk.Chunk, concurrencyNum)
-	for i := 0; i < len(workers); i++ {
+	for range workers {
 		tmpSpillChunksChan <- exec.TryNewCacheChunk(topn.Children(0))
 	}
 
@@ -165,7 +165,7 @@ func (t *topNSpillHelper) spill() (err error) {
 	errChan := make(chan error, workerNum)
 	workerWaiter := &sync.WaitGroup{}
 	workerWaiter.Add(workerNum)
-	for i := 0; i < workerNum; i++ {
+	for i := range workerNum {
 		go func(idx int) {
 			defer func() {
 				if r := recover(); r != nil {

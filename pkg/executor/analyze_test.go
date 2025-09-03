@@ -36,7 +36,7 @@ import (
 )
 
 func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
-	for i := 0; i < len(hg.Buckets); i++ {
+	for i := range hg.Buckets {
 		lower, upper := hg.GetLower(i), hg.GetUpper(i)
 		cmp, err := upper.Compare(sc.TypeCtx(), lower, collate.GetBinaryCollator())
 		if cmp < 0 || err != nil {
@@ -80,7 +80,7 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test_index_extract_topn"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
 	topn := statistics.NewTopN(2)

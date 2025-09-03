@@ -27,7 +27,7 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
-	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.TLS, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -120,9 +120,6 @@ func NewBackupCommand() *cobra.Command {
 			task.LogArguments(c)
 			// Do not run stat worker in BR.
 			session.DisableStats4Test()
-
-			// Do not run ddl worker in BR.
-			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
 
 			summary.SetUnit(summary.BackupUnit)
 			return nil

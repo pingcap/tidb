@@ -232,7 +232,8 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
  |-explain.txt
 */
 func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
-	task *PlanReplayerDumpTask) (err error) {
+	task *PlanReplayerDumpTask,
+) (err error) {
 	zf := task.Zf
 	fileName := task.FileName
 	sessionVars := task.SessionVars
@@ -535,7 +536,7 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 		if err != nil {
 			return err
 		}
-		tblStats := statsHandle.GetTableStats(tbl.Meta())
+		tblStats := statsHandle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 		if tblStats == nil {
 			continue
 		}
@@ -790,7 +791,8 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 
 // extractTableNames extracts table names from the given stmts.
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
-	execStmts []ast.StmtNode, curDB ast.CIStr) (map[tableNamePair]struct{}, error) {
+	execStmts []ast.StmtNode, curDB ast.CIStr,
+) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
 		executor: sctx.GetRestrictedSQLExecutor(),
@@ -871,7 +873,7 @@ func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet, emptyAsNi
 	sRows := make([][]string, len(rows))
 	for i, row := range rows {
 		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
+		for j := range row.Len() {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {

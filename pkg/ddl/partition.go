@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -216,8 +217,11 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
-
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions)
+		var scatterScope string
+		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
+		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions, scatterScope)
 
 		tblInfo.Partition.DDLState = model.StateNone
 		tblInfo.Partition.DDLAction = model.ActionNone
@@ -382,7 +386,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 				return errors.Trace(err)
 			}
 
-			for i := 0; i < len(newDefs); i++ {
+			for i := range newDefs {
 				ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
 				if ifMaxvalue && i == len(newDefs)-1 {
 					return nil
@@ -1261,13 +1265,11 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 			return err
 		}
 	}
-	var partDefs []*ast.PartitionDefinition
-	if len(partitionOptions.Definitions) != 0 {
-		partDefs = partitionOptions.Definitions
-	} else {
+	partDefs := partitionOptions.Definitions
+	if len(partDefs) == 0 {
 		partDefs = make([]*ast.PartitionDefinition, 0, 1)
 	}
-	for i := 0; i < mysql.PartitionCountLimit; i++ {
+	for i := range mysql.PartitionCountLimit {
 		if i == 0 {
 			currExpr = startExpr
 			// TODO: adjust the startExpr and have an offset for interval to handle
@@ -1440,7 +1442,7 @@ func buildHashPartitionDefinitions(defs []*ast.PartitionDefinition, tbInfo *mode
 
 	definitions := make([]model.PartitionDefinition, numParts)
 	oldParts := uint64(len(tbInfo.Partition.Definitions))
-	for i := uint64(0); i < numParts; i++ {
+	for i := range numParts {
 		if i < oldParts {
 			// Use the existing definitions
 			def := tbInfo.Partition.Definitions[i]
@@ -1841,7 +1843,7 @@ func checkRangePartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 	}
 	isUnsigned := isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo)
 	var prevRangeValue any
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(dbterror.ErrPartitionMaxvalue)
 		}
@@ -2048,13 +2050,7 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 
 	// consider using a map to probe partLowerNames if too many partLowerNames
 	for i := range oldDefs {
-		found := false
-		for _, partName := range partLowerNames {
-			if oldDefs[i].Name.L == partName {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(partLowerNames, oldDefs[i].Name.L)
 		if found {
 			droppingDefs = append(droppingDefs, oldDefs[i])
 		} else {
@@ -2068,7 +2064,7 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 
 func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
 	defs := tblInfo.Partition.Definitions
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		if strings.EqualFold(defs[i].Name.L, strings.ToLower(partName)) {
 			return i, &(defs[i]), nil
 		}
@@ -2558,7 +2554,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
+		var scatterScope string
+		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
+		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
 		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
@@ -3758,7 +3758,7 @@ type reorgPartitionWorker struct {
 }
 
 func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
-	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblReorgPartitionRate, false, false)
+	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblReorgPartitionRate, false)
 	if err != nil {
 		return nil, err
 	}
@@ -3794,7 +3794,7 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 	}, nil
 }
 
-func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -4410,7 +4410,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 	// Lower bound check (for all partitions except first)
 	if hasLowerBound {
 		currVals := pi.Definitions[index-1].LessThan
-		for i := 0; i < len(pi.Columns); i++ {
+		for i := range pi.Columns {
 			nextIsMax := false
 			if i < (len(pi.Columns)-1) && strings.EqualFold(currVals[i+1], partitionMaxValue) {
 				nextIsMax = true
@@ -4421,7 +4421,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 			if i > 0 {
 				buf.WriteString("(")
 				// All previous columns must be equal and non-NULL
-				for j := 0; j < i; j++ {
+				for j := range i {
 					if j > 0 {
 						buf.WriteString(" AND ")
 					}
@@ -4448,7 +4448,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 
 	currVals := pi.Definitions[index].LessThan
 	// Upper bound check (for all partitions)
-	for i := 0; i < len(pi.Columns); i++ {
+	for i := range pi.Columns {
 		if strings.EqualFold(currVals[i], partitionMaxValue) {
 			break
 		}
@@ -4458,7 +4458,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 		if i > 0 {
 			buf.WriteString("(")
 			// All previous columns must be equal
-			for j := 0; j < i; j++ {
+			for j := range i {
 				if j > 0 {
 					buf.WriteString(" AND ")
 				}
@@ -4728,7 +4728,7 @@ type stringSlice interface {
 
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
-	for i := 0; i < partCols.Len(); i++ {
+	for i := range partCols.Len() {
 		partCol := partCols.At(i)
 		_, idxCol := model.FindIndexColumnByName(idxCols, partCol)
 		if idxCol == nil {
@@ -4903,8 +4903,8 @@ func checkPartitionExprArgs(_ expression.BuildContext, tblInfo *model.TableInfo,
 			return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
 		}
 	case ast.DateDiff:
-		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(i int) bool {
-			return hasDateArgs(argsType[i])
+		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(arg byte) bool {
+			return hasDateArgs(arg)
 		})))
 
 	case ast.Abs, ast.Ceiling, ast.Floor, ast.Mod:
@@ -4934,26 +4934,24 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 }
 
 func hasDateArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDate || argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDate || t == mysql.TypeDatetime
 	})
 }
 
 func hasTimeArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDuration || argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDuration || t == mysql.TypeDatetime
 	})
 }
 
 func hasTimestampArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeTimestamp
-	})
+	return slices.Contains(argsType, mysql.TypeTimestamp)
 }
 
 func hasDatetimeArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDatetime
 	})
 }
 
@@ -5240,7 +5238,7 @@ func checkTwoRangeColumns(ctx expression.BuildContext, curr, prev *model.Partiti
 	if len(curr.LessThan) != len(pi.Columns) {
 		return false, errors.Trace(ast.ErrPartitionColumnList)
 	}
-	for i := 0; i < len(pi.Columns); i++ {
+	for i := range pi.Columns {
 		// Special handling for MAXVALUE.
 		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) && !strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
 			// If current is maxvalue, it certainly >= previous.

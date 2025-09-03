@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -115,7 +116,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
-	for i := 0; i < len(stmt.dbName); i++ {
+	for i := range stmt.dbName {
 		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
 		if !ok {
 			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
@@ -254,10 +255,10 @@ func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}(time.Now())
 	fastPoint := stmt.PointGet.Executor != nil // this case is specially handled
-	pointPlan, isPoint := plan.(*PointGetPlan)
+	pointPlan, isPoint := plan.(*physicalop.PointGetPlan)
 	if fastPoint && isPoint { // special optimization for fast point plans
 		if stmt.PointGet.FastPlan == nil {
-			stmt.PointGet.FastPlan = new(PointGetPlan)
+			stmt.PointGet.FastPlan = new(physicalop.PointGetPlan)
 		}
 		FastClonePointGetForPlanCache(sctx.GetPlanCtx(), pointPlan, stmt.PointGet.FastPlan)
 		clonedPlan = stmt.PointGet.FastPlan
@@ -340,10 +341,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	stmtCtx := sessVars.StmtCtx
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
-	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
-	p, names, err := OptimizeAstNode(ctx, sctx, nodeW, is)
-	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
+	p, names, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, is)
 	if err != nil {
 		return nil, nil, err
 	}

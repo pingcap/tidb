@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -398,7 +400,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 
 	// generate SQL
 	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024*4))
-	for i := 0; i < 50000; i++ {
+	for i := range 50000 {
 		if i > 0 {
 			buf.WriteString(" union ")
 		}
@@ -473,18 +475,18 @@ func TestCopPaging(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set session tidb_enable_paging = 1")
 	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
 	defer tk.MustExec("drop table t")
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
 	}
 	tk.MustExec("analyze table t all columns")
 
 	// limit 960 should go paging
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
 			"Limit 4.00 root  offset:0, count:960",
 			"└─IndexLookUp 4.00 root  ",
@@ -495,7 +497,7 @@ func TestCopPaging(t *testing.T) {
 	}
 
 	// selection between limit and indexlookup, limit 960 should also go paging
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
 			"Limit 3.20 root  offset:0, count:960",
 			"└─IndexLookUp 3.20 root  ",
@@ -506,7 +508,7 @@ func TestCopPaging(t *testing.T) {
 	}
 
 	// limit 961 exceeds the threshold, it should not go paging
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
 			"Limit 4.00 root  offset:0, count:961",
 			"└─IndexLookUp 4.00 root  ",
@@ -517,7 +519,7 @@ func TestCopPaging(t *testing.T) {
 	}
 
 	// selection between limit and indexlookup, limit 961 should not go paging too
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
 			"Limit 3.20 root  offset:0, count:961",
 			"└─IndexLookUp 3.20 root  ",
@@ -544,9 +546,9 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 		return mode == aggregation.FinalMode || mode == aggregation.CompleteMode
 	}
 	checkResult := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
-		for partialIsCop := 0; partialIsCop < 2; partialIsCop++ {
-			for isMPPTask := 0; isMPPTask < 2; isMPPTask++ {
-				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
+		for partialIsCop := range 2 {
+			for isMPPTask := range 2 {
+				partial, final, _ := physicalop.BuildFinalModeAggregation(sctx, &physicalop.AggInfo{
 					AggFuncs:     aggFuncs,
 					GroupByItems: groubyItems,
 					Schema:       aggSchemaBuilder(sctx, aggFuncs),
@@ -569,7 +571,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 		}
 	}
 
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -677,31 +679,31 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 }
 
 func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
-	window := &core.PhysicalWindow{}
+	window := &physicalop.PhysicalWindow{}
 	newPlan, err := window.Clone(nil)
 	require.NoError(t, err)
-	newWindow, ok := newPlan.(*core.PhysicalWindow)
+	newWindow, ok := newPlan.(*physicalop.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	window.TiFlashFineGrainedShuffleStreamCount = 8
 	newPlan, err = window.Clone(nil)
 	require.NoError(t, err)
-	newWindow, ok = newPlan.(*core.PhysicalWindow)
+	newWindow, ok = newPlan.(*physicalop.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
-	sort := &core.PhysicalSort{}
+	sort := &physicalop.PhysicalSort{}
 	newPlan, err = sort.Clone(nil)
 	require.NoError(t, err)
-	newSort, ok := newPlan.(*core.PhysicalSort)
+	newSort, ok := newPlan.(*physicalop.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 
 	sort.TiFlashFineGrainedShuffleStreamCount = 8
 	newPlan, err = sort.Clone(nil)
 	require.NoError(t, err)
-	newSort, ok = newPlan.(*core.PhysicalSort)
+	newSort, ok = newPlan.(*physicalop.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 }
@@ -711,8 +713,8 @@ func TestImportIntoBuildPlan(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int);")
-	tk.MustExec("create table t2 (a int, b int);")
+	tk.MustExec("create table t1 (a int, b int, c datetime on update CURRENT_TIMESTAMP);")
+	tk.MustExec("create table t2 (a int, b int, c datetime on update CURRENT_TIMESTAMP);")
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1 FROM select a from t2;"),
 		plannererrors.ErrWrongValueCountOnRow)
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),

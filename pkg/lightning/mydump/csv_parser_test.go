@@ -846,7 +846,7 @@ func TestTooLargeRow(t *testing.T) {
 	t.Run("too long field", func(t *testing.T) {
 		var dataBuf bytes.Buffer
 		dataBuf.WriteString("a,b,c,d")
-		for i := 0; i < mydump.LargestEntryLimit; i++ {
+		for range mydump.LargestEntryLimit {
 			dataBuf.WriteByte('d')
 		}
 		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
@@ -859,17 +859,33 @@ func TestTooLargeRow(t *testing.T) {
 		require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
 	})
 
+	t.Run("too long field with header", func(t *testing.T) {
+		var dataBuf bytes.Buffer
+		dataBuf.WriteString("c1,c2,c3,c4\na,b,c,d")
+		for range mydump.LargestEntryLimit {
+			dataBuf.WriteByte('d')
+		}
+		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
+		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+		require.NoError(t, err)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(dataBuf.String()), int64(config.ReadBlockSize), ioWorkersForCSV, true, charsetConvertor)
+		require.NoError(t, err)
+		e := parser.ReadRow()
+		require.Error(t, e)
+		require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
+	})
+
 	t.Run("field is short, but whole row too long", func(t *testing.T) {
 		var dataBuf bytes.Buffer
-		for i := 0; i < 16; i++ {
+		for i := range 16 {
 			if i > 0 {
 				dataBuf.WriteByte(',')
 			}
-			for j := 0; j < mydump.LargestEntryLimit/16; j++ {
+			for range mydump.LargestEntryLimit / 16 {
 				dataBuf.WriteByte('d')
 			}
 		}
-		for i := 0; i < mydump.LargestEntryLimit-dataBuf.Len()+16; i++ {
+		for range mydump.LargestEntryLimit - dataBuf.Len() + 16 {
 			dataBuf.WriteByte('d')
 		}
 		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
@@ -1092,7 +1108,7 @@ func TestTrimLastSep(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		require.Nil(t, parser.ReadRow())
 		require.Len(t, parser.LastRow().Row, 3)
 	}

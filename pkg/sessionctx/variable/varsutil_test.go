@@ -99,7 +99,7 @@ func TestNewSessionVars(t *testing.T) {
 }
 
 func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
-	for i := 0; i < val.NumField(); i++ {
+	for i := range val.NumField() {
 		fieldVal := val.Field(i)
 		require.Greater(t, fieldVal.Int(), int64(0))
 	}
@@ -399,9 +399,9 @@ func TestVarsutil(t *testing.T) {
 		{"marker", "MARKER"},
 		{"2", "MARKER"},
 	} {
-		err = v.SetSystemVar(vardef.TiDBRedactLog, c.a)
+		err = v.GlobalVarsAccessor.SetGlobalSysVar(context.TODO(), vardef.TiDBRedactLog, c.a)
 		require.NoError(t, err)
-		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBRedactLog)
+		val, err = v.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBRedactLog)
 		require.NoError(t, err)
 		require.Equal(t, c.b, val)
 	}

@@ -46,6 +46,6 @@ echo "wait checkpoint advance"
 
 restart_services
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/domain/mock-load-schema-long-time=return(true);github.com/pingcap/tidb/br/pkg/task/post-restore-kv-pending=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/infoschema/issyncer/mock-load-schema-long-time=return(true);github.com/pingcap/tidb/br/pkg/task/post-restore-kv-pending=return(true)"
 run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
 export GO_FAILPOINTS=""

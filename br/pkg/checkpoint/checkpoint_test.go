@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -60,9 +61,9 @@ func TestCheckpointMetaForRestoreOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot")
+	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
 	defer snapshotMetaManager.Close()
-	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log")
+	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log", 1)
 	defer logMetaManager.Close()
 	testCheckpointMetaForRestore(t, snapshotMetaManager, logMetaManager)
 }
@@ -70,10 +71,10 @@ func TestCheckpointMetaForRestoreOnStorage(t *testing.T) {
 func TestCheckpointMetaForRestoreOnTable(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	g := gluetidb.New()
-	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 1)
 	require.NoError(t, err)
 	defer snapshotMetaManager.Close()
-	logMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName)
+	logMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 1)
 	require.NoError(t, err)
 	defer logMetaManager.Close()
 	testCheckpointMetaForRestore(t, snapshotMetaManager, logMetaManager)
@@ -136,7 +137,7 @@ func testCheckpointMetaForRestore(
 	require.NoError(t, err)
 	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersisted, progress.Progress)
 
-	taskInfo, err := checkpoint.TryToGetCheckpointTaskInfo(ctx, snapshotMetaManager, logMetaManager)
+	taskInfo, err := checkpoint.GetCheckpointTaskInfo(ctx, snapshotMetaManager, logMetaManager)
 	require.NoError(t, err)
 	require.Equal(t, uint64(123), taskInfo.Metadata.UpstreamClusterID)
 	require.Equal(t, uint64(222), taskInfo.Metadata.RestoredTS)
@@ -301,7 +302,7 @@ func TestCheckpointRestoreRunnerOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot")
+	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
 	defer snapshotMetaManager.Close()
 	testCheckpointRestoreRunner(t, snapshotMetaManager)
 }
@@ -309,7 +310,7 @@ func TestCheckpointRestoreRunnerOnStorage(t *testing.T) {
 func TestCheckpointRestoreRunnerOnTable(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	g := gluetidb.New()
-	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 1)
 	require.NoError(t, err)
 	defer snapshotMetaManager.Close()
 	testCheckpointRestoreRunner(t, snapshotMetaManager)
@@ -410,7 +411,7 @@ func TestCheckpointRunnerRetryOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot")
+	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
 	defer snapshotMetaManager.Close()
 	testCheckpointRunnerRetry(t, snapshotMetaManager)
 }
@@ -418,7 +419,7 @@ func TestCheckpointRunnerRetryOnStorage(t *testing.T) {
 func TestCheckpointRunnerRetryOnTable(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	g := gluetidb.New()
-	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 1)
 	require.NoError(t, err)
 	defer snapshotMetaManager.Close()
 	testCheckpointRunnerRetry(t, snapshotMetaManager)
@@ -477,7 +478,7 @@ func TestCheckpointRunnerNoRetryOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot")
+	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
 	defer snapshotMetaManager.Close()
 	testCheckpointRunnerNoRetry(t, snapshotMetaManager)
 }
@@ -485,7 +486,7 @@ func TestCheckpointRunnerNoRetryOnStorage(t *testing.T) {
 func TestCheckpointRunnerNoRetryOnTable(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	g := gluetidb.New()
-	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 1)
 	require.NoError(t, err)
 	defer snapshotMetaManager.Close()
 	testCheckpointRunnerNoRetry(t, snapshotMetaManager)
@@ -532,7 +533,7 @@ func TestCheckpointLogRestoreRunnerOnStorage(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log")
+	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log", 1)
 	defer logMetaManager.Close()
 	testCheckpointLogRestoreRunner(t, logMetaManager)
 }
@@ -540,7 +541,7 @@ func TestCheckpointLogRestoreRunnerOnStorage(t *testing.T) {
 func TestCheckpointLogRestoreRunnerOnTable(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	g := gluetidb.New()
-	logMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName)
+	logMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 1)
 	require.NoError(t, err)
 	defer logMetaManager.Close()
 	testCheckpointLogRestoreRunner(t, logMetaManager)
@@ -615,11 +616,9 @@ func testCheckpointLogRestoreRunner(
 			if !exists {
 				continue
 			}
-			for _, foff := range foffs {
-				if f.foff == foff {
-					respCount += 1
-					return nil
-				}
+			if slices.Contains(foffs, f.foff) {
+				respCount += 1
+				return nil
 			}
 		}
 		require.FailNow(t, "not found in the original data")

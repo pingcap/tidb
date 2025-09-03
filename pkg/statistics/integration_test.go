@@ -55,7 +55,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT := h.GetTableStats(tblT.Meta())
+	statsTblT := h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
@@ -69,7 +69,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
@@ -77,14 +77,14 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
 		return false
@@ -98,7 +98,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
@@ -107,14 +107,14 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
 		return false
@@ -145,7 +145,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT := h.GetTableStats(tblT.Meta())
+	statsTblT := h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
@@ -159,7 +159,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
@@ -167,14 +167,14 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
 		return false
@@ -189,7 +189,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"")) // since fallback to ver2 path, should do samplerate adjustment
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
@@ -199,14 +199,14 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\""))
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT = h.GetTableStats(tblT.Meta())
+	statsTblT = h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
 		return false
@@ -222,7 +222,6 @@ func TestExpBackoffEstimation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // estRows won't be updated if hit cache.
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
 	tk.MustExec("insert into exp_backoff values(1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 2, 3), (1, 2, 2, 4), (1, 2, 3, 5)")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
@@ -272,7 +271,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTblT := h.GetTableStats(tblT.Meta())
+	statsTblT := h.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	// Check the null count is 3.
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(3), col.NullCount)
@@ -468,11 +467,11 @@ func TestColumnStatsLazyLoad(t *testing.T) {
 	tblInfo := tbl.Meta()
 	c1 := tblInfo.Columns[0]
 	c2 := tblInfo.Columns[1]
-	require.True(t, h.GetTableStats(tblInfo).GetCol(c1.ID).IsAllEvicted())
-	require.True(t, h.GetTableStats(tblInfo).GetCol(c2.ID).IsAllEvicted())
+	require.True(t, h.GetPhysicalTableStats(tblInfo.ID, tblInfo).GetCol(c1.ID).IsAllEvicted())
+	require.True(t, h.GetPhysicalTableStats(tblInfo.ID, tblInfo).GetCol(c2.ID).IsAllEvicted())
 	tk.MustExec("analyze table t")
-	require.True(t, h.GetTableStats(tblInfo).GetCol(c1.ID).IsAllEvicted())
-	require.True(t, h.GetTableStats(tblInfo).GetCol(c2.ID).IsAllEvicted())
+	require.True(t, h.GetPhysicalTableStats(tblInfo.ID, tblInfo).GetCol(c1.ID).IsAllEvicted())
+	require.True(t, h.GetPhysicalTableStats(tblInfo.ID, tblInfo).GetCol(c2.ID).IsAllEvicted())
 }
 
 func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
@@ -492,12 +491,12 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	idxInfo := tblInfo.Indices[0]
 	p0 := tblInfo.Partition.Definitions[0]
 	p1 := tblInfo.Partition.Definitions[1]
-	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).GetIdx(idxInfo.ID).FMSketch)
-	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).GetIdx(idxInfo.ID).FMSketch)
+	require.Nil(t, h.GetPhysicalTableStats(p0.ID, tblInfo).GetIdx(idxInfo.ID).FMSketch)
+	require.Nil(t, h.GetPhysicalTableStats(p1.ID, tblInfo).GetIdx(idxInfo.ID).FMSketch)
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), is))
-	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).GetIdx(idxInfo.ID).FMSketch)
-	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).GetIdx(idxInfo.ID).FMSketch)
+	require.Nil(t, h.GetPhysicalTableStats(p0.ID, tblInfo).GetIdx(idxInfo.ID).FMSketch)
+	require.Nil(t, h.GetPhysicalTableStats(p1.ID, tblInfo).GetIdx(idxInfo.ID).FMSketch)
 }
 
 func TestIssue44369(t *testing.T) {

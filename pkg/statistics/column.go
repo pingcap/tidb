@@ -150,6 +150,10 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 		}()
 	}
 	if sctx != nil {
+		if sctx.GetSessionVars().InRestrictedSQL {
+			inValidForCollPseudo = true
+			return true
+		}
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
@@ -265,4 +269,14 @@ func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column 
 		Histogram:  *NewHistogram(colInfo.ID, 0, 0, 0, &colInfo.FieldType, 0, 0),
 		IsHandle:   pkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 	}
+}
+
+// GetHistogram returns the histogram for this column.
+func (c *Column) GetHistogram() *Histogram {
+	return &c.Histogram
+}
+
+// GetTopN returns the TopN for this column.
+func (c *Column) GetTopN() *TopN {
+	return c.TopN
 }

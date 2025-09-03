@@ -16,6 +16,7 @@ package old
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -26,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -429,7 +431,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		// TODO: Remove this check when we have implemented TiFlashAggregation.
 		return false
 	}
-	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
+	return physicalop.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
 }
 
 // OnTransform implements Transformation interface.
@@ -448,8 +450,8 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
 	copy(gbyItems, agg.GroupByItems)
 
-	partialPref, finalPref, firstRowFuncMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
-		&plannercore.AggInfo{
+	partialPref, finalPref, firstRowFuncMap := physicalop.BuildFinalModeAggregation(agg.SCtx(),
+		&physicalop.AggInfo{
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
 			Schema:       aggSchema,
@@ -459,7 +461,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
+		physicalop.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 
 	partialAgg := logicalop.LogicalAggregation{
 		AggFuncs:     partialPref.AggFuncs,
@@ -547,10 +549,8 @@ func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return nil, false, false, nil
-		}
+	if slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc) {
+		return nil, false, false, nil
 	}
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
@@ -776,12 +776,7 @@ func NewRulePushLimitDownProjection() Transformation {
 // Match implements Transformation interface.
 func (*PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
 	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc)
 }
 
 // OnTransform implements Transformation interface.
@@ -876,7 +871,7 @@ func (*pushDownJoin) predicatePushDown(
 		tempCond = append(tempCond, join.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), tempCond)
+		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), nil, tempCond...)
 		// Return table dual when filter is constant false or null.
 		dual := logicalop.Conds2TableDual(join, tempCond)
 		if dual != nil {
@@ -907,9 +902,9 @@ func (*pushDownJoin) predicatePushDown(
 		copy(remainCond, predicates)
 		nullSensitive := join.JoinType == logicalop.AntiLeftOuterSemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin
 		if join.JoinType == logicalop.RightOuterJoin {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
+			joinConds, remainCond = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive, nil)
 		} else {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
+			joinConds, remainCond = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive, nil)
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)
@@ -1294,12 +1289,7 @@ func NewRulePushTopNDownProjection() Transformation {
 // Match implements Transformation interface.
 func (*PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
 	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc)
 }
 
 // OnTransform implements Transformation interface.
@@ -1463,7 +1453,7 @@ func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 	if len(child.ByItems) < len(topN.ByItems) {
 		return false
 	}
-	for i := 0; i < len(topN.ByItems); i++ {
+	for i := range topN.ByItems {
 		if !topN.ByItems[i].Equal(topN.SCtx().GetExprCtx().GetEvalCtx(), child.ByItems[i]) {
 			return false
 		}

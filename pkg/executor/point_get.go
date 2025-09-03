@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -31,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -48,7 +49,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
-func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {
+func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executor {
 	var err error
 	if err = b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
 		b.err = err
@@ -74,6 +75,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 			b.inSelectLockStmt = false
 		}()
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &PointGetExecutor{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
@@ -180,7 +183,7 @@ func matchPartitionNames(pid int64, partitionNames []ast.CIStr, pi *model.Partit
 }
 
 // Recreated based on Init, change baseExecutor fields also
-func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan, ctx sessionctx.Context) {
+func (e *PointGetExecutor) Recreated(p *physicalop.PointGetPlan, ctx sessionctx.Context) {
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
 	e.BaseExecutor = exec.NewBaseExecutor(ctx, p.Schema(), p.ID())
@@ -193,7 +196,7 @@ func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan, ctx sessionctx
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
 // Note: since this function is also used by Recreated function, thus we can't rely on member field's default value
 // for example: we need to explicitly set e.stats to nil when e.RuntimeStats() is nil
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
+func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	decoder := NewRowDecoder(e.Ctx(), p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
@@ -310,7 +313,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
-			handleBytes, err := plannercore.EncodeUniqueIndexValuesForKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals)
+			handleBytes, err := physicalop.EncodeUniqueIndexValuesForKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
 				if kv.ErrNotExist.Equal(err) {
 					return nil
@@ -322,7 +325,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 		} else {
-			e.idxKey, err = plannercore.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+			e.idxKey, err = physicalop.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
 			if err != nil && !kv.ErrNotExist.Equal(err) {
 				return err
 			}
@@ -392,10 +395,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if !matchPartitionNames(tblID, e.partitionNames, pi) {
 					return nil
 				}
-				for _, id := range pi.IDsInDDLToIgnore() {
-					if id == pid {
-						return nil
-					}
+				if slices.Contains(pi.IDsInDDLToIgnore(), pid) {
+					return nil
 				}
 			}
 		}
@@ -810,12 +811,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 }
 
 func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
-	for _, pCol := range prefixColIDs {
-		if pCol == colID {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(prefixColIDs, colID)
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {

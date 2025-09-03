@@ -38,7 +38,7 @@ func TestDomainAdvancedSessionPoolInternalSessionRegistry(t *testing.T) {
 	// We test for more than one times to cover the case that the session is in the pool.
 	var sctx sessionctx.Context
 	var se *syssession.Session
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		sctx = nil
 		se = nil
 		require.NoError(t, p.WithSession(func(session *syssession.Session) error {

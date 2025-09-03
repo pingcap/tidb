@@ -2,20 +2,19 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "issuetest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "planner_issue_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    race = "on",
-    shard_count = 8,
+    shard_count = 12,
     deps = [
         "//pkg/parser",
         "//pkg/planner",
-        "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

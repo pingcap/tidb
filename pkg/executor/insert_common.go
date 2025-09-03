@@ -322,6 +322,17 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else {
 		err = completeInsertErr(c, val, rowIdx, err)
 	}
+	if col != nil && col.GetType() == mysql.TypeTimestamp &&
+		types.ErrTimestampInDSTTransition.Equal(err) {
+		newErr := exeerrors.ErrTruncateWrongInsertValue.FastGenByArgs(types.TypeStr(col.GetType()), val.GetString(), col.Name.O, rowIdx+1)
+		// IGNORE takes precedence over STRICT mode.
+		if !e.ignoreErr && e.Ctx().GetSessionVars().SQLMode.HasStrictMode() {
+			return newErr
+		}
+		// timestamp already adjusted to end of DST transition, convert error to warning
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(newErr)
+		return nil
+	}
 
 	// TODO: should not filter all types of errors here.
 	if err != nil {
@@ -542,7 +553,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
 
-	for i := 0; i < e.rowLen; i++ {
+	for i := range e.rowLen {
 		col := e.insertColumns[i].ToInfo()
 		casted, err := table.CastValue(e.Ctx(), vals[i], col, false, false)
 		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
@@ -885,7 +896,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				e.lastInsertID = uint64(minv)
 			}
 			// Assign autoIDs to rows.
-			for j := 0; j < cnt; j++ {
+			for j := range cnt {
 				offset := j + start
 				id := int64(uint64(minv) + uint64(j)*uint64(increment))
 				err = setDatumAutoIDAndCast(e.Ctx(), &rows[offset][idx], id, col)

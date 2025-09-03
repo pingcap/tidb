@@ -17,7 +17,7 @@ package statistics
 import (
 	"cmp"
 	"fmt"
-	stdmaps "maps"
+	"maps"
 	"slices"
 	"strings"
 
@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -42,6 +41,29 @@ const (
 	PseudoRowCount = 10000
 )
 
+// CopyIntent specifies what data structures are safe to modify in the copied table.
+type CopyIntent uint8
+
+const (
+	// MetaOnly shares all maps - only table metadata is safe to modify
+	MetaOnly CopyIntent = iota
+
+	// ColumnMapWritable clones columns map - safe to add/remove columns
+	ColumnMapWritable
+
+	// IndexMapWritable clones indices map - safe to add/remove indices
+	IndexMapWritable
+
+	// BothMapsWritable clones both maps - safe to add/remove columns and indices
+	BothMapsWritable
+
+	// ExtendedStatsWritable shares all maps - safe to modify ExtendedStats field
+	ExtendedStatsWritable
+
+	// AllDataWritable deep copies everything - safe to modify all data including histograms
+	AllDataWritable
+)
+
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
 // Exported for testing.
 var AutoAnalyzeMinCnt int64 = 1000
@@ -51,7 +73,7 @@ var (
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
 
 	// GetRowCountByIndexRanges is a function type to get row count by index ranges.
-	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, corrResult float64, err error)
+	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range, idxCol []*expression.Column) (result RowEstimate, err error)
 
 	// GetRowCountByIntColumnRanges is a function type to get row count by int column ranges.
 	GetRowCountByIntColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error)
@@ -600,53 +622,70 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 	return tMemUsage
 }
 
-// Copy copies the current table.
-func (t *Table) Copy() *Table {
-	newHistColl := HistColl{
-		PhysicalID:    t.PhysicalID,
-		RealtimeCount: t.RealtimeCount,
-		columns:       make(map[int64]*Column, len(t.columns)),
-		indices:       make(map[int64]*Index, len(t.indices)),
-		Pseudo:        t.Pseudo,
-		ModifyCount:   t.ModifyCount,
-		StatsVer:      t.StatsVer,
-	}
-	for id, col := range t.columns {
-		newHistColl.columns[id] = col.Copy()
-	}
-	for id, idx := range t.indices {
-		newHistColl.indices[id] = idx.Copy()
-	}
-	nt := &Table{
-		HistColl:             newHistColl,
-		Version:              t.Version,
-		TblInfoUpdateTS:      t.TblInfoUpdateTS,
-		LastAnalyzeVersion:   t.LastAnalyzeVersion,
-		LastStatsHistVersion: t.LastStatsHistVersion,
-	}
-	if t.ExtendedStats != nil {
-		newExtStatsColl := &ExtendedStatsColl{
-			Stats:             make(map[string]*ExtendedStatsItem),
-			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
-		}
-		stdmaps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
-		nt.ExtendedStats = newExtStatsColl
-	}
-	if t.ColAndIdxExistenceMap != nil {
-		nt.ColAndIdxExistenceMap = t.ColAndIdxExistenceMap.Clone()
-	}
-	return nt
-}
+// CopyAs creates a copy of the table with the specified writability intent.
+//
+// PERFORMANCE NOTE: Choose the most minimal intent for your use case. Copying is heavily
+// used at scale and unnecessary cloning causes significant memory pressure. Only use
+// AllDataWritable when you truly need to modify histogram data.
+//
+// MetaOnly: Shares all maps, only metadata modifications are safe
+// ColumnMapWritable: Clones columns map, safe to add/remove columns
+// IndexMapWritable: Clones indices map, safe to add/remove indices
+// BothMapsWritable: Clones both maps - safe to add/remove columns and indices
+// ExtendedStatsWritable: Shares all maps, safe to modify ExtendedStats field
+// AllDataWritable: Deep copies everything, safe to modify all data including histograms
+func (t *Table) CopyAs(intent CopyIntent) *Table {
+	var columns map[int64]*Column
+	var indices map[int64]*Index
+	var existenceMap *ColAndIdxExistenceMap
 
-// ShallowCopy copies the current table.
-// It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
-// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
-func (t *Table) ShallowCopy() *Table {
+	switch intent {
+	case MetaOnly:
+		columns = t.columns
+		indices = t.indices
+		existenceMap = t.ColAndIdxExistenceMap
+	case ColumnMapWritable:
+		columns = maps.Clone(t.columns)
+		indices = t.indices
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case IndexMapWritable:
+		columns = t.columns
+		indices = maps.Clone(t.indices)
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case BothMapsWritable:
+		columns = maps.Clone(t.columns)
+		indices = maps.Clone(t.indices)
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	case ExtendedStatsWritable:
+		columns = t.columns
+		indices = t.indices
+		existenceMap = t.ColAndIdxExistenceMap
+	case AllDataWritable:
+		// For deep copy, create new maps and deep copy all content
+		columns = make(map[int64]*Column, len(t.columns))
+		for id, col := range t.columns {
+			columns[id] = col.Copy()
+		}
+		indices = make(map[int64]*Index, len(t.indices))
+		for id, idx := range t.indices {
+			indices[id] = idx.Copy()
+		}
+		if t.ColAndIdxExistenceMap != nil {
+			existenceMap = t.ColAndIdxExistenceMap.Clone()
+		}
+	}
+
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
 		RealtimeCount: t.RealtimeCount,
-		columns:       t.columns,
-		indices:       t.indices,
+		columns:       columns,
+		indices:       indices,
 		Pseudo:        t.Pseudo,
 		ModifyCount:   t.ModifyCount,
 		StatsVer:      t.StatsVer,
@@ -655,11 +694,23 @@ func (t *Table) ShallowCopy() *Table {
 		HistColl:              newHistColl,
 		Version:               t.Version,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
-		ExtendedStats:         t.ExtendedStats,
-		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
+		ColAndIdxExistenceMap: existenceMap,
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
 		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
+
+	// Handle ExtendedStats for deep copy vs shallow copy
+	if (intent == AllDataWritable || intent == ExtendedStatsWritable) && t.ExtendedStats != nil {
+		newExtStatsColl := &ExtendedStatsColl{
+			Stats:             make(map[string]*ExtendedStatsItem),
+			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
+		}
+		maps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
+		nt.ExtendedStats = newExtStatsColl
+	} else {
+		nt.ExtendedStats = t.ExtendedStats
+	}
+
 	return nt
 }
 
@@ -757,7 +808,7 @@ func (t *Table) IsEligibleForAnalysis() bool {
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
-	ids := maps.Keys(coll.columns)
+	ids := slices.Collect(maps.Keys(coll.columns))
 	slices.Sort(ids)
 	for _, id := range ids {
 		col := coll.columns[id]
@@ -765,7 +816,9 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 			return col.TotalRowCount()
 		}
 	}
-	ids = maps.Keys(coll.indices)
+	clear(ids)
+	ids = slices.Grow(ids, len(coll.indices))
+	ids = slices.AppendSeq(ids, maps.Keys(coll.indices))
 	slices.Sort(ids)
 	for _, id := range ids {
 		idx := coll.indices[id]
@@ -921,11 +974,11 @@ func (t *Table) ReleaseAndPutToPool() {
 	for _, col := range t.columns {
 		col.FMSketch.DestroyAndPutToPool()
 	}
-	maps.Clear(t.columns)
+	clear(t.columns)
 	for _, idx := range t.indices {
 		idx.FMSketch.DestroyAndPutToPool()
 	}
-	maps.Clear(t.indices)
+	clear(t.indices)
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.

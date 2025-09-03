@@ -42,7 +42,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -54,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -190,7 +194,7 @@ func TestRangeProperties(t *testing.T) {
 	collector := newRangePropertiesCollector()
 	for _, p := range cases {
 		v := make([]byte, p.vLen)
-		for i := 0; i < p.count; i++ {
+		for range p.count {
 			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: uint64(pebble.InternalKeyKindSet)}, v)
 		}
 	}
@@ -299,9 +303,9 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 	}
 	writeOpt := &pebble.WriteOptions{Sync: false}
 	value := make([]byte, 100)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wb := db.NewBatch()
-		for j := 0; j < 100; j++ {
+		for j := range 100 {
 			key := make([]byte, 8)
 			valueLen := rand.Intn(50)
 			binary.BigEndian.PutUint64(key, uint64(i*100+j))
@@ -373,7 +377,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	ctx := context.Background()
 	var kvs []common.KvPair
 	value := make([]byte, 128)
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
 	}
 	var keys [][]byte
@@ -514,12 +518,12 @@ func TestLocalIngestLoop(t *testing.T) {
 	count := 500
 	var metaSeqLock sync.Mutex
 	maxMetaSeq := int32(0)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			defer wg.Done()
 			flushCnt := rand.Int31n(10) + 1
 			seq := int32(0)
-			for i := 0; i < count; i++ {
+			for i := range count {
 				size := int64(rand.Int31n(50) + 1)
 				m := &sstMeta{totalSize: size, totalCount: 1}
 				atomic.AddInt64(&totalSize, size)
@@ -554,14 +558,6 @@ func TestLocalIngestLoop(t *testing.T) {
 	require.Equal(t, f.TotalSize.Load(), totalSize)
 	require.Equal(t, int64(concurrency*count), f.Length.Load())
 	require.Equal(t, atomic.LoadInt32(&maxMetaSeq), f.finishedMetaSeq.Load())
-}
-
-func makeRanges(input []string) []engineapi.Range {
-	ranges := make([]engineapi.Range, 0, len(input)/2)
-	for i := 0; i < len(input)-1; i += 2 {
-		ranges = append(ranges, engineapi.Range{Start: []byte(input[i]), End: []byte(input[i+1])})
-	}
-	return ranges
 }
 
 func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
@@ -627,9 +623,9 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 
 func TestMergeSSTs(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		var pairs []common.KvPair
-		for j := 0; j < 10; j++ {
+		for j := range 10 {
 			var kv common.KvPair
 			kv.Key = make([]byte, 16)
 			key := i*100 + j
@@ -645,9 +641,9 @@ func TestMergeSSTs(t *testing.T) {
 
 func TestMergeSSTsDuplicated(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		var pairs []common.KvPair
-		for j := 0; j < 10; j++ {
+		for j := range 10 {
 			var kv common.KvPair
 			kv.Key = make([]byte, 16)
 			key := i*100 + j
@@ -1089,6 +1085,9 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	bak := Backend{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
@@ -1191,6 +1190,9 @@ func (m mockIngestData) DecRef() {}
 func (m mockIngestData) Finish(_, _ int64) {}
 
 func TestCheckPeersBusy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 300
 	t.Cleanup(func() {
@@ -1324,6 +1326,9 @@ func TestCheckPeersBusy(t *testing.T) {
 }
 
 func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	log.InitLogger(&log.Config{Level: "debug"}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1426,6 +1431,9 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 }
 
 func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1522,6 +1530,9 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 }
 
 func TestPartialWriteIngestBusy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1741,7 +1752,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 10)
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
@@ -1758,6 +1769,9 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx := context.Background()
 	local := &Backend{
 		splitCli: initTestSplitClient(
@@ -1779,6 +1793,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	extEngine := external.NewExternalEngine(
+		ctx,
 		memStore,
 		dataFiles,
 		statFiles,
@@ -1786,16 +1801,14 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		[]byte{10},
 		keys,
 		[][]byte{{1}, {11}},
-		common.NoopKeyAdapter{},
-		false,
-		nil,
-		common.DupDetectOpt{},
 		10,
 		123,
 		456,
 		789,
 		true,
 		16*units.GiB,
+		engineapi.OnDuplicateKeyIgnore,
+		"",
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -1810,7 +1823,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 9)
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
@@ -1849,13 +1862,16 @@ func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
 		},
 		{
 			ingest: injectedIngestBehaviour{
-				err: &ingestAPIError{err: common.ErrKVEpochNotMatch},
+				err: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch},
 			},
 		},
 	}
 }
 
 func TestDoImport(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2096,6 +2112,9 @@ func TestDoImport(t *testing.T) {
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2187,6 +2206,9 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 }
 
 func TestCtxCancelIsIgnored(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2241,6 +2263,9 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 }
 
 func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2297,16 +2322,10 @@ func (r *recordScanRegionsHook) AfterScanRegions(infos []*split.RegionInfo, err 
 }
 
 func TestExternalEngine(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
 	ctx := context.Background()
 	dir := t.TempDir()
 	storageURI := "file://" + filepath.ToSlash(dir)
@@ -2317,8 +2336,8 @@ func TestExternalEngine(t *testing.T) {
 	keys := make([][]byte, 100)
 	values := make([][]byte, 100)
 	for i := range keys {
-		keys[i] = []byte(fmt.Sprintf("key%06d", i))
-		values[i] = []byte(fmt.Sprintf("value%06d", i))
+		keys[i] = fmt.Appendf(nil, "key%06d", i)
+		values[i] = fmt.Appendf(nil, "value%06d", i)
 	}
 	// simple append 0x00
 	endKey := make([]byte, len(keys[99])+1)
@@ -2360,7 +2379,7 @@ func TestExternalEngine(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 7; i++ {
+		for range 7 {
 			jobs = append(jobs, <-jobToWorkerCh)
 			testJobWg.Done()
 		}
@@ -2525,11 +2544,11 @@ func TestTotalMemoryConsume(t *testing.T) {
 	require.NoError(t, err)
 	// write about 150 MiB data
 	val := make([]byte, 35)
-	for i := 0; i < 1024*1024; i++ {
+	for i := range 1024 * 1024 {
 		err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
-			{Key: []byte(fmt.Sprintf("key_a_%09d", i)), Val: val},
-			{Key: []byte(fmt.Sprintf("key_b_%09d", i)), Val: val},
-			{Key: []byte(fmt.Sprintf("key_c_%09d", i)), Val: val},
+			{Key: fmt.Appendf(nil, "key_a_%09d", i), Val: val},
+			{Key: fmt.Appendf(nil, "key_b_%09d", i), Val: val},
+			{Key: fmt.Appendf(nil, "key_c_%09d", i), Val: val},
 		}))
 		require.NoError(t, err)
 	}

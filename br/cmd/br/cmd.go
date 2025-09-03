@@ -234,7 +234,10 @@ func Init(cmd *cobra.Command) (err error) {
 			return
 		}
 		log.ReplaceGlobals(lg, p)
-		memory.InitMemoryHook()
+		err = memory.InitMemoryHook()
+		if err != nil {
+			return
+		}
 		if debug.SetMemoryLimit(-1) == math.MaxInt64 {
 			memtotal, e := memory.MemTotal()
 			if e != nil {
@@ -264,13 +267,13 @@ func Init(cmd *cobra.Command) (err error) {
 			return
 		}
 		redact.InitRedact(redactLog || redactInfoLog)
-		err = startPProf(cmd)
+		err = startStatusServer(cmd)
 	})
 	return errors.Trace(err)
 }
 
-func startPProf(cmd *cobra.Command) error {
-	// Initialize the pprof server.
+// Initialize the metrics/pprof server.
+func startStatusServer(cmd *cobra.Command) error {
 	statusAddr, err := cmd.Flags().GetString(FlagStatusAddr)
 	if err != nil {
 		return errors.Trace(err)
@@ -286,7 +289,7 @@ func startPProf(cmd *cobra.Command) error {
 	}
 
 	if statusAddr != "" {
-		return utils.StartPProfListener(statusAddr, tls)
+		return utils.StartStatusListener(statusAddr, tls)
 	}
 	utils.StartDynamicPProfListener(tls)
 	return nil

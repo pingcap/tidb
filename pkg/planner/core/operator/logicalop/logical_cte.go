@@ -105,13 +105,13 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 // HashCode inherits the BaseLogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	if p.Cte.RecursivePartLogicalPlan != nil {
 		// Doesn't support recursive CTE yet.
-		return predicates, p.Self()
+		return predicates, p.Self(), nil
 	}
 	if !p.Cte.IsOuterMostCTE {
-		return predicates, p.Self()
+		return predicates, p.Self(), nil
 	}
 	pushedPredicates := make([]expression.Expression, len(predicates))
 	copy(pushedPredicates, predicates)
@@ -128,7 +128,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 	}
 	if len(pushedPredicates) == 0 {
 		p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.NewOne())
-		return predicates, p.Self()
+		return predicates, p.Self(), nil
 	}
 	newPred := make([]expression.Expression, 0, len(predicates))
 	for i := range pushedPredicates {
@@ -136,7 +136,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 		ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
 	}
 	p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
-	return predicates, p.Self()
+	return predicates, p.Self(), nil
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -224,7 +224,8 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.Cte.RecursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
 		if p.Cte.IsDistinct {
-			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(p.Schema().Columns, p.Schema(), p.StatsInfo())
+			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(
+				p.SCtx(), p.Schema().Columns, p.Schema(), p.StatsInfo())
 		} else {
 			p.StatsInfo().RowCount += recurStat.RowCount
 		}

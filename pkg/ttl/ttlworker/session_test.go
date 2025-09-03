@@ -116,7 +116,7 @@ func (r *mockRows) Append(row ...any) *mockRows {
 
 func (r *mockRows) Rows() []chunk.Row {
 	rows := make([]chunk.Row, r.NumRows())
-	for i := 0; i < r.NumRows(); i++ {
+	for i := range r.NumRows() {
 		rows[i] = r.GetRow(i)
 	}
 	return rows
@@ -193,8 +193,12 @@ func (s *mockSession) GetStore() kv.Storage {
 	return nil
 }
 
-func (s *mockSession) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
+func (s *mockSession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
+}
+
+func (s *mockSession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
+	return s.GetLatestInfoSchema()
 }
 
 func (s *mockSession) SessionInfoSchema() infoschemactx.MetaOnlyInfoSchema {

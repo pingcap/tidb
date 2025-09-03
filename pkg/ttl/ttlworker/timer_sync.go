@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -158,7 +157,7 @@ func (g *TTLTimersSyncer) Reset() {
 	g.lastSyncTime = zeroTime
 	g.lastSyncVer = 0
 	if len(g.key2Timers) > 0 {
-		maps.Clear(g.key2Timers)
+		clear(g.key2Timers)
 	}
 }
 
@@ -182,7 +181,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		newKey2Timers := make(map[string]*timerapi.TimerRecord, len(g.key2Timers))
 		timers, err := g.cli.GetTimers(ctx, timerapi.WithKeyPrefix(timerKeyPrefix))
 		if err != nil {
-			logutil.BgLogger().Error("failed to pull timers", zap.Error(err))
+			logutil.BgLogger().Warn("failed to pull timers", zap.Error(err))
 			return
 		}
 

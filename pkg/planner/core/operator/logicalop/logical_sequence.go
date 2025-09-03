@@ -59,11 +59,11 @@ func (p *LogicalSequence) Schema() *expression.Schema {
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 // Currently, we only maintain the main query tree.
-func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	lastIdx := p.ChildLen() - 1
-	remained, newLastChild := p.Children()[lastIdx].PredicatePushDown(predicates, op)
+	remained, newLastChild, err := p.Children()[lastIdx].PredicatePushDown(predicates, op)
 	p.SetChild(lastIdx, newLastChild)
-	return remained, p
+	return remained, p, err
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.

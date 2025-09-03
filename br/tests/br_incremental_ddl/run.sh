@@ -40,7 +40,7 @@ echo "full backup start..."
 run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/full" --db $DB -t $TABLE --log-file $LOG
 
 # when we backup, we should close domain in one shot session.
-# so we can check the log count of `one shot domain closed` to be 2.
+# so we can check the log count of `one shot domain closed` to be 1.
 # we will call UseOneShotSession once to get the value global variable.
 one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
 one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)
