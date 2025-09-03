@@ -106,8 +106,8 @@ type PhysicalIndexScan struct {
 
 	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
 
-	GroupedRanges [][]*ranger.Range `plan-cache-clone:"shallow"`
-	GroupByColIdxs []int `plan-cache-clone:"shallow"`
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // FullRange represent used all partitions.
