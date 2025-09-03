@@ -425,9 +425,8 @@ func BuildHistAndTopN(
 		allowPruning = false
 	}
 
-	// Step1: collect topn from samples using heap and track their index ranges
-	// use heap for efficient TopN maintenance - O(log N) insertions
-	topNHeap := generic.NewPriorityQueue(numTopN, func(a, b TopNWithRange) int {
+	// Step1: collect topn from samples using priority queue and track their index ranges
+	topNPriorityQueue := generic.NewPriorityQueue(numTopN, func(a, b TopNWithRange) int {
 		if a.Count < b.Count {
 			return -1 // min-heap: smaller counts at root
 		} else if a.Count > b.Count {
@@ -469,7 +468,7 @@ func BuildHistAndTopN(
 		// case 2, meet a different value: counting for the "current" is complete
 		sampleNDV++
 		// process the completed value using heap with range tracking
-		processTopNValue(topNHeap, cur, curCnt, curStartIdx, i-1, numTopN, allowPruning, sampleFactor)
+		processTopNValue(topNPriorityQueue, cur, curCnt, curStartIdx, i-1, numTopN, allowPruning, sampleFactor)
 
 		cur, curCnt = sampleBytes, 1
 		curStartIdx = i // new value group starts at current index
@@ -482,17 +481,17 @@ func BuildHistAndTopN(
 
 	// handle the counting for the last value
 	if numTopN != 0 {
-		processTopNValue(topNHeap, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor)
+		processTopNValue(topNPriorityQueue, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor)
 	}
 
-	// convert heap to sorted slice and apply pruning directly to heap items
-	heapItems := topNHeap.ToSortedSlice()
+	// convert priority queue to sorted slice
+	sortedTopNItems := topNPriorityQueue.ToSortedSlice()
 
 	// apply pruning directly to heap items (preserving range information)
-	finalTopNRanges := heapItems
+	finalTopNRanges := sortedTopNItems
 	if allowPruning {
 		// Prune out any TopN values that have the same count as the remaining average.
-		finalTopNRanges = pruneTopNItem(heapItems, ndv, nullCount, sampleNum, count)
+		finalTopNRanges = pruneTopNItem(sortedTopNItems, ndv, nullCount, sampleNum, count)
 		if sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(finalTopNRanges) >= int(sampleNDV) {
 			// If we're sampling, and TopN contains everything in the sample - trim TopN so
 			// that buckets will be built. This can help address issues in optimizer
