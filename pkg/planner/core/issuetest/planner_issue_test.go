@@ -16,7 +16,6 @@ package issuetest
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
