@@ -2141,16 +2141,14 @@ a	a
 1	1
 show warnings;
 Level	Code	Message
-explain format = 'plan_tree' select /*+ hash_join_build(t1) leading(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a;
-id	task	access object	operator info
-IndexJoin	root		inner join, inner:TableReader, outer key:planner__core__casetest__physicalplantest__physical_plan.t2.a, inner key:planner__core__casetest__physicalplantest__physical_plan.t3.a, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t3.a)
-└─HashJoin  root		inner join, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a), eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)
-│ ├─TableReader(Build)	root		data:TableFullScan
-│ │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-│ └─TableReader(Probe)	root		data:TableFullScan
-│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	root		data:TableRangeScan
-  └─TableRangeScan	cop[tikv]	table:t3	range: decided by [planner__core__casetest__physicalplantest__physical_plan.t2.a], keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t3.a)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.a) eq(planner__core__casetest__physicalplantest__physical_plan.t2.b, planner__core__casetest__physicalplantest__physical_plan.t1.b)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ hash_join_build(t1) leading(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a;
 a	a
 1	1
