@@ -3434,8 +3434,8 @@ IndexHashJoin	root		left outer join, inner:StreamAgg, left side:IndexLookUp, out
 │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─StreamAgg(Probe)	root		group by:Column#37, funcs:sum(Column#36)->Column#13, funcs:firstrow(Column#37)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#36, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#37
+└─StreamAgg(Probe)	root		group by:Column#35, funcs:sum(Column#34)->Column#13, funcs:firstrow(Column#35)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#34, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#35
     └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.tb.id, planner__core__casetest__physicalplantest__physical_plan.tb.code
       └─IndexLookUp	root		
         ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
@@ -3470,8 +3470,8 @@ HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(planner__core__
 │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─HashAgg(Probe)	root		group by:Column#33, funcs:sum(Column#32)->Column#18, funcs:firstrow(Column#33)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#32, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#33
+└─HashAgg(Probe)	root		group by:Column#31, funcs:sum(Column#30)->Column#18, funcs:firstrow(Column#31)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#30, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#31
     └─HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.name))
@@ -3515,8 +3515,8 @@ HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(planner__core__
 │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─HashAgg(Probe)	root		group by:Column#27, funcs:sum(Column#26)->Column#18, funcs:firstrow(Column#27)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#26, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#27
+└─HashAgg(Probe)	root		group by:Column#25, funcs:sum(Column#24)->Column#18, funcs:firstrow(Column#25)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#24, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#25
     └─Apply	root		CARTESIAN semi join, left side:TableReader
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
