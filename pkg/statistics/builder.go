@@ -223,12 +223,11 @@ func buildHist(
 	samples []*SampleItem,
 	count, ndv, numBuckets int64,
 	memTracker *memory.Tracker,
-	effectiveSampleNum int64, // number of samples that will actually be processed (excluding TopN)
+	sampleCountExcludeTopN int64,
 	rangeChecker *SequentialRangeChecker, // optional range checker for skipping TopN indices
 ) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
-	// use the passed effective sample count for correct sample factor calculation
-	sampleFactor := float64(count) / float64(effectiveSampleNum)
+	sampleFactor := float64(count) / float64(sampleCountExcludeTopN)
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
 	ndvFactor := min(float64(count)/float64(ndv), sampleFactor)
@@ -520,7 +519,9 @@ func BuildHistAndTopN(
 	// Step2: calculate adjusted parameters for histogram
 	// The histogram will be built with reduced count and NDV to account for TopN values
 	var topNTotalCount uint64
+	var topNSampleCount int64
 	for i := range topn.TopN {
+		topNSampleCount += int64(topn.TopN[i].Count)
 		topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
 		topNTotalCount += topn.TopN[i].Count
 	}
@@ -543,16 +544,8 @@ func BuildHistAndTopN(
 		// create range checker for efficient TopN index skipping using final TopN items only
 		rangeChecker := NewSequentialRangeChecker(finalTopNRanges)
 
-		// calculate effective sample count (samples not in TopN ranges)
-		effectiveSampleCount := int64(0)
-		for i := range sampleNum {
-			if !rangeChecker.IsIndexInTopNRange(i) {
-				effectiveSampleCount++
-			}
-		}
-
-		_, err = buildHist(sc, hg, samples,
-			count-int64(topNTotalCount), remainingNDV, int64(numBuckets), memTracker, effectiveSampleCount, rangeChecker)
+		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV,
+			int64(numBuckets), memTracker, sampleNum-topNSampleCount, rangeChecker)
 		if err != nil {
 			return nil, nil, err
 		}
