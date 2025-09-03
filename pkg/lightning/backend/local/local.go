@@ -1560,6 +1560,8 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 		importClientFactory: local.importClientFactory,
 		resourceGroupName:   local.ResourceGroupName,
 		taskType:            local.TaskType,
+
+		collectRemoteDupRows: true,
 	}
 }
 
