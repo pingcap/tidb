@@ -212,9 +212,7 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
-		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
-		path.AccessConds = append(path.AccessConds, accesses...)
-		path.TableFilters = remained
+		accesses := path.SplitCorColAccessCondFromFilters(ds.SCtx())
 		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
 			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
 		} else {
@@ -354,9 +352,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
-		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
-		path.AccessConds = append(path.AccessConds, accesses...)
-		path.TableFilters = remained
+		accesses := path.SplitCorColAccessCondFromFilters(ds.SCtx())
 		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
 			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
 		} else {
