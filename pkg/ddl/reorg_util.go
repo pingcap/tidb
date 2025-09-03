@@ -86,6 +86,12 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	}
 
+	failpoint.Inject("MockTableSize", func(v failpoint.Value) {
+		if size, ok := v.(int); ok && size > 0 {
+			tableSizeInBytes = int64(size)
+		}
+	})
+
 	if setReorgParam {
 		if kerneltype.IsNextGen() && setDistTaskParam {
 			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)

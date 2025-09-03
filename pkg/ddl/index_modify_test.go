@@ -1101,7 +1101,9 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	}
 	if kerneltype.IsNextGen() {
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/model/mock-concurrency-for-ddl-reorg", `return(1)`)
+		// For next-gen, we set tidb_ddl_reorg_worker_cnt automatically by calculating the table size,
+		// which needs PD client. So for this UT, we mock the table size to set worker cnt to 1.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockTableSize", `return(1024)`)
 	}
 
 	for i := 1; i <= 12; i++ {
