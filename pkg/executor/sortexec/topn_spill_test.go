@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -382,7 +383,7 @@ func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
 
 	oneChunkInDiskCase(t, topnExec)
 	severalChunksInDiskCase(t, topnExec)
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestTopNSpillDisk(t *testing.T) {
@@ -429,7 +430,7 @@ func TestTopNSpillDisk(t *testing.T) {
 	}
 
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestTopNSpillDiskFailpoint(t *testing.T) {
@@ -482,7 +483,7 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 	}
 
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestIssue54206(t *testing.T) {
@@ -496,7 +497,7 @@ func TestIssue54206(t *testing.T) {
 	tk.MustExec("create table t2(a bigint, b bigint);")
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustQuery("select t1.a+t1.b as result from t1 left join t2 on 1 = 0 order by result limit 1;")
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestIssue54541(t *testing.T) {
@@ -519,7 +520,7 @@ func TestIssue54541(t *testing.T) {
 	exe := buildTopNExec(topNCase, dataSource, offset, count)
 
 	sortexec.TestKillSignalInTopN(t, exe)
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestTopNFallBackAction(t *testing.T) {
@@ -549,5 +550,5 @@ func TestTopNFallBackAction(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }

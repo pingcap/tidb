@@ -15,14 +15,10 @@
 package sortexec_test
 
 import (
-	"fmt"
-	"io/fs"
-	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -81,25 +77,6 @@ func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *so
 	executeInFailpoint(t, exe, hardLimit2, ctx.GetSessionVars().MemTracker)
 }
 
-func checkNoLeakFiles(t *testing.T) {
-	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
-
-	fileNum := 0
-	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		log.Info(fmt.Sprintf("name: %s", d.Name()))
-		if !d.IsDir() {
-			fileNum++
-		}
-		return nil
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, 1, fileNum)
-}
-
 func TestParallelSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
@@ -113,9 +90,6 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-
-	log.Info("debug ------")
-	checkNoLeakFiles(t)
 
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
@@ -132,7 +106,7 @@ func TestParallelSortSpillDisk(t *testing.T) {
 		inMemoryThenSpill(t, ctx, exe, sortCase, schema, dataSource)
 	}
 
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestParallelSortSpillDiskFailpoint(t *testing.T) {
@@ -151,9 +125,6 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
-	log.Info("debug ------")
-	checkNoLeakFiles(t)
-
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
@@ -169,7 +140,7 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, dataSource)
 	}
 
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestIssue59655(t *testing.T) {
@@ -186,9 +157,6 @@ func TestIssue59655(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
-	log.Info("debug ------")
-	checkNoLeakFiles(t)
-
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
@@ -197,7 +165,7 @@ func TestIssue59655(t *testing.T) {
 		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}
 
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestIssue63216(t *testing.T) {
@@ -213,13 +181,10 @@ func TestIssue63216(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
-	log.Info("debug ------")
-	checkNoLeakFiles(t)
-
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
 	failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }

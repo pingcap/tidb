@@ -472,6 +472,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 
 			for i := range e.partialWorkers {
 				e.spillHelper.addListInDisks(e.partialWorkers[i].spilledChunksIO)
+				e.partialWorkers[i].spilledChunksIO = e.partialWorkers[i].spilledChunksIO[:0]
 			}
 		}
 
@@ -479,6 +480,16 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			close(e.partialInputChs[i])
 		}
 		waitGroup.Done()
+
+		// When error happens, some disk files may not be closed.
+		// We need to manully check and close it.
+		for i := range e.partialWorkers {
+			if len(e.partialWorkers[i].spilledChunksIO) > 0 {
+				for _, disk := range e.partialWorkers[i].spilledChunksIO {
+					disk.Close()
+				}
+			}
+		}
 	}()
 
 	for {

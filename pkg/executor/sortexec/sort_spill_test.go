@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
@@ -354,9 +354,6 @@ func TestUnparallelSortSpillDisk(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
 
-	log.Info("debug ------")
-	checkNoLeakFiles(t)
-
 	for range 50 {
 		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
@@ -364,12 +361,10 @@ func TestUnparallelSortSpillDisk(t *testing.T) {
 		multiPartitionCase(t, ctx, sortCase, true)
 		inMemoryThenSpillCase(t, ctx, sortCase)
 	}
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }
 
 func TestFallBackAction(t *testing.T) {
-	log.Info("debug ------")
-	checkNoLeakFiles(t)
 	hardLimitBytesNum := int64(1000000)
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -395,5 +390,5 @@ func TestFallBackAction(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
-	checkNoLeakFiles(t)
+	util.CheckNoLeakFiles(t)
 }

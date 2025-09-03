@@ -207,8 +207,7 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	// this will cause data race.
 	defer func() {
 		if !isInDiskAppended && inDisk.NumRows() > 0 {
-			p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
-			isInDiskAppended = true
+			inDisk.Close()
 		}
 		channel.Clear(spilledRowChannel)
 	}()

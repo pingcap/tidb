@@ -13,3 +13,33 @@
 // limitations under the License.
 
 package util
+
+import (
+	"fmt"
+	"io/fs"
+	"path/filepath"
+	"testing"
+
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/stretchr/testify/require"
+)
+
+func CheckNoLeakFiles(t *testing.T) {
+	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
+
+	fileNum := 0
+	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		log.Info(fmt.Sprintf("name: %s", d.Name()))
+		if !d.IsDir() {
+			fileNum++
+		}
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, fileNum)
+}
