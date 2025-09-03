@@ -25,11 +25,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// CheckNoLeakFiles checks if there are file leaks
 func CheckNoLeakFiles(t *testing.T) {
 	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
 
 	fileNum := 0
-	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
