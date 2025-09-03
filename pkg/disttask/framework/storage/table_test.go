@@ -848,6 +848,22 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4001", Role: "", CPUCount: 8},
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
+	require.NoError(t, sm.InitMeta(ctx, ":4001", "background"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
+	require.NoError(t, sm.InitMeta(ctx, ":4003", ""))
+	cpuCount, err = sm.GetCPUCountOfNode(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 100, cpuCount)
+	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "")
+	require.NoError(t, err)
+	require.Equal(t, 8, cpuCount)
+	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "background")
+	require.NoError(t, err)
+	require.Equal(t, 100, cpuCount)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
