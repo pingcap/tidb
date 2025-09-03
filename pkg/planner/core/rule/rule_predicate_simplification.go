@@ -181,7 +181,8 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool, filter func(expr expression.Expression) bool) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool,
+	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
 	if len(predicates) == 0 {
 		return predicates
 	}
@@ -192,9 +193,9 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.
 	if propagateConstant {
-		simplifiedPredicate = expression.PropagateConstant(exprCtx, filter, simplifiedPredicate...)
+		simplifiedPredicate = expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 	} else {
-		exprs := expression.PropagateConstant(exprCtx, filter, simplifiedPredicate...)
+		exprs := expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 		if len(exprs) == 1 {
 			simplifiedPredicate = exprs
 		}
