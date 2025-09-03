@@ -52,9 +52,19 @@ type rowTableBuilder struct {
 	// These are auxiliary utility for rehash.
 	hash      hash.Hash64
 	rehashBuf []byte
+
+	bitMap []byte
+
+	partitionNumber uint
 }
 
-func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
+type preAllocHelper struct {
+	totalRowNum int64
+	validRowNum int64
+	rawDataLen  int64
+}
+
+func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool, nullMapLength int) *rowTableBuilder {
 	builder := &rowTableBuilder{
 		buildKeyIndex:                 buildKeyIndex,
 		buildKeyTypes:                 buildKeyTypes,
@@ -62,6 +72,8 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 		hasNullableKey:                hasNullableKey,
 		hasFilter:                     hasFilter,
 		keepFilteredRows:              keepFilteredRows,
+		partitionNumber:               partitionNumber,
+		bitMap:                        make([]byte, nullMapLength),
 	}
 	return builder
 }
@@ -122,6 +134,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 	// 1. split partition
+	codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer)
 	for index, colIdx := range b.buildKeyIndex {
 		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
 		if err != nil {
@@ -229,13 +242,13 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 			if err != nil {
 				return err
 			}
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, uint(maxRowTableSegmentSize))
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true)
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		} else {
 			partID = int(fakePartIndex)
 			newHashValue = fakePartIndex
 			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, uint(maxRowTableSegmentSize))
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true)
 		}
 
 		seg.hashValues = append(seg.hashValues, newHashValue)
@@ -263,9 +276,11 @@ func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashT
 	}
 }
 
-func fillNullMap(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment) int {
+func fillNullMap(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment, bitmap []byte) int {
 	if nullMapLength := rowTableMeta.nullMapLength; nullMapLength > 0 {
-		bitmap := make([]byte, nullMapLength)
+		for i := range nullMapLength {
+			bitmap[i] = 0
+		}
 		for colIndexInRowTable, colIndexInRow := range rowTableMeta.rowColumnsOrder {
 			colIndexInBitMap := colIndexInRowTable + rowTableMeta.colOffsetInNullMap
 			if row.IsNull(colIndexInRow) {
@@ -273,7 +288,6 @@ func fillNullMap(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegme
 			}
 		}
 		seg.rawData = append(seg.rawData, bitmap...)
-		return nullMapLength
 	}
 	return 0
 }
@@ -297,6 +311,7 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *jo
 		} else {
 			length = 0
 		}
+		// checkMem(cap(seg.rawData), len(seg.rawData), sizeOfElementSize)
 		seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfElementSize)...)
 		appendRowLength += int64(sizeOfElementSize)
 	}
@@ -318,27 +333,139 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *jo
 	return appendRowLength
 }
 
+func (b *rowTableBuilder) estimateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *joinTableMeta, hasValidKey bool, logicalRowIndex int) int64 {
+	appendRowLength := int64(0)
+	if !rowTableMeta.isJoinKeysFixedLength {
+		appendRowLength += int64(sizeOfElementSize)
+	}
+	if !rowTableMeta.isJoinKeysInlined {
+		if hasValidKey {
+			appendRowLength += int64(len(b.serializedKeyVectorBuffer[logicalRowIndex]))
+		} else {
+			if rowTableMeta.isJoinKeysFixedLength {
+				appendRowLength += int64(rowTableMeta.joinKeysLength)
+			}
+		}
+	}
+	return appendRowLength
+}
+
 func fillRowData(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegment) int64 {
 	appendRowLength := int64(0)
 	for index, colIdx := range rowTableMeta.rowColumnsOrder {
 		if rowTableMeta.columnsSize[index] > 0 {
 			// fixed size
+			// checkMem(cap(seg.rawData), len(seg.rawData), len(row.GetRaw(colIdx)))
 			seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
 			appendRowLength += int64(rowTableMeta.columnsSize[index])
 		} else {
 			// length, raw_data
 			raw := row.GetRaw(colIdx)
 			length := uint32(len(raw))
+			// checkMem(cap(seg.rawData), len(seg.rawData), sizeOfElementSize+len(raw))
 			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfElementSize)...)
-			appendRowLength += int64(sizeOfElementSize)
 			seg.rawData = append(seg.rawData, raw...)
-			appendRowLength += int64(length)
+			appendRowLength += int64(length) + int64(sizeOfElementSize)
 		}
 	}
 	return appendRowLength
 }
 
+func estimateFillRowData(rowTableMeta *joinTableMeta, row *chunk.Row) int64 {
+	appendRowLength := int64(0)
+	for index, colIdx := range rowTableMeta.rowColumnsOrder {
+		if rowTableMeta.columnsSize[index] > 0 {
+			appendRowLength += int64(rowTableMeta.columnsSize[index])
+		} else {
+			length := uint32(len(row.GetRaw(colIdx)))
+			appendRowLength += int64(length) + int64(sizeOfElementSize)
+		}
+	}
+	return appendRowLength
+}
+
+func fillFake(seg *rowTableSegment, rowLength int64) {
+	if rowLength%8 != 0 {
+		appendedFakePlaceHolder := fakeAddrPlaceHolder[:8-rowLength%8]
+		seg.rawData = append(seg.rawData, appendedFakePlaceHolder...)
+	}
+}
+
+func estimateFillFake(rowLength int64) int64 {
+	fakeLength := int64(0)
+	if rowLength%8 != 0 {
+		appendedFakePlaceHolder := fakeAddrPlaceHolder[:8-rowLength%8]
+		fakeLength = int64(len(appendedFakePlaceHolder))
+	}
+	return fakeLength
+}
+
+func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) {
+	helpers := make([]preAllocHelper, len(segs))
+	rowTableMeta := hashJoinCtx.hashTableMeta
+	for logicalRowIndex, physicalRowIndex := range b.usedRows {
+		hasValidKey := (!b.hasFilter || b.filterVector[physicalRowIndex]) && (!b.hasNullableKey || !b.nullKeyVector[physicalRowIndex])
+		if !hasValidKey && !b.keepFilteredRows {
+			continue
+		}
+
+		var (
+			row     = chk.GetRow(logicalRowIndex)
+			partIdx = b.partIdxVector[logicalRowIndex]
+		)
+
+		helpers[partIdx].totalRowNum++
+
+		if hasValidKey {
+			helpers[partIdx].validRowNum++
+		}
+
+		rowLength := int64(0)
+		rowLength += int64(sizeOfNextPtr)
+		rowLength += int64(rowTableMeta.nullMapLength)
+		rowLength += b.estimateFillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex)
+		rowLength += estimateFillRowData(rowTableMeta, &row)
+		rowLength += estimateFillFake(rowLength)
+		helpers[partIdx].rawDataLen += rowLength
+	}
+
+	for partIdx, seg := range segs {
+		helper := helpers[partIdx]
+		seg.rawData = make([]byte, 0, helper.rawDataLen)
+		seg.hashValues = make([]uint64, 0, helper.totalRowNum)
+		seg.rowStartOffset = make([]uint64, 0, helper.totalRowNum)
+		seg.validJoinKeyPos = make([]int, 0, helper.validRowNum)
+	}
+}
+
+// func checkMem(capLen int, curLen int, addedLen int) {
+// 	if capLen < curLen+addedLen {
+// 		panic(fmt.Sprintf("cap: %d, len: %d, addedLen: %d", capLen, curLen, addedLen))
+// 	}
+// }
+
 func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int) error {
+	if len(b.usedRows) == 0 {
+		return nil
+	}
+
+	segs := make([]*rowTableSegment, b.partitionNumber)
+	for partIdx := range b.partitionNumber {
+		segs[partIdx] = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, int(partIdx), true)
+	}
+
+	defer func() {
+		for partIdx, seg := range segs {
+			if len(seg.hashValues) == 0 {
+				continue
+			}
+
+			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b, true)
+		}
+	}()
+
+	b.preAllocForSegments(segs, chk, hashJoinCtx)
+
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if logicalRowIndex%10 == 0 || logicalRowIndex == len(b.usedRows)-1 {
@@ -357,31 +484,26 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 			partIdx = b.partIdxVector[logicalRowIndex]
 			seg     *rowTableSegment
 		)
-		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, true, b.firstSegRowSizeHint)
-		// first check if current seg is full
-		if b.rowNumberInCurrentRowTableSeg[partIdx] >= maxRowTableSegmentSize || len(seg.rawData) >= maxRowTableSegmentByteSize {
-			// finalize current seg and create a new seg
-			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b, true)
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, true, b.firstSegRowSizeHint)
-		}
+		seg = segs[partIdx]
 		if hasValidKey {
+			// checkMem(cap(seg.validJoinKeyPos), len(seg.validJoinKeyPos), 1)
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
+		// checkMem(cap(seg.hashValues), len(seg.hashValues), 1)
 		seg.hashValues = append(seg.hashValues, b.hashValue[logicalRowIndex])
+		// checkMem(cap(seg.rowStartOffset), len(seg.rowStartOffset), 1)
 		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
 		rowLength := int64(0)
 		// fill next_row_ptr field
 		rowLength += int64(fillNextRowPtr(seg))
 		// fill null_map
-		rowLength += int64(fillNullMap(rowTableMeta, &row, seg))
+		rowLength += int64(fillNullMap(rowTableMeta, &row, seg, b.bitMap))
 		// fill serialized key and key length if needed
 		rowLength += b.fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
 		// fill row data
 		rowLength += fillRowData(rowTableMeta, &row, seg)
-		// to make sure rowLength is 8 bit alignment
-		if rowLength%8 != 0 {
-			seg.rawData = append(seg.rawData, fakeAddrPlaceHolder[:8-rowLength%8]...)
-		}
+		// to make sure rowLength is 8 bytes alignment
+		fillFake(seg, rowLength)
 		b.rowNumberInCurrentRowTableSeg[partIdx]++
 	}
 	return nil
