@@ -162,59 +162,105 @@ alter schema db1 read only 1;
 use db1;
 
 # insert
-insert into t1 values(1);
+-- error 3809
+insert into t1 values(1, 1);
+-- error 3809
 insert into t1 select * from t2;
+-- error 3809
 insert into t1 table t2;
+-- error 3809
 insert into t1 set a=1;
-insert into t1 (a) set a=1;
 
 # replace
-replace into t1 values (1 || 2)
-replace into t1 table t2
+-- error 3809
+replace into t1 values (1, 2);
+-- error 3809
+replace into t1 table t2;
+-- error 3809
 replace t1 set a = default;
 
 # delete
+-- error 3809
 delete from t1;
+-- error 3809
 delete t1, t2 from t1, t2;
+-- error 3809
 delete db1.t1, db2.t2 from db1.t1, db2.t2;
+-- error 3809
 delete t1,t2,t3 from t1, t2, t3 where t3.a < 5 and t1.a = 3;
+-- error 3809
 delete t2 from t1, t2;
 delete db2.t2 from db1.t1, db2.t2;
+-- error 3809
 delete db1.t1 from db1.t1, db2.t2;
+-- error 3809
 delete t1 from t1, t1 as t2 where t1.b = t2.b and t1.a > t2.a;
+-- error 3809
 delete from t1,t2,t3 using t1,t2,t3 where t3.a = 1;
+-- error 3809
+delete from t1,db2.t2,db2.t3 using t1,db2.t2,db2.t3 where db2.t3.a = 1;
+-- error 3809
 delete from t2,t3 using t1,t2,t3 where t1.a = 1;
+-- error 3809
+delete from t2,db2.t3 using t1,t2,db2.t3 where t1.a = 1;
+-- error 3809
 with cte as (select * from t1) delete from t2 where t2.a in (select a from cte);
 
 # update
+-- error 3809
 update t1 set a = a + 1;
+-- error 3809
 update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
-update t1 join t2 set t1.a=1 where t1.b=t2.b;
-analyze table t1 update histogram on t1.a; -- success
+-- error 3809
+update t1 join db2.t2 set t1.a=1 where t1.b=db2.t2.b;
+analyze table t1; #pass
+-- error 3809
 with cte as (select * from t1) update t2 set a = 1 where t2.a in (select a from cte);
 
 # modify columns with foreign key
+-- error 3809
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete restrict;
+-- error 3809
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update restrict;
+-- error 3809
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete cascade;
+-- error 3809
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update cascade;
+-- error 3809
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete set null;
+-- error 3809
 alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update set null;
+-- error 3809
 
 # for update / for share + tidb_enable_shared_lock_promotion
-select * from t for update;
-select * from t for update OF t WAIT 5;
+-- error 3809
+select * from t1 for update;
+-- error 3809
+select * from t1 for update of t1 nowait;
+-- error 3809
+select * from t1 for update of t1 wait 5;
+-- error 3809
 select * from t1 join t2 on t1.a= t2.a for update;
+-- error 3809
 select t1.a from t1 join t2 on t1.a= t2.a for update;
-table t for update;
+-- error 3809
+table t1 for update;
 set @@session.tidb_enable_shared_lock_promotion = 1;
-select * from t for share;
-select * from t for share OF t WAIT 5;
+-- error 3809
+select * from t1 for share;
+-- error 3809
+select * from t1 for share nowait;
+-- error 3809
 select * from t1 join t2 on t1.a= t2.a for share;
+-- error 3809
 select t1.a from t1 join t2 on t1.a= t2.a for share;
+-- error 3809
 table t1 for share;
 
 # select should be ok
-select * from t;
+select * from t1;
 select * from t1 join t2 on t1.a= t2.a;
-table t;
+table t1;
+
+# finish test
+alter schema db1 read only 0;

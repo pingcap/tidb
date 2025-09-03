@@ -154,3 +154,107 @@ drop global temporary table t_global;
 alter table t compact tiflash replica;
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 0;
+drop database if exists db1;
+create database db1;
+use db1;
+create table t1(id int primary key, a int);
+create table t2(id int, a int);
+create table t3(a int);
+drop database if exists db2;
+create database db2;
+use db2;
+create table t1(id int primary key, a int);
+create table t2(id int, a int);
+create table t3(a int);
+alter schema db1 read only 1;
+use db1;
+insert into t1 values(1, 1);
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+insert into t1 select * from t2;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+insert into t1 table t2;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+insert into t1 set a=1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+replace into t1 values (1, 2);
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+replace into t1 table t2;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+replace t1 set a = default;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete from t1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete t1, t2 from t1, t2;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete db1.t1, db2.t2 from db1.t1, db2.t2;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete t1,t2,t3 from t1, t2, t3 where t3.a < 5 and t1.a = 3;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete t2 from t1, t2;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete db2.t2 from db1.t1, db2.t2;
+delete db1.t1 from db1.t1, db2.t2;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete t1 from t1, t1 as t2 where t1.b = t2.b and t1.a > t2.a;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete from t1,t2,t3 using t1,t2,t3 where t3.a = 1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete from t1,db2.t2,db2.t3 using t1,db2.t2,db2.t3 where db2.t3.a = 1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete from t2,t3 using t1,t2,t3 where t1.a = 1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+delete from t2,db2.t3 using t1,t2,db2.t3 where t1.a = 1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+with cte as (select * from t1) delete from t2 where t2.a in (select a from cte);
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+update t1 set a = a + 1;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+update t1 join db2.t2 set t1.a=1 where t1.b=db2.t2.b;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+analyze table t1; #pass
+with cte as (select * from t1) update t2 set a = 1 where t2.a in (select a from cte);
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete restrict;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update restrict;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete cascade;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update cascade;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on delete set null;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+alter table t1 add constraint fk_1 foreign key (id) references t2(id) on update set null;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select * from t1 for update;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select * from t1 for update of t1 nowait;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select * from t1 for update of t1 wait 5;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select * from t1 join t2 on t1.a= t2.a for update;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select t1.a from t1 join t2 on t1.a= t2.a for update;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+table t1 for update;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+set @@session.tidb_enable_shared_lock_promotion = 1;
+select * from t1 for share;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select * from t1 for share nowait;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select * from t1 join t2 on t1.a= t2.a for share;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select t1.a from t1 join t2 on t1.a= t2.a for share;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+table t1 for share;
+Error 3809 (HY000): Schema 'db1' is in read only mode.
+select * from t1;
+id	a
+select * from t1 join t2 on t1.a= t2.a;
+id	a	id	a
+table t1;
+id	a
+alter schema db1 read only 0;
