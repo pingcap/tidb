@@ -1488,6 +1488,19 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
+		for _, item := range x.byItems {
+			c, ok := item.Expr.(*expression.Column)
+			if !ok {
+				b.err = errors.Errorf("Not support non-column in orderBy pushed down")
+				return nil
+			}
+			for i, col := range x.columns {
+				if col.ID == c.ID {
+					us.usedIndex = append(us.usedIndex, i)
+					break
+				}
+			}
+		}
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1496,9 +1509,14 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, ic := range x.index.Columns {
+		for _, item := range x.byItems {
+			c, ok := item.Expr.(*expression.Column)
+			if !ok {
+				b.err = errors.Errorf("Not support non-column in orderBy pushed down")
+				return nil
+			}
 			for i, col := range x.columns {
-				if col.Name.L == ic.Name.L {
+				if col.ID == c.ID {
 					us.usedIndex = append(us.usedIndex, i)
 					break
 				}
@@ -1512,9 +1530,14 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, ic := range x.index.Columns {
+		for _, item := range x.byItems {
+			c, ok := item.Expr.(*expression.Column)
+			if !ok {
+				b.err = errors.Errorf("Not support non-column in orderBy pushed down")
+				return nil
+			}
 			for i, col := range x.columns {
-				if col.Name.L == ic.Name.L {
+				if col.ID == c.ID {
 					us.usedIndex = append(us.usedIndex, i)
 					break
 				}
