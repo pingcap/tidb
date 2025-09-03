@@ -59,11 +59,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-<<<<<<< HEAD
-    shard_count = 35,
-=======
-    shard_count = 37,
->>>>>>> aa875ea4723 (dxf: calculate max_node_count and concurrency for next-gen automatically (#62995))
+    shard_count = 38,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
