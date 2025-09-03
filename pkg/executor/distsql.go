@@ -500,7 +500,6 @@ type IndexLookUpExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
-	kvRanges      []kv.KeyRange
 	workerStarted bool
 
 	byItems   []*plannerutil.ByItems
@@ -652,19 +651,15 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		// If there are more than one kv ranges, it must come from the partitioned table, or GroupedRanges, or both.
 		intest.Assert(e.partitionTableMode || len(e.GroupedRanges) > 0)
 	}
-	if len(kvRanges) > 1 {
-		// Build the new groupedKVRanges structure
-		e.partitionKVRanges = make([]*groupedKVRanges, 0, len(kvRanges))
-		for i, kvRange := range kvRanges {
-			partitionKVRange := &groupedKVRanges{
-				PhysicalTableID: physicalTblIDsForPartitionKVRanges[i],
-				KeyRanges:       kvRange,
-			}
-			e.partitionKVRanges = append(e.partitionKVRanges, partitionKVRange)
+	e.partitionKVRanges = make([]*groupedKVRanges, 0, len(kvRanges))
+	for i, kvRange := range kvRanges {
+		partitionKVRange := &groupedKVRanges{
+			PhysicalTableID: physicalTblIDsForPartitionKVRanges[i],
+			KeyRanges:       kvRange,
 		}
-	} else if len(kvRanges) == 1 {
-		e.kvRanges = kvRanges[0]
+		e.partitionKVRanges = append(e.partitionKVRanges, partitionKVRange)
 	}
+
 	return nil
 }
 
@@ -784,13 +779,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 
-	kvRanges := [][]kv.KeyRange{e.kvRanges}
-	if len(e.partitionKVRanges) > 0 {
-		kvRanges = make([][]kv.KeyRange, 0, len(e.partitionKVRanges))
-		for _, partitionRange := range e.partitionKVRanges {
-			kvRanges = append(kvRanges, partitionRange.KeyRanges)
-		}
+	kvRanges := make([][]kv.KeyRange, 0, len(e.partitionKVRanges))
+	for _, partitionRange := range e.partitionKVRanges {
+		kvRanges = append(kvRanges, partitionRange.KeyRanges)
 	}
+
 	// When len(kvrange) = 1, no sorting is required,
 	// so remove byItems and non-necessary output columns
 	if len(kvRanges) == 1 {
@@ -958,7 +951,6 @@ func (e *IndexLookUpExecutor) Close() error {
 			e.index.ID,
 			e.idxPlans[0].ID())
 	}
-	e.kvRanges = e.kvRanges[:0]
 	if e.dummy {
 		return nil
 	}
