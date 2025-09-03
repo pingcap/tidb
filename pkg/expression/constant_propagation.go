@@ -428,11 +428,10 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			oriWarningCnt := s.ctx.GetEvalCtx().WarningCount()
 			newExpr := BuildCastFunction(s.ctx, con, col.GetType(s.ctx.GetEvalCtx()))
 			s.ctx.GetEvalCtx().TruncateWarnings(oriWarningCnt)
-			newCon, ok := newExpr.(*Constant)
-			if !ok {
-				logutil.BgLogger().Info("gjt2")
+
+			if newCon, ok := newExpr.(*Constant); ok {
+				retMapper[s.getColID(col)] = newCon
 			}
-			retMapper[s.getColID(col)] = newCon
 		}
 	}
 	return
