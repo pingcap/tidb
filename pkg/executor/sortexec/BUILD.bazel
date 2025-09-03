@@ -58,6 +58,7 @@ go_test(
         "//pkg/config",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
+        "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/parser/mysql",
@@ -74,7 +75,6 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
     ],
 )
