@@ -27,7 +27,6 @@ import (
 )
 
 func (s *mockGCSSuite) TestCSVSource() {
-	s.T().Skip("debug timeout")
 	// prepare source data
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "cloud_csv", Name: "t.1.csv"},
