@@ -111,7 +111,7 @@ func MergeOverlappingFiles(
 				collector,
 				checkHotspot,
 				onDup,
-				len(dataFilesSlice),
+				concurrency,
 			)
 		})
 	}
