@@ -359,14 +359,16 @@ func (s *propConstSolver) propagateColumnEQ() {
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
-					if s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
+					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
 						continue
 					}
 					s.conditions = append(s.conditions, newExpr)
 				}
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
-					if s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
+					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
 						continue
 					}
 					s.conditions = append(s.conditions, newExpr)
@@ -374,6 +376,12 @@ func (s *propConstSolver) propagateColumnEQ() {
 			}
 		}
 	}
+}
+
+// isConstant is to determine whether the expression is a constant.
+func isConstant(cond Expression) bool {
+	_, ok := cond.(*Constant)
+	return ok
 }
 
 func (s *propConstSolver) setConds2ConstFalse() {
@@ -721,7 +729,8 @@ func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, sch
 		}
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
-			if s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+			// TODO(hawkingrei): if it is the true expression, we can remvoe it.
+			if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
 				continue
 			}
 			s.joinConds = append(s.joinConds, newExpr)
