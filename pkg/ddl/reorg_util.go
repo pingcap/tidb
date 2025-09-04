@@ -86,8 +86,14 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	}
 
+	failpoint.Inject("MockTableSize", func(v failpoint.Value) {
+		if size, ok := v.(int); ok && size > 0 {
+			tableSizeInBytes = int64(size)
+		}
+	})
+
 	if setReorgParam {
-		if kerneltype.IsNextGen() {
+		if kerneltype.IsNextGen() && setDistTaskParam {
 			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)
 			m.SetConcurrency(autoConc)
 		} else {
@@ -140,6 +146,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
 		zap.Int("maxNodeCount", m.MaxNodeCount),
+		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
 	)

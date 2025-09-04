@@ -184,7 +184,6 @@ go_library(
         "//pkg/util/parser",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
-        "//pkg/util/redact",
         "//pkg/util/rowcodec",
         "//pkg/util/sem",
         "//pkg/util/sem/compat",
@@ -266,6 +265,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/executor/join/joinversion",

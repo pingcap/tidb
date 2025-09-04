@@ -303,6 +303,9 @@ type PlanBuilder struct {
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
 
+	// noDecorrelate indicates whether decorrelation should be disabled for correlated aggregates in subqueries
+	noDecorrelate bool
+
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
@@ -462,6 +465,7 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.is = is
 	b.hintProcessor = processor
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
+	b.noDecorrelate = sctx.GetSessionVars().EnableNoDecorrelateInSelect
 	if savedBlockNames == nil {
 		return b, nil
 	}
@@ -494,6 +498,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.noDecorrelate = false
 
 	// Add more fields if they are safe to be reused.
 
@@ -1638,7 +1643,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetIsPartition(isPartition)
 	ts.SetSchema(idxColSchema)
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
+	ts.Columns = physicalop.ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 	switch {
 	case hasExtraCol:
 		ts.Columns = append(ts.Columns, extraInfo)
@@ -5716,17 +5721,22 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
 		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
-			origin := sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
-			sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+			origin := stmtCtx.EnableOptimizeTrace
+			stmtCtx.EnableOptimizeTrace = true
 			defer func() {
-				sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = origin
+				stmtCtx.EnableOptimizeTrace = origin
 			}()
 		}
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
-		targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
+		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
+		} else {
+			targetPlan, _, err = OptimizeAstNodeNoCache(ctx, sctx, nodeW, b.is)
+		}
 		if err != nil {
 			return nil, err
 		}

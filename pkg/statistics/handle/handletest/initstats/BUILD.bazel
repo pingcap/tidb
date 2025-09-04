@@ -11,6 +11,7 @@ go_test(
     shard_count = 4,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/parser/ast",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",

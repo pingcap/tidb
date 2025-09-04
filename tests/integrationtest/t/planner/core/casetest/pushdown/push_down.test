@@ -20,38 +20,38 @@ create table t2(a json);
 analyze table t;
 analyze table t2;
 set session tidb_opt_projection_push_down=1;
-desc format = 'plan_tree' select a from t2;
-desc format = 'plan_tree' select a->'$.key0' from t2;
-desc format = 'plan_tree' select a->>'$.key0' from t2;
-desc format = 'plan_tree' select json_length(a) from t2;
-desc format = 'plan_tree' select json_valid(a) from t2;
-desc format = 'plan_tree' select json_type(a) from t2;
-desc format = 'plan_tree' select json_depth(a) from t2;
-desc format = 'plan_tree' select json_contains(a, '$.key0')from t2;
-desc format = 'plan_tree' select json_contains_path(a, 'one', '$.key0', '$.key1') from t2;
-desc format = 'plan_tree' select json_keys(a) from t2;
-desc format = 'plan_tree' select 'ab' MEMBER OF(a) from t2;
-desc format = 'plan_tree' select json_overlaps(a, a) from t2;
-desc format = 'plan_tree' select json_search(a, 'one', 'key0') from t2;
-desc format = 'plan_tree' select json_unquote(a) from t2;
-desc format = 'plan_tree' select i * 2 from t;
-desc format = 'plan_tree' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t;
-desc format = 'plan_tree' select md5(s) from t;
-desc format = 'plan_tree' select c from t where a+1=3;
-desc format = 'plan_tree' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A;
-desc format = 'plan_tree' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A;
-desc format = 'plan_tree' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A;
-desc format = 'plan_tree' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A;
-desc format = 'plan_tree' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A;
-desc format = 'plan_tree' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A;
-desc format = 'plan_tree' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
-desc format = 'plan_tree' select * from t join (select id-2 as b from t) A on A.b=t.id;
-desc format = 'plan_tree' select * from t left join (select id-2 as b from t) A on A.b=t.id;
-desc format = 'plan_tree' select * from t right join (select id-2 as b from t) A on A.b=t.id;
-desc format = 'plan_tree' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
-desc format = 'plan_tree' select A.id from t as A where exists (select 1 from t where t.id=A.id);
-desc format = 'plan_tree' select A.id from t as A where not exists  (select 1 from t where t.id=A.id);
-desc format = 'plan_tree' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;
+explain format = 'plan_tree' select a from t2;
+explain format = 'plan_tree' select a->'$.key0' from t2;
+explain format = 'plan_tree' select a->>'$.key0' from t2;
+explain format = 'plan_tree' select json_length(a) from t2;
+explain format = 'plan_tree' select json_valid(a) from t2;
+explain format = 'plan_tree' select json_type(a) from t2;
+explain format = 'plan_tree' select json_depth(a) from t2;
+explain format = 'plan_tree' select json_contains(a, '$.key0')from t2;
+explain format = 'plan_tree' select json_contains_path(a, 'one', '$.key0', '$.key1') from t2;
+explain format = 'plan_tree' select json_keys(a) from t2;
+explain format = 'plan_tree' select 'ab' MEMBER OF(a) from t2;
+explain format = 'plan_tree' select json_overlaps(a, a) from t2;
+explain format = 'plan_tree' select json_search(a, 'one', 'key0') from t2;
+explain format = 'plan_tree' select json_unquote(a) from t2;
+explain format = 'plan_tree' select i * 2 from t;
+explain format = 'plan_tree' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t;
+explain format = 'plan_tree' select md5(s) from t;
+explain format = 'plan_tree' select c from t where a+1=3;
+explain format = 'plan_tree' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A;
+explain format = 'plan_tree' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A;
+explain format = 'plan_tree' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A;
+explain format = 'plan_tree' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A;
+explain format = 'plan_tree' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A;
+explain format = 'plan_tree' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A;
+explain format = 'plan_tree' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
+explain format = 'plan_tree' select * from t join (select id-2 as b from t) A on A.b=t.id;
+explain format = 'plan_tree' select * from t left join (select id-2 as b from t) A on A.b=t.id;
+explain format = 'plan_tree' select * from t right join (select id-2 as b from t) A on A.b=t.id;
+explain format = 'plan_tree' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
+explain format = 'plan_tree' select A.id from t as A where exists (select 1 from t where t.id=A.id);
+explain format = 'plan_tree' select A.id from t as A where not exists  (select 1 from t where t.id=A.id);
+explain format = 'plan_tree' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;
 
 # TestIssue55012
 CREATE TABLE `t4a8656d1` (
@@ -69,3 +69,15 @@ CREATE TABLE `tld47bc815` (
   KEY `idx_4` (`col_1`(4))
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
 explain format='plan_tree' select 1, r0 as col_754 from (     select format(t4a8656d1.col_74, 1) as r0     from t4a8656d1     join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1     where JSON_OVERLAPS(t4a8656d1.col_73, '[0.035131302371695955]')     group by t4a8656d1.col_74, t4a8656d1.col_73 ) as subquery where IsNull(subquery.r0);
+
+# Test for correctness of predicate pushdown through Aggregation on a non-key column (Issue #24853)
+DROP TABLE IF EXISTS final_test_v2;
+CREATE TABLE final_test_v2 (
+  id INT PRIMARY KEY,
+  val INT,
+  group_key INT
+);
+INSERT INTO final_test_v2 VALUES (1, 100, 10), (2, 200, 20), (3, 100, 10), (4, 300, 20);
+ANALYZE TABLE final_test_v2;
+SELECT group_key, ANY_VALUE(val) as val FROM final_test_v2 GROUP BY group_key HAVING val = 100 ORDER BY group_key;
+EXPLAIN FORMAT='BRIEF' SELECT group_key, ANY_VALUE(val) as val FROM final_test_v2 GROUP BY group_key HAVING val = 100 ORDER BY group_key;

@@ -11,6 +11,7 @@ go_test(
     shard_count = 19,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/util",
         "//pkg/domain",
@@ -28,6 +29,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/testkit",

@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -858,8 +860,7 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 }
 
 func TestConflictReadFromStorage(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
@@ -1646,18 +1647,26 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 			testKit.MustExec("set @@sql_mode = ''")
 			rs = testKit.MustQuery(query).Rows()
 			checkRes(rs, 2, "mpp[tiflash]")
-			testKit.MustQuery("show warnings").Check(testkit.Rows())
 		}
 
 		// Insert into ... select
 		check("explain insert into t2 select a+b from t")
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
 		check("explain insert into t2 select t.a from t2 join t on t2.a = t.a")
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
 
 		// Replace into ... select
 		check("explain replace into t2 select a+b from t")
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
 
 		// CTE
 		check("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)")
+		if kerneltype.IsClassic() {
+			testKit.MustQuery("show warnings").Check(testkit.Rows())
+		} else {
+			testKit.MustQuery("show warnings").Check(testkit.Rows(
+				"Warning 1105 MPP mode may be blocked because operator `SelectLock` is not supported now."))
+		}
 	})
 }
 
