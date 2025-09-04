@@ -1773,10 +1773,6 @@ func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk
 	d.metrics.totalChunks.Add(1)
 	// Chunking mode is already set at table level in concurrentDumpTable
 	task := NewTaskTableData(meta, data, currentChunk, totalChunks)
-	// Set IsLastChunk for known total chunks scenarios
-	if totalChunks > 0 {
-		task.IsLastChunk = (currentChunk == totalChunks-1)
-	}
 	return task
 }
 

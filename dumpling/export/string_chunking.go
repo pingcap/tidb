@@ -77,11 +77,10 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 	}
 	var buffer *bufferedChunk
 
-	// Helper function to send buffered chunk with correct termination flag
+	// Helper function to send buffered chunk
 	sendBufferedChunk := func(isLast bool) error {
 		if buffer != nil {
-			// Update the task with proper chunk termination info
-			buffer.task.IsLastChunk = isLast
+			// Update the task with proper chunk info
 			if isLast {
 				buffer.task.TotalChunks = buffer.chunkIndex + 1 // Now we know the total
 			}

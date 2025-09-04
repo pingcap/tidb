@@ -21,27 +21,51 @@ for data in "$DUMPLING_BASE_NAME"/data/*; do
 done
 
 # Run dumpling with --rows parameter to force chunking
+# With --rows 5 and tables containing 10 rows, we expect 2 chunk files
+# Each chunk should contain a complete INSERT statement with ~5 rows
 run_dumpling --rows 5
 
 for file_path in "$DUMPLING_BASE_NAME"/data/*; do
   base_name=$(basename "$file_path")
   table_name="${base_name%.sql}"
   
-  # For chunked tables, there might be multiple files
-  # Check that at least one chunk file exists
-  file_should_exist "$DUMPLING_OUTPUT_DIR/composite_string_key.$table_name.000000000.sql"
+  # Count the number of chunk files created
+  chunk_count=$(ls -1 "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql 2>/dev/null | wc -l)
   
-  # Combine all chunk files and compare with expected result
-  combined_file="$DUMPLING_OUTPUT_DIR/combined_$table_name.sql"
-  cat "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql > "$combined_file"
+  # For tables with 10 rows and --rows 5, we expect 2 chunks
+  if [ "$chunk_count" -lt 2 ]; then
+    echo "ERROR: Expected at least 2 chunks for $table_name, but found $chunk_count"
+    exit 1
+  fi
   
-  # Remove the SQL headers from combined file for comparison
-  sed '/^\/\*!/d' "$combined_file" > "$combined_file.clean"
-  sed '/^\/\*!/d' "$DUMPLING_BASE_NAME/result/$table_name.sql" > "$DUMPLING_BASE_NAME/result/$table_name.sql.clean"
+  # Verify each chunk file contains a complete INSERT statement
+  for chunk_file in "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql; do
+    if ! grep -q "INSERT INTO \`$table_name\` VALUES" "$chunk_file"; then
+      echo "ERROR: Chunk file $chunk_file does not contain a complete INSERT statement"
+      exit 1
+    fi
+  done
   
-  # Compare the cleaned files (ignore trailing whitespace differences)
-  diff -b "$DUMPLING_BASE_NAME/result/$table_name.sql.clean" "$combined_file.clean"
+  # Collect all data from chunks and verify completeness
+  # This is just to ensure all data is exported, not to verify the format
+  temp_file="$DUMPLING_OUTPUT_DIR/temp_$table_name.sql"
+  for chunk_file in "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql; do
+    # Extract only the data rows (remove headers and INSERT INTO line)
+    sed -n '/INSERT INTO/,/;$/p' "$chunk_file" | sed '1s/INSERT INTO .* VALUES//' | sed 's/;$//' | tr -d '\n' | sed 's/,(/\n(/g' | grep -v '^$' >> "$temp_file"
+  done
+  
+  # Sort both files for comparison (data order might differ between chunks)
+  sort "$temp_file" > "$temp_file.sorted"
+  sed -n '/INSERT INTO/,/;$/p' "$DUMPLING_BASE_NAME/result/$table_name.sql" | sed '1s/INSERT INTO .* VALUES//' | sed 's/;$//' | tr -d '\n' | sed 's/,(/\n(/g' | grep -v '^$' | sort > "$DUMPLING_BASE_NAME/result/$table_name.sorted"
+  
+  # Compare sorted data to ensure all rows are exported
+  if ! diff -b "$temp_file.sorted" "$DUMPLING_BASE_NAME/result/$table_name.sorted"; then
+    echo "ERROR: Data mismatch for $table_name"
+    exit 1
+  fi
   
   # Cleanup
-  rm -f "$combined_file" "$combined_file.clean" "$DUMPLING_BASE_NAME/result/$table_name.sql.clean"
+  rm -f "$temp_file" "$temp_file.sorted" "$DUMPLING_BASE_NAME/result/$table_name.sorted"
+  
+  echo "Table $table_name: Successfully validated $chunk_count chunks"
 done

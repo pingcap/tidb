@@ -58,7 +58,6 @@ type TaskTableData struct {
 	Data        TableDataIR
 	ChunkIndex  int
 	TotalChunks int
-	IsLastChunk bool // Flag to indicate if this is the last chunk
 }
 
 // NewTaskDatabaseMeta returns a new dumping database metadata task
@@ -112,7 +111,6 @@ func NewTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunk
 		Data:        data,
 		ChunkIndex:  currentChunk,
 		TotalChunks: totalChunks,
-		IsLastChunk: false, // Default to false, will be set explicitly when known
 	}
 }
 

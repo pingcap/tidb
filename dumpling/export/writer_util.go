@@ -148,8 +148,6 @@ func WriteInsert(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
-	chunkIndex int,
-	isLastChunk bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
@@ -214,24 +212,18 @@ func WriteInsert(
 
 	selectedField := meta.SelectedField()
 
-	// Determine if we should write INSERT prefix based on chunk position
-	// For string chunking, only first chunk gets prefix; for row chunking, each chunk is independent
-	shouldWritePrefix := (chunkIndex == 0) || !cfg.IsStringChunking
-
-	var insertStatementPrefixLen uint64
-	if shouldWritePrefix {
-		// if has generated column
-		if selectedField != "" && selectedField != "*" {
-			insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
-				wrapBackTicks(escapeString(meta.TableName())), selectedField)
-		} else {
-			insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
-				wrapBackTicks(escapeString(meta.TableName())))
-		}
-		insertStatementPrefixLen = uint64(len(insertStatementPrefix))
+	// Always write INSERT prefix for each chunk to ensure complete statements
+	// if has generated column
+	if selectedField != "" && selectedField != "*" {
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
+			wrapBackTicks(escapeString(meta.TableName())), selectedField)
+	} else {
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
+			wrapBackTicks(escapeString(meta.TableName())))
 	}
+	insertStatementPrefixLen := uint64(len(insertStatementPrefix))
 
-	isFirstChunk := shouldWritePrefix
+	isFirstChunk := true
 	for fileRowIter.HasNext() {
 		if isFirstChunk {
 			wp.currentStatementSize = 0
@@ -262,17 +254,14 @@ func WriteInsert(
 			// This can happen due to file size limit or statement size limit
 			shouldSwitch := wp.ShouldSwitchStatement()
 
-			// Determine row terminator based on chunk position and remaining rows
+			// Determine row terminator - always use comma for rows within a statement
 			hasMoreRows := fileRowIter.HasNext() && !shouldSwitch
 
 			if hasMoreRows {
 				bf.WriteString(",\n")
-			} else if isLastChunk || !cfg.IsStringChunking {
-				// End with semicolon for last chunk OR when not in string chunking mode
-				bf.WriteString(";\n")
 			} else {
-				// Not last chunk in string chunking mode, end with comma for concatenation
-				bf.WriteString(",\n")
+				// Always end with semicolon to complete the INSERT statement
+				bf.WriteString(";\n")
 			}
 			if bf.Len() >= lengthLimit {
 				select {
@@ -293,9 +282,8 @@ func WriteInsert(
 			if shouldSwitch {
 				// Need to end current INSERT statement due to size limits
 				wp.currentStatementSize = 0
-				// For statement size switching, only restart with INSERT prefix
-				// if we're doing row-based chunking (not string-based chunking)
-				isFirstChunk = shouldWritePrefix
+				// Always restart with INSERT prefix for complete statements
+				isFirstChunk = true
 				break
 			}
 		}
@@ -317,8 +305,6 @@ func WriteInsert(
 }
 
 // WriteInsertInCsv writes TableDataIR to a storage.ExternalFileWriter in csv type
-// Note: isLastChunk parameter is not used for CSV format since CSV doesn't require
-// statement-level concatenation logic (each row is independently terminated)
 func WriteInsertInCsv(
 	pCtx *tcontext.Context,
 	cfg *Config,
@@ -326,8 +312,6 @@ func WriteInsertInCsv(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
-	_ int,
-	_ bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
@@ -687,14 +671,12 @@ func (f FileFormat) WriteInsert(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
-	chunkIndex int,
-	isLastChunk bool,
 ) (uint64, error) {
 	switch f {
 	case FileFormatSQLText:
-		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, isLastChunk)
+		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics)
 	case FileFormatCSV:
-		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, isLastChunk)
+		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics)
 	default:
 		return 0, errors.Errorf("unknown file format")
 	}
