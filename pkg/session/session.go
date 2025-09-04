@@ -3698,6 +3698,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.EnableInternalCheck {
 			failToLoadOrParseSQLFile = true
 		}
+
+		for _, sql := range Create4KDatabasesAndGrant {
+			config.GetGlobalConfig().Security.SkipGrantTable = true
+			doReentrantDDL(ses[9], sql, dbterror.ErrDupKeyName)
+			config.GetGlobalConfig().Security.SkipGrantTable = false
+		}
 	}
 
 	// setup extract Handle

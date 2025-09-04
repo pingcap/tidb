@@ -836,12 +836,16 @@ const (
 
 var Create4KDatabasesAndGrant = (func() []string {
 	var sqls []string
-	sqls = append(sqls, "CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED WITH 'mysql_native_password' BY '';")
+	// sqls = append(sqls, "CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED WITH 'mysql_native_password' BY '';")
 	for i := 1; i <= 4000; i++ {
 		sqls = append(sqls, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `db%d`;", i))
-		sqls = append(sqls, fmt.Sprintf("GRANT ALL PRIVILEGES ON `db%d`.* TO 'admin'@'%%';", i))
+		sqls = append(sqls, fmt.Sprintf("GRANT ALL PRIVILEGES ON `db%d`.* TO 'root'@'%%';", i))
 	}
-	sqls = append(sqls, "GRANT ALL PRIVILEGES ON `test`.* TO 'admin'@'%';")
+	sqls = append(sqls, "GRANT ALL PRIVILEGES ON `test`.* TO 'root'@'%';")
+	sqls = append(sqls, "GRANT ALL PRIVILEGES ON `mysql`.* TO 'root'@'%';")
+	sqls = append(sqls, "GRANT ALL PRIVILEGES ON `information_schema`.* TO 'root'@'%';")
+	sqls = append(sqls, "GRANT PROCESS ON *.* TO 'root'@'%';")
+	sqls = append(sqls, "REVOKE Select,Insert,Update,Delete ON *.* FROM 'root'@'%';")
 	return sqls
 })()
 
@@ -1252,11 +1256,6 @@ func doDDLWorks(s sessionapi.Session) {
 		}
 		for _, tbl := range tablesInSystemDatabase {
 			mustExecute(s, tbl.SQL)
-		}
-		for _, sql := range Create4KDatabasesAndGrant {
-			config.GetGlobalConfig().Security.SkipGrantTable = true
-			mustExecute(s, sql)
-			config.GetGlobalConfig().Security.SkipGrantTable = false
 		}
 	}
 	// Create bind_info table.
