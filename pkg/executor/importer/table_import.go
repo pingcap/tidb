@@ -426,7 +426,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 		DataInvalidCharReplace: string(utf8.RuneError),
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
-		SkipParquetRowCount:    mydump.SkipReadRowCount(e.Table.Meta()),
+		SkipParquetRowCount:    common.SkipReadRowCount(e.Table.Meta()),
 	}
 	makeEngineCtx := logutil.WithLogger(ctx, e.logger)
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)

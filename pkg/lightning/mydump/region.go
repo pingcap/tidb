@@ -24,11 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -362,41 +359,6 @@ func MakeSourceFileRegion(
 			zap.Int64("size", regionSize))
 	}
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.RealSize)}, nil
-}
-
-// SkipReadRowCount determines whether the target table requires a precise row count, which is used to for
-// auto-increment and auto-random columns. If any unique/primary index contains these columns,
-// we should read the actual row count to prevent generating duplicate key. Otherwise, the row
-// count is not used, so we can skip reading the row count to improve performance.
-func SkipReadRowCount(tblInfo *model.TableInfo) bool {
-	// Some tests may not set the table info.
-	if tblInfo == nil {
-		return false
-	}
-
-	if common.TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
-		return false
-	}
-
-	for _, idx := range tblInfo.Indices {
-		if !idx.Unique || !idx.Primary {
-			continue
-		}
-		for _, col := range idx.Columns {
-			colInfo := tblInfo.Columns[col.Offset]
-			if mysql.HasAutoIncrementFlag(colInfo.GetFlag()) {
-				return false
-			}
-		}
-	}
-
-	for _, col := range tblInfo.Columns {
-		if mysql.HasPriKeyFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(col.GetFlag()) {
-			return false
-		}
-	}
-
-	return true
 }
 
 // because parquet files can't seek efficiently, there is no benefit in split.
