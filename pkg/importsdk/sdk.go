@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
-// CloudImportSDK defines the interface for cloud import services
-type CloudImportSDK interface {
+// SDK defines the interface for cloud import services
+type SDK interface {
 	// CreateSchemasAndTables creates all database schemas and tables from source path
 	CreateSchemasAndTables(ctx context.Context) error
 
@@ -64,7 +64,7 @@ type DataFileMeta struct {
 	Compression mydump.Compression
 }
 
-// ImportSDK implements CloudImportSDK interface
+// ImportSDK implements SDK interface
 type ImportSDK struct {
 	sourcePath string
 	db         *sql.DB
@@ -75,7 +75,7 @@ type ImportSDK struct {
 }
 
 // NewImportSDK creates a new CloudImportSDK instance
-func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ...SDKOption) (CloudImportSDK, error) {
+func NewImportSDK(ctx context.Context, sourcePath string, db *sql.DB, options ...SDKOption) (SDK, error) {
 	cfg := defaultSDKConfig()
 	for _, opt := range options {
 		opt(cfg)
