@@ -518,6 +518,30 @@ func (s *propSpecialJoinConstSolver) Clear() {
 	propSpecialJoinConstSolverPool.Put(s)
 }
 
+func (s *propSpecialJoinConstSolver) cloneJoinKeys(exprs []Expression) (joinKeys []Expression) {
+	for _, expr := range exprs {
+		if s.isJoinKey(expr) {
+			joinKeys = append(joinKeys, expr.Clone())
+		}
+	}
+	return
+}
+
+func (s *propSpecialJoinConstSolver) isJoinKey(expr Expression) bool {
+	binop, ok := expr.(*ScalarFunction)
+	if !ok || binop.FuncName.L != ast.EQ {
+		return false
+	}
+	col0, lOK := binop.GetArgs()[0].(*Column)
+	col1, rOK := binop.GetArgs()[1].(*Column)
+	if !lOK || !rOK {
+		return false
+	}
+	fromDifferentTables := (s.outerSchema.RetrieveColumn(col0) != nil && s.innerSchema.RetrieveColumn(col1) != nil) ||
+		(s.outerSchema.RetrieveColumn(col1) != nil && s.innerSchema.RetrieveColumn(col0) != nil)
+	return fromDifferentTables
+}
+
 func (s *propSpecialJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 	s.joinConds = s.joinConds[:0]
 	s.joinConds = append(s.joinConds, &Constant{
@@ -789,6 +813,7 @@ func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 }
 
 func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
+	joinKeys := append(s.cloneJoinKeys(joinConds), s.cloneJoinKeys(filterConds)...)
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
@@ -808,7 +833,12 @@ func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) 
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
-	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+
+	// keep join keys in the results since they are crucial for join optimization like join reorder
+	// and index join selection. (#63314, #60076)
+	joinConds = append(slices.Clone(s.joinConds), joinKeys...)
+	joinConds = RemoveDupExprs(joinConds)
+	return joinConds, slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
