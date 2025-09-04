@@ -1605,21 +1605,22 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			currentCandidate = getIndexCandidate(ds, path, prop)
 		}
-		pruned, missingStats := false, false
+		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			var result int
-			result, missingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
+			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
 			if missingStats {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
 			if result == 1 {
 				pruned = true
-				// We can break here because the current candidate cannot prune others anymore.
+				// We can break here because the current candidate lost to another plan.
+				// This means that we won't add it to the candidates below.
 				break
 			} else if result == -1 {
+				// The current candidate is better - so remove the old one from "candidates"
 				candidates = slices.Delete(candidates, i, i+1)
 			}
 		}
