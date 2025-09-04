@@ -4145,7 +4145,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	if dom != nil {
 		statsHandle = dom.StatsHandle()
 	}
-	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
+	var usePartitionStats, countIs0, pseudoStatsForUninitialized bool
 	var statsTbl *statistics.Table
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ctx)
@@ -4157,7 +4157,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 				usePartitionStats,
 				countIs0,
 				pseudoStatsForUninitialized,
-				pseudoStatsForOutdated,
+				false,
 				statsTbl,
 			)
 			debugtrace.LeaveContextCommon(ctx)
@@ -4207,18 +4207,13 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading, true)
 	}
 
-	// 3. statistics is uninitialized or outdated.
+	// 3. statistics is uninitialized.
 	pseudoStatsForUninitialized = !statsTbl.IsInitialized()
-	pseudoStatsForOutdated = ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
-	if pseudoStatsForUninitialized || pseudoStatsForOutdated {
+	if pseudoStatsForUninitialized {
 		tbl := *statsTbl
 		tbl.Pseudo = true
 		statsTbl = &tbl
-		if pseudoStatsForUninitialized {
-			core_metrics.PseudoEstimationNotAvailable.Inc()
-		} else {
-			core_metrics.PseudoEstimationOutdate.Inc()
-		}
+		core_metrics.PseudoEstimationNotAvailable.Inc()
 	}
 
 	return statsTbl

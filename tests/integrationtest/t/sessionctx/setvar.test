@@ -532,14 +532,6 @@ select /*+ set_var(tidb_enable_ordered_result_mode=1) */ @@tidb_enable_ordered_r
 select @@tidb_enable_ordered_result_mode;
 set @@tidb_enable_ordered_result_mode=default;
 select @@tidb_enable_ordered_result_mode;
-select /*+ set_var(tidb_enable_pseudo_for_outdated_stats=0) */ @@tidb_enable_pseudo_for_outdated_stats;
-select @@tidb_enable_pseudo_for_outdated_stats;
-set @@tidb_enable_pseudo_for_outdated_stats=default;
-select @@tidb_enable_pseudo_for_outdated_stats;
-select /*+ set_var(tidb_enable_pseudo_for_outdated_stats=1) */ @@tidb_enable_pseudo_for_outdated_stats;
-select @@tidb_enable_pseudo_for_outdated_stats;
-set @@tidb_enable_pseudo_for_outdated_stats=default;
-select @@tidb_enable_pseudo_for_outdated_stats;
 select /*+ set_var(tidb_stats_load_sync_wait=0) */ @@tidb_stats_load_sync_wait;
 select @@tidb_stats_load_sync_wait;
 set @@tidb_stats_load_sync_wait=default;
