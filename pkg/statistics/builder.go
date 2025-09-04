@@ -85,25 +85,25 @@ func (s *SequentialRangeChecker) IsIndexInTopNRange(idx int64) bool {
 	return false
 }
 
-// processTopNValue handles the logic for a complete TopN value count using existing priority queue with range tracking.
-func processTopNValue(topNPriorityQueue *generic.PriorityQueue[TopNWithRange], encoded []byte, curCnt float64,
+// processTopNValue handles the logic for a complete TopN value count using bounded min-heap with range tracking.
+func processTopNValue(boundedMinHeap *generic.BoundedMinHeap[TopNWithRange], encoded []byte, curCnt float64,
 	startIdx, endIdx int64, numTopN int, allowPruning bool, sampleFactor float64, lastValue bool) {
 	// case 1: do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
 	// Note: adding lastValue corner case handling just to make consistent behavior with previous code version,
 	// it is not necessary to special handle last value but a lot of current tests hardcoded the output of the last
 	// version and making change will involve a lot of test changes.
 	if !lastValue && curCnt == 1 && allowPruning &&
-		(topNPriorityQueue.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
+		(boundedMinHeap.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
 		return
 	}
 
-	// case 2: add to heap (existing heap handles all optimization internally)
+	// case 2: add to bounded min-heap (heap handles all optimization internally)
 	newItem := TopNWithRange{
 		TopNMeta: TopNMeta{Encoded: encoded, Count: uint64(curCnt)},
 		startIdx: startIdx,
 		endIdx:   endIdx,
 	}
-	topNPriorityQueue.Add(newItem)
+	boundedMinHeap.Add(newItem)
 }
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -429,8 +429,8 @@ func BuildHistAndTopN(
 		allowPruning = false
 	}
 
-	// Step1: collect topn from samples using priority queue and track their index ranges
-	topNPriorityQueue := generic.NewPriorityQueue(numTopN, func(a, b TopNWithRange) int {
+	// Step1: collect topn from samples using bounded min-heap and track their index ranges
+	boundedMinHeap := generic.NewBoundedMinHeap(numTopN, func(a, b TopNWithRange) int {
 		if a.Count < b.Count {
 			return -1 // min-heap: smaller counts at root
 		} else if a.Count > b.Count {
@@ -471,8 +471,8 @@ func BuildHistAndTopN(
 		}
 		// case 2, meet a different value: counting for the "current" is complete
 		sampleNDV++
-		// process the completed value using heap with range tracking
-		processTopNValue(topNPriorityQueue, cur, curCnt, curStartIdx, i-1, numTopN, allowPruning, sampleFactor, false)
+		// process the completed value using bounded min-heap with range tracking
+		processTopNValue(boundedMinHeap, cur, curCnt, curStartIdx, i-1, numTopN, allowPruning, sampleFactor, false)
 
 		cur, curCnt = sampleBytes, 1
 		curStartIdx = i // new value group starts at current index
@@ -487,19 +487,18 @@ func BuildHistAndTopN(
 	// Note: not necessary to add the condition (!allowPruning || (sampleFactor <= 1 || curCnt > 1)), it can be handled
 	// inside processTopNValue but just to make it consistent with previous behavior...
 	if numTopN != 0 && (!allowPruning || (sampleFactor <= 1 || curCnt > 1)) {
-		processTopNValue(topNPriorityQueue, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor,
+		processTopNValue(boundedMinHeap, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor,
 			true)
 	}
 
-	// convert priority queue to sorted slice
-	sortedTopNItems := topNPriorityQueue.ToSortedSlice()
+	// convert to sorted slice
+	sortedTopNItems := boundedMinHeap.ToSortedSlice()
 
-	// apply pruning directly to heap items (preserving range information)
-	finalTopNRanges := sortedTopNItems
+	prunedTopNItems := sortedTopNItems
 	if allowPruning {
 		// Prune out any TopN values that have the same count as the remaining average.
-		finalTopNRanges = pruneTopNItem(sortedTopNItems, ndv, nullCount, sampleNum, count)
-		if sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(finalTopNRanges) >= int(sampleNDV) {
+		prunedTopNItems = pruneTopNItem(sortedTopNItems, ndv, nullCount, sampleNum, count)
+		if sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(prunedTopNItems) >= int(sampleNDV) {
 			// If we're sampling, and TopN contains everything in the sample - trim TopN so
 			// that buckets will be built. This can help address issues in optimizer
 			// cardinality estimation if TopN contains all values in the sample, but the
@@ -508,13 +507,13 @@ func BuildHistAndTopN(
 			// values are likely to added as the last value of a bucket such that skew will
 			// still be recognized.
 			keepTopN := max(1, sampleNDV-1)
-			finalTopNRanges = finalTopNRanges[:keepTopN]
+			prunedTopNItems = prunedTopNItems[:keepTopN]
 		}
 	}
 
 	// extract TopNMeta for result from final pruned items
-	topNList := make([]TopNMeta, len(finalTopNRanges))
-	for i, item := range finalTopNRanges {
+	topNList := make([]TopNMeta, len(prunedTopNItems))
+	for i, item := range prunedTopNItems {
 		topNList[i] = item.TopNMeta
 	}
 
@@ -550,7 +549,7 @@ func BuildHistAndTopN(
 		}
 
 		// create range checker for efficient TopN index skipping using final TopN items only
-		rangeChecker := NewSequentialRangeChecker(finalTopNRanges)
+		rangeChecker := NewSequentialRangeChecker(prunedTopNItems)
 
 		_, err = buildHist(sc, hg, samples, count-int64(topNTotalCount), remainingNDV,
 			int64(numBuckets), memTracker, samplesExcludingTopN, rangeChecker)
