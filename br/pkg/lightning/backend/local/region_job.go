@@ -388,6 +388,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (err error) {
 		if err := preparedMsg.Encode(clients[0], req); err != nil {
 			return err
 		}
+		failpoint.InjectCall("getWriteLimitInDoWrite", writeLimiter.Limit())
 
 		for i := range clients {
 			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))

@@ -37,6 +37,7 @@ go_test(
         "//pkg/ddl/ingest",
         "//pkg/ddl/util/callback",
         "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",

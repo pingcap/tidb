@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -993,7 +994,11 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if _, ok := bc.(*ingest.MockBackendCtx); !ok {
 		// Adjust dynamically max_write_speed during writing to tikv
 		wg.Run(func() {
-			ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
+			interval := UpdateDDLJobReorgCfgInterval
+			if intest.InTest {
+				interval = 300 * time.Millisecond
+			}
+			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			select {
 			case <-ctx.Done():

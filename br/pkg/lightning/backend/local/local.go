@@ -1346,6 +1346,11 @@ func (local *Backend) generateJobForRange(
 		}
 		failpoint.Return(injected.jobs, injected.err)
 	})
+	failpoint.Inject("mockRegionSplitKeys", func(val failpoint.Value) {
+		if i64, ok := val.(int64); ok {
+			regionSplitKeys = i64
+		}
+	})
 
 	start, end := keyRange.Start, keyRange.End
 	pairStart, pairEnd, err := data.GetFirstAndLastKey(start, end)
