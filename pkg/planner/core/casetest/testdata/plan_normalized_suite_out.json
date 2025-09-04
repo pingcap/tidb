@@ -151,10 +151,9 @@
       {
         "SQL": "insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
         "Plan": [
-          " IndexLookUp        root ",
-          " ├─Selection        cop  gt(test.t2.a, ?)",
-          " │ └─IndexRangeScan cop  table:t2, index:b(b), range:[?,?], keep order:false",
-          " └─TableRowIDScan   cop  table:t2, keep order:false"
+          " TableReader        root ",
+          " └─Selection        cop  ne(test.t2.b, ?)",
+          "   └─TableRangeScan cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
@@ -636,7 +635,7 @@
     "Name": "TestTiFlashLateMaterialization",
     "Cases": [
       {
-        "SQL": "explain format='brief' select * from t1;",
+        "SQL": "explain format = 'plan_tree' select * from t1;",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -644,7 +643,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a<1;",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a<1;",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -652,7 +651,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a>3",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a>3",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -660,7 +659,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a=1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a=1",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -668,7 +667,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a in (1,2,3)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a in (1,2,3)",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -677,7 +676,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where b=1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where b=1",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -685,7 +684,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a!=1 order by c limit 1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a!=1 order by c limit 1",
         "Plan": [
           " TopN                    root         test.t1.c",
           " └─TableReader           root         ",
@@ -696,7 +695,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select a from t1 where a>3",
+        "SQL": "explain format = 'plan_tree' select a from t1 where a>3",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -705,7 +704,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select a from t1 where a>3 and b>1",
+        "SQL": "explain format = 'plan_tree' select a from t1 where a>3 and b>1",
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
@@ -715,7 +714,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a>3 and b>1 and c>1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a>3 and b>1 and c>1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -724,7 +723,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a<1 or b<2",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a<1 or b<2",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -732,7 +731,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where (a<1 or b<2) and (a>3 and b>2)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a<1 or b<2) and (a>3 and b>2)",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -741,7 +740,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where (a<1 or b<2) and (a>3 and b>2) and c>1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a<1 or b<2) and (a>3 and b>2) and c>1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -750,7 +749,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where (a>2 or b<2) and (a>3 and b>2) and c>2",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a>2 or b<2) and (a>3 and b>2) and c>2",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -759,7 +758,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select count(a), max(t) from t1 where a>3",
+        "SQL": "explain format = 'plan_tree' select count(a), max(t) from t1 where a>3",
         "Plan": [
           " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
           " └─TableReader     root         ",
@@ -772,7 +771,7 @@
     "Name": "TestInvertedIndex",
     "Cases": [
       {
-        "SQL": "explain format='brief' select * from t1;",
+        "SQL": "explain format = 'plan_tree' select * from t1;",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -780,7 +779,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a<1;",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a<1;",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -789,7 +788,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a>3",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a>3",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -798,7 +797,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a=1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a=1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -807,7 +806,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a in (1,2,3)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a in (1,2,3)",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -816,7 +815,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where b=1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where b=1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -825,7 +824,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a!=1 order by c limit 1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a!=1 order by c limit 1",
         "Plan": [
           " TopN                    root         test.t1.c",
           " └─TableReader           root         ",
@@ -836,7 +835,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select a from t1 where a>3",
+        "SQL": "explain format = 'plan_tree' select a from t1 where a>3",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -845,7 +844,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select a from t1 where a>3 and b>1",
+        "SQL": "explain format = 'plan_tree' select a from t1 where a>3 and b>1",
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
@@ -855,7 +854,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a>3 and b>1 and c>1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a>3 and b>1 and c>1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -864,7 +863,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where a<1 or b<2",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a<1 or b<2",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -873,7 +872,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where (a<1 or b<2) and (a>3 and b>2)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a<1 or b<2) and (a>3 and b>2)",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -882,7 +881,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where (a<1 or b<2) and (a>3 and b>2) and c>1",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a<1 or b<2) and (a>3 and b>2) and c>1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -891,7 +890,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select * from t1 where (a>2 or b<2) and (a>3 and b>2) and c>2",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a>2 or b<2) and (a>3 and b>2) and c>2",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -900,7 +899,7 @@
         ]
       },
       {
-        "SQL": "explain format='brief' select count(a), max(t) from t1 where a>3",
+        "SQL": "explain format = 'plan_tree' select count(a), max(t) from t1 where a>3",
         "Plan": [
           " HashAgg               root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
           " └─TableReader         root         ",

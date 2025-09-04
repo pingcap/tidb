@@ -425,7 +425,18 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			return nil
 		}
 		if updated {
-			retMapper[s.getColID(col)] = con
+			colType := col.GetType(s.ctx.GetEvalCtx())
+			conType := con.GetType(s.ctx.GetEvalCtx())
+			castedCon := con
+			if !colType.Equal(conType) {
+				oriWarningCnt := s.ctx.GetEvalCtx().WarningCount()
+				newExpr := BuildCastFunction(s.ctx, con, col.GetType(s.ctx.GetEvalCtx()))
+				s.ctx.GetEvalCtx().TruncateWarnings(oriWarningCnt)
+				if newCon, ok := newExpr.(*Constant); ok {
+					castedCon = newCon
+				}
+			}
+			retMapper[s.getColID(col)] = castedCon
 		}
 	}
 	return
