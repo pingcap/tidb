@@ -17,6 +17,7 @@ package util
 import (
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +31,11 @@ import (
 // CheckNoLeakFiles checks if there are file leaks
 func CheckNoLeakFiles(t *testing.T) {
 	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
+
+	// TODO remove it
+	if err := os.MkdirAll(config.GetGlobalConfig().TempStoragePath, 0755); err != nil {
+		panic(err)
+	}
 
 	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
