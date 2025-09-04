@@ -37,7 +37,8 @@ const int64Len = int64(unsafe.Sizeof(int64(0)))
 const chkFixedSize = intLen * 4
 const colMetaSize = int64Len * 4
 
-const defaultChunkDataInDiskByChunksPath = "defaultChunkDataInDiskByChunksPath"
+// DefaultChunkDataInDiskByChunksPath gives the file name prefix
+const DefaultChunkDataInDiskByChunksPath = "defaultChunkDataInDiskByChunksPath"
 
 // DataInDiskByChunks represents some data stored in temporary disk.
 // They can only be restored by chunks.
@@ -73,7 +74,7 @@ func (d *DataInDiskByChunks) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	err = d.dataFile.initWithFileName(defaultChunkDataInDiskByChunksPath + strconv.Itoa(d.diskTracker.Label()))
+	err = d.dataFile.initWithFileName(DefaultChunkDataInDiskByChunksPath + strconv.Itoa(d.diskTracker.Label()))
 	return
 }
 

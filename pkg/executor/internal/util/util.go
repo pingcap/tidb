@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,18 +31,15 @@ import (
 func CheckNoLeakFiles(t *testing.T) {
 	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
 
-	fileNum := 0
 	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		log.Info(fmt.Sprintf("name: %s", d.Name()))
+
 		if !d.IsDir() {
-			fileNum++
+			require.False(t, strings.HasPrefix(d.Name(), chunk.DefaultChunkDataInDiskByChunksPath))
 		}
 		return nil
 	})
-
 	require.NoError(t, err)
-	require.Equal(t, 1, fileNum)
 }
