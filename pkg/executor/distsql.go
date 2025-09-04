@@ -757,7 +757,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for _, kvRange := range kvRanges {
+		for i, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -768,8 +768,26 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			if finished {
 				break
 			}
+
+			dagPB := e.dagPB
+			if e.partitionTableMode {
+				var cloned tipb.DAGRequest
+				cloned = *e.dagPB
+				cloned.Executors = make([]*tipb.Executor, len(e.dagPB.Executors))
+				copy(cloned.Executors, e.dagPB.Executors)
+				for _, ex := range cloned.Executors {
+					if ex.Tp == tipb.ExecType_TypeIndexLookup {
+						var indexLookupClone tipb.IndexLookup
+						indexLookupClone = *ex.IndexLookup
+						indexLookupClone.TableId = e.prunedPartitions[i].GetPhysicalID()
+						ex.IndexLookup = &indexLookupClone
+					}
+				}
+				dagPB = &cloned
+			}
+
 			var builder distsql.RequestBuilder
-			builder.SetDAGRequest(e.dagPB).
+			builder.SetDAGRequest(dagPB).
 				SetStartTS(e.startTS).
 				SetDesc(e.desc).
 				SetKeepOrder(e.keepOrder).
