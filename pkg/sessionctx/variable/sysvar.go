@@ -779,7 +779,7 @@ var defaultSysVars = []*SysVar{
 		vardef.SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, vardef.DefTiDBDDLReorgWorkerCount)))
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDDLReorgBatchSize, Value: strconv.Itoa(vardef.DefTiDBDDLReorgBatchSize), Type: vardef.TypeUnsigned, MinValue: int64(vardef.MinDDLReorgBatchSize), MaxValue: uint64(vardef.MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDDLReorgBatchSize, Value: strconv.Itoa(vardef.DefTiDBDDLReorgBatchSize), Type: vardef.TypeUnsigned, MinValue: int64(1), MaxValue: uint64(vardef.MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, vardef.DefTiDBDDLReorgBatchSize)))
 		return nil
 	}},
