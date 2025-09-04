@@ -22,6 +22,7 @@ go_test(
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",
         "//pkg/testkit/external",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/sqlkiller",
         "//pkg/util/tiflashcompute",
