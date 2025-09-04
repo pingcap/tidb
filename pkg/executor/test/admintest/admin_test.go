@@ -2274,61 +2274,92 @@ func TestAdminCheckMVIndex(t *testing.T) {
 	executor.CheckTableFastBucketSize = 4
 	executor.LookupCheckThreshold = 1
 
+	type corruptedEntry struct {
+		handle kv.Handle
+		values []any
+	}
+
 	type testCase struct {
-		indexSQLs     []string
-		insertValue   []string
-		corruptHandle kv.Handle
-		corruptValue  []any
+		indexSQLs   []string
+		insertValue []string
+		addEntry    *corruptedEntry
+		deleteEntry *corruptedEntry
 	}
 
 	testCases := []testCase{
 		{
-			indexSQLs:     []string{"INDEX mvi((CAST(j AS CHAR(10) ARRAY)))"},
-			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5.5", "7"]'`},
-			corruptHandle: kv.IntHandle(1),
-			corruptValue:  []any{"3"},
+			indexSQLs:   []string{"INDEX mvi((CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5.5", "7"]'`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(1),
+				values: []any{"3"},
+			},
 		},
 		{
-			indexSQLs:     []string{"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))"},
-			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `NULL`},
-			corruptHandle: kv.IntHandle(2),
-			corruptValue:  []any{2, "2", "3"},
+			indexSQLs:   []string{"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `NULL`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(2),
+				values: []any{2, "2", "3"},
+			},
 		},
 		{
 			indexSQLs: []string{
 				"PRIMARY KEY (i1)",
 				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
 			},
-			insertValue:   []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
-			corruptHandle: kv.IntHandle(1),
-			corruptValue:  []any{3},
+			insertValue: []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(1),
+				values: []any{3},
+			},
 		},
 		{
 			indexSQLs: []string{
 				"PRIMARY KEY (i1)",
 				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
 			},
-			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`},
-			corruptHandle: kv.IntHandle(1),
-			corruptValue:  []any{1, "b", "1"},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(1),
+				values: []any{1, "b", "1"},
+			},
 		},
 		{
 			indexSQLs: []string{
 				"PRIMARY KEY (i1, i2)",
 				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
 			},
-			insertValue:   []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
-			corruptHandle: testutil.MustNewCommonHandle(t, 1, "1"),
-			corruptValue:  []any{3},
+			insertValue: []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			addEntry: &corruptedEntry{
+				handle: testutil.MustNewCommonHandle(t, 1, "1"),
+				values: []any{3},
+			},
 		},
 		{
 			indexSQLs: []string{
 				"PRIMARY KEY (i1, i2)",
 				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
 			},
-			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`, `NULL`},
-			corruptHandle: testutil.MustNewCommonHandle(t, 2, "2"),
-			corruptValue:  []any{2, "2", "3"},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`, `NULL`},
+			addEntry: &corruptedEntry{
+				handle: testutil.MustNewCommonHandle(t, 2, "2"),
+				values: []any{2, "2", "3"},
+			},
+		},
+		{
+			indexSQLs: []string{
+				"INDEX mvi(i1, (i1 * 2), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`, `NULL`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(2),
+				values: []any{2, "4", "5"},
+			},
+			deleteEntry: &corruptedEntry{
+				handle: kv.IntHandle(2),
+				values: []any{2, "3", "5"},
+			},
 		},
 	}
 
@@ -2343,7 +2374,7 @@ func TestAdminCheckMVIndex(t *testing.T) {
 		}
 
 		for i, value := range tc.insertValue {
-			tk.MustExec(fmt.Sprintf("INSERT INTO t(i1, i2, j) VALUES (%d, %d, %s)", i, i, value))
+			tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %s)", i, i, value))
 		}
 
 		for _, fastCheck := range []bool{false, true} {
@@ -2370,8 +2401,14 @@ func TestAdminCheckMVIndex(t *testing.T) {
 			indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 			txn, err := store.Begin()
 			require.NoError(t, err)
-			_, err = indexOpr.Create(ctx, txn, types.MakeDatums(tc.corruptValue...), tc.corruptHandle, nil)
-			require.NoError(t, err)
+			if tc.addEntry != nil {
+				_, err = indexOpr.Create(ctx, txn, types.MakeDatums(tc.addEntry.values...), tc.addEntry.handle, nil)
+				require.NoError(t, err)
+			}
+			if tc.deleteEntry != nil {
+				err = indexOpr.Delete(ctx, txn, types.MakeDatums(tc.deleteEntry.values...), tc.deleteEntry.handle)
+				require.NoError(t, err)
+			}
 			err = txn.Commit(context.Background())
 			require.NoError(t, err)
 		}
@@ -2380,6 +2417,7 @@ func TestAdminCheckMVIndex(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
 			err = tk.ExecToErr("admin check table t")
 			require.Error(t, err)
+			require.ErrorContains(t, err, "inconsistency")
 
 			// The output of error message is different whether fast check is enabled,
 			// and we just check error message for fast check.

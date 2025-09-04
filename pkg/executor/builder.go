@@ -518,11 +518,6 @@ func indexSupportFastCheck(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) b
 	}
 
 	for _, col := range idxInfo.Columns {
-		// Prefix index does not support fast check.
-		if col.Length != types.UnspecifiedLength {
-			return false
-		}
-
 		// Currently, MV Index only support fast check for part of data types.
 		tblCol := tblInfo.Columns[col.Offset]
 		if len(ExtractCastArrayExpr(tblCol)) > 0 {

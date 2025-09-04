@@ -452,9 +452,10 @@ func buildChecksumSQLForMVIndex(
 			tableFilterCol = fmt.Sprintf("(JSON_LENGTH(%s) > 0 or JSON_LENGTH(%s) is null)", rawExpr, rawExpr)
 			tableArrayCols = strings.Replace(generatedExpr, "cast", "JSON_SUM_CRC32", 1)
 			indexArrayCols = fmt.Sprintf("CRC32(%s)", colName)
-		} else {
-			// normal columns or generated columns
+		} else if col.Length == types.UnspecifiedLength {
 			crc32Cols = append(crc32Cols, colName)
+		} else {
+			crc32Cols = append(crc32Cols, fmt.Sprintf("CAST(%s AS CHAR(%d))", ColumnName(col.Name.O), col.Length))
 		}
 	}
 
@@ -538,8 +539,11 @@ func buildCheckRowSQLForMVIndex(
 			indexSubqueryCols = append(indexSubqueryCols, arrayExpr)
 			indexSelectCols = append(indexSelectCols, fmt.Sprintf("JSON_ARRAYAGG(%s)", alias))
 		} else {
-			// Even if the column is a generated column, we can still use the generated column name
-			// to do the table scan.
+			// For prefix column
+			if col.Length != types.UnspecifiedLength {
+				colName = fmt.Sprintf("CAST(%s AS CHAR(%d))", ColumnName(col.Name.O), col.Length)
+			}
+
 			tableSelectCols = append(tableSelectCols, colName)
 			tableHandleCols = append(tableHandleCols, colName)
 
@@ -574,10 +578,10 @@ func buildChecksumSQLForNormalIndex(
 	checksumCols := handleCols
 	for _, col := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[col.Offset]
-		if tblCol.IsVirtualGenerated() && tblCol.Hidden {
-			checksumCols = append(checksumCols, tblCol.GeneratedExprString)
+		if col.Length == types.UnspecifiedLength {
+			checksumCols = append(checksumCols, ColumnName(tblCol.Name.O))
 		} else {
-			checksumCols = append(checksumCols, ColumnName(col.Name.O))
+			checksumCols = append(checksumCols, fmt.Sprintf("CAST(%s AS CHAR(%d))", ColumnName(col.Name.O), col.Length))
 		}
 	}
 
@@ -603,10 +607,10 @@ func buildCheckRowSQLForNormalIndex(
 	checksumCols := handleCols
 	for _, col := range idxInfo.Columns {
 		tblCol := tblMeta.Columns[col.Offset]
-		if tblCol.IsVirtualGenerated() && tblCol.Hidden {
-			checksumCols = append(checksumCols, tblCol.GeneratedExprString)
+		if col.Length == types.UnspecifiedLength {
+			checksumCols = append(checksumCols, ColumnName(tblCol.Name.O))
 		} else {
-			checksumCols = append(checksumCols, ColumnName(col.Name.O))
+			checksumCols = append(checksumCols, fmt.Sprintf("CAST(%s AS CHAR(%d))", ColumnName(col.Name.O), col.Length))
 		}
 	}
 
@@ -700,10 +704,10 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 	}
 
 	if idxInfo.MVIndex {
+		// We will add non-array columns of the MV Index into handle too, to simplify the SQL.
 		md5Handle, tableChecksumSQL, indexChecksumSQL = buildChecksumSQLForMVIndex(tblName, handleCols, idxInfo, tblInfo)
 		tableCheckSQL, indexCheckSQL = buildCheckRowSQLForMVIndex(tblName, handleCols, idxInfo, tblInfo)
 	} else {
-		// We will add non-array columns of the MV Index into handle too, to simplify the SQL.
 		md5Handle = crc32FromCols(handleCols)
 		tableChecksumSQL, indexChecksumSQL = buildChecksumSQLForNormalIndex(tblName, handleCols, idxInfo, tblInfo)
 		tableCheckSQL, indexCheckSQL = buildCheckRowSQLForNormalIndex(tblName, handleCols, idxInfo, tblInfo)
