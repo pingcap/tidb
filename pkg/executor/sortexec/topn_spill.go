@@ -212,6 +212,13 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(t.diskTracker)
 
+	isInDiskCollected := false
+	defer func() {
+		if !isInDiskCollected {
+			inDisk.Close()
+		}
+	}()
+
 	rowPtrNum := chkHeap.Len()
 	for ; chkHeap.idx < rowPtrNum; chkHeap.idx++ {
 		if chkHeap.idx%100 == 0 && t.sqlKiller != nil {
@@ -238,8 +245,10 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 		}
 	}
 
-	t.addInDisk(inDisk)
 	injectTopNRandomFail(200)
+
+	t.addInDisk(inDisk)
+	isInDiskCollected = true
 
 	chkHeap.clear()
 	return nil
