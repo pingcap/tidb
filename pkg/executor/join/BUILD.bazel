@@ -122,7 +122,6 @@ go_test(
         "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/sqlkiller",
-        "@com_github_ngaut_log//:go_default_library",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
