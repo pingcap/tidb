@@ -476,11 +476,6 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			}
 		}
 
-		for i := range e.partialInputChs {
-			close(e.partialInputChs[i])
-		}
-		waitGroup.Done()
-
 		// When error happens, some disk files may not be closed.
 		// We need to manually check and close them.
 		for i := range e.partialWorkers {
@@ -490,6 +485,11 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 				}
 			}
 		}
+
+		for i := range e.partialInputChs {
+			close(e.partialInputChs[i])
+		}
+		waitGroup.Done()
 	}()
 
 	for {
