@@ -1385,9 +1385,6 @@ type SessionVars struct {
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
 
-	// TiDBEnableExchangePartition indicates whether to enable exchange partition
-	TiDBEnableExchangePartition bool
-
 	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
@@ -2317,6 +2314,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
+	vars.TiFlashFineGrainedShuffleStreamCount = vardef.DefTiFlashFineGrainedShuffleStreamCount
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
