@@ -282,7 +282,7 @@ func (w *txnCommitWorker) CommitTXN(rr *RowRecords) (count int, errInTxn error) 
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 
 		//txn.SetOption(kv.Enable1PC, true)
-		
+
 		updateTxnEntrySizeLimitIfNeeded(txn)
 
 		// Because TiCDC do not want this kind of change,
