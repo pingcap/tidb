@@ -2606,7 +2606,7 @@ func (m *MemArbitrator) recordDebugProfile() (f DebugFields) {
 		zap.Int64("awaitfree-pool-heapinuse", m.approxAwaitFreePoolUsed().trackedHeap),
 		zap.Int64("tracked-heapinuse", m.avoidance.heapTracked.Load()),
 		zap.Int64("out-of-control", m.avoidance.size.Load()),
-		zap.Int64("reserved-buffer", m.buffer.size.Load()),
+		zap.Int64("buffer", m.buffer.size.Load()),
 		zap.Int64("task-num", m.TaskNum()),
 		zap.Int64("task-priority-low", taskNumByMode[ArbitrationPriorityLow]),
 		zap.Int64("task-priority-medium", taskNumByMode[ArbitrationPriorityMedium]),
@@ -2883,7 +2883,7 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 						zap.Int64("quota-under-reclaim", reclaiming),
 						zap.Int64("rest-quota-to-reclaim", max(0, memToReclaim-reclaiming)),
 					)
-					m.actions.Error("No more running root pool or awaiting task can be terminated to resolve `OOM RISK`",
+					m.actions.Warn("No more running root pool or awaiting task can be terminated to resolve `OOM RISK`",
 						profile.fields[:profile.n]...,
 					)
 				}

@@ -212,9 +212,9 @@ func TestSomeTables(t *testing.T) {
 		memTracker := se2.GetSessionVars().StmtCtx.MemTracker
 		require.True(t,
 			memTracker.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0))
-		memTracker.MemArbitrator.TotalAwaitDurNano.Add(2e9 + 1e8)
-		memTracker.MemArbitrator.AwaitAllocState.Size = 123456789123
-		memTracker.MemArbitrator.AwaitAllocState.StartUtimeNano = 123456789123456
+		memTracker.MemArbitrator.AwaitAlloc.TotalDur.Add(2e9 + 1e8)
+		memTracker.MemArbitrator.AwaitAlloc.Size = 123456789123
+		memTracker.MemArbitrator.AwaitAlloc.StartUtime = 123456789123456
 		require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeDisableName))
 	}
 	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}

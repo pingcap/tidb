@@ -35,16 +35,16 @@ var (
 	GlobalMemArbitratorRuntimeMemMagnifi prometheus.Gauge
 	GlobalMemArbitratorRootPool          prometheus.GaugeVec
 
-	GlobalMemArbitratorActionCount prometheus.CounterVec
-	GlobalMemArbitratorAction      struct {
+	GlobalMemArbitratorEventCounter prometheus.CounterVec
+	GlobalMemArbitratorSubEvents    struct {
 		PoolInitHitDigest   prometheus.Counter
 		PoolInitReserve     prometheus.Counter
 		PoolInitMediumQuota prometheus.Counter
 		PoolInitNone        prometheus.Counter
 	}
 
-	GlobalMemArbitratorTaskExecCount prometheus.CounterVec
-	GlobalMemArbitratorTaskExec      struct {
+	GlobalMemArbitratorTaskExecCounter prometheus.CounterVec
+	GlobalMemArbitratorSubTasks        struct {
 		CancelWaitAverseParse   prometheus.Counter
 		CancelWaitAversePlan    prometheus.Counter
 		CancelStandardModeParse prometheus.Counter
@@ -103,31 +103,31 @@ func InitMemoryMetrics() {
 		Name:      "arbitrator_root_pool",
 		Help:      "Root pool info of the global memory arbitrator",
 	}, []string{LblType})
-	GlobalMemArbitratorTaskExecCount = *metricscommon.NewCounterVec(prometheus.CounterOpts{
+	GlobalMemArbitratorTaskExecCounter = *metricscommon.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: subsystem,
 		Name:      "arbitrator_task_exec",
 		Help:      "Task execution count of the global memory arbitrator",
 	}, []string{LblType})
-	GlobalMemArbitratorActionCount = *metricscommon.NewCounterVec(prometheus.CounterOpts{
+	GlobalMemArbitratorEventCounter = *metricscommon.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: subsystem,
-		Name:      "arbitrator_action",
-		Help:      "Action count of the global memory arbitrator",
+		Name:      "arbitrator_event",
+		Help:      "Event count of the global memory arbitrator",
 	}, []string{LblType})
 
-	GlobalMemArbitratorAction.PoolInitHitDigest = GlobalMemArbitratorActionCount.WithLabelValues("pool-init-hit-digest")
-	GlobalMemArbitratorAction.PoolInitReserve = GlobalMemArbitratorActionCount.WithLabelValues("pool-init-reserve")
-	GlobalMemArbitratorAction.PoolInitMediumQuota = GlobalMemArbitratorActionCount.WithLabelValues("pool-init-medium-quota")
-	GlobalMemArbitratorAction.PoolInitNone = GlobalMemArbitratorActionCount.WithLabelValues("pool-init-none")
+	GlobalMemArbitratorSubEvents.PoolInitHitDigest = GlobalMemArbitratorEventCounter.WithLabelValues("pool-init-hit-digest")
+	GlobalMemArbitratorSubEvents.PoolInitReserve = GlobalMemArbitratorEventCounter.WithLabelValues("pool-init-reserve")
+	GlobalMemArbitratorSubEvents.PoolInitMediumQuota = GlobalMemArbitratorEventCounter.WithLabelValues("pool-init-medium-quota")
+	GlobalMemArbitratorSubEvents.PoolInitNone = GlobalMemArbitratorEventCounter.WithLabelValues("pool-init-none")
 
-	GlobalMemArbitratorTaskExec.CancelWaitAverseParse = GlobalMemArbitratorTaskExecCount.WithLabelValues("cancel-wait-averse-parse")
-	GlobalMemArbitratorTaskExec.CancelWaitAversePlan = GlobalMemArbitratorTaskExecCount.WithLabelValues("cancel-wait-averse-plan")
-	GlobalMemArbitratorTaskExec.CancelStandardModeParse = GlobalMemArbitratorTaskExecCount.WithLabelValues("cancel-standard-mode-parse")
-	GlobalMemArbitratorTaskExec.CancelStandardModePlan = GlobalMemArbitratorTaskExecCount.WithLabelValues("cancel-standard-mode-plan")
-	GlobalMemArbitratorTaskExec.ForceKillParse = GlobalMemArbitratorTaskExecCount.WithLabelValues("force-kill-parse")
-	GlobalMemArbitratorTaskExec.ForceKillPlan = GlobalMemArbitratorTaskExecCount.WithLabelValues("force-kill-plan")
-	GlobalMemArbitratorTaskExec.NoLimit = GlobalMemArbitratorTaskExecCount.WithLabelValues("nolimit")
+	GlobalMemArbitratorSubTasks.CancelWaitAverseParse = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-wait-averse-parse")
+	GlobalMemArbitratorSubTasks.CancelWaitAversePlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-wait-averse-plan")
+	GlobalMemArbitratorSubTasks.CancelStandardModeParse = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-standard-mode-parse")
+	GlobalMemArbitratorSubTasks.CancelStandardModePlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-standard-mode-plan")
+	GlobalMemArbitratorSubTasks.ForceKillParse = GlobalMemArbitratorTaskExecCounter.WithLabelValues("force-kill-parse")
+	GlobalMemArbitratorSubTasks.ForceKillPlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("force-kill-plan")
+	GlobalMemArbitratorSubTasks.NoLimit = GlobalMemArbitratorTaskExecCounter.WithLabelValues("nolimit")
 }
 
 // AddGlobalMemArbitratorCounter adds a counter for the global memory arbitrator.

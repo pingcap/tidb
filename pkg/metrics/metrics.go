@@ -341,8 +341,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalMemArbitratorWaitingTask)
 	prometheus.MustRegister(GlobalMemArbitratorRuntimeMemMagnifi)
 	prometheus.MustRegister(GlobalMemArbitratorRootPool)
-	prometheus.MustRegister(GlobalMemArbitratorActionCount)
-	prometheus.MustRegister(GlobalMemArbitratorTaskExecCount)
+	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
+	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
 }
 
 var mode struct {

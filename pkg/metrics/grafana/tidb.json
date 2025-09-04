@@ -25651,7 +25651,8 @@
           "legend": {
             "avg": false,
             "current": false,
-            "hideEmpty": false,
+            "hideEmpty": true,
+            "hideZero": true,
             "max": false,
             "min": false,
             "show": true,
@@ -25733,8 +25734,8 @@
         {
           "aliasColors": {},
           "bars": false,
-          "dashes": false,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "Events of the global memory arbitrator",
           "fieldConfig": {
@@ -25756,8 +25757,8 @@
             "alignAsTable": true,
             "avg": false,
             "current": true,
-            "hideEmpty": false,
-            "hideZero": false,
+            "hideEmpty": true,
+            "hideZero": true,
             "max": true,
             "min": false,
             "rightSide": true,
@@ -25783,7 +25784,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(increase(tidb_memory_arbitrator_action{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (type, instance)",
+              "expr": "sum(increase(tidb_memory_arbitrator_event{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (type, instance)",
               "format": "time_series",
               "instant": false,
               "interval": "",

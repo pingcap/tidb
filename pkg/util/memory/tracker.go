@@ -942,14 +942,15 @@ type memArbitrator struct {
 			atomic.Bool
 		}
 	}
-	uid               uint64
-	digestID          uint64 // identify the digest profile of root-pool / SQL
-	reserveSize       int64
-	finished          atomic.Bool
-	TotalAwaitDurNano atomic.Int64 // total time spent waiting for memory allocation in nanoseconds
-	AwaitAllocState   struct {
-		StartUtimeNano int64 // start time of the last allocation attempt in nanoseconds.
-		Size           int64 // size of the last allocation attempt in bytes. 0 means no allocation attempt is in progress.
+	uid         uint64
+	digestID    uint64 // identify the digest profile of root-pool / SQL
+	reserveSize int64
+	finished    atomic.Bool
+
+	AwaitAlloc struct {
+		TotalDur   atomic.Int64 // total time spent waiting for memory allocation in nanoseconds
+		StartUtime int64        // start time of the last allocation attempt in nanoseconds.
+		Size       int64        // size of the last allocation attempt in bytes. 0 means no allocation attempt is in progress.
 	}
 }
 
@@ -1030,7 +1031,7 @@ func (t *Tracker) MemArbitration() time.Duration {
 	if m == nil {
 		return 0
 	}
-	return time.Duration(m.TotalAwaitDurNano.Load())
+	return time.Duration(m.AwaitAlloc.TotalDur.Load())
 }
 
 // WaitArbitrate returns the start time and size of the last memory allocation attempt.
@@ -1042,7 +1043,7 @@ func (t *Tracker) WaitArbitrate() (ts time.Time, size int64) {
 	if m == nil {
 		return
 	}
-	return time.Unix(0, m.AwaitAllocState.StartUtimeNano), m.AwaitAllocState.Size
+	return time.Unix(0, m.AwaitAlloc.StartUtime), m.AwaitAlloc.Size
 }
 
 func (m *memArbitrator) growBigBudget() {
@@ -1057,23 +1058,23 @@ func (m *memArbitrator) growBigBudget() {
 			extra := max(((used*2783)>>10)-capacity, upper.Pool.allocAlignSize)
 			extra = min(extra, m.poolAllocStats.MaxPoolAllocUnit)
 			extra = max(extra, used-capacity)
-			m.AwaitAllocState.StartUtimeNano = time.Now().UnixNano()
-			m.AwaitAllocState.Size = extra
+			m.AwaitAlloc.StartUtime = time.Now().UnixNano()
+			m.AwaitAlloc.Size = extra
 			if err := upper.Pool.allocate(extra); err == nil {
 				capacity += extra
 				m.setBigBudgetCap(capacity)
 				m.setBigBudgetGrowThreshold(max(capacity*95/100, used))
 			}
-			duration = time.Now().UnixNano() - m.AwaitAllocState.StartUtimeNano
-			m.AwaitAllocState.StartUtimeNano = 0
-			m.AwaitAllocState.Size = 0
+			duration = time.Now().UnixNano() - m.AwaitAlloc.StartUtime
+			m.AwaitAlloc.StartUtime = 0
+			m.AwaitAlloc.Size = 0
 		}
 
 		upper.Unlock()
 	}
 
 	if duration > 0 {
-		m.TotalAwaitDurNano.Add(duration)
+		m.AwaitAlloc.TotalDur.Add(duration)
 		metrics.GlobalMemArbitrationDuration.Observe(time.Duration(duration).Seconds())
 	}
 }
@@ -1106,19 +1107,19 @@ func (m *memArbitrator) initBigBudget() {
 
 	if m.reserveSize > 0 {
 		m.reserveBigBudget(m.reserveSize)
-		metrics.GlobalMemArbitratorAction.PoolInitReserve.Inc()
+		metrics.GlobalMemArbitratorSubEvents.PoolInitReserve.Inc()
 	} else if m.ctx.PrevMaxMem > 0 {
-		metrics.GlobalMemArbitratorAction.PoolInitHitDigest.Inc()
+		metrics.GlobalMemArbitratorSubEvents.PoolInitHitDigest.Inc()
 		m.reserveBigBudget(m.ctx.PrevMaxMem)
 	} else if m.bigBudgetUsed() > m.poolAllocStats.SmallPoolLimit {
 		if initCap := m.SuggestPoolInitCap(); initCap != 0 {
 			m.reserveBigBudget(initCap)
-			metrics.GlobalMemArbitratorAction.PoolInitMediumQuota.Inc()
+			metrics.GlobalMemArbitratorSubEvents.PoolInitMediumQuota.Inc()
 		}
 	}
 
 	if m.bigBudgetCap() == 0 {
-		metrics.GlobalMemArbitratorAction.PoolInitNone.Inc()
+		metrics.GlobalMemArbitratorSubEvents.PoolInitNone.Inc()
 	}
 
 	m.budget.useBig.Store(true)
@@ -1134,22 +1135,22 @@ func (m *memArbitrator) reserveBigBudget(newCap int64) {
 
 		capacity := m.bigBudgetCap()
 		extra := max(newCap*1053/1000, m.bigBudgetGrowThreshold(), capacity, m.bigBudgetUsed()) - capacity
-		m.AwaitAllocState.StartUtimeNano = time.Now().UnixNano()
-		m.AwaitAllocState.Size = extra
+		m.AwaitAlloc.StartUtime = time.Now().UnixNano()
+		m.AwaitAlloc.Size = extra
 		if err := upper.Pool.allocate(extra); err == nil {
 			capacity += extra
 			m.setBigBudgetCap(capacity)
 			m.setBigBudgetGrowThreshold(capacity * 95 / 100)
 		}
-		duration = time.Now().UnixNano() - m.AwaitAllocState.StartUtimeNano
-		m.AwaitAllocState.StartUtimeNano = 0
-		m.AwaitAllocState.Size = 0
+		duration = time.Now().UnixNano() - m.AwaitAlloc.StartUtime
+		m.AwaitAlloc.StartUtime = 0
+		m.AwaitAlloc.Size = 0
 
 		upper.Unlock()
 	}
 
 	if duration > 0 {
-		m.TotalAwaitDurNano.Add(duration)
+		m.AwaitAlloc.TotalDur.Add(duration)
 		metrics.GlobalMemArbitrationDuration.Observe(time.Duration(duration).Seconds())
 	}
 }

@@ -39,9 +39,9 @@ func TestLogFormat(t *testing.T) {
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
 	require.True(t,
 		mem.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0))
-	mem.MemArbitrator.TotalAwaitDurNano.Add(2e9 + 1e8)
-	mem.MemArbitrator.AwaitAllocState.Size = 123456789123
-	mem.MemArbitrator.AwaitAllocState.StartUtimeNano = 123456789123456
+	mem.MemArbitrator.AwaitAlloc.TotalDur.Add(2e9 + 1e8)
+	mem.MemArbitrator.AwaitAlloc.Size = 123456789123
+	mem.MemArbitrator.AwaitAlloc.StartUtime = 123456789123456
 	mockTooLongQuery := make([]byte, 1024*9)
 
 	var refCount stmtctx.ReferenceCount = 0

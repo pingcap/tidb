@@ -107,7 +107,7 @@ func reportGlobalMemArbitratorMetrics() {
 		}
 		setQuota("allocated", m.allocated())
 		setQuota("out-of-control", m.avoidance.size.Load())
-		setQuota("buffer", m.reservedBuffer())
+		setQuota("buffer", m.buffer.size.Load())
 		setQuota("tracked-heap", m.avoidance.heapTracked.Load())
 		setQuota("awaitfree-pool-cap", m.awaitFreePoolCap())
 		setQuota("awaitfree-pool-used", m.approxAwaitFreePoolUsed().quota)
@@ -122,8 +122,7 @@ func reportGlobalMemArbitratorMetrics() {
 			}
 			setQuota("blocked-at", blockedAt)
 		}
-		setQuota("medium(pool-max-mem)", m.poolMediumQuota())
-		setQuota("max(pool-max-mem)", m.buffer.size.Load())
+		setQuota("medium-pool", m.poolMediumQuota())
 	}
 	{
 		memMagnif := float64(0)
@@ -145,52 +144,52 @@ func reportGlobalMemArbitratorMetrics() {
 		setRootPool("small-running", globalArbitrator.metrics.smallPool.Load())
 		setRootPool("into-big", globalArbitrator.metrics.bigPool.into.Load())
 	}
-	// counter
-	{
-		oriExecMetrics := &globalArbitrator.metrics.last
+	{ // counter
 		newExecMetrics := m.ExecMetrics()
-
-		addTaskExecCount := func(label string, value int64) {
-			if value <= 0 {
-				return
-			}
-			metrics.AddGlobalMemArbitratorCounter(metrics.GlobalMemArbitratorTaskExecCount, label, value)
-		}
-		addActionCount := func(label string, value int64) {
-			if value <= 0 {
-				return
-			}
-			metrics.AddGlobalMemArbitratorCounter(metrics.GlobalMemArbitratorActionCount, label, value)
-		}
-
-		addTaskExecCount("success", (newExecMetrics.Task.Succ - oriExecMetrics.Task.Succ))
-		addTaskExecCount("fail", (newExecMetrics.Task.Fail - oriExecMetrics.Task.Fail))
-		addTaskExecCount("success-prio-low", (newExecMetrics.Task.SuccByPriority[ArbitrationPriorityLow] - oriExecMetrics.Task.SuccByPriority[ArbitrationPriorityLow]))
-		addTaskExecCount("success-prio-medium", (newExecMetrics.Task.SuccByPriority[ArbitrationPriorityMedium] - oriExecMetrics.Task.SuccByPriority[ArbitrationPriorityMedium]))
-		addTaskExecCount("success-prio-high", (newExecMetrics.Task.SuccByPriority[ArbitrationPriorityHigh] - oriExecMetrics.Task.SuccByPriority[ArbitrationPriorityHigh]))
-		addTaskExecCount("cancel-standard-mode", (newExecMetrics.Cancel.StandardMode - oriExecMetrics.Cancel.StandardMode))
-		addTaskExecCount("cancel-wait-averse", (newExecMetrics.Cancel.WaitAverse - oriExecMetrics.Cancel.WaitAverse))
-		addTaskExecCount("cancel-prio-low", (newExecMetrics.Cancel.PriorityMode[ArbitrationPriorityLow] - oriExecMetrics.Cancel.PriorityMode[ArbitrationPriorityLow]))
-		addTaskExecCount("cancel-prio-medium", (newExecMetrics.Cancel.PriorityMode[ArbitrationPriorityMedium] - oriExecMetrics.Cancel.PriorityMode[ArbitrationPriorityMedium]))
-		addTaskExecCount("cancel-prio-high", (newExecMetrics.Cancel.PriorityMode[ArbitrationPriorityHigh] - oriExecMetrics.Cancel.PriorityMode[ArbitrationPriorityHigh]))
-		addTaskExecCount("kill-prio-low", (newExecMetrics.Risk.OOMKill[ArbitrationPriorityLow] - oriExecMetrics.Risk.OOMKill[ArbitrationPriorityLow]))
-		addTaskExecCount("kill-prio-medium", (newExecMetrics.Risk.OOMKill[ArbitrationPriorityMedium] - oriExecMetrics.Risk.OOMKill[ArbitrationPriorityMedium]))
-		addTaskExecCount("kill-prio-high", (newExecMetrics.Risk.OOMKill[ArbitrationPriorityHigh] - oriExecMetrics.Risk.OOMKill[ArbitrationPriorityHigh]))
-
-		addActionCount("mem-risk", (newExecMetrics.Risk.Mem - oriExecMetrics.Risk.Mem))
-		addActionCount("oom-risk", (newExecMetrics.Risk.OOM - oriExecMetrics.Risk.OOM))
-		addActionCount("awaitfree-pool-grow-succ", (newExecMetrics.AwaitFree.Succ - oriExecMetrics.AwaitFree.Succ))
-		addActionCount("awaitfree-pool-grow-fail", (newExecMetrics.AwaitFree.Fail - oriExecMetrics.AwaitFree.Fail))
-		addActionCount("awaitfree-pool-shrink", (newExecMetrics.AwaitFree.Shrink - oriExecMetrics.AwaitFree.Shrink))
-		addActionCount("awaitfree-pool-force-shrink", (newExecMetrics.AwaitFree.ForceShrink - oriExecMetrics.AwaitFree.ForceShrink))
-		addActionCount("gc", (newExecMetrics.Action.GC - oriExecMetrics.Action.GC))
-		addActionCount("update-memstats", (newExecMetrics.Action.UpdateRuntimeMemStats - oriExecMetrics.Action.UpdateRuntimeMemStats))
-		addActionCount("record-memstate-succ", (newExecMetrics.Action.RecordMemState.Succ - oriExecMetrics.Action.RecordMemState.Succ))
-		addActionCount("record-memstate-fail", (newExecMetrics.Action.RecordMemState.Fail - oriExecMetrics.Action.RecordMemState.Fail))
-		addActionCount("shrink-digest-cache", (newExecMetrics.ShrinkDigest - oriExecMetrics.ShrinkDigest))
-
+		doReportGlobalMemArbitratorCounter(&globalArbitrator.metrics.last.execMetricsCounter, &newExecMetrics, false)
 		globalArbitrator.metrics.last.execMetricsCounter = newExecMetrics
 	}
+}
+
+func doReportGlobalMemArbitratorCounter(oriExecMetrics, newExecMetrics *execMetricsCounter, init bool) {
+	addTaskExecCount := func(label string, value int64) {
+		if value <= 0 && !init {
+			return
+		}
+		metrics.AddGlobalMemArbitratorCounter(metrics.GlobalMemArbitratorTaskExecCounter, label, value)
+	}
+	addEventCount := func(label string, value int64) {
+		if value <= 0 && !init {
+			return
+		}
+		metrics.AddGlobalMemArbitratorCounter(metrics.GlobalMemArbitratorEventCounter, label, value)
+	}
+
+	addTaskExecCount("success", (newExecMetrics.Task.Succ - oriExecMetrics.Task.Succ))
+	addTaskExecCount("fail", (newExecMetrics.Task.Fail - oriExecMetrics.Task.Fail))
+	addTaskExecCount("success-prio-low", (newExecMetrics.Task.SuccByPriority[ArbitrationPriorityLow] - oriExecMetrics.Task.SuccByPriority[ArbitrationPriorityLow]))
+	addTaskExecCount("success-prio-medium", (newExecMetrics.Task.SuccByPriority[ArbitrationPriorityMedium] - oriExecMetrics.Task.SuccByPriority[ArbitrationPriorityMedium]))
+	addTaskExecCount("success-prio-high", (newExecMetrics.Task.SuccByPriority[ArbitrationPriorityHigh] - oriExecMetrics.Task.SuccByPriority[ArbitrationPriorityHigh]))
+	addTaskExecCount("cancel-standard-mode", (newExecMetrics.Cancel.StandardMode - oriExecMetrics.Cancel.StandardMode))
+	addTaskExecCount("cancel-wait-averse", (newExecMetrics.Cancel.WaitAverse - oriExecMetrics.Cancel.WaitAverse))
+	addTaskExecCount("cancel-prio-low", (newExecMetrics.Cancel.PriorityMode[ArbitrationPriorityLow] - oriExecMetrics.Cancel.PriorityMode[ArbitrationPriorityLow]))
+	addTaskExecCount("cancel-prio-medium", (newExecMetrics.Cancel.PriorityMode[ArbitrationPriorityMedium] - oriExecMetrics.Cancel.PriorityMode[ArbitrationPriorityMedium]))
+	addTaskExecCount("cancel-prio-high", (newExecMetrics.Cancel.PriorityMode[ArbitrationPriorityHigh] - oriExecMetrics.Cancel.PriorityMode[ArbitrationPriorityHigh]))
+	addTaskExecCount("kill-prio-low", (newExecMetrics.Risk.OOMKill[ArbitrationPriorityLow] - oriExecMetrics.Risk.OOMKill[ArbitrationPriorityLow]))
+	addTaskExecCount("kill-prio-medium", (newExecMetrics.Risk.OOMKill[ArbitrationPriorityMedium] - oriExecMetrics.Risk.OOMKill[ArbitrationPriorityMedium]))
+	addTaskExecCount("kill-prio-high", (newExecMetrics.Risk.OOMKill[ArbitrationPriorityHigh] - oriExecMetrics.Risk.OOMKill[ArbitrationPriorityHigh]))
+
+	addEventCount("mem-risk", (newExecMetrics.Risk.Mem - oriExecMetrics.Risk.Mem))
+	addEventCount("oom-risk", (newExecMetrics.Risk.OOM - oriExecMetrics.Risk.OOM))
+	addEventCount("awaitfree-pool-grow-succ", (newExecMetrics.AwaitFree.Succ - oriExecMetrics.AwaitFree.Succ))
+	addEventCount("awaitfree-pool-grow-fail", (newExecMetrics.AwaitFree.Fail - oriExecMetrics.AwaitFree.Fail))
+	addEventCount("awaitfree-pool-shrink", (newExecMetrics.AwaitFree.Shrink - oriExecMetrics.AwaitFree.Shrink))
+	addEventCount("awaitfree-pool-force-shrink", (newExecMetrics.AwaitFree.ForceShrink - oriExecMetrics.AwaitFree.ForceShrink))
+	addEventCount("gc", (newExecMetrics.Action.GC - oriExecMetrics.Action.GC))
+	addEventCount("update-memstats", (newExecMetrics.Action.UpdateRuntimeMemStats - oriExecMetrics.Action.UpdateRuntimeMemStats))
+	addEventCount("record-memstate-succ", (newExecMetrics.Action.RecordMemState.Succ - oriExecMetrics.Action.RecordMemState.Succ))
+	addEventCount("record-memstate-fail", (newExecMetrics.Action.RecordMemState.Fail - oriExecMetrics.Action.RecordMemState.Fail))
+	addEventCount("shrink-digest-cache", (newExecMetrics.ShrinkDigest - oriExecMetrics.ShrinkDigest))
 }
 
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
@@ -324,6 +323,8 @@ func SetGlobalMemArbitratorWorkMode(str string) bool {
 				metrics.GlobalMemArbitratorWorkMode.WithLabelValues(mode.String()).Set(0)
 			}
 			metrics.GlobalMemArbitratorWorkMode.WithLabelValues(GetGlobalMemArbitratorWorkModeText()).Set(1)
+			execMetricsCounter := &globalArbitrator.metrics.last.execMetricsCounter
+			doReportGlobalMemArbitratorCounter(execMetricsCounter, execMetricsCounter, true)
 			globalArbitrator.metrics.workModeInit.Store(true)
 		}
 

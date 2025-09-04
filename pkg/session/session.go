@@ -1581,11 +1581,11 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 		uid := s.sessionVars.ConnectionID
 		intoErrBeforeExec := func() error {
 			if s.sessionVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable {
-				metrics.GlobalMemArbitratorTaskExec.CancelWaitAverseParse.Inc()
+				metrics.GlobalMemArbitratorSubTasks.CancelWaitAverseParse.Inc()
 				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+", path=ParseSQL", uid)
 			}
 			if arbitratorMode == memory.ArbitratorModeStandard {
-				metrics.GlobalMemArbitratorTaskExec.CancelStandardModeParse.Inc()
+				metrics.GlobalMemArbitratorSubTasks.CancelStandardModeParse.Inc()
 				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+", path=ParseSQL", uid)
 			}
 			return nil
@@ -1597,7 +1597,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 			}
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
-					metrics.GlobalMemArbitratorTaskExec.ForceKillParse.Inc()
+					metrics.GlobalMemArbitratorSubTasks.ForceKillParse.Inc()
 					return nil, nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+", path=ParseSQL", uid)
 				}
 				time.Sleep(time.Millisecond)
@@ -2368,11 +2368,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		commonMemQuota = 75761 * sessVars.MemArbitrator.TokenCnt
 		intoErrBeforeExec := func() error {
 			if enableWaitAverse {
-				metrics.GlobalMemArbitratorTaskExec.CancelWaitAversePlan.Inc()
+				metrics.GlobalMemArbitratorSubTasks.CancelWaitAversePlan.Inc()
 				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+", path=CompilePlan", sessVars.ConnectionID)
 			}
 			if arbitratorMode == memory.ArbitratorModeStandard {
-				metrics.GlobalMemArbitratorTaskExec.CancelStandardModePlan.Inc()
+				metrics.GlobalMemArbitratorSubTasks.CancelStandardModePlan.Inc()
 				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+", path=CompilePlan", sessVars.ConnectionID)
 			}
 			return nil
@@ -2384,7 +2384,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			}
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
-					metrics.GlobalMemArbitratorTaskExec.ForceKillPlan.Inc()
+					metrics.GlobalMemArbitratorSubTasks.ForceKillPlan.Inc()
 					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+", path=CompilePlan", sessVars.ConnectionID)
 				}
 				time.Sleep(time.Millisecond)
@@ -2459,7 +2459,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	defer logStmt(stmt, s) // defer until txnStartTS is set
 
 	if sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorNolimit {
-		metrics.GlobalMemArbitratorTaskExec.NoLimit.Inc()
+		metrics.GlobalMemArbitratorSubTasks.NoLimit.Inc()
 	}
 	if execUseArbitrator {
 		releaseCommonQuota()
