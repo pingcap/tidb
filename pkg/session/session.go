@@ -3699,11 +3699,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			failToLoadOrParseSQLFile = true
 		}
 
-		for _, sql := range Create4KDatabasesAndGrant {
-			config.GetGlobalConfig().Security.SkipGrantTable = true
-			doReentrantDDL(ses[9], sql, dbterror.ErrDupKeyName)
-			config.GetGlobalConfig().Security.SkipGrantTable = false
-		}
+		go func() {
+			for _, sql := range Create4KDatabasesAndGrant {
+				config.GetGlobalConfig().Security.SkipGrantTable = true
+				doReentrantDDL(ses[9], sql, dbterror.ErrDupKeyName)
+				config.GetGlobalConfig().Security.SkipGrantTable = false
+			}
+		}()
 	}
 
 	// setup extract Handle
