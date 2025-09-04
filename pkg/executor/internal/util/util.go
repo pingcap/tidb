@@ -33,7 +33,7 @@ func CheckNoLeakFiles(t *testing.T) {
 	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
 
 	// TODO remove it
-	if err := os.MkdirAll(config.GetGlobalConfig().TempStoragePath, 0755); err != nil {
+	if err := os.MkdirAll(config.GetGlobalConfig().TempStoragePath, 0750); err != nil {
 		panic(err)
 	}
 
