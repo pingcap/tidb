@@ -265,8 +265,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		//innerTable := children[1]
-		//outerTable := children[0]
 		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
 			p.Children()[0].Schema(), p.Children()[1].Schema(),
 			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
