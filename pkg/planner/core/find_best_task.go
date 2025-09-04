@@ -1188,7 +1188,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if !comparable1 && !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	// Compare index and total comparison factors - but make sure we have more than 1 predicate
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
@@ -1270,8 +1269,6 @@ func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqO
 
 func isFullIndexMatch(candidate *candidatePath) bool {
 	// Check if the DNF condition is a full match
-	// TO-DO: Implement full index match logic for DNF conditions, since this code may
-	// incorrectly identify predicates that are not index predicates.
 	if candidate.path.IsDNFCond && candidate.hasOnlyEqualPredicatesInDNF() {
 		return candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns)
 	}
