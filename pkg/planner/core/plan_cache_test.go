@@ -266,6 +266,9 @@ func TestIssue53872(t *testing.T) {
 	tk.MustExec(`create table t1(id bigint primary key, name varchar(100));`)
 	tk.MustExec(`INSERT INTO t1 (id, name) VALUES (1, 'Alice'),(2, 'Bob'),(3, 'Charlie'),(4, 'David'),(5, 'Eve'),(6, 'Frank'),(7, 'Grace'),(8, 'Hannah'),(9, 'Ivy'),(10, 'Jack'),(11, null);`)
 	tk.MustExec(`prepare stmt from 'select name, ? from t1 group by name, ? order by name';`)
+	tk.MustExec(`set @a=1, @b=0;`)
+	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
+		`<nil> 1`, `Alice 1`, `Bob 1`, `Charlie 1`, `David 1`, `Eve 1`, `Frank 1`, `Grace 1`, `Hannah 1`, `Ivy 1`, `Jack 1`))
 	tk.MustExec(`set @a="0", @b="0";`)
 	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
 		`<nil> 0`, `Alice 0`, `Bob 0`, `Charlie 0`, `David 0`, `Eve 0`, `Frank 0`, `Grace 0`, `Hannah 0`, `Ivy 0`, `Jack 0`))
@@ -308,6 +311,12 @@ func TestIssue53872(t *testing.T) {
 	tk.MustExecToErr(`execute stmt using @a;`) //  Unknown column '2' in 'group statement'
 	tk.MustExec(`set @a=-1;`)
 	tk.MustQuery(`execute stmt using @a;`).Check(testkit.Rows(
+		`<nil>`, `Alice`, `Bob`, `Charlie`, `David`, `Eve`, `Frank`, `Grace`, `Hannah`, `Ivy`, `Jack`))
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows(
+		`<nil>`, `Alice`, `Bob`, `Charlie`, `David`, `Eve`, `Frank`, `Grace`, `Hannah`, `Ivy`, `Jack`))
+	tk.MustExec(`set @a=0;`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows(
 		`<nil>`, `Alice`, `Bob`, `Charlie`, `David`, `Eve`, `Frank`, `Grace`, `Hannah`, `Ivy`, `Jack`))
 }
 
