@@ -464,6 +464,10 @@ const (
 	// version 251
 	// Add group_key to mysql.tidb_import_jobs.
 	version251 = 251
+
+	// version 252
+	// create database / grant for test
+	version252 = 252
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -477,7 +481,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version251
+var currentBootstrapVersion int64 = version252
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -653,6 +657,7 @@ var (
 		{version: version249, fn: upgradeToVer249},
 		{version: version250, fn: upgradeToVer250},
 		{version: version251, fn: upgradeToVer251},
+		{version: version252, fn: upgradeToVer252},
 	}
 )
 
@@ -2017,4 +2022,10 @@ func upgradeToVer250(s sessionapi.Session, _ int64) {
 func upgradeToVer251(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN `group_key` VARCHAR(256) NOT NULL DEFAULT '' AFTER `created_by`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_group_key(group_key)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer252(s sessionapi.Session, _ int64) {
+	for _, sql := range Create4KDatabasesAndGrant {
+		doReentrantDDL(s, sql, dbterror.ErrDupKeyName)
+	}
 }
