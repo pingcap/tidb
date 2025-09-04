@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -305,9 +304,6 @@ type ParquetParser struct {
 
 	lastRow Row
 	logger  log.Logger
-
-	memoryUsage int
-	memLimiter  *membuf.Limiter
 }
 
 // Init initializes the Parquet parser and allocate necessary buffers
@@ -406,10 +402,6 @@ func (pp *ParquetParser) Close() error {
 	defer func() {
 		if a, ok := pp.alloc.(interface{ Close() }); ok {
 			a.Close()
-		}
-
-		if pp.memLimiter != nil {
-			pp.memLimiter.Release(pp.memoryUsage)
 		}
 	}()
 
@@ -541,17 +533,10 @@ func NewParquetParser(
 	path string,
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
-	// Acquire memory limiter first
-	memoryUsage := min(meta.MemoryUsage, readerMemoryLimit)
-	if readerMemoryLimiter != nil {
-		readerMemoryLimiter.Acquire(memoryUsage)
-	}
-
 	logger := log.Wrap(logutil.Logger(ctx))
 	logger.Info("Get memory usage of parquet reader",
 		zap.String("file", path),
-		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
-		zap.String("memory limit", fmt.Sprintf("%d MB", readerMemoryLimit>>20)),
+		zap.String("memory usage", fmt.Sprintf("%d MB", meta.MemoryUsage>>20)),
 	)
 
 	workerPool := &errgroup.Group{}
@@ -568,9 +553,15 @@ func NewParquetParser(
 		}
 	}
 
-	allocator := GetAllocator()
+	var allocator memory.Allocator
+	allocator = memory.NewGoAllocator()
+	if meta.MemoryPool != nil {
+		allocator = NewAppendOnlyAllocator(meta.MemoryPool)
+	}
+
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
+	prop.BufferSize = 1024
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop), file.WithWorkerPool(workerPool))
 	if err != nil {
@@ -627,8 +618,6 @@ func NewParquetParser(
 		columnNames: columnNames,
 		alloc:       allocator,
 		logger:      logger,
-		memoryUsage: memoryUsage,
-		memLimiter:  readerMemoryLimiter,
 		rowPool:     &pool,
 	}
 	if err := parser.Init(meta.Loc); err != nil {
@@ -653,7 +642,10 @@ func SampleStatisticsFromParquet(
 		return 0, 0, err
 	}
 
-	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, GetDefaultParquetMeta())
+	meta := GetDefaultParquetMeta()
+	meta.MemoryPool = GetPool(2 << 30) // use up to 2GB memory for sampling
+
+	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, meta)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -689,8 +681,8 @@ func SampleStatisticsFromParquet(
 	avgRowSize = float64(rowSize) / float64(rowCount)
 
 	alloc := parser.alloc
-	defaultAlloc, _ := alloc.(*defaultAllocator)
-	memoryUsage = defaultAlloc.Allocated() + defaultArenaSize
+	a, _ := alloc.(*appendOnlyAllocator)
+	memoryUsage = a.Allocated() + arenaSize
 
 	parser.logger.Info("Get memory usage of parquet reader",
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),

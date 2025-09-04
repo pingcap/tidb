@@ -76,6 +76,7 @@ type importStepExecutor struct {
 	wg           sync.WaitGroup
 
 	summary execute.SubtaskSummary
+	memPool *mydump.Pool
 }
 
 func getTableImporter(
@@ -113,11 +114,8 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	}
 	s.tableImporter = tableImporter
 
-	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
-		mydump.ConfigureReaderLimitForParquet(mydump.ImportIntoReaderUsage)
-		if s.tableImporter.EncodeThreadCnt > 0 {
-			s.tableImporter.Plan.ThreadCnt = s.tableImporter.EncodeThreadCnt
-		}
+	if s.taskMeta.Plan.Format == importer.DataFormatParquet && s.tableImporter.EncodeThreadCnt > 0 {
+		s.tableImporter.Plan.ThreadCnt = s.tableImporter.EncodeThreadCnt
 	}
 
 	// we need this sub context since Cleanup which wait on this routine is called
@@ -199,8 +197,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
+	if s.memPool == nil {
+		s.memPool = mydump.GetPool(int(s.GetResource().Mem.Capacity()))
+	}
+
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()), s.memPool)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -311,10 +313,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 }
 
 func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
-	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
-		mydump.ReleaseMemoryForParquet()
-	}
-
 	s.logger.Info("cleanup subtask env")
 	s.importCancel()
 	s.wg.Wait()

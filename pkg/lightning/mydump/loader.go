@@ -94,6 +94,7 @@ type MDTableMeta struct {
 type ParquetFileMeta struct {
 	Rows        int64 // row count
 	MemoryUsage int   // memory usage for reader
+	MemoryPool  *Pool
 	Loc         *time.Location
 }
 

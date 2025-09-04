@@ -306,8 +306,11 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			p.collector.Add(delta, int64(rowCount))
 		}
 
-		avgRowSize := delta / int64(rowCount)
-		rowBatchSize := MinDeliverBytes * 3 / 2 / uint64(avgRowSize)
+		rowBatchSize := MinDeliverRowCnt
+		if delta > int64(rowCount) {
+			avgRowSize := delta / int64(rowCount)
+			rowBatchSize = min(MinDeliverRowCnt, int(MinDeliverBytes)*3/2/int(avgRowSize))
+		}
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
 		// not touch it anymore.

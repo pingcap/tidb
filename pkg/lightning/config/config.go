@@ -334,9 +334,6 @@ type Lightning struct {
 	CheckRequirements bool   `toml:"check-requirements" json:"check-requirements"`
 	MetaSchemaName    string `toml:"meta-schema-name" json:"meta-schema-name"`
 
-	// max memory used for memory arena used for parquet file
-	MaxMemoryUsage int `toml:"max-memory-usage" json:"max-memory-usage"`
-
 	MaxError MaxError `toml:"max-error" json:"max-error"`
 	// deprecated, use Conflict.MaxRecordRows instead
 	MaxErrorRecords    int64  `toml:"max-error-records" json:"max-error-records"`
@@ -354,18 +351,12 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = l.RegionConcurrency
 		}
-		if l.MaxMemoryUsage == 0 {
-			l.MaxMemoryUsage = defaultMemoryUsageTiDB
-		}
 	case BackendLocal:
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = defaultIndexConcurrency
 		}
 		if l.TableConcurrency == 0 {
 			l.TableConcurrency = DefaultTableConcurrency
-		}
-		if l.MaxMemoryUsage == 0 {
-			l.MaxMemoryUsage = defaultMemoryUsageLocal
 		}
 		if len(l.MetaSchemaName) == 0 {
 			l.MetaSchemaName = defaultMetaSchemaName
@@ -1459,7 +1450,6 @@ func NewConfig() *Config {
 			RegionConcurrency:  runtime.NumCPU(),
 			TableConcurrency:   0,
 			IndexConcurrency:   0,
-			MaxMemoryUsage:     40,
 			IOConcurrency:      5,
 			CheckRequirements:  true,
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,

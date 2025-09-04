@@ -24,8 +24,10 @@ import (
 )
 
 func TestSimpleAllocator(t *testing.T) {
-	defaultArenaSize = 16 << 20
-	a := getSimpleAllocator(nil)
+	arenaSize = 16 << 20
+
+	pool := GetPool(16 << 23)
+	a := NewAppendOnlyAllocator(pool)
 
 	var (
 		lk sync.Mutex
@@ -46,14 +48,14 @@ func TestSimpleAllocator(t *testing.T) {
 			default:
 				lk.Lock()
 				bufSize := allocSize[rand.Intn(len(allocSize))]
-				buf := a.allocate(bufSize)
+				buf := a.Allocate(bufSize)
 				lk.Unlock()
 
 				// hold for sometimes
 				time.Sleep(time.Millisecond)
 
 				lk.Lock()
-				a.free(buf)
+				a.Free(buf)
 				lk.Unlock()
 			}
 		}
@@ -65,4 +67,6 @@ func TestSimpleAllocator(t *testing.T) {
 		go allocFunc(ctx)
 	}
 	wg.Wait()
+
+	a.check()
 }

@@ -15,113 +15,94 @@
 package mydump
 
 import (
-	"math"
-	"runtime"
-	"runtime/debug"
-	"sync"
 	"unsafe"
 
-	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	tidbmemory "github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
 )
-
-// ImportIntoReaderUsage is the percentage of memory usage for parquet reader
-const ImportIntoReaderUsage = 40
 
 var (
-	// size of each arena
-	defaultArenaSize = 256 << 20
+	// arenaSize is the size of each arena
+	arenaSize = 64 << 20
 
-	// memory limit for parquet reader
-	readerMemoryLimit   int
-	readerMemoryLimiter *membuf.Limiter
+	// parserMemoryPercent defines the percentage of memory used for parser
+	parserMemoryPercent = 0.3
 
-	// globalPool is used for all parquet import tasks.
-	// We use importCount to track and release memory.
-	lk          sync.Mutex
-	globalPool  *membuf.Pool
-	importCount int
+	// parquetWriterPercent defines the percentage of memory used for parquet writer
+	parquetWriterPercent = 0.4
 
-	// GetArena creates a new arena
-	GetArena func(*membuf.Buffer) arena
+	// otherWriterPercent defines the percentage of memory used for csv writer
+	otherWriterPercent = 0.5
 )
 
-// ConfigureReaderLimitForParquet set the memory limit for parquet reader.
-// Remember to call ReleaseMemoryForParquet to free the memory.
-func ConfigureReaderLimitForParquet(percent int) {
-	lk.Lock()
-	defer lk.Unlock()
-
-	importCount++
-	if importCount > 1 {
-		return
-	}
-
-	// Set a hard limit to percent, which is derived from manual testing.
-	percent = min(percent, 75)
-
-	memTotal, err := tidbmemory.MemTotal()
-	if err != nil {
-		log.L().Warn("Fail to get total memory")
-		// Set limit to int max, which means no limiter
-		memTotal = math.MaxInt32
-	}
-	readerMemoryLimit = int(memTotal) * percent / 100
-	readerMemoryLimiter = membuf.NewLimiter(readerMemoryLimit)
-
-	gcPercent := (10000/percent - 100) / 10 * 10
-	gcPercent = max(gcPercent, 10)
-	gcPercent = min(gcPercent, 50)
-	debug.SetGCPercent(gcPercent)
-
-	globalPool = membuf.NewPool(
-		membuf.WithBlockNum(readerMemoryLimit/defaultArenaSize),
-		membuf.WithBlockSize(defaultArenaSize),
-	)
-
-	log.L().Info("set memory limit",
-		zap.Int("total memory", int(memTotal)),
-		zap.Int("memory limit", readerMemoryLimit),
-		zap.Int("GC Percentage", gcPercent),
-	)
-}
-
-// ReleaseMemoryForParquet releases memory allocated for parquet readers.
-func ReleaseMemoryForParquet() {
-	lk.Lock()
-	defer lk.Unlock()
-
-	importCount--
-	if importCount == 0 {
-		globalPool.Destroy()
-		globalPool = nil
-		debug.SetGCPercent(100)
-		//nolint: all_revive,revive
-		runtime.GC()
+// GetMemoryForWriter gets the memory for writer according to the file type.
+func GetMemoryForWriter(tp string, memPerCon int) int {
+	switch tp {
+	case "parquet":
+		return int(float64(memPerCon) * parquetWriterPercent)
+	default:
+		return int(float64(memPerCon) * otherWriterPercent)
 	}
 }
 
-// AdjustEncodeThreadCnt adjust the concurrency in encode&sort step for parquet file.
-// It's used for IMPORT INTO.
-func AdjustEncodeThreadCnt(
-	memoryUsage, threadCnt int,
-) int {
-	memTotal, err := tidbmemory.MemTotal()
+// AdjustEncodeThreadCnt adjusts the concurrency in encode&sort step for parquet IMPORT INTO.
+func AdjustEncodeThreadCnt(memoryPerFile, threadCnt int) int {
+	totalCPU := cpu.GetCPUCount()
+	totalMem, err := tidbmemory.MemTotal()
 	if err != nil {
 		return threadCnt
 	}
 
-	return max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsage, threadCnt), 1)
+	if totalCPU <= 0 || totalMem <= 0 {
+		return threadCnt
+	}
+
+	// Use half of memory per conn for parquet parser
+	memForImport := int(float64(int(totalMem)/totalCPU)*parserMemoryPercent) * threadCnt
+	optimalThreads := memForImport / memoryPerFile
+	return max(1, min(optimalThreads, threadCnt))
 }
 
-func init() {
-	GetArena = getSimpleAllocator
+// Pool manages a pool of reusable byte buffers to reduce memory allocation overhead.
+// It uses a buffered channel to store and reuse buffers efficiently.
+type Pool struct {
+	blockSize  int
+	blockCache chan []byte
 }
 
-// Get the address of a buffer, return 0 if the buffer is nil
+// GetPool gets a pool with the given capacity.
+func GetPool(capacity int) *Pool {
+	mem := int(float64(capacity) * parserMemoryPercent)
+	return &Pool{
+		blockSize:  arenaSize,
+		blockCache: make(chan []byte, (mem+arenaSize-1)/arenaSize),
+	}
+}
+
+// Get retrieves a buffer from the pool or allocates a new one if the pool is empty.
+func (p *Pool) Get() []byte {
+	select {
+	case buf := <-p.blockCache:
+		return buf
+	default:
+		return make([]byte, p.blockSize)
+	}
+}
+
+func (p *Pool) Put(buf []byte) {
+	if buf == nil {
+		return
+	}
+
+	select {
+	case p.blockCache <- buf:
+	default:
+		// Pool is full, discard the buffer
+	}
+}
+
+// addressOf returns the address of a buffer, return 0 if the buffer is nil or empty.
+// This is used to create unique identifiers for tracking buffer allocations.
 func addressOf(buf []byte) uintptr {
 	if buf == nil || cap(buf) == 0 {
 		return 0
@@ -130,76 +111,8 @@ func addressOf(buf []byte) uintptr {
 	return uintptr(unsafe.Pointer(&buf[0]))
 }
 
-// arena is the interface of single allocator
 type arena interface {
 	allocate(int) []byte
 	free([]byte)
 	reset()
-}
-
-type defaultAllocator struct {
-	mu     sync.Mutex
-	arenas []arena
-	mbufs  []*membuf.Buffer
-
-	allocatedBuf map[uintptr]int
-}
-
-func (alloc *defaultAllocator) Allocate(size int) []byte {
-	alloc.mu.Lock()
-	defer alloc.mu.Unlock()
-	for i, a := range alloc.arenas {
-		if buf := a.allocate(size); buf != nil {
-			alloc.allocatedBuf[addressOf(buf)] = i
-			return buf
-		}
-	}
-
-	var mbuf *membuf.Buffer
-	if globalPool != nil {
-		mbuf = globalPool.NewBuffer()
-		alloc.mbufs = append(alloc.mbufs, mbuf)
-	}
-
-	na := GetArena(mbuf)
-	buf := na.allocate(size)
-	alloc.allocatedBuf[addressOf(buf)] = len(alloc.arenas)
-	alloc.arenas = append(alloc.arenas, na)
-	return buf
-}
-
-func (alloc *defaultAllocator) Free(buf []byte) {
-	alloc.mu.Lock()
-	defer alloc.mu.Unlock()
-	addr := addressOf(buf)
-	if arenaID, ok := alloc.allocatedBuf[addr]; ok {
-		alloc.arenas[arenaID].free(buf)
-		delete(alloc.allocatedBuf, addr)
-	}
-}
-
-func (alloc *defaultAllocator) Reallocate(size int, buf []byte) []byte {
-	alloc.Free(buf)
-	return alloc.Allocate(size)
-}
-
-func (alloc *defaultAllocator) Close() {
-	for _, a := range alloc.arenas {
-		a.reset()
-	}
-	for _, mbuf := range alloc.mbufs {
-		mbuf.Destroy()
-	}
-	alloc.arenas = nil
-}
-
-func (alloc *defaultAllocator) Allocated() int {
-	return defaultArenaSize * len(alloc.arenas)
-}
-
-// GetAllocator get a default allocator
-func GetAllocator() memory.Allocator {
-	return &defaultAllocator{
-		allocatedBuf: make(map[uintptr]int, 32),
-	}
 }

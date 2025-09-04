@@ -1299,8 +1299,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	// Fill memory usage info
 	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
+		// We may not be able to open ThreadCnt files concurrently due to memory usage
 		_, memoryUsage, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
-		encodeThreadCnt := mydump.AdjustEncodeThreadCnt(memoryUsage, e.Plan.ThreadCnt)
+		e.Plan.EncodeThreadCnt = mydump.AdjustEncodeThreadCnt(memoryUsage, e.Plan.ThreadCnt)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -1311,10 +1312,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				MemoryUsage: memoryUsage,
 			}
 		}
-
-		// Because we may not be able to open ThreadCnt files concurrently,
-		// we can adjust thread count for parquet here.
-		e.Plan.EncodeThreadCnt = encodeThreadCnt
 	}
 
 	failpoint.Label("afterReadFiles")

@@ -16,19 +16,21 @@ package mydump
 
 import (
 	"math"
+	"sync"
 
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 const (
-	// Size of metadata of each block
+	// metaSize is the size of metadata for each allocated block (64 bytes for alignment)
 	metaSize = 64
-	invalid  = math.MaxInt32
 
-	// The allocated memory size will be aligned to the nearest multiple of alignSize.
-	// This value will be modifed in test
-	alignSize = 16 << 10
+	// invalid represents an invalid offset/pointer in the linked list
+	invalid = math.MaxInt32
+
+	// alignSize defines the alignment boundary for memory allocation.
+	alignSize = 1 << 10
 )
 
 func roundUp(n, sz int) int {
@@ -47,21 +49,36 @@ func readInt(buf []byte) int {
 }
 
 /*
-simpleAllocator is a very simple allocator with low allocation efficiency
-which manages allocated memory using a linked list structure.
+simpleAllocator is a memory allocator that manages allocated memory using a linked list structure.
+It provides basic memory allocation and deallocation with automatic merging of adjacent free blocks
+to reduce fragmentation.
 
-It is used in parquet reader and it's sufficient for our scenario
-as memory allocation will not be a bottleneck.
+While this allocator has relatively low allocation efficiency due to its linear search algorithm,
+it is sufficient for parquet reader scenarios where memory allocation is not the primary bottleneck.
 
-The memory layout is as follows:
+Memory Layout:
+Each block has the following structure:
+- Size (4 bytes): Size of the block including metadata
+- Previous offset (4 bytes): Offset to the previous block in the free list
+- Next offset (4 bytes): Offset to the next block in the free list
+- Reserved (52 bytes): Reserved space for alignment
+- Data: The actual allocated data follows the metadata
 
-								  --------------------|
-	                              |                   v
-	  -------------------------------------------------------------------------
-	  |                 | s | p | n | xxxx |          | s | p | n | xxxx |    |
-	  -------------------------------------------------------------------------
-	                    ^                                   |
-						|___________________________________|
+The allocator maintains a linked list of free blocks:
+
+	            ┌───────────────────────────┐
+	            │                           ▼
+	┌─────────────────────────────────────────────────────────────────┐
+	│         │ s │ p │ n │ xxxx │          │ s │ p │ n │ xxxx │      │
+	└─────────────────────────────────────────────────────────────────┘
+	          ▲                                   │
+	          └───────────────────────────────────┘
+
+Where:
+- s = size of block
+- p = previous block offset
+- n = next block offset
+- xxxx = reserved space
 */
 type simpleAllocator struct {
 	buf  []byte
@@ -72,14 +89,7 @@ type simpleAllocator struct {
 	bytesAloc   int
 }
 
-func getSimpleAllocator(mbuf *membuf.Buffer) arena {
-	var buf []byte
-	if mbuf != nil {
-		buf = mbuf.AllocBytes(defaultArenaSize)
-	} else {
-		buf = make([]byte, defaultArenaSize)
-	}
-
+func getSimpleAllocator(buf []byte) arena {
 	a := &simpleAllocator{
 		buf:  buf,
 		base: int(addressOf(buf)),
@@ -112,21 +122,22 @@ func (sa *simpleAllocator) getBlk(offset int) (prev, next, blkSize int) {
 }
 
 func (sa *simpleAllocator) insertFree(free int) {
+	_, _, freeSize := sa.getBlk(free)
+
 	for offset := 0; offset != invalid; {
 		if free > offset {
-			_, _, blkSize := sa.getBlk(free)
 			_, next, _ := sa.getBlk(offset)
 			sa.setBlk(offset, -1, free, -1)
 			sa.setBlk(free, offset, next, -1)
 			sa.setBlk(next, free, -1, -1)
-			sa.bytesAloc -= blkSize
+			sa.bytesAloc -= freeSize
 			return
 		}
 	}
 	panic("Error insertFree")
 }
 
-// Merge adjacent free blocks into one big free block to reduce fragmentation.
+// merge coalesces adjacent free blocks into larger blocks to reduce fragmentation.
 func (sa *simpleAllocator) merge() {
 	for offset := 0; offset != invalid; {
 		_, next, blkSize := sa.getBlk(offset)
@@ -185,7 +196,7 @@ func (sa *simpleAllocator) allocate(size int) []byte {
 
 func (sa *simpleAllocator) free(buf []byte) {
 	offset := sa.getOffset(buf)
-	if offset < 0 || offset > len(sa.buf) {
+	if offset < 0 || offset >= len(sa.buf) {
 		return
 	}
 
@@ -197,11 +208,6 @@ func (sa *simpleAllocator) free(buf []byte) {
 
 	sa.insertFree(offset)
 	sa.sanityCheck()
-}
-
-func (sa *simpleAllocator) reallocate(buf []byte, size int) []byte {
-	sa.free(buf)
-	return sa.allocate(size)
 }
 
 func (sa *simpleAllocator) sanityCheck() {
@@ -216,16 +222,89 @@ func (sa *simpleAllocator) sanityCheck() {
 		offset = next
 	}
 	if mem != (len(sa.buf) - 3*alignSize) {
-		panic("sanity check failed")
+		panic("sanity check failed: memory accounting mismatch")
 	}
 }
 
 func (sa *simpleAllocator) reset() {
+	sa.blocksAlloc = 0
 	sa.bytesAloc = 0
 
-	// Add dummy head and tail block to simplify the allocation logic
 	total := len(sa.buf)
 	sa.setBlk(0, invalid, alignSize, 0)
 	sa.setBlk(alignSize, 0, total-alignSize, total-alignSize*3)
 	sa.setBlk(total-alignSize, alignSize, invalid, 0)
+}
+
+// listAllocator implements memory.Allocator interface using multiple arenas.
+type listAllocator struct {
+	mu sync.RWMutex
+
+	arenas []arena
+	mbufs  [][]byte
+	pool   *Pool
+
+	allocatedBuf map[uintptr]int
+}
+
+func (alloc *listAllocator) Allocate(size int) []byte {
+	if size >= arenaSize {
+		return make([]byte, size)
+	}
+
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+
+	for i, a := range alloc.arenas {
+		if buf := a.allocate(size); buf != nil {
+			alloc.allocatedBuf[addressOf(buf)] = i
+			return buf
+		}
+	}
+
+	mbuf := alloc.pool.Get()
+	alloc.mbufs = append(alloc.mbufs, mbuf)
+
+	na := getSimpleAllocator(mbuf)
+	alloc.arenas = append(alloc.arenas, na)
+
+	buf := na.allocate(size)
+	arenaIndex := len(alloc.arenas)
+	alloc.allocatedBuf[addressOf(buf)] = arenaIndex
+
+	return buf
+}
+
+func (alloc *listAllocator) Free(buf []byte) {
+	addr := addressOf(buf)
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+
+	if arenaID, ok := alloc.allocatedBuf[addr]; ok {
+		alloc.arenas[arenaID].free(buf)
+		delete(alloc.allocatedBuf, addr)
+	}
+}
+
+func (alloc *listAllocator) Reallocate(size int, buf []byte) []byte {
+	alloc.Free(buf)
+	return alloc.Allocate(size)
+}
+
+func (alloc *listAllocator) Close() {
+	for _, mbuf := range alloc.mbufs {
+		alloc.pool.Put(mbuf)
+	}
+}
+
+func (alloc *listAllocator) Allocated() int {
+	return arenaSize * len(alloc.arenas)
+}
+
+// NewAllocator creates a new default allocator with the given pool.
+func NewAllocator(pool *Pool) memory.Allocator {
+	return &listAllocator{
+		pool:         pool,
+		allocatedBuf: make(map[uintptr]int, 32),
+	}
 }

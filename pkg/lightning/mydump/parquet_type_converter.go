@@ -105,7 +105,10 @@ func getInt32Getter(converted *convertedType, loc *time.Location) setter[int32] 
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 			d.SetMysqlTime(mysqlTime)
 		}
-	case schema.ConvertedTypes.Int32, schema.ConvertedTypes.None:
+	case schema.ConvertedTypes.Int32, schema.ConvertedTypes.Uint32,
+		schema.ConvertedTypes.Int16, schema.ConvertedTypes.Uint16,
+		schema.ConvertedTypes.Int8, schema.ConvertedTypes.Uint8,
+		schema.ConvertedTypes.None:
 		return func(val int32, d *types.Datum) {
 			d.SetInt64(int64(val))
 		}
@@ -116,7 +119,10 @@ func getInt32Getter(converted *convertedType, loc *time.Location) setter[int32] 
 
 func getInt64Getter(converted *convertedType, loc *time.Location) setter[int64] {
 	switch converted.converted {
-	case schema.ConvertedTypes.Uint32, schema.ConvertedTypes.Uint64:
+	case schema.ConvertedTypes.Uint64,
+		schema.ConvertedTypes.Uint32, schema.ConvertedTypes.Int32,
+		schema.ConvertedTypes.Uint16, schema.ConvertedTypes.Int16,
+		schema.ConvertedTypes.Uint8, schema.ConvertedTypes.Int8:
 		return func(val int64, d *types.Datum) {
 			d.SetUint64(uint64(val))
 		}
@@ -162,9 +168,13 @@ func getInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location) {
 	// ---------------------------
 	// |  nano sec  |  julian day  |
 	// ---------------------------
-	// NOTE: parquet date can be less than 1970-01-01 that is not supported by TiDB,
-	// where dt is a negative number but still legal in the context of Go.
-	// But it will cause errors or potential data inconsistency when importing.
+	// NOTE:
+	// INT96 is a deprecated type in parquet format to store timestamp, which consists of
+	// two parts: the first 8 bytes is the nanoseconds within the day, and the last 4 bytes
+	// is the Julian Day (days since noon on January 1, 4713 BC). And it will be converted it to UTC by
+	//   julian day - 2440588 (Julian Day of the Unix epoch 1970-01-01 00:00:00)
+	// As julian day is decoded as uint32, so if user store a date before 1970-01-01, the converted time will be wrong
+	// and possibly to be truncated.
 	t := val.ToTime().In(loc)
 	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 0)
 	d.SetMysqlTime(mysqlTime)
