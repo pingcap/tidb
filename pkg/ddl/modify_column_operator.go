@@ -280,7 +280,9 @@ func (w *txnCommitWorker) CommitTXN(rr *RowRecords) (count int, errInTxn error) 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
-		txn.SetOption(kv.Enable1PC, true)
+
+		//txn.SetOption(kv.Enable1PC, true)
+		
 		updateTxnEntrySizeLimitIfNeeded(txn)
 
 		// Because TiCDC do not want this kind of change,
