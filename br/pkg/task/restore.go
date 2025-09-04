@@ -692,6 +692,25 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	// Enable restore mode in PD before starting restore
+	if err := mgr.GetPDHTTPClient().SetPitrRestoreMark(ctx); err != nil {
+		return errors.Annotate(err, "failed to enable restore mode in PD")
+	}
+
+	// Ensure restore mode is disabled when function exits, fail restore if we cannot disable restore mode
+	defer func() {
+		if disableErr := mgr.GetPDHTTPClient().DeletePitrRestoreMark(ctx); disableErr != nil {
+			if err == nil {
+				err = errors.Annotate(disableErr, "failed to disable restore mode in PD")
+			} else {
+				log.Error("failed to disable restore mode in PD", zap.Error(disableErr))
+			}
+		}
+	}()
+
 	var restoreError error
 	if IsStreamRestore(cmdName) {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
@@ -732,7 +751,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Info("all the checkpoint data is removed.")
 		}
 	}
-	return nil
+
+	return err
 }
 
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {
