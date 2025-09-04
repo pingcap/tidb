@@ -2921,10 +2921,16 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		if err != nil {
 			g.err = plannererrors.ErrUnknown.GenWithStackByArgs()
 		}
-		if err != nil || (isNull && !isParamMarkerExpr) {
+		if err != nil || isNull {
 			return inNode, false
 		}
-		if pos < 1 && isParamMarkerExpr {
+		if pos == 0 && isParamMarkerExpr {
+			// In Spring ORM, sometimes such prepare statements are generated.
+			// prepare stmt from 'select name, ? from t1 group by name, ? order by name';
+			// set @a="0", @b="0";
+			// Grouping by 0 is illegal, but here it should be of string type.
+			// In fact, any string is valid here.
+			// So, we need to try to find the "0" in this GROUP BY that corresponds to the "0" in the SELECT field.
 			pme := v.P.(*driver.ParamMarkerExpr)
 			for idx, field := range g.fields {
 				if expr, ok := field.Expr.(*driver.ParamMarkerExpr); ok {
