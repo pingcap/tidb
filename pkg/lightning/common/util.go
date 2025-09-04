@@ -719,10 +719,10 @@ func IsAccessDeniedNeedConfigPrivilegeError(err error) bool {
 	return ok && e.Number == errno.ErrSpecificAccessDenied && strings.Contains(e.Message, "CONFIG")
 }
 
-// SkipReadRowCount determines whether the target table requires a precise row count, which is used to for
-// auto-increment and auto-random columns. If any unique/primary index contains these columns,
-// we should read the actual row count to prevent generating duplicate key. Otherwise, the row
-// count is not used, so we can skip reading the row count to improve performance.
+// SkipReadRowCount determines whether the target table requires a precise row count.
+// If any unique index/clustered primary contains columns with auto_random/auto_increment,
+// we must read the actual row count to prevent generating duplicate keys. Otherwise,
+// we can skip reading it to improve performance.
 func SkipReadRowCount(tblInfo *model.TableInfo) bool {
 	// Some tests may not set the table info.
 	if tblInfo == nil {
