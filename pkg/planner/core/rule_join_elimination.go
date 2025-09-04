@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
+	coreusage "github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
@@ -171,10 +172,50 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	}
 
 	switch x := p.(type) {
+	case *logicalop.LogicalApply:
+		// For Apply, only columns from the left child are visible to the parent at this layer.
+		// Filter incoming parentCols to left child's schema and also include correlated columns
+		// from the right child that reference the left schema (required by subqueries).
+		leftSchema := x.Children()[0].Schema()
+		filtered := make([]*expression.Column, 0, len(parentCols))
+		for _, col := range parentCols {
+			if leftSchema.Contains(col) {
+				filtered = append(filtered, col)
+			}
+		}
+		// Add correlated columns from the right child that map to the left schema
+		corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(x.Children()[1], leftSchema)
+		if len(corCols) > 0 {
+			seen := make(map[int64]struct{}, len(corCols))
+			for _, cc := range corCols {
+				uid := cc.Column.UniqueID
+				if _, ok := seen[uid]; ok {
+					continue
+				}
+				seen[uid] = struct{}{}
+				filtered = append(filtered, &cc.Column)
+			}
+		}
+		parentCols = filtered
 	case *logicalop.LogicalProjection:
 		parentCols = parentCols[:0]
 		for _, expr := range x.Exprs {
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
+		}
+		// Include columns required by subqueries (appear as correlated columns in child subtree)
+		if len(x.Children()) > 0 {
+			corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(x.Children()[0])
+			if len(corCols) > 0 {
+				seen := make(map[int64]struct{}, len(corCols))
+				for _, cc := range corCols {
+					uid := cc.Column.UniqueID
+					if _, ok := seen[uid]; ok {
+						continue
+					}
+					seen[uid] = struct{}{}
+					parentCols = append(parentCols, &cc.Column)
+				}
+			}
 		}
 	case *logicalop.LogicalAggregation:
 		parentCols = parentCols[:0]
