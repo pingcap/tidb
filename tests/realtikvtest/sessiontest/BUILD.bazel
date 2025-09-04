@@ -4,6 +4,7 @@ go_test(
     name = "sessiontest_test",
     timeout = "moderate",
     srcs = [
+        "infoschema_test.go",
         "infoschema_v2_test.go",
         "main_test.go",
         "paging_test.go",
@@ -11,6 +12,10 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
+=======
+    shard_count = 15,
+>>>>>>> b82dd2c3da2 (ddl,executor: fix usages of getting regions from pd client (#63371))
     deps = [
         "//pkg/config",
         "//pkg/infoschema",
