@@ -129,51 +129,43 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 		}
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
-		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+		var constVal *expression.Constant
+		c, ok := f.GetArgs()[0].(*expression.Column)
+		idx_const := 1
+		if !ok {
+			idx_const = 0
+			if c, ok = f.GetArgs()[1].(*expression.Column); !ok {
 				return -1
-			}
-			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return -1
-			}
-			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
-				val, err := constVal.Eval(evalCtx, chunk.Row{})
-				intest.AssertFunc(func() bool {
-					if sctx.ExprCtx.ConnectionID() == 0 {
-						return sctx.RegardNULLAsPoint
-					}
-					return true
-				})
-				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
-					// treat col<=>null as range scan instead of point get to avoid incorrect results
-					// when nullable unique index has multiple matches for filter x is null
-					return -1
-				}
-				for i, col := range cols {
-					// When cols are a generated expression col, compare them in terms of virtual expr.
-					if col.EqualByExprAndID(evalCtx, c) {
-						return i
-					}
-				}
 			}
 		}
-		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return -1
+
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+			return -1
+		}
+		if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
+			return -1
+		}
+
+		if constVal, ok = f.GetArgs()[idx_const].(*expression.Constant); !ok {
+			return -1
+		}
+
+		val, err := constVal.Eval(evalCtx, chunk.Row{})
+		intest.AssertFunc(func() bool {
+			if sctx.ExprCtx.ConnectionID() == 0 {
+				return sctx.RegardNULLAsPoint
 			}
-			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return -1
-			}
-			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
-				val, err := constVal.Eval(evalCtx, chunk.Row{})
-				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) {
-					return -1
-				}
-				for i, col := range cols {
-					if col.EqualColumn(c) {
-						return i
-					}
-				}
+			return true
+		})
+		if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
+			// treat col<=>null as range scan instead of point get to avoid incorrect results
+			// when nullable unique index has multiple matches for filter x is null
+			return -1
+		}
+		for i, col := range cols {
+			// When cols are a generated expression col, compare them in terms of virtual expr.
+			if col.EqualByExprAndID(evalCtx, c) {
+				return i
 			}
 		}
 	case ast.In:
