@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -34,6 +35,7 @@ import (
 func TestSortInDisk(t *testing.T) {
 	testSortInDisk(t, false)
 	testSortInDisk(t, true)
+	util.CheckNoLeakFiles(t)
 }
 
 // TODO remove failpoint

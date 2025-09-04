@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -80,6 +81,8 @@ func TestInterruptedDuringSort(t *testing.T) {
 }
 
 func TestInterruptedDuringSpilling(t *testing.T) {
+	defer util.CheckNoLeakFiles(t)
+
 	rootTracker := memory.NewTracker(-1, -1)
 	rootTracker.IsRootTrackerOfSess = true
 	rootTracker.Killer = &sqlkiller.SQLKiller{}

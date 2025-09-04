@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -415,6 +416,7 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
+	util.CheckNoLeakFiles(t)
 }
 
 func TestSemiJoinProbeBasic(t *testing.T) {

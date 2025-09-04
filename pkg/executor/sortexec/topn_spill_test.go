@@ -358,6 +358,7 @@ func testImpl(t *testing.T, topnExec *sortexec.TopNExec, inDisk *chunk.DataInDis
 func oneChunkInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 	rowNumInDisk := uint64(spilledChunkMaxSize)
 	inDisk := createAndInitDataInDiskByChunks(rowNumInDisk)
+	defer inDisk.Close()
 
 	testImpl(t, topnExec, inDisk, rowNumInDisk, 0)
 	testImpl(t, topnExec, inDisk, rowNumInDisk, uint64(spilledChunkMaxSize-15))
@@ -368,6 +369,7 @@ func oneChunkInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 	rowNumInDisk := uint64(spilledChunkMaxSize*3 + 10)
 	inDisk := createAndInitDataInDiskByChunks(rowNumInDisk)
+	defer inDisk.Close()
 
 	testImpl(t, topnExec, inDisk, rowNumInDisk, 0)
 	testImpl(t, topnExec, inDisk, rowNumInDisk, spilledChunkMaxSize-15)
