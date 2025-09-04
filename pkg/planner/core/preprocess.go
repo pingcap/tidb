@@ -1718,6 +1718,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
 			return
 		}
+
 		currentDB := p.sctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
 			p.err = errors.Trace(plannererrors.ErrNoDB)
