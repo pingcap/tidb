@@ -869,7 +869,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 
-		txn.SetOption(kv.Enable1PC, true)
+		//txn.SetOption(kv.Enable1PC, true)
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)
