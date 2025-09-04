@@ -51,6 +51,7 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.FoundRows:       {},
 	ast.Rand:            {},
 	ast.UUID:            {},
+	ast.UUIDShort:       {},
 	ast.Sleep:           {},
 	ast.RowFunc:         {},
 	ast.Values:          {},
