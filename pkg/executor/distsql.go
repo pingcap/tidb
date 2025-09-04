@@ -392,7 +392,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	})
 
 	// Determine if we need merge sort
-	needMergeSort := shouldUseMergeSort(e.byItems, e.partitions, e.groupedRanges, len(kvRanges))
+	needMergeSort := shouldUseMergeSort(e.byItems, len(kvRanges))
 
 	if !needMergeSort {
 		// Use single SelectResult when no merge sort is needed
@@ -864,7 +864,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			results = append(results, result)
 		}
-		if shouldUseMergeSort(e.byItems, e.prunedPartitions, e.groupedRanges, len(results)) {
+		if shouldUseMergeSort(e.byItems, len(results)) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
@@ -1740,6 +1740,6 @@ func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 	return planIDs
 }
 
-func shouldUseMergeSort(byItems []*plannerutil.ByItems, _ []table.PhysicalTable, _ [][]*ranger.Range, kvRangesCount int) bool {
+func shouldUseMergeSort(byItems []*plannerutil.ByItems, kvRangesCount int) bool {
 	return len(byItems) > 0 && kvRangesCount > 1
 }
