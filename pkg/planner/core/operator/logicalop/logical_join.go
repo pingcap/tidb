@@ -153,6 +153,8 @@ type LogicalJoin struct {
 
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
+
+	CartesianJoin bool
 }
 
 // Init initializes LogicalJoin.
@@ -215,7 +217,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
-		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, false, nil)
+		predicates, _ = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, false, nil)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -234,7 +236,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
-		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, nil)
+		predicates, _ = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, nil)
 		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForRightOuterJoin)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -261,7 +263,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
+		tempCond, p.CartesianJoin = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -277,7 +279,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		rightCond = rightPushCond
 	case AntiSemiJoin:
 		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
-		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true,
+		predicates, p.CartesianJoin = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true,
 			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
@@ -353,7 +355,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		selfSchema.PKOrUK = childSchema[0].Clone().PKOrUK
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
 		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
-		if len(p.EqualConditions) == 0 {
+		if len(p.EqualConditions) == 0 || p.CartesianJoin {
 			return
 		}
 		// Extract all left and right columns from equal conditions
@@ -553,7 +555,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
 	p.EqualCondOutCnt = cardinality.EstimateFullJoinRowCount(p.SCtx(),
-		0 == len(p.EqualConditions),
+		len(p.EqualConditions) == 0 || p.CartesianJoin,
 		leftProfile, rightProfile,
 		leftJoinKeys, rightJoinKeys,
 		childSchema[0], childSchema[1],
@@ -1742,7 +1744,7 @@ func (p *LogicalJoin) updateEQCond() {
 	// todo: by now, when there is already a normal EQ condition, just keep NA-EQ as other-condition filters above it.
 	// eg: select * from stu where stu.name not in (select name from exam where exam.stu_id = stu.id);
 	// combination of <stu.name NAEQ exam.name> and <exam.stu_id EQ stu.id> for join key is little complicated for now.
-	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
+	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && (len(p.EqualConditions) == 0 || p.CartesianJoin)
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		var otherCond expression.CNFExprs
 		for i := range p.OtherConditions {
@@ -1807,7 +1809,7 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression, vaildExp
 	exprCtx := p.SCtx().GetExprCtx()
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
-	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema,
+	joinConds, predicates, p.CartesianJoin = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema,
 		innerTableSchema, nullSensitive, vaildExprFunc)
 	p.AttachOnConds(joinConds)
 	return predicates

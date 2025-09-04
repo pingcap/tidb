@@ -89,7 +89,8 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
 		leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
 		leftNAJoinKeys, _ := p.GetNAJoinKeys()
-		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && physicalop.CanUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
+		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() &&
+			physicalop.CanUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys, p.CartesianJoin) {
 			if !forceLeftToBuild {
 				joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 			}
@@ -279,6 +280,7 @@ func constructIndexJoinStatic(
 		InnerJoinKeys: innerJoinKeys,
 		IsNullEQ:      isNullEQ,
 		DefaultValues: p.DefaultValues,
+		CartesianJoin: p.CartesianJoin,
 	}
 
 	join := physicalop.PhysicalIndexJoin{
@@ -514,6 +516,7 @@ func constructIndexJoin(
 		InnerJoinKeys:   newInnerKeys,
 		IsNullEQ:        newIsNullEQ,
 		DefaultValues:   p.DefaultValues,
+		CartesianJoin:   p.CartesianJoin,
 	}
 
 	join := physicalop.PhysicalIndexJoin{
@@ -2369,7 +2372,7 @@ func getJoinChildStatsAndSchema(ge *memo.GroupExpression, p base.LogicalPlan) (s
 // If we can use mpp broadcast join, that's our first choice.
 func preferMppBCJ(super base.LogicalPlan) bool {
 	ge, p := getGEAndLogicalJoin(super)
-	if len(p.EqualConditions) == 0 && p.SCtx().GetSessionVars().AllowCartesianBCJ == 2 {
+	if (len(p.EqualConditions) == 0 || p.CartesianJoin) && p.SCtx().GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
 
@@ -2488,6 +2491,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		RightJoinKeys:   rkeys,
 		LeftNAJoinKeys:  lNAkeys,
 		RightNAJoinKeys: rNAKeys,
+		CartesianJoin:   p.CartesianJoin,
 	}
 	// It indicates which side is the build side.
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
@@ -2506,7 +2510,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType.IsSemiJoin() {
-		if !useBCJ && !p.IsNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin) {
+		if !useBCJ && !p.IsNAAJ() && (len(p.EqualConditions) > 0 && !p.CartesianJoin) && (p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin) {
 			// TiFlash only supports Non-null_aware non-cross semi/anti_semi join to use both sides as build side
 			preferredBuildIndex = 1
 			// MPPOuterJoinFixedBuildSide default value is false
@@ -2525,7 +2529,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
 		// 2. or session variable MPPOuterJoinFixedBuildSide is set to true
 		// 3. or nullAware/cross joins
-		if useBCJ || p.IsNAAJ() || len(p.EqualConditions) == 0 || p.SCtx().GetSessionVars().MPPOuterJoinFixedBuildSide {
+		if useBCJ || p.IsNAAJ() || len(p.EqualConditions) == 0 || p.CartesianJoin || p.SCtx().GetSessionVars().MPPOuterJoinFixedBuildSide {
 			if !p.SCtx().GetSessionVars().MPPOuterJoinFixedBuildSide {
 				// The hint has higher priority than variable.
 				fixedBuildSide = true

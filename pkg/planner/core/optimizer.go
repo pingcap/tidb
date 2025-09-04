@@ -354,6 +354,9 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if planCounter == 0 {
 		planCounter = -1
 	}
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
 		return nil, nil, 0, err

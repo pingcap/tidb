@@ -573,7 +573,7 @@ func extractOrderedPhysicalJoinGroup(p PhysicalJoin, visitedIDs map[int]struct{}
 	// two independent join groups. So we don't need to handle it here.
 	// Currently, index joins must match the index or PK of the inner table, so cartesian join must be a hash join.
 	if hashJoin, ok := p.(*physicalop.PhysicalHashJoin); ok {
-		if len(hashJoin.EqualConditions) == 0 && len(hashJoin.NAEqualConditions) == 0 {
+		if (len(hashJoin.EqualConditions) == 0 && len(hashJoin.NAEqualConditions) == 0) || hashJoin.CartesianJoin {
 			return nil
 		}
 	}

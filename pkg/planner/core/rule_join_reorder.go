@@ -211,6 +211,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		hasOuterJoin:      hasOuterJoin,
 		joinOrderHintInfo: joinOrderHintInfo,
 		basicJoinGroupInfo: &basicJoinGroupInfo{
+			cartesianJoin:      join.CartesianJoin,
 			eqEdges:            eqEdges,
 			otherConds:         otherConds,
 			joinTypes:          joinTypes,
@@ -251,7 +252,9 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 	}
 
 	var err error
-
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	result := extractJoinGroup(p)
 	curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
 	if len(curJoinGroup) > 1 {
@@ -393,6 +396,7 @@ type basicJoinGroupInfo struct {
 	// The sub-plan will join the join reorder process to build the new plan.
 	// So after we have finished the join reorder process, we can reset the join method hint based on the sub-plan's ID.
 	joinMethodHintInfo map[int]*joinMethodHint
+	cartesianJoin      bool
 }
 
 type joinGroupResult struct {
@@ -701,6 +705,7 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *logicalop.L
 		newJoin.RightPreferJoinType = joinMethodHint.preferredJoinMethod
 		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
 	}
+	newJoin.CartesianJoin = s.cartesianJoin
 	newJoin.SetPreferredJoinType()
 }
 

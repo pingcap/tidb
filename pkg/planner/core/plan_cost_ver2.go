@@ -767,11 +767,19 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	var hashTableCost costusage.CostVer2
 	switch indexJoinType {
 	case 1: // IndexHashJoin
-		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(p.RightJoinKeys)), cpuFactor, memFactor)
+		keys := len(p.RightJoinKeys)
+		if p.CartesianJoin {
+			keys = 0
+		}
+		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, float64(keys), cpuFactor, memFactor)
 	case 2: // IndexMergeJoin
 		hashTableCost = costusage.NewZeroCostVer2(costusage.TraceCost(option))
 	default: // IndexJoin
-		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, float64(len(p.LeftJoinKeys)), cpuFactor, memFactor)
+		keys := len(p.LeftJoinKeys)
+		if p.CartesianJoin {
+			keys = 0
+		}
+		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, float64(keys), cpuFactor, memFactor)
 	}
 
 	// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be

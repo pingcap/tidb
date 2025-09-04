@@ -182,10 +182,11 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 }
 
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool,
-	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
+	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) ([]expression.Expression, bool) {
 	if len(predicates) == 0 {
-		return predicates
+		return predicates, false
 	}
+	var cartesianJoin bool
 	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
 	simplifiedPredicate = PushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
@@ -193,9 +194,10 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.
 	if propagateConstant {
-		simplifiedPredicate = expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+		simplifiedPredicate, cartesianJoin = expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 	} else {
-		exprs := expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+		var exprs []expression.Expression
+		exprs, cartesianJoin = expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 		if len(exprs) == 1 {
 			simplifiedPredicate = exprs
 		}
@@ -205,7 +207,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
-	return simplifiedPredicate
+	return simplifiedPredicate, cartesianJoin
 }
 
 func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
@@ -302,7 +304,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 		if err != nil {
 			return false
 		}
-		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), nil, newPred)
+		newPredList, _ := expression.PropagateConstant(ctx.GetExprCtx(), nil, newPred)
 		return unsatisfiableExpression(ctx, newPredList[0])
 	}
 	return false
