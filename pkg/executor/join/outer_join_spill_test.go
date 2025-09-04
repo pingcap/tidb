@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
@@ -142,6 +143,8 @@ func testRandomFail(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType
 }
 
 func TestOuterJoinSpillBasic(t *testing.T) {
+	log.Info("-------debug")
+	util.CheckNoLeakFiles(t)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -196,6 +199,8 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 }
 
 func TestOuterJoinSpillWithSel(t *testing.T) {
+	log.Info("-------debug")
+	util.CheckNoLeakFiles(t)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -244,6 +249,8 @@ func TestOuterJoinSpillWithSel(t *testing.T) {
 }
 
 func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
+	log.Info("-------debug")
+	util.CheckNoLeakFiles(t)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -301,6 +308,8 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 
 // Hash join executor may be repeatedly closed and opened
 func TestOuterJoinUnderApplyExec(t *testing.T) {
+	log.Info("-------debug")
+	util.CheckNoLeakFiles(t)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -344,6 +353,8 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 }
 
 func TestFallBackAction(t *testing.T) {
+	log.Info("-------debug")
+	util.CheckNoLeakFiles(t)
 	leftDataSource, rightDataSource, info, newRootExceedAction := prepareSimpleHashJoinEnv()
 
 	leftDataSource.PrepareChunks()
@@ -355,6 +366,8 @@ func TestFallBackAction(t *testing.T) {
 }
 
 func TestIssue59377(t *testing.T) {
+	log.Info("-------debug")
+	util.CheckNoLeakFiles(t)
 	leftDataSource, rightDataSource, info, _ := prepareSimpleHashJoinEnv()
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
@@ -376,6 +389,8 @@ func TestIssue59377(t *testing.T) {
 }
 
 func TestHashJoinRandomFail(t *testing.T) {
+	log.Info("-------debug")
+	util.CheckNoLeakFiles(t)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
