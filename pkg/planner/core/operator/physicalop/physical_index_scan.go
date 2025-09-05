@@ -103,6 +103,11 @@ type PhysicalIndexScan struct {
 	// UsedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	UsedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+
+	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
+
+	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
+	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
 // FullRange represent used all partitions.

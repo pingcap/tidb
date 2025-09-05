@@ -242,6 +242,11 @@ func buildRangeForTableScan(sctx base.PlanContext, ts *physicalop.PhysicalTableS
 			ts.Ranges = ranger.FullIntRange(false)
 		}
 	}
+
+	// Rebuild GroupedRanges if GroupByColIdxs is set
+	if len(ts.GroupByColIdxs) > 0 {
+		ts.GroupedRanges = GroupRangesByCols(ts.Ranges, ts.GroupByColIdxs)
+	}
 	return
 }
 
@@ -418,6 +423,11 @@ func buildRangeForIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexS
 		return errors.New("rebuild to get an unsafe range")
 	}
 	is.Ranges = res.Ranges
+
+	// Rebuild GroupedRanges if GroupByColIdxs is set
+	if len(is.GroupByColIdxs) > 0 {
+		is.GroupedRanges = GroupRangesByCols(is.Ranges, is.GroupByColIdxs)
+	}
 	return
 }
 
