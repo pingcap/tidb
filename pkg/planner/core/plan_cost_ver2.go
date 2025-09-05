@@ -814,7 +814,7 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
 	if !isSameStorageType {
-		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 1.4)
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 2)
 	}
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexJoinCostFactor)
 	return p.PlanCostVer2, nil
