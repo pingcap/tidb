@@ -74,22 +74,22 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64, fileNamePrefixForTest string) *sortPartition {
 	lock := new(sync.Mutex)
 	retVal := &sortPartition{
-		cond:        sync.NewCond(lock),
-		spillError:  nil,
-		spillStatus: notSpilled,
-		fieldTypes:  fieldTypes,
-		savedRows:   make([]chunk.Row, 0),
-		isSorted:    false,
-		inDisk:      nil, // It's initialized only when spill is triggered
-		memTracker:  memory.NewTracker(memory.LabelForSortPartition, -1),
-		diskTracker: disk.NewTracker(memory.LabelForSortPartition, -1),
-		spillAction: nil, // It's set in `actionSpill` function
-		spillLimit:  spillLimit,
-		byItemsDesc: byItemsDesc,
-		keyColumns:  keyColumns,
-		keyCmpFuncs: keyCmpFuncs,
-		cursor:      NewDataCursor(),
-		closed:      false,
+		cond:                  sync.NewCond(lock),
+		spillError:            nil,
+		spillStatus:           notSpilled,
+		fieldTypes:            fieldTypes,
+		savedRows:             make([]chunk.Row, 0),
+		isSorted:              false,
+		inDisk:                nil, // It's initialized only when spill is triggered
+		memTracker:            memory.NewTracker(memory.LabelForSortPartition, -1),
+		diskTracker:           disk.NewTracker(memory.LabelForSortPartition, -1),
+		spillAction:           nil, // It's set in `actionSpill` function
+		spillLimit:            spillLimit,
+		byItemsDesc:           byItemsDesc,
+		keyColumns:            keyColumns,
+		keyCmpFuncs:           keyCmpFuncs,
+		cursor:                NewDataCursor(),
+		closed:                false,
 		fileNamePrefixForTest: fileNamePrefixForTest,
 	}
 
