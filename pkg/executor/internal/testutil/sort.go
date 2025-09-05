@@ -31,6 +31,7 @@ type SortCase struct {
 	OrderByIdx []int
 	Ndvs       []int
 	Rows       int
+	FileNamePrefixForTest string
 }
 
 // Columns creates column

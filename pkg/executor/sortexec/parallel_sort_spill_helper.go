@@ -41,17 +41,20 @@ type parallelSortSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	fileNamePrefixForTest string
 }
 
-func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError) *parallelSortSpillHelper {
+func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError, fileNamePrefixForTest string) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
-		cond:          sync.NewCond(new(sync.Mutex)),
-		spillStatus:   notSpilled,
-		sortExec:      sortExec,
-		lessRowFunc:   lessRowFunc,
-		errOutputChan: errOutputChan,
-		finishCh:      finishCh,
-		fieldTypes:    fieldTypes,
+		cond:                  sync.NewCond(new(sync.Mutex)),
+		spillStatus:           notSpilled,
+		sortExec:              sortExec,
+		lessRowFunc:           lessRowFunc,
+		errOutputChan:         errOutputChan,
+		finishCh:              finishCh,
+		fieldTypes:            fieldTypes,
+		fileNamePrefixForTest: fileNamePrefixForTest,
 	}
 }
 
@@ -195,7 +198,7 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", p.bytesConsumed.Load()), zap.Int64("quota", p.bytesLimit.Load()))
 	p.initForSpill()
 	p.tmpSpillChunk.Reset()
-	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
+	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes, p.fileNamePrefixForTest)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
 	isInDiskAppended := false
 

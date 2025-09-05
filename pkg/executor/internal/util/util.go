@@ -17,25 +17,26 @@ package util
 import (
 	"fmt"
 	"io/fs"
-	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
-// CheckNoLeakFiles checks if there are file leaks
-func CheckNoLeakFiles(t *testing.T) {
-	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
+// GetFunctionName returns the function name
+func GetFunctionName() string {
+	pc, _, _, _ := runtime.Caller(1)
+	return path.Base(runtime.FuncForPC(pc).Name())
+}
 
-	// TODO remove it
-	if err := os.MkdirAll(config.GetGlobalConfig().TempStoragePath, 0750); err != nil {
-		panic(err)
-	}
+// CheckNoLeakFiles checks if there are file leaks
+func CheckNoLeakFiles(t *testing.T, fileNamePrefixForTest string) {
+	log.Info(fmt.Sprintf("path: %s", config.GetGlobalConfig().TempStoragePath))
 
 	err := filepath.WalkDir(config.GetGlobalConfig().TempStoragePath, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -43,7 +44,7 @@ func CheckNoLeakFiles(t *testing.T) {
 		}
 
 		if !d.IsDir() {
-			require.False(t, strings.HasPrefix(d.Name(), chunk.DefaultChunkDataInDiskByChunksPath))
+			require.False(t, strings.HasPrefix(d.Name(), fileNamePrefixForTest))
 		}
 		return nil
 	})

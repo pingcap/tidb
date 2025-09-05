@@ -50,6 +50,8 @@ type topNSpillHelper struct {
 	bytesLimit    atomic.Int64
 
 	sqlKiller *sqlkiller.SQLKiller
+
+	fileNamePrefixForTest string
 }
 
 func newTopNSpillerHelper(
@@ -70,19 +72,20 @@ func newTopNSpillerHelper(
 	}
 
 	return &topNSpillHelper{
-		cond:               sync.NewCond(&lock),
-		spillStatus:        notSpilled,
-		sortedRowsInDisk:   make([]*chunk.DataInDiskByChunks, 0),
-		finishCh:           finishCh,
-		errOutputChan:      errOutputChan,
-		memTracker:         memTracker,
-		diskTracker:        diskTracker,
-		fieldTypes:         fieldTypes,
-		tmpSpillChunksChan: tmpSpillChunksChan,
-		workers:            workers,
-		bytesConsumed:      atomic.Int64{},
-		bytesLimit:         atomic.Int64{},
-		sqlKiller:          sqlKiller,
+		cond:                  sync.NewCond(&lock),
+		spillStatus:           notSpilled,
+		sortedRowsInDisk:      make([]*chunk.DataInDiskByChunks, 0),
+		finishCh:              finishCh,
+		errOutputChan:         errOutputChan,
+		memTracker:            memTracker,
+		diskTracker:           diskTracker,
+		fieldTypes:            fieldTypes,
+		tmpSpillChunksChan:    tmpSpillChunksChan,
+		workers:               workers,
+		bytesConsumed:         atomic.Int64{},
+		bytesLimit:            atomic.Int64{},
+		sqlKiller:             sqlKiller,
+		fileNamePrefixForTest: topn.FileNamePrefixForTest,
 	}
 }
 
@@ -209,7 +212,7 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 		t.tmpSpillChunksChan <- tmpSpillChunk
 	}()
 
-	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes)
+	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes, t.fileNamePrefixForTest)
 	inDisk.GetDiskTracker().AttachTo(t.diskTracker)
 
 	isInDiskCollected := false

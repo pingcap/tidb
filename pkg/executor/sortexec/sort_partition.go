@@ -65,11 +65,13 @@ type sortPartition struct {
 	// Sort is a time-consuming operation, we need to set a checkpoint to detect
 	// the outside signal periodically.
 	timesOfRowCompare uint
+
+	fileNamePrefixForTest string
 }
 
 // Creates a new SortPartition in memory.
 func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
-	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64) *sortPartition {
+	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64, fileNamePrefixForTest string) *sortPartition {
 	lock := new(sync.Mutex)
 	retVal := &sortPartition{
 		cond:        sync.NewCond(lock),
@@ -88,6 +90,7 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 		keyCmpFuncs: keyCmpFuncs,
 		cursor:      NewDataCursor(),
 		closed:      false,
+		fileNamePrefixForTest: fileNamePrefixForTest,
 	}
 
 	return retVal
@@ -164,7 +167,7 @@ func (s *sortPartition) spillToDiskImpl() (err error) {
 		return nil
 	}
 
-	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes)
+	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes, s.fileNamePrefixForTest)
 	s.inDisk.GetDiskTracker().AttachTo(s.diskTracker)
 	tmpChk := chunk.NewChunkWithCapacity(s.fieldTypes, spillChunkSize)
 

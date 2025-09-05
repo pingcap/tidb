@@ -158,6 +158,8 @@ type HashAggExec struct {
 	isChildDrained bool
 
 	invalidMemoryUsageForTrackingTest bool
+
+	FileNamePrefixForTest string
 }
 
 // Close implements the Executor Close interface.
@@ -281,7 +283,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed.Store(false)
 	e.isChildDrained = false
-	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)))
+	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)), e.FileNamePrefixForTest)
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
 	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && vardef.EnableTmpStorageOnOOM.Load() {
@@ -307,23 +309,24 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 
 		partialResultsBuffer, groupKeyBuf := getBuffer()
 		e.partialWorkers[i] = HashAggPartialWorker{
-			baseHashAggWorker:    newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
-			idForTest:            i,
-			ctx:                  ctx,
-			inputCh:              e.partialInputChs[i],
-			outputChs:            e.partialOutputChs,
-			giveBackCh:           e.inputCh,
-			BInMaps:              make([]int, finalConcurrency),
-			partialResultsBuffer: *partialResultsBuffer,
-			globalOutputCh:       e.finalOutputCh,
-			partialResultsMap:    partialResultsMap,
-			groupByItems:         e.GroupByItems,
-			chk:                  e.NewChunkWithCapacity(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
-			groupKeyBuf:          *groupKeyBuf,
-			serializeHelpers:     aggfuncs.NewSerializeHelper(),
-			isSpillPrepared:      false,
-			spillHelper:          e.spillHelper,
-			inflightChunkSync:    e.inflightChunkSync,
+			baseHashAggWorker:     newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
+			idForTest:             i,
+			ctx:                   ctx,
+			inputCh:               e.partialInputChs[i],
+			outputChs:             e.partialOutputChs,
+			giveBackCh:            e.inputCh,
+			BInMaps:               make([]int, finalConcurrency),
+			partialResultsBuffer:  *partialResultsBuffer,
+			globalOutputCh:        e.finalOutputCh,
+			partialResultsMap:     partialResultsMap,
+			groupByItems:          e.GroupByItems,
+			chk:                   e.NewChunkWithCapacity(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
+			groupKeyBuf:           *groupKeyBuf,
+			serializeHelpers:      aggfuncs.NewSerializeHelper(),
+			isSpillPrepared:       false,
+			spillHelper:           e.spillHelper,
+			inflightChunkSync:     e.inflightChunkSync,
+			fileNamePrefixForTest: e.FileNamePrefixForTest,
 		}
 
 		memUsage += e.partialWorkers[i].chk.MemoryUsage()

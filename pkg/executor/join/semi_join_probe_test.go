@@ -363,6 +363,8 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 }
 
 func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	var leftCols = []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -404,11 +406,11 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 	joinTypes := []logicalop.JoinType{logicalop.SemiJoin}
 	params := []spillTestParam{
 		// basic case
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1500000, 3000000, 100000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1500000, 3500000, 100000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1500000, 3000000, 100000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1500000, 3500000, 100000, 10000}, testFuncName},
 		// with other condition
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1500000, 3500000, 100000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1500000, 3500000, 100000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1500000, 3500000, 100000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, otherCondition, []int{1}, []int{1}, []int64{1800000, 1500000, 3500000, 100000, 10000}, testFuncName},
 	}
 
 	for _, joinType := range joinTypes {
@@ -416,7 +418,7 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestSemiJoinProbeBasic(t *testing.T) {

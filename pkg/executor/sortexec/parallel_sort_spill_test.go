@@ -78,9 +78,11 @@ func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *so
 }
 
 func TestParallelSortSpillDisk(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
@@ -106,13 +108,15 @@ func TestParallelSortSpillDisk(t *testing.T) {
 		inMemoryThenSpill(t, ctx, exe, sortCase, schema, dataSource)
 	}
 
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestParallelSortSpillDiskFailpoint(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
@@ -140,13 +144,15 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, dataSource)
 	}
 
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestIssue59655(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/Issue59655", `return(true)`)
 
@@ -165,13 +171,15 @@ func TestIssue59655(t *testing.T) {
 		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}
 
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestIssue63216(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/sortexec/Issue63216", `return(true)`)
 
@@ -186,5 +194,5 @@ func TestIssue63216(t *testing.T) {
 	exe := buildSortExec(sortCase, dataSource)
 	failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }

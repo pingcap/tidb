@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -33,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func prepareSimpleHashJoinEnv() (*testutil.MockDataSource, *testutil.MockDataSource, *hashJoinInfo, *testutil.MockActionOnExceed) {
+func prepareSimpleHashJoinEnv(fileNamePrefixForTest string) (*testutil.MockDataSource, *testutil.MockDataSource, *hashJoinInfo, *testutil.MockActionOnExceed) {
 	hardLimitBytesNum := int64(5000000)
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 
@@ -66,7 +65,7 @@ func prepareSimpleHashJoinEnv() (*testutil.MockDataSource, *testutil.MockDataSou
 		{Index: 2, RetType: stringTp},
 	}
 
-	param := spillTestParam{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 1500000, 10000}}
+	param := spillTestParam{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 1500000, 10000}, fileNamePrefixForTest}
 
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
@@ -98,6 +97,7 @@ func prepareSimpleHashJoinEnv() (*testutil.MockDataSource, *testutil.MockDataSou
 		otherCondition:        param.otherCondition,
 		lUsedInOtherCondition: param.leftUsedByOtherCondition,
 		rUsedInOtherCondition: param.rightUsedByOtherCondition,
+		fileNamePrefixForTest: param.fileNamePrefixForTest,
 	}
 
 	return leftDataSource, rightDataSource, info, newRootExceedAction
@@ -134,6 +134,7 @@ func testRandomFail(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType
 		otherCondition:        param.otherCondition,
 		lUsedInOtherCondition: param.leftUsedByOtherCondition,
 		rUsedInOtherCondition: param.rightUsedByOtherCondition,
+		fileNamePrefixForTest: param.fileNamePrefixForTest,
 	}
 
 	leftDataSource.PrepareChunks()
@@ -143,8 +144,8 @@ func testRandomFail(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType
 }
 
 func TestOuterJoinSpillBasic(t *testing.T) {
-	log.Info("-------debug")
-	util.CheckNoLeakFiles(t)
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -169,14 +170,14 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 
 	params := []spillTestParam{
 		// Normal case
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}, testFuncName},
 		// rightUsed is empty
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 250000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 250000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}, testFuncName},
 		// leftUsed is empty
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 250000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{5000000, 1700000, 6000000, 500000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 1700000, 3500000, 250000, 10000}, testFuncName},
 	}
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
@@ -195,12 +196,12 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestOuterJoinSpillWithSel(t *testing.T) {
-	log.Info("-------debug")
-	util.CheckNoLeakFiles(t)
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -225,8 +226,8 @@ func TestOuterJoinSpillWithSel(t *testing.T) {
 
 	params := []spillTestParam{
 		// Normal case
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 1000000, 3000000, 200000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 1000000, 3000000, 200000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 1000000, 3000000, 200000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 1000000, 3000000, 200000, 10000}, testFuncName},
 	}
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
@@ -245,12 +246,12 @@ func TestOuterJoinSpillWithSel(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
-	log.Info("-------debug")
-	util.CheckNoLeakFiles(t)
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -283,8 +284,8 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 	otherCondition = append(otherCondition, sf)
 
 	params := []spillTestParam{
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{5000000, 1700000, 6000000, 500000, 10000}},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{5000000, 1700000, 6000000, 500000, 10000}},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{5000000, 1700000, 6000000, 500000, 10000}, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, otherCondition, []int{0}, []int{4}, []int64{5000000, 1700000, 6000000, 500000, 10000}, testFuncName},
 	}
 
 	err = failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
@@ -303,13 +304,13 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
 		}
 	}
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 // Hash join executor may be repeatedly closed and opened
 func TestOuterJoinUnderApplyExec(t *testing.T) {
-	log.Info("-------debug")
-	util.CheckNoLeakFiles(t)
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -335,6 +336,7 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 		otherCondition:        expression.CNFExprs{},
 		lUsedInOtherCondition: []int{0},
 		rUsedInOtherCondition: []int{4},
+		fileNamePrefixForTest: testFuncName,
 	}
 
 	maxRowTableSegmentSize = 100
@@ -349,26 +351,26 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 		expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 		testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 	}
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestFallBackAction(t *testing.T) {
-	log.Info("-------debug")
-	util.CheckNoLeakFiles(t)
-	leftDataSource, rightDataSource, info, newRootExceedAction := prepareSimpleHashJoinEnv()
+	testFuncName := util.GetFunctionName()
+
+	leftDataSource, rightDataSource, info, newRootExceedAction := prepareSimpleHashJoinEnv(testFuncName)
 
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
 	_ = executeHashJoinExec(t, hashJoinExec)
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestIssue59377(t *testing.T) {
-	log.Info("-------debug")
-	util.CheckNoLeakFiles(t)
-	leftDataSource, rightDataSource, info, _ := prepareSimpleHashJoinEnv()
+	testFuncName := util.GetFunctionName()
+
+	leftDataSource, rightDataSource, info, _ := prepareSimpleHashJoinEnv(testFuncName)
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
 	hashJoinExec := buildHashJoinV2Exec(info)
@@ -385,12 +387,12 @@ func TestIssue59377(t *testing.T) {
 	err = hashJoinExec.Next(tmpCtx, chk)
 	require.True(t, err != nil)
 	_ = hashJoinExec.Close()
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestHashJoinRandomFail(t *testing.T) {
-	log.Info("-------debug")
-	util.CheckNoLeakFiles(t)
+	testFuncName := util.GetFunctionName()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -415,8 +417,8 @@ func TestHashJoinRandomFail(t *testing.T) {
 
 	params := []spillTestParam{
 		// Normal case
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, nil},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, nil},
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, nil, testFuncName},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, nil, testFuncName},
 	}
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
@@ -442,5 +444,5 @@ func TestHashJoinRandomFail(t *testing.T) {
 			}
 		}
 	}
-	util.CheckNoLeakFiles(t)
+	util.CheckNoLeakFiles(t, testFuncName)
 }

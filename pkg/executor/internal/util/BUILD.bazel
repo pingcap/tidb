@@ -10,7 +10,6 @@ go_library(
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/config",
-        "//pkg/util/chunk",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",

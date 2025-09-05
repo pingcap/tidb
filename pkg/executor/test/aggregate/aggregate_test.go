@@ -29,9 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
-	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -73,7 +71,6 @@ func TestHashAggRuntimeStat(t *testing.T) {
 	stats.Merge(stats.Clone())
 	expect = "partial_worker:{wall_time:40s, concurrency:5, task_num:50, tot_wait:20s, tot_exec:10s, tot_time:20s, max:4s, p95:4s}, final_worker:{wall_time:20s, concurrency:8, task_num:80, tot_wait:32ms, tot_exec:16ms, tot_time:56ms, max:7ms, p95:7ms}"
 	require.Equal(t, expect, stats.String())
-	util.CheckNoLeakFiles(t)
 }
 
 func reconstructParallelGroupConcatResult(rows [][]any) []string {
@@ -92,8 +89,6 @@ func reconstructParallelGroupConcatResult(rows [][]any) []string {
 }
 
 func TestParallelStreamAggGroupConcat(t *testing.T) {
-	log.Info("----debug")
-	util.CheckNoLeakFiles(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -137,7 +132,6 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 			}
 		}
 	}
-	util.CheckNoLeakFiles(t)
 }
 
 func TestIssue20658(t *testing.T) {
@@ -213,7 +207,6 @@ func TestIssue20658(t *testing.T) {
 			}
 		}
 	}
-	util.CheckNoLeakFiles(t)
 }
 
 func TestAggInDisk(t *testing.T) {
@@ -254,12 +247,9 @@ func TestAggInDisk(t *testing.T) {
 	tk.MustExec("create table t(c int, c1 int);")
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t;").Check(testkit.Rows("0"))
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
-	util.CheckNoLeakFiles(t)
 }
 
 func TestRandomPanicConsume(t *testing.T) {
-	log.Info("----debug")
-	util.CheckNoLeakFiles(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -344,7 +334,6 @@ func TestRandomPanicConsume(t *testing.T) {
 		}
 	}
 
-	util.CheckNoLeakFiles(t)
 }
 
 func checkResults(actualRes [][]any, expectedRes map[string]string) bool {
@@ -466,7 +455,6 @@ func TestParallelHashAgg(t *testing.T) {
 			rs.Check(rsStatic.Rows())
 		}
 	}
-	util.CheckNoLeakFiles(t)
 }
 
 func TestIssue50849(t *testing.T) {
@@ -485,5 +473,4 @@ func TestIssue50849(t *testing.T) {
 	err = rs.Close()
 	// Check the error contains stack information
 	require.True(t, errors.HasStack(err))
-	util.CheckNoLeakFiles(t)
 }
