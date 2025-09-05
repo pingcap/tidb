@@ -76,7 +76,7 @@ PARTITION BY RANGE ( a ) (
 		require.NoError(t, err)
 		handle := do.StatsHandle()
 		for _, def := range pi.Definitions {
-			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+			statsTbl := handle.GetPhysicalTableStats(def.ID, table.Meta())
 			require.False(t, statsTbl.Pseudo)
 			require.Equal(t, statsTbl.ColNum(), 3)
 			require.Equal(t, statsTbl.IdxNum(), 1)
@@ -103,7 +103,7 @@ PARTITION BY RANGE ( a ) (
 		require.NotNil(t, pi)
 
 		for i, def := range pi.Definitions {
-			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+			statsTbl := handle.GetPhysicalTableStats(def.ID, table.Meta())
 			if i == 0 {
 				require.False(t, statsTbl.Pseudo)
 				require.Equal(t, statsTbl.ColNum(), 3)
@@ -157,7 +157,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col := tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 	require.Len(t, col.TopN.TopN, 1)
@@ -166,7 +166,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	require.Equal(t, int32(2048), width)
 
 	tk.MustExec("analyze table t with 4 buckets, 0 topn, 4 cmsketch width, 4 cmsketch depth")
-	tbl = dom.StatsHandle().GetTableStats(tableInfo)
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col = tbl.GetCol(1)
 	require.Equal(t, 4, col.Len())
 	require.Nil(t, col.TopN)
@@ -176,7 +176,7 @@ func TestAnalyzeParameters(t *testing.T) {
 
 	// Test very large cmsketch
 	tk.MustExec(fmt.Sprintf("analyze table t with %d cmsketch width, %d cmsketch depth", core.CMSketchSizeLimit, 1))
-	tbl = dom.StatsHandle().GetTableStats(tableInfo)
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col = tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 
@@ -187,7 +187,7 @@ func TestAnalyzeParameters(t *testing.T) {
 
 	// Test very large cmsketch
 	tk.MustExec("analyze table t with 20480 cmsketch width, 50 cmsketch depth")
-	tbl = dom.StatsHandle().GetTableStats(tableInfo)
+	tbl = dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col = tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 	require.Len(t, col.TopN.TopN, 1)
@@ -213,7 +213,7 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	col1 := tbl.GetCol(1)
 	require.Equal(t, 0, col1.Len())
 	require.Equal(t, 0, col1.TopN.Num())
@@ -255,7 +255,7 @@ func TestExtractTopN(t *testing.T) {
 	table, err := is.TableByName(context.Background(), model.NewCIStr("test_extract_topn"), model.NewCIStr("test_extract_topn"))
 	require.NoError(t, err)
 	tblInfo := table.Meta()
-	tblStats := dom.StatsHandle().GetTableStats(tblInfo)
+	tblStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	colStats := tblStats.GetCol(tblInfo.Columns[1].ID)
 	require.Len(t, colStats.TopN.TopN, 10)
 	item := colStats.TopN.TopN[0]
@@ -730,7 +730,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
 	col0 := tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 2, len(col0.Buckets))
@@ -749,7 +749,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
@@ -757,7 +757,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	// manual analyze uses the table-level persisted options by merging the new options
 	tk.MustExec("analyze table t columns a,b with 1 samplerate, 3 buckets")
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
@@ -781,7 +781,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustExec("set global tidb_persist_analyze_options = false")
 	// manual analyze will neither use the pre-persisted options nor persist new options
 	tk.MustExec("analyze table t with 2 topn")
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.NotEqual(t, 3, len(col0.Buckets))
@@ -821,7 +821,7 @@ PARTITION BY RANGE ( a ) (
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
-	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	lastVersion := p0.Version
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
@@ -835,8 +835,8 @@ PARTITION BY RANGE ( a ) (
 
 	// merge partition & table level options
 	tk.MustExec("analyze table t columns a,b with 0 topn, 2 buckets")
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	p0 = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
+	p1 := h.GetPhysicalTableStats(pi.Definitions[1].ID, tableInfo)
 	require.Greater(t, p0.Version, lastVersion)
 	lastVersion = p0.Version
 	require.Equal(t, 2, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
@@ -869,8 +869,8 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition only updates this partition, and set different collist
 	tk.MustExec("analyze table t partition p1 columns a,c with 1 buckets")
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	p1 = h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	p0 = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
+	p1 = h.GetPhysicalTableStats(pi.Definitions[1].ID, tableInfo)
 	require.Equal(t, p0.Version, lastVersion)
 	require.Greater(t, p1.Version, lastVersion)
 	lastVersion = p1.Version
@@ -895,7 +895,7 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition without options uses saved partition options
 	tk.MustExec("analyze table t partition p0")
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	require.Greater(t, p0.Version, lastVersion)
 	lastVersion = p0.Version
 	require.Equal(t, 2, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
@@ -908,7 +908,7 @@ PARTITION BY RANGE ( a ) (
 
 	// merge options of statement's, partition's and table's
 	tk.MustExec("analyze table t partition p0 with 3 buckets")
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 = h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	require.Greater(t, p0.Version, lastVersion)
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
@@ -928,7 +928,7 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, err)
 	tableInfo = table.Meta()
 	pi = tableInfo.GetPartitionInfo()
-	p2 := h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
+	p2 := h.GetPhysicalTableStats(pi.Definitions[2].ID, tableInfo)
 	require.Equal(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p2.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
@@ -949,7 +949,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t partition p2")
 	pi = tableInfo.GetPartitionInfo()
-	p2 = h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
+	p2 = h.GetPhysicalTableStats(pi.Definitions[2].ID, tableInfo)
 	require.NotEqual(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
 
 	// drop column
@@ -1018,8 +1018,8 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo1 := table1.Meta()
 	tableInfo2 := table2.Meta()
-	tblStats1 := h.GetTableStats(tableInfo1)
-	tblStats2 := h.GetTableStats(tableInfo2)
+	tblStats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
+	tblStats2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	tbl1Col0 := tblStats1.GetCol(tableInfo1.Columns[0].ID)
 	tbl2Col0 := tblStats2.GetCol(tableInfo2.Columns[0].ID)
 	require.Equal(t, 3, len(tbl1Col0.Buckets))
@@ -1076,7 +1076,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("analyze table t predicate columns")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tblStats := h.GetTableStats(tblInfo)
+	tblStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	lastVersion := tblStats.Version
 	// column b is analyzed
 	require.Greater(t, lastVersion, tblStats.GetCol(tblInfo.Columns[0].ID).LastUpdateVersion)
@@ -1089,7 +1089,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	// manually analyze uses the saved option(predicate columns).
 	tk.MustExec("analyze table t")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tblStats = h.GetTableStats(tblInfo)
+	tblStats = h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column b, c are analyzed
@@ -1102,7 +1102,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), is))
 	// auto analyze uses the saved option(predicate columns).
 	h.HandleAutoAnalyze()
-	tblStats = h.GetTableStats(tblInfo)
+	tblStats = h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column b, c are analyzed
@@ -1924,7 +1924,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	lastVersion := h.GetTableStats(tableInfo).Version
+	lastVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	jobInfo := "auto analyze "
@@ -1959,7 +1959,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
-			currentVersion := h.GetTableStats(tableInfo).Version
+			currentVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
 				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
@@ -2006,7 +2006,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	lastVersion := h.GetTableStats(tblInfo).Version
+	lastVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	const jobInfo = "auto analyze index idx"
@@ -2032,7 +2032,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
-			currentVersion := h.GetTableStats(tblInfo).Version
+			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
 				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
@@ -2234,7 +2234,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t columns a,c with 1 topn, 3 buckets")
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
 	// both globalStats and partition stats generated and options saved for column a,c
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
@@ -2254,7 +2254,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
@@ -2274,7 +2274,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t with 2 topn, 2 buckets")
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
@@ -2328,9 +2328,9 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
-	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
+	p1 := h.GetPhysicalTableStats(pi.Definitions[1].ID, tableInfo)
 	lastVersion := tbl.Version
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
@@ -2353,7 +2353,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	p0, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[0].ID, true, 0)
@@ -2377,7 +2377,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t columns b,d with 2 topn, 2 buckets")
 	tk.MustQuery("select * from t where b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[1].ID).Buckets))
@@ -2397,7 +2397,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
@@ -2407,7 +2407,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t with 1 topn")
 	tk.MustQuery("select * from t where b > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[1].ID).Buckets))
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
@@ -2467,7 +2467,7 @@ PARTITION BY RANGE ( a ) (
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
 	require.NotEqual(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.NotEqual(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
@@ -2476,7 +2476,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/9) as the sample-rate=1\"",
 	))
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion) // global stats updated
 }
 
@@ -2522,7 +2522,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 := h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo)
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 
 	// analyze partition with existing stats of other partitions under dynamic
@@ -2554,14 +2554,14 @@ PARTITION BY RANGE ( a ) (
 	// flaky test, fix it later
 	//tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	//require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	//tbl := h.GetTableStats(tableInfo)
+	//tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	//require.Equal(t, 0, len(tbl.Columns))
 
 	// ignore both p0's 3 buckets, persisted-partition-options' 1 bucket, just use table-level 2 buckets
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 }
 
@@ -2606,14 +2606,14 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	tbl := h.GetTableStats(tableInfo)
+	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
-	tbl = h.GetTableStats(tableInfo)
+	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetIdx(tableInfo.Indices[0].ID).Buckets))
 }
@@ -2811,7 +2811,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	stats := h.GetTableStats(tblInfo)
+	stats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.True(t, stats.GetCol(tblInfo.Columns[0].ID).IsStatsInitialized())
 	require.True(t, stats.GetCol(tblInfo.Columns[1].ID).IsStatsInitialized())
 	require.False(t, stats.GetCol(tblInfo.Columns[2].ID).IsStatsInitialized())
