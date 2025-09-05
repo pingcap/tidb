@@ -333,7 +333,6 @@ func TestRandomPanicConsume(t *testing.T) {
 			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 		}
 	}
-
 }
 
 func checkResults(actualRes [][]any, expectedRes map[string]string) bool {
