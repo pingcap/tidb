@@ -512,46 +512,49 @@ func TestExternalMetaPath(t *testing.T) {
 	require.Equal(t, "2/3/meta.json", SubtaskMetaPath(2, 3))
 }
 
+type intV int
+
+func (i intV) GetByte() []byte {
+	return []byte{byte(i)}
+}
+
 func TestRemoveDuplicates(t *testing.T) {
-	valGetter := func(e *int) []byte {
-		return []byte{byte(*e)}
-	}
 	cases := []struct {
-		in   []int
-		out  []int
-		dups []int
+		in   []intV
+		out  []intV
+		dups []intV
 	}{
 		// no duplicates
-		{in: []int{}, out: []int{}, dups: []int{}},
-		{in: []int{1}, out: []int{1}, dups: []int{}},
-		{in: []int{1, 2}, out: []int{1, 2}, dups: []int{}},
-		{in: []int{1, 2, 3}, out: []int{1, 2, 3}, dups: []int{}},
-		{in: []int{1, 2, 3, 4, 5}, out: []int{1, 2, 3, 4, 5}, dups: []int{}},
+		{in: []intV{}, out: []intV{}, dups: []intV{}},
+		{in: []intV{1}, out: []intV{1}, dups: []intV{}},
+		{in: []intV{1, 2}, out: []intV{1, 2}, dups: []intV{}},
+		{in: []intV{1, 2, 3}, out: []intV{1, 2, 3}, dups: []intV{}},
+		{in: []intV{1, 2, 3, 4, 5}, out: []intV{1, 2, 3, 4, 5}, dups: []intV{}},
 		// duplicates at beginning
-		{in: []int{1, 1}, out: []int{}, dups: []int{1, 1}},
-		{in: []int{1, 1, 1}, out: []int{}, dups: []int{1, 1, 1}},
-		{in: []int{1, 1, 2, 3}, out: []int{2, 3}, dups: []int{1, 1}},
-		{in: []int{1, 1, 1, 2, 3}, out: []int{2, 3}, dups: []int{1, 1, 1}},
+		{in: []intV{1, 1}, out: []intV{}, dups: []intV{1, 1}},
+		{in: []intV{1, 1, 1}, out: []intV{}, dups: []intV{1, 1, 1}},
+		{in: []intV{1, 1, 2, 3}, out: []intV{2, 3}, dups: []intV{1, 1}},
+		{in: []intV{1, 1, 1, 2, 3}, out: []intV{2, 3}, dups: []intV{1, 1, 1}},
 		// duplicates in middle
-		{in: []int{1, 2, 2, 3}, out: []int{1, 3}, dups: []int{2, 2}},
-		{in: []int{1, 2, 2, 2, 3}, out: []int{1, 3}, dups: []int{2, 2, 2}},
-		{in: []int{1, 2, 2, 2, 3, 3, 4}, out: []int{1, 4}, dups: []int{2, 2, 2, 3, 3}},
-		{in: []int{1, 2, 2, 2, 3, 3, 4, 4, 5}, out: []int{1, 5}, dups: []int{2, 2, 2, 3, 3, 4, 4}},
-		{in: []int{1, 2, 2, 2, 3, 4, 4, 5}, out: []int{1, 3, 5}, dups: []int{2, 2, 2, 4, 4}},
-		{in: []int{1, 2, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9}, out: []int{1, 3, 6, 7, 9}, dups: []int{2, 2, 2, 4, 4, 5, 5, 8, 8}},
+		{in: []intV{1, 2, 2, 3}, out: []intV{1, 3}, dups: []intV{2, 2}},
+		{in: []intV{1, 2, 2, 2, 3}, out: []intV{1, 3}, dups: []intV{2, 2, 2}},
+		{in: []intV{1, 2, 2, 2, 3, 3, 4}, out: []intV{1, 4}, dups: []intV{2, 2, 2, 3, 3}},
+		{in: []intV{1, 2, 2, 2, 3, 3, 4, 4, 5}, out: []intV{1, 5}, dups: []intV{2, 2, 2, 3, 3, 4, 4}},
+		{in: []intV{1, 2, 2, 2, 3, 4, 4, 5}, out: []intV{1, 3, 5}, dups: []intV{2, 2, 2, 4, 4}},
+		{in: []intV{1, 2, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9}, out: []intV{1, 3, 6, 7, 9}, dups: []intV{2, 2, 2, 4, 4, 5, 5, 8, 8}},
 		// duplicates at end
-		{in: []int{1, 2, 3, 3}, out: []int{1, 2}, dups: []int{3, 3}},
-		{in: []int{1, 2, 3, 3, 3}, out: []int{1, 2}, dups: []int{3, 3, 3}},
+		{in: []intV{1, 2, 3, 3}, out: []intV{1, 2}, dups: []intV{3, 3}},
+		{in: []intV{1, 2, 3, 3, 3}, out: []intV{1, 2}, dups: []intV{3, 3, 3}},
 		// mixing
-		{in: []int{1, 1, 2, 3, 3, 4}, out: []int{2, 4}, dups: []int{1, 1, 3, 3}},
-		{in: []int{1, 2, 3, 3, 4, 4}, out: []int{1, 2}, dups: []int{3, 3, 4, 4}},
-		{in: []int{1, 1, 2, 3, 4, 4}, out: []int{2, 3}, dups: []int{1, 1, 4, 4}},
-		{in: []int{1, 1, 2, 2, 3, 3}, out: []int{}, dups: []int{1, 1, 2, 2, 3, 3}},
-		{in: []int{1, 1, 2, 2, 2, 3, 3}, out: []int{}, dups: []int{1, 1, 2, 2, 2, 3, 3}},
-		{in: []int{1, 1, 2, 2, 2, 3, 3, 4, 4}, out: []int{}, dups: []int{1, 1, 2, 2, 2, 3, 3, 4, 4}},
-		{in: []int{1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5}, out: []int{}, dups: []int{1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5}},
-		{in: []int{1, 1, 2, 2, 2, 3, 4, 4, 5, 5}, out: []int{3}, dups: []int{1, 1, 2, 2, 2, 4, 4, 5, 5}},
-		{in: []int{1, 1, 2, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9, 9}, out: []int{3, 6, 7}, dups: []int{1, 1, 2, 2, 2, 4, 4, 5, 5, 8, 8, 9, 9}},
+		{in: []intV{1, 1, 2, 3, 3, 4}, out: []intV{2, 4}, dups: []intV{1, 1, 3, 3}},
+		{in: []intV{1, 2, 3, 3, 4, 4}, out: []intV{1, 2}, dups: []intV{3, 3, 4, 4}},
+		{in: []intV{1, 1, 2, 3, 4, 4}, out: []intV{2, 3}, dups: []intV{1, 1, 4, 4}},
+		{in: []intV{1, 1, 2, 2, 3, 3}, out: []intV{}, dups: []intV{1, 1, 2, 2, 3, 3}},
+		{in: []intV{1, 1, 2, 2, 2, 3, 3}, out: []intV{}, dups: []intV{1, 1, 2, 2, 2, 3, 3}},
+		{in: []intV{1, 1, 2, 2, 2, 3, 3, 4, 4}, out: []intV{}, dups: []intV{1, 1, 2, 2, 2, 3, 3, 4, 4}},
+		{in: []intV{1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5}, out: []intV{}, dups: []intV{1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5}},
+		{in: []intV{1, 1, 2, 2, 2, 3, 4, 4, 5, 5}, out: []intV{3}, dups: []intV{1, 1, 2, 2, 2, 4, 4, 5, 5}},
+		{in: []intV{1, 1, 2, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9, 9}, out: []intV{3, 6, 7}, dups: []intV{1, 1, 2, 2, 2, 4, 4, 5, 5, 8, 8, 9, 9}},
 	}
 
 	for i, c := range cases {
@@ -560,16 +563,16 @@ func TestRemoveDuplicates(t *testing.T) {
 			require.True(t, slices.IsSorted(c.out))
 			require.True(t, slices.IsSorted(c.dups))
 			require.Equal(t, len(c.dups), len(c.in)-len(c.out))
-			tmpIn := make([]int, len(c.in))
+			tmpIn := make([]intV, len(c.in))
 			copy(tmpIn, c.in)
-			out, dups, dupCnt := removeDuplicates(tmpIn, valGetter, true)
+			out, dups, dupCnt := removeDuplicates(tmpIn, true)
 			require.EqualValues(t, c.out, out)
 			require.EqualValues(t, c.dups, dups)
 			require.Equal(t, dupCnt, len(dups))
 
-			tmpIn = make([]int, len(c.in))
+			tmpIn = make([]intV, len(c.in))
 			copy(tmpIn, c.in)
-			out, dups, dupCnt = removeDuplicates(tmpIn, valGetter, false)
+			out, dups, dupCnt = removeDuplicates(tmpIn, false)
 			require.EqualValues(t, c.out, out)
 			require.Empty(t, dups)
 			require.Equal(t, dupCnt, len(c.dups))
@@ -578,53 +581,50 @@ func TestRemoveDuplicates(t *testing.T) {
 }
 
 func TestRemoveDuplicatesMoreThan2(t *testing.T) {
-	valGetter := func(e *int) []byte {
-		return []byte{byte(*e)}
-	}
 	cases := []struct {
-		in    []int
-		out   []int
-		dups  []int
+		in    []intV
+		out   []intV
+		dups  []intV
 		total int
 	}{
 		// no duplicates
-		{in: []int{}, out: []int{}, dups: []int{}, total: 0},
-		{in: []int{1}, out: []int{1}, dups: []int{}, total: 0},
-		{in: []int{1, 2}, out: []int{1, 2}, dups: []int{}, total: 0},
-		{in: []int{1, 2, 3}, out: []int{1, 2, 3}, dups: []int{}, total: 0},
-		{in: []int{1, 2, 3, 4, 5}, out: []int{1, 2, 3, 4, 5}, dups: []int{}, total: 0},
+		{in: []intV{}, out: []intV{}, dups: []intV{}, total: 0},
+		{in: []intV{1}, out: []intV{1}, dups: []intV{}, total: 0},
+		{in: []intV{1, 2}, out: []intV{1, 2}, dups: []intV{}, total: 0},
+		{in: []intV{1, 2, 3}, out: []intV{1, 2, 3}, dups: []intV{}, total: 0},
+		{in: []intV{1, 2, 3, 4, 5}, out: []intV{1, 2, 3, 4, 5}, dups: []intV{}, total: 0},
 		// duplicates at beginning
-		{in: []int{1, 1}, out: []int{1, 1}, dups: []int{}, total: 2},
-		{in: []int{1, 1, 1}, out: []int{1, 1}, dups: []int{1}, total: 3},
-		{in: []int{1, 1, 1, 1}, out: []int{1, 1}, dups: []int{1, 1}, total: 4},
-		{in: []int{1, 1, 1, 1, 1}, out: []int{1, 1}, dups: []int{1, 1, 1}, total: 5},
-		{in: []int{1, 1, 2, 3}, out: []int{1, 1, 2, 3}, dups: []int{}, total: 2},
-		{in: []int{1, 1, 1, 2, 3}, out: []int{1, 1, 2, 3}, dups: []int{1}, total: 3},
-		{in: []int{1, 1, 1, 1, 2, 3}, out: []int{1, 1, 2, 3}, dups: []int{1, 1}, total: 4},
+		{in: []intV{1, 1}, out: []intV{1, 1}, dups: []intV{}, total: 2},
+		{in: []intV{1, 1, 1}, out: []intV{1, 1}, dups: []intV{1}, total: 3},
+		{in: []intV{1, 1, 1, 1}, out: []intV{1, 1}, dups: []intV{1, 1}, total: 4},
+		{in: []intV{1, 1, 1, 1, 1}, out: []intV{1, 1}, dups: []intV{1, 1, 1}, total: 5},
+		{in: []intV{1, 1, 2, 3}, out: []intV{1, 1, 2, 3}, dups: []intV{}, total: 2},
+		{in: []intV{1, 1, 1, 2, 3}, out: []intV{1, 1, 2, 3}, dups: []intV{1}, total: 3},
+		{in: []intV{1, 1, 1, 1, 2, 3}, out: []intV{1, 1, 2, 3}, dups: []intV{1, 1}, total: 4},
 		// duplicates in middle
-		{in: []int{1, 2, 2, 3}, out: []int{1, 2, 2, 3}, dups: []int{}, total: 2},
-		{in: []int{1, 2, 2, 2, 3}, out: []int{1, 2, 2, 3}, dups: []int{2}, total: 3},
-		{in: []int{1, 2, 2, 2, 2, 3}, out: []int{1, 2, 2, 3}, dups: []int{2, 2}, total: 4},
-		{in: []int{1, 2, 2, 2, 2, 2, 3}, out: []int{1, 2, 2, 3}, dups: []int{2, 2, 2}, total: 5},
-		{in: []int{1, 2, 2, 2, 3, 3, 4}, out: []int{1, 2, 2, 3, 3, 4}, dups: []int{2}, total: 5},
-		{in: []int{1, 2, 2, 2, 3, 3, 4, 4, 5}, out: []int{1, 2, 2, 3, 3, 4, 4, 5}, dups: []int{2}, total: 7},
-		{in: []int{1, 2, 2, 2, 3, 4, 4, 5}, out: []int{1, 2, 2, 3, 4, 4, 5}, dups: []int{2}, total: 5},
-		{in: []int{1, 2, 2, 2, 3, 4, 4, 5, 5, 5, 6, 7, 8, 8, 9}, out: []int{1, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9}, dups: []int{2, 5}, total: 10},
+		{in: []intV{1, 2, 2, 3}, out: []intV{1, 2, 2, 3}, dups: []intV{}, total: 2},
+		{in: []intV{1, 2, 2, 2, 3}, out: []intV{1, 2, 2, 3}, dups: []intV{2}, total: 3},
+		{in: []intV{1, 2, 2, 2, 2, 3}, out: []intV{1, 2, 2, 3}, dups: []intV{2, 2}, total: 4},
+		{in: []intV{1, 2, 2, 2, 2, 2, 3}, out: []intV{1, 2, 2, 3}, dups: []intV{2, 2, 2}, total: 5},
+		{in: []intV{1, 2, 2, 2, 3, 3, 4}, out: []intV{1, 2, 2, 3, 3, 4}, dups: []intV{2}, total: 5},
+		{in: []intV{1, 2, 2, 2, 3, 3, 4, 4, 5}, out: []intV{1, 2, 2, 3, 3, 4, 4, 5}, dups: []intV{2}, total: 7},
+		{in: []intV{1, 2, 2, 2, 3, 4, 4, 5}, out: []intV{1, 2, 2, 3, 4, 4, 5}, dups: []intV{2}, total: 5},
+		{in: []intV{1, 2, 2, 2, 3, 4, 4, 5, 5, 5, 6, 7, 8, 8, 9}, out: []intV{1, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9}, dups: []intV{2, 5}, total: 10},
 		// duplicates at end
-		{in: []int{1, 2, 3, 3}, out: []int{1, 2, 3, 3}, dups: []int{}, total: 2},
-		{in: []int{1, 2, 3, 3, 3}, out: []int{1, 2, 3, 3}, dups: []int{3}, total: 3},
-		{in: []int{1, 2, 3, 3, 3, 3}, out: []int{1, 2, 3, 3}, dups: []int{3, 3}, total: 4},
-		{in: []int{1, 2, 3, 3, 3, 3, 3}, out: []int{1, 2, 3, 3}, dups: []int{3, 3, 3}, total: 5},
+		{in: []intV{1, 2, 3, 3}, out: []intV{1, 2, 3, 3}, dups: []intV{}, total: 2},
+		{in: []intV{1, 2, 3, 3, 3}, out: []intV{1, 2, 3, 3}, dups: []intV{3}, total: 3},
+		{in: []intV{1, 2, 3, 3, 3, 3}, out: []intV{1, 2, 3, 3}, dups: []intV{3, 3}, total: 4},
+		{in: []intV{1, 2, 3, 3, 3, 3, 3}, out: []intV{1, 2, 3, 3}, dups: []intV{3, 3, 3}, total: 5},
 		// mixing
-		{in: []int{1, 1, 1, 1, 1, 2, 3, 3, 3, 4}, out: []int{1, 1, 2, 3, 3, 4}, dups: []int{1, 1, 1, 3}, total: 8},
-		{in: []int{1, 2, 3, 3, 3, 4, 4, 4}, out: []int{1, 2, 3, 3, 4, 4}, dups: []int{3, 4}, total: 6},
-		{in: []int{1, 1, 1, 2, 3, 4, 4, 4}, out: []int{1, 1, 2, 3, 4, 4}, dups: []int{1, 4}, total: 6},
-		{in: []int{1, 1, 1, 2, 2, 2, 3, 3, 3}, out: []int{1, 1, 2, 2, 3, 3}, dups: []int{1, 2, 3}, total: 9},
-		{in: []int{1, 1, 2, 2, 2, 3, 3}, out: []int{1, 1, 2, 2, 3, 3}, dups: []int{2}, total: 7},
-		{in: []int{1, 1, 2, 2, 2, 3, 3, 4, 4, 4}, out: []int{1, 1, 2, 2, 3, 3, 4, 4}, dups: []int{2, 4}, total: 10},
-		{in: []int{1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5, 5}, out: []int{1, 1, 2, 2, 3, 3, 4, 4, 5, 5}, dups: []int{2, 4}, total: 12},
-		{in: []int{1, 1, 2, 2, 2, 3, 4, 4, 4, 5, 5, 5}, out: []int{1, 1, 2, 2, 3, 4, 4, 5, 5}, dups: []int{2, 4, 5}, total: 11},
-		{in: []int{1, 1, 2, 2, 2, 3, 4, 4, 5, 5, 5, 6, 7, 8, 8, 9, 9}, out: []int{1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9, 9}, dups: []int{2, 5}, total: 14},
+		{in: []intV{1, 1, 1, 1, 1, 2, 3, 3, 3, 4}, out: []intV{1, 1, 2, 3, 3, 4}, dups: []intV{1, 1, 1, 3}, total: 8},
+		{in: []intV{1, 2, 3, 3, 3, 4, 4, 4}, out: []intV{1, 2, 3, 3, 4, 4}, dups: []intV{3, 4}, total: 6},
+		{in: []intV{1, 1, 1, 2, 3, 4, 4, 4}, out: []intV{1, 1, 2, 3, 4, 4}, dups: []intV{1, 4}, total: 6},
+		{in: []intV{1, 1, 1, 2, 2, 2, 3, 3, 3}, out: []intV{1, 1, 2, 2, 3, 3}, dups: []intV{1, 2, 3}, total: 9},
+		{in: []intV{1, 1, 2, 2, 2, 3, 3}, out: []intV{1, 1, 2, 2, 3, 3}, dups: []intV{2}, total: 7},
+		{in: []intV{1, 1, 2, 2, 2, 3, 3, 4, 4, 4}, out: []intV{1, 1, 2, 2, 3, 3, 4, 4}, dups: []intV{2, 4}, total: 10},
+		{in: []intV{1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5, 5}, out: []intV{1, 1, 2, 2, 3, 3, 4, 4, 5, 5}, dups: []intV{2, 4}, total: 12},
+		{in: []intV{1, 1, 2, 2, 2, 3, 4, 4, 4, 5, 5, 5}, out: []intV{1, 1, 2, 2, 3, 4, 4, 5, 5}, dups: []intV{2, 4, 5}, total: 11},
+		{in: []intV{1, 1, 2, 2, 2, 3, 4, 4, 5, 5, 5, 6, 7, 8, 8, 9, 9}, out: []intV{1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9, 9}, dups: []intV{2, 5}, total: 14},
 	}
 
 	for i, c := range cases {
@@ -633,9 +633,9 @@ func TestRemoveDuplicatesMoreThan2(t *testing.T) {
 			require.True(t, slices.IsSorted(c.out))
 			require.True(t, slices.IsSorted(c.dups))
 			require.Equal(t, len(c.dups), len(c.in)-len(c.out))
-			tmpIn := make([]int, len(c.in))
+			tmpIn := make([]intV, len(c.in))
 			copy(tmpIn, c.in)
-			out, dups, totalDup := removeDuplicatesMoreThanTwo(tmpIn, valGetter)
+			out, dups, totalDup := removeDuplicatesMoreThanTwo(tmpIn)
 			require.EqualValues(t, c.out, out)
 			require.EqualValues(t, c.dups, dups)
 			require.Equal(t, c.total, totalDup)
