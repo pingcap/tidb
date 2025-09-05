@@ -451,6 +451,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 }
 
 func (s *propConstSolver) solve(conditions []Expression) []Expression {
+	joinKeys := cloneJoinKeys(conditions)
 	s.conditions = slices.Grow(s.conditions, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
@@ -466,6 +467,9 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.conditions...)
+	// keep join keys in the results since they are crucial for join optimization like join reorder
+	// and index join selection. (#63314, #60076)
+	s.conditions = append(s.conditions, joinKeys...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return slices.Clone(s.conditions)
 }
@@ -524,6 +528,27 @@ func (s *propSpecialJoinConstSolver) Clear() {
 	s.nullSensitive = false
 	s.vaildExprFunc = nil
 	propSpecialJoinConstSolverPool.Put(s)
+}
+
+func cloneJoinKeys(exprs []Expression) (joinKeys []Expression) {
+	for _, expr := range exprs {
+		if maybeJoinKey(expr) {
+			joinKeys = append(joinKeys, expr.Clone())
+		}
+	}
+	return
+}
+
+// maybeJoinKey returns true if this expression could be a join key like `t1.col = t2.col`.
+// If these 2 columns are from the same table like `t1.col1 = t1.col1`, we still return true for simplification.
+func maybeJoinKey(expr Expression) bool {
+	binop, ok := expr.(*ScalarFunction)
+	if !ok || binop.FuncName.L != ast.EQ {
+		return false
+	}
+	_, lOK := binop.GetArgs()[0].(*Column)
+	_, rOK := binop.GetArgs()[1].(*Column)
+	return lOK && rOK
 }
 
 func (s *propSpecialJoinConstSolver) setConds2ConstFalse(filterConds bool) {
@@ -798,6 +823,7 @@ func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 }
 
 func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
+	joinKeys := append(cloneJoinKeys(joinConds), cloneJoinKeys(filterConds)...)
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
@@ -817,7 +843,12 @@ func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) 
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
-	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+
+	// keep join keys in the results since they are crucial for join optimization like join reorder
+	// and index join selection. (#63314, #60076)
+	joinConds = append(slices.Clone(s.joinConds), joinKeys...)
+	joinConds = RemoveDupExprs(joinConds)
+	return joinConds, slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
