@@ -146,9 +146,9 @@ func testDropTableBeforeInitStats(t *testing.T) {
 }
 
 func TestSkipStatsInitWithSkipGrantTable(t *testing.T) {
-	config.GetGlobalConfig().Security.SkipGrantTable = true
+	config.GetGlobalConfig().Performance.SkipInitStats = true
 	defer func() {
-		config.GetGlobalConfig().Security.SkipGrantTable = false
+		config.GetGlobalConfig().Performance.SkipInitStats = false
 	}()
 
 	store, dom := session.CreateStoreAndBootstrap(t)
