@@ -792,10 +792,6 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	default: // IndexJoin
 		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, float64(len(p.LeftJoinKeys)), cpuFactor, memFactor)
 	}
-	if !isSameStorageType {
-		hashTableCost = costusage.MulCostVer2(hashTableCost, 100)
-	}
-
 	// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
 	//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
 	// Use an empirical value batchRatio to handle this now.
@@ -817,6 +813,9 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
+	if !isSameStorageType {
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 1.8)
+	}
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
