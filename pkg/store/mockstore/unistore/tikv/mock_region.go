@@ -979,6 +979,9 @@ func newGCState() *gcState {
 	}
 }
 
+// gcStatesManagerSimulator is a mock implementation of GC APIs of PD. Note that it's currently a simple map and
+// assumes keyspace IDs passed here are all valid, without caring about the keyspace metas of the cluster. Neither
+// does it handle redirection logic of keyspaces configured running unified GC.
 type gcStatesManagerSimulator struct {
 	mu               sync.Mutex
 	keyspaceGCStates map[uint32]*gcState
