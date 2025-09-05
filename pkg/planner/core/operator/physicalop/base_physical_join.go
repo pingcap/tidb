@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -32,6 +33,22 @@ var (
 	_ base.PhysicalJoin = &PhysicalIndexHashJoin{}
 	_ base.PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
+
+// GetStoreType is to get store type
+func GetStoreType(pp base.PhysicalPlan) kv.StoreType {
+	switch p := pp.(type) {
+	case *PhysicalHashJoin:
+		return p.StoreTp
+	case *PhysicalTableScan:
+		return p.StoreType
+	case *PhysicalTableReader:
+		return p.StoreType
+	case *PhysicalWindow:
+		return p.StoreTp
+	default:
+		return kv.UnSpecified
+	}
+}
 
 // BasePhysicalJoin is the base struct for all physical join operators.
 // TODO: it is temporarily to be public for all physical join operators to embed it.
