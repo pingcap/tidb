@@ -388,6 +388,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (err error) {
 		if err := preparedMsg.Encode(clients[0], req); err != nil {
 			return err
 		}
+		failpoint.InjectCall("getWriteLimitInDoWrite", writeLimiter.Limit())
 
 		for i := range clients {
 			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
@@ -740,6 +741,16 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 		}
 	}
 	return resp, nil
+}
+
+// UpdateWriteSpeedLimit updates the write limiter of the backend.
+func (local *Backend) UpdateWriteSpeedLimit(limit int) {
+	local.writeLimiter.UpdateLimit(limit)
+}
+
+// GetWriteSpeedLimit returns the speed of the write limiter.
+func (local *Backend) GetWriteSpeedLimit() int {
+	return local.writeLimiter.Limit()
 }
 
 // convertStageOnIngestError will try to fix the error contained in ingest response.
