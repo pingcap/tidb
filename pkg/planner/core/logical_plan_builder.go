@@ -2945,9 +2945,6 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 						break
 					}
 				}
-				if pos == 0 {
-					return inNode, false
-				}
 			}
 		}
 		if pos < 1 || pos > len(g.fields) {
