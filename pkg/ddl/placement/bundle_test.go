@@ -1477,5 +1477,5 @@ func TestGetRangeStartAndEndKeyHex(t *testing.T) {
 	require.NoError(t, err)
 	_, endKeyDecoded, err := codec.DecodeBytes(endKeyBytes, nil)
 	require.NoError(t, err)
-	require.True(t, bytes.Equal(tablecodec.GenTablePrefix(0), endKeyDecoded), "tablePrefix and endKeyDecoded should have the same content")
+	require.True(t, bytes.Equal(rawPrefix, endKeyDecoded), "rawPrefix and endKeyDecoded should have the same content")
 }
