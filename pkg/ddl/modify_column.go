@@ -554,11 +554,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.AnalyzeStateNone:
 			// reorg the index data.
 			var done bool
-			if job.MultiSchemaInfo != nil {
-				done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
-			} else {
-				done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
-			}
+			done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
 			if !done {
 				return ver, err
 			}
@@ -574,6 +570,16 @@ func (w *worker) doModifyColumnTypeWithData(
 			} else {
 				// when TiDBEnableDDLAnalyze is default off, we just move to next DONE state for public this index.
 				job.AnalyzeState = model.AnalyzeStateDone
+			}
+			// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
+			// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
+			// sub and process the others.
+			// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
+			// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
+			// use the schema version generated once.
+			if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
+				// We need another round to wait for all the others sub-jobs to finish.
+				job.MarkNonRevertible()
 			}
 		case model.AnalyzeStateDone:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
@@ -690,21 +696,6 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 		logutil.DDLLogger().Info("analyze table after create index timeout check", zap.Int64("jobID", job.ID))
 		return false
 	}
-}
-
-func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
-	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
-		if done {
-			// We need another round to wait for all the others sub-jobs to finish.
-			job.MarkNonRevertible()
-		}
-		// We need another round to run the reorg process.
-		return false, ver, err
-	}
-	// Non-revertible means all the sub jobs finished.
-	return true, ver, err
 }
 
 func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
