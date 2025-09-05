@@ -103,7 +103,7 @@ insert into t values (1, "2019-04-29 11:56:12");
 explain format = 'plan_tree' select * from t where b = (select max(b) from t);
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		eq(expression__time.t.b, 2019-04-29 11:56:12<-ScalarQueryCol#6)
+└─Selection	cop[tikv]		eq(expression__time.t.b, ScalarQueryCol#6(2019-04-29 11:56:12))
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#6
 └─MaxOneRow	root		

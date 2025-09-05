@@ -141,8 +141,12 @@ func (col *Column) ExplainNormalizedInfo4InList() string {
 func (expr *Constant) ExplainInfo(ctx EvalContext) string {
 	redact := ctx.GetTiDBRedactLog()
 	if redact == errors.RedactLogEnable {
+		if expr.SubqueryRefID > 0 {
+			return fmt.Sprintf("ScalarQueryCol#%d(?)", expr.SubqueryRefID)
+		}
 		return "?"
 	}
+
 	dt, err := expr.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return "not recognized const value"
@@ -152,8 +156,7 @@ func (expr *Constant) ExplainInfo(ctx EvalContext) string {
 
 	// Add subquery reference if available (same logic as StringWithCtx)
 	if expr.SubqueryRefID > 0 {
-		refStr := fmt.Sprintf("ScalarQueryCol#%d", expr.SubqueryRefID)
-		return fmt.Sprintf("%s<-%s", valueStr, refStr)
+		return fmt.Sprintf("ScalarQueryCol#%d(%s)", expr.SubqueryRefID, valueStr)
 	}
 
 	if redact == errors.RedactLogMarker {
@@ -200,14 +203,8 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 				builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 			}
 		case *Constant:
-			// For Projection operators, show only the subquery reference without the constant value
-			if expr.SubqueryRefID > 0 {
-				refStr := fmt.Sprintf("ScalarQueryCol#%d", expr.SubqueryRefID)
-				builder.WriteString(refStr)
-			} else {
-				v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
-				redact.WriteRedact(builder, v, redactMode)
-			}
+			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
+			redact.WriteRedact(builder, v, redactMode)
 			builder.WriteString("->")
 			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 		default:
