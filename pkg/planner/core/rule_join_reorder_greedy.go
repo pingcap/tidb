@@ -16,13 +16,13 @@ package core
 
 import (
 	"cmp"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"math"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
