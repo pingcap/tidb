@@ -517,7 +517,7 @@ func TestStatsAnalyzedInDDL(t *testing.T) {
 				}
 				lastIsSelect = true
 			} else {
-				// run the ddl away
+				// run the ddl anyway
 				testKit.MustExec(sql)
 				lastIsSelect = false
 			}
