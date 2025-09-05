@@ -67,13 +67,13 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	join, ok := p.(*logicalop.LogicalJoin)
 	// If it's not a join, or not a (outer) semi join. We just return it since no optimization is needed.
 	// Actually the check of the preferRewriteSemiJoin is a superset of checking the join type. We remain them for a better understanding.
-	if !ok || !(join.JoinType == logicalop.SemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin) || (join.PreferJoinType&h.PreferRewriteSemiJoin == 0) {
+	if !ok || !(join.JoinType == base.SemiJoin || join.JoinType == base.LeftOuterSemiJoin) || (join.PreferJoinType&h.PreferRewriteSemiJoin == 0) {
 		return p, nil
 	}
 	// The preferRewriteSemiJoin flag only be used here. We should reset it in order to not affect other parts.
 	join.PreferJoinType &= ^h.PreferRewriteSemiJoin
 
-	if join.JoinType == logicalop.LeftOuterSemiJoin {
+	if join.JoinType == base.LeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin.")
 		return p, nil
 	}
@@ -121,7 +121,7 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	subAgg.BuildSelfKeyInfo(subAgg.Schema())
 
 	innerJoin := logicalop.LogicalJoin{
-		JoinType:        logicalop.InnerJoin,
+		JoinType:        base.InnerJoin,
 		HintInfo:        join.HintInfo,
 		PreferJoinType:  join.PreferJoinType,
 		PreferJoinOrder: join.PreferJoinOrder,
