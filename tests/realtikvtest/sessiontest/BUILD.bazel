@@ -12,10 +12,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-=======
     shard_count = 15,
->>>>>>> b82dd2c3da2 (ddl,executor: fix usages of getting regions from pd client (#63371))
     deps = [
         "//pkg/config",
         "//pkg/infoschema",
