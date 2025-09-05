@@ -1539,32 +1539,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_cznic_sortutil",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/cznic/sortutil",
-        sha256 = "67783879c1ae4472fdabb377b1772e4e4c5ced181528c2fc4569b565cb47a57b",
-        strip_prefix = "github.com/cznic/sortutil@v0.0.0-20181122101858-f5f958428db8",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cznic/sortutil/com_github_cznic_sortutil-v0.0.0-20181122101858-f5f958428db8.zip",
-            "http://ats.apps.svc/gomod/github.com/cznic/sortutil/com_github_cznic_sortutil-v0.0.0-20181122101858-f5f958428db8.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/cznic/sortutil/com_github_cznic_sortutil-v0.0.0-20181122101858-f5f958428db8.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cznic/sortutil/com_github_cznic_sortutil-v0.0.0-20181122101858-f5f958428db8.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_cznic_strutil",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/cznic/strutil",
-        sha256 = "867902276444cbffca84d9d5f63754e8b22092d93a94480d8dfebd234ac8ffbd",
-        strip_prefix = "github.com/cznic/strutil@v0.0.0-20181122101858-275e90344537",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cznic/strutil/com_github_cznic_strutil-v0.0.0-20181122101858-275e90344537.zip",
-            "http://ats.apps.svc/gomod/github.com/cznic/strutil/com_github_cznic_strutil-v0.0.0-20181122101858-275e90344537.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/cznic/strutil/com_github_cznic_strutil-v0.0.0-20181122101858-275e90344537.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cznic/strutil/com_github_cznic_strutil-v0.0.0-20181122101858-275e90344537.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_daixiang0_gci",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/daixiang0/gci",
