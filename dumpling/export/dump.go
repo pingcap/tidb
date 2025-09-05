@@ -782,7 +782,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	if isStringField {
 		estimateField = "*"
 	}
-	
+
 	count := estimateCount(d.tctx, db, tbl, conn, estimateField, conf)
 	tctx.L().Info("get estimated rows count",
 		zap.String("database", db),
@@ -791,7 +791,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		zap.String("field", field),
 		zap.String("estimateField", estimateField),
 		zap.Bool("isStringField", isStringField))
-		
+
 	// If estimation returns 0, try a direct count for small tables
 	// This can happen when table statistics are not available
 	if count == 0 && isStringField {
@@ -801,7 +801,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		// For test scenarios with small tables, we can afford a quick count
 		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", escapeString(db), escapeString(tbl))
 		if conf.Where != "" {
-			countQuery += " WHERE " + conf.Where
+			countQuery += " WHERE " + conf.Where // #nosec G202
 		}
 		var directCount sql.NullInt64
 		err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
@@ -816,7 +816,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 				zap.Uint64("directCount", count))
 		}
 	}
-		
+
 	if count < conf.Rows {
 		// skip chunk logic if estimates are low
 		tctx.L().Info("fallback to sequential dump due to estimate count < rows. This won't influence the whole dump process",
