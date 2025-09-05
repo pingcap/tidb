@@ -16,6 +16,7 @@ package core
 
 import (
 	"cmp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"math"
 	"slices"
 
@@ -106,6 +107,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		var bestJoin, whateverValidOne base.LogicalPlan
 		for i, node := range s.curJoinGroup {
 			newJoin, remainOthers, isCartesian := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
+			if isCartesian {
+				s.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptCartesianJoinOrderThreshold)
+			}
 			if newJoin == nil || // can't yield a valid join
 				(cartesianThreshold <= 0 && isCartesian) { // disable cartesian join
 				continue
