@@ -1026,6 +1026,8 @@ func GetAlterTablePlacementArgs(job *Job) (*AlterTablePlacementArgs, error) {
 // SetTiFlashReplicaArgs is the arguments for setting TiFlash replica ddl.
 type SetTiFlashReplicaArgs struct {
 	TiflashReplica ast.TiFlashReplicaSpec `json:"tiflash_replica,omitempty"`
+	// Note that ResetAvailable is only used in v2 job.
+	ResetAvailable bool `json:"reset_available,omitempty"`
 }
 
 func (a *SetTiFlashReplicaArgs) getArgsV1(*Job) []any {
