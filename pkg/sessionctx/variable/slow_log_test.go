@@ -305,14 +305,18 @@ func TestParseSlowLogRules(t *testing.T) {
 	_, err = variable.ParseSlowLogRules(longRules)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid slow log rules count")
+	// the field has ','
+	slowLogRules, err = variable.ParseSlowLogRules(`DB:"a,b", Succ:true`)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(slowLogRules.Rules[0].Conditions))
 
 	// Format error
 	_, err = variable.ParseSlowLogRules("Conn_ID 123")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid slow log field format")
+	require.Contains(t, err.Error(), "invalid slow log rule format:Conn_ID 123")
 	_, err = variable.ParseSlowLogRules("Conn_ID > 123")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid slow log field format")
+	require.Contains(t, err.Error(), "invalid slow log rule format:Conn_ID > 123")
 
 	// Field resetting
 	slowLogRules, err = variable.ParseSlowLogRules("Mem_max:100,Succ:true,Succ:false,Mem_max:200")
@@ -326,9 +330,9 @@ func TestParseSlowLogRules(t *testing.T) {
 	require.Equal(t, false, m[strings.ToLower(variable.SlowLogSucc)])
 
 	// empty fields in a single rule
-	_, err = variable.ParseSlowLogRules("Conn_ID:1,  , DB:db")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid slow log field format")
+	slowLogRules, err = variable.ParseSlowLogRules("Conn_ID:1,  , DB:db")
+	require.NoError(t, err)
+	require.Equal(t, 2, len(slowLogRules.Rules[0].Conditions))
 }
 
 func BenchmarkSlowLog(b *testing.B) {

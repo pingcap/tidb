@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/grafana/regexp"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -863,6 +864,9 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		}),
 }
 
+// slowLogFieldRe is uses to compile field:value
+var slowLogFieldRe = regexp.MustCompile(`\s*([^:,]+)\s*:\s*("[^"]*"|'[^']*'|[^,]+)\s*`)
+
 // ParseSlowLogRules parses a raw slow log rules string into a structured SlowLogRules object.
 // Each rule is separated by a semicolon (';'), and within each rule, fields are separated by commas (',').
 // Each field is a key-value pair separated by a colon (':').
@@ -876,9 +880,6 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 	}
 
 	rules := strings.Split(rawRules, ";")
-	if len(rules) == 0 {
-		return nil, nil
-	}
 	if len(rules) > 10 {
 		return nil, errors.Errorf("invalid slow log rules count:%d, limit is 10", len(rules))
 	}
@@ -892,16 +893,18 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 			continue
 		}
 
-		fields := strings.Split(rule, ",")
-		fieldMap := make(map[string]any, len(fields))
-		for _, field := range fields {
-			kv := strings.Split(field, ":")
-			if len(kv) != 2 {
-				return nil, errors.Errorf("invalid slow log field format:%s", field)
+		matches := slowLogFieldRe.FindAllStringSubmatch(rule, -1)
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("invalid slow log rule format:%s", rule)
+		}
+		fieldMap := make(map[string]any, len(matches))
+		for _, matche := range matches {
+			if len(matche) != 3 {
+				return nil, errors.Errorf("invalid slow log condition format:%s", matche)
 			}
 
-			fieldName := strings.ToLower(strings.TrimSpace(kv[0]))
-			value := strings.TrimSpace(kv[1])
+			fieldName := strings.ToLower(strings.TrimSpace(matche[1]))
+			value := strings.TrimSpace(matche[2])
 			fieldValue, err := ParseSlowLogFieldValue(fieldName, strings.Trim(value, "\"'"))
 			if err != nil {
 				return nil, errors.Errorf("invalid slow log format, value:%s, err:%s", value, err)
