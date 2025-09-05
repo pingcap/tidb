@@ -1188,6 +1188,16 @@ SwitchIndexState:
 				// when TiDBEnableDDLAnalyze is default off, we just move to next DONE state for public this index.
 				job.AnalyzeState = model.AnalyzeStateDone
 			}
+			// previously, when reorg is done, and before we set the state to public, we need all other sub-task to
+			// be ready as well which is via setting this job as NornRevertible, then we can continue skip current
+			// sub and process the others.
+			// And when all sub-task are ready, which means each of them could be public in one more ddl round. And
+			// in onMultiSchemaChange, we just give all sub-jobs each one more round to public the schema, and only
+			// use the schema version generated once.
+			if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible && job.AnalyzeState == model.AnalyzeStateDone {
+				// We need another round to wait for all the others sub-jobs to finish.
+				job.MarkNonRevertible()
+			}
 		case model.AnalyzeStateDone:
 			// Set column index flag.
 			for _, indexInfo := range allIndexInfos {
@@ -1469,18 +1479,14 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-		if done {
-			job.MarkNonRevertible()
-			if err == nil {
-				ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
-			}
+	done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
+	if done {
+		// looks like we still need update version here, which couldn't be merged with the outer
+		if err == nil {
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		}
-		// We need another round to wait for all the others sub-jobs to finish.
-		return false, ver, err
 	}
-	return true, ver, err
+	return done, ver, err
 }
 
 func doReorgWorkForCreateIndex(
