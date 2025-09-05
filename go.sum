@@ -48,8 +48,8 @@ filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
 git.musta.ch/company/tidb-client-go/v2 v2.0.0-20250821004118-47bff1c09ae5 h1:6auJ29rkTv40XXs2p35Bm+dw4XDi4WccVY42B43IYPg=
 git.musta.ch/company/tidb-client-go/v2 v2.0.0-20250821004118-47bff1c09ae5/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
-git.musta.ch/company/tidb-pd/client v0.0.0-20250828013444-e100c3e2efe0 h1:9hQ4j3AbSgzqJVtzruTPNJaDAGjxiooWh7MSY7t3Tn8=
-git.musta.ch/company/tidb-pd/client v0.0.0-20250828013444-e100c3e2efe0/go.mod h1:W5a0sDadwUpI9k8p7M77d3jo253ZHdmua+u4Ho4Xw8U=
+git.musta.ch/company/tidb-pd/client v0.0.0-20250903174936-0cbb10a0b95f h1:O4ZEN0+69OAoDNxbGFNcuo6SPon35+0sB7j8d41iMKY=
+git.musta.ch/company/tidb-pd/client v0.0.0-20250903174936-0cbb10a0b95f/go.mod h1:W5a0sDadwUpI9k8p7M77d3jo253ZHdmua+u4Ho4Xw8U=
 git.sr.ht/~sbinet/gg v0.3.1/go.mod h1:KGYtlADtqsqANL9ueOFkWymvzUvLMQllU5Ixo+8v3pc=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.12.0 h1:1nGuui+4POelzDwI7RG56yfQJHCnKvwfMoU7VsEp+Zg=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.12.0/go.mod h1:99EvauvlcJ1U06amZiksfYz/3aFGyIhWGHVyiZXtBAI=
