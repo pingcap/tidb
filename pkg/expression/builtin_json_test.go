@@ -128,7 +128,7 @@ func TestJSONSumCrc32(t *testing.T) {
 	checksumFunc := func(vals []any) int64 {
 		var sum int64
 		for _, v := range vals {
-			sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", v)))
+			sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", v)) % JSONCRC32Mod)
 		}
 		return sum
 	}

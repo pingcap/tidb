@@ -1579,7 +1579,7 @@ func TestAdminCheckTableFailed(t *testing.T) {
 func TestAdminCheckTableErrorLocate(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
-	executor.CheckTableFastBucketSize.Store(8)
+	executor.CheckTableFastBucketSize = 8
 
 	seed := time.Now().UnixNano()
 	rand := rand.New(rand.NewSource(seed))
@@ -1711,7 +1711,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
-	executor.CheckTableFastBucketSize.Store(8)
+	executor.CheckTableFastBucketSize = 8
 
 	seed := time.Now().UnixNano()
 	rand := rand.New(rand.NewSource(seed))
@@ -2192,6 +2192,11 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	tk.Session().GetSessionVars().IndexLookupSize = 3
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMeetErrorInCheckTable", "return(true)")
+	tk.MustExec("set tidb_enable_fast_table_check = true")
+	err = tk.ExecToErr("admin check table t")
+	require.ErrorContains(t, err, "no error detected during row comparison")
+
 	// Simulate inconsistent index column
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	txn, err := store.Begin()
@@ -2203,9 +2208,222 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMeetErrorInCheckTable", "return(false)")
 	for _, enabled := range []bool{false, true} {
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 		err = tk.ExecToErr("admin check table t")
 		require.Error(t, err)
+	}
+}
+
+func TestExtractCastArrayExpr(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tc := []struct {
+		sql            string
+		arrayExprIndex int
+	}{
+		{
+			sql:            "CREATE TABLE t (a int, b JSON, KEY mv_idx_binary(a, (( ( CAST(b->'$[*]' AS BINARY(12) ARRAY ) ) ) )))",
+			arrayExprIndex: 1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b JSON, KEY mv_idx_binary((a * 2), ( ( CAST(b->'$[*]' AS BINARY(12) ARRAY ) ) ) ))",
+			arrayExprIndex: 1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, CAST_AS_ARRAY int as (a * 2), case_array JSON, KEY mv_idx_binary(CAST_AS_ARRAY, (a * 2), (( ( CAST(case_array->'$[*]' AS BINARY(12) ARRAY ) ) ) )))",
+			arrayExprIndex: 2,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b int as (a * 2), CAST_AS_ARRAY JSON, KEY mv_idx_binary(b, (a * 2), (( ( CAST(`CAST_AS_ARRAY` AS CHAR(16)) ) ) )))",
+			arrayExprIndex: -1,
+		},
+		{
+			sql:            "CREATE TABLE t (a int, b int as (a * 2), CAST_AS_ARRAY JSON, KEY mv_idx_binary(b, (a * 2), (( ( CAST(CAST_AS_ARRAY AS CHAR(16)  ARRAY ) ) ) )))",
+			arrayExprIndex: 2,
+		},
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+
+	for _, tt := range tc {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(tt.sql)
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		meta := tbl.Meta()
+
+		for i, col := range meta.Indices[0].Columns {
+			tblCol := meta.Columns[col.Offset]
+			extracted := executor.ExtractCastArrayExpr(tblCol)
+			if i == tt.arrayExprIndex {
+				require.True(t, len(extracted) > 0, "Expected to extract cast array expression, got empty result")
+			} else {
+				require.True(t, len(extracted) == 0, "Expected to extract nothing, got non-empty result")
+			}
+		}
+	}
+}
+
+func TestAdminCheckMVIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	executor.CheckTableFastBucketSize = 4
+	executor.LookupCheckThreshold = 1
+
+	type corruptedEntry struct {
+		handle kv.Handle
+		values []any
+	}
+
+	type testCase struct {
+		indexSQLs   []string
+		insertValue []string
+		addEntry    *corruptedEntry
+		deleteEntry *corruptedEntry
+	}
+
+	testCases := []testCase{
+		{
+			indexSQLs:   []string{"INDEX mvi((CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5.5", "7"]'`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(1),
+				values: []any{"3"},
+			},
+		},
+		{
+			indexSQLs:   []string{"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `NULL`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(2),
+				values: []any{2, "2", "3"},
+			},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1)",
+				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
+			},
+			insertValue: []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(1),
+				values: []any{3},
+			},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1)",
+				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(1),
+				values: []any{1, "b", "1"},
+			},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1, i2)",
+				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
+			},
+			insertValue: []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			addEntry: &corruptedEntry{
+				handle: testutil.MustNewCommonHandle(t, 1, "1"),
+				values: []any{3},
+			},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1, i2)",
+				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`, `NULL`},
+			addEntry: &corruptedEntry{
+				handle: testutil.MustNewCommonHandle(t, 2, "2"),
+				values: []any{2, "2", "3"},
+			},
+		},
+		{
+			indexSQLs: []string{
+				"INDEX mvi(i1, (i1 * 2), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue: []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`, `NULL`},
+			addEntry: &corruptedEntry{
+				handle: kv.IntHandle(2),
+				values: []any{2, "4", "5"},
+			},
+			deleteEntry: &corruptedEntry{
+				handle: kv.IntHandle(2),
+				values: []any{2, "3", "5"},
+			},
+		},
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tc := range testCases {
+		tk.MustExec("DROP TABLE IF EXISTS t")
+		tk.MustExec("CREATE TABLE t(i1 INT, i2 CHAR(16), j JSON)")
+		for _, sql := range tc.indexSQLs {
+			tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD %s", sql))
+		}
+
+		for i, value := range tc.insertValue {
+			tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d, %d, %s)", i, i, value))
+		}
+
+		for _, fastCheck := range []bool{false, true} {
+			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
+			tk.MustExec("ADMIN CHECK TABLE t")
+		}
+
+		// Make some corrupted index. Build the index information
+		// and simulate inconsistent index values on MVI
+		sctx := mock.NewContext()
+		sctx.Store = store
+		ctx := sctx.GetTableCtx()
+		is := domain.InfoSchema()
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("t")
+		tbl, err := is.TableByName(context.Background(), dbName, tblName)
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		for _, idxInfo := range tblInfo.Indices {
+			if idxInfo.Primary {
+				continue
+			}
+
+			indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			if tc.addEntry != nil {
+				_, err = indexOpr.Create(ctx, txn, types.MakeDatums(tc.addEntry.values...), tc.addEntry.handle, nil)
+				require.NoError(t, err)
+			}
+			if tc.deleteEntry != nil {
+				err = indexOpr.Delete(ctx, txn, types.MakeDatums(tc.deleteEntry.values...), tc.deleteEntry.handle)
+				require.NoError(t, err)
+			}
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+		}
+
+		for _, fastCheck := range []bool{false, true} {
+			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
+			err = tk.ExecToErr("admin check table t")
+			require.Error(t, err)
+			require.ErrorContains(t, err, "inconsistency")
+
+			// The output of error message is different whether fast check is enabled,
+			// and we just check error message for fast check.
+			if fastCheck {
+				require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: t, index: mvi")
+			}
+		}
 	}
 }
