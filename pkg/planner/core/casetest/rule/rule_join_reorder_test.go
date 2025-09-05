@@ -80,13 +80,13 @@ func TestCartesianJoinOrder(t *testing.T) {
 		tk.MustExec(`analyze table t1, t2, t3 all columns`)
 		runJoinReorderTestData(t, tk, caller)
 
-		// after setting tidb_opt_risk_cartesian_join_order_ratio, we could get a plan with cartesian join and lower cost.
+		// after setting tidb_opt_cartesian_join_order_threshold, we could get a plan with cartesian join and lower cost.
 		costWithoutCartesian, err := strconv.ParseFloat(
-			tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_risk_cartesian_join_order_ratio=0) */ 1
+			tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1
 								from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Rows()[0][2].(string), 64)
 		require.NoError(t, err)
 		costWithCartesian, err := strconv.ParseFloat(
-			tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_risk_cartesian_join_order_ratio=100) */ 1
+			tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1
 								from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Rows()[0][2].(string), 64)
 		require.NoError(t, err)
 		require.Less(t, costWithCartesian, costWithoutCartesian)

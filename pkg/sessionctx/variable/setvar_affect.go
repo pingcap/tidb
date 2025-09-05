@@ -76,7 +76,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_risk_range_skew_ratio":                  {},
 	"tidb_opt_group_ndv_skew_ratio":                   {},
 	"tidb_opt_scale_ndv_skew_ratio":                   {},
-	"tidb_opt_risk_cartesian_join_order_ratio":        {},
+	"tidb_opt_cartesian_join_order_threshold":         {},
 	"tidb_index_join_batch_size":                      {},
 	"tidb_index_lookup_size":                          {},
 	"tidb_index_serial_scan_concurrency":              {},

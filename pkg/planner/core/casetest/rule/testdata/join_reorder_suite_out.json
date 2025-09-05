@@ -789,7 +789,7 @@
     "Name": "TestCartesianJoinOrder",
     "Cases": [
       {
-        "SQL": "select /*+ set_var(tidb_opt_risk_cartesian_join_order_ratio=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
+        "SQL": "select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
         "Plan": [
           "Projection 50000.00 root  1->Column#13",
           "└─HashJoin 50000.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
@@ -805,7 +805,7 @@
         "Warning": null
       },
       {
-        "SQL": "select /*+ set_var(tidb_opt_risk_cartesian_join_order_ratio=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
+        "SQL": "select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
         "Plan": [
           "Projection 50000.00 root  1->Column#13",
           "└─HashJoin 50000.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
