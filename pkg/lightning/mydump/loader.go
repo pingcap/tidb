@@ -824,6 +824,22 @@ func (l *MDLoader) GetStore() storage.ExternalStorage {
 	return l.store
 }
 
+// GetAllFiles gets all the files for the loader.
+func (l *MDLoader) GetAllFiles() map[string]FileInfo {
+	allFiles := make(map[string]FileInfo)
+	for _, dbMeta := range l.dbs {
+		for _, tblMeta := range dbMeta.Tables {
+			for _, file := range tblMeta.DataFiles {
+				allFiles[file.FileMeta.Path] = file
+			}
+			if tblMeta.SchemaFile.FileMeta.Path != "" {
+				allFiles[tblMeta.SchemaFile.FileMeta.Path] = tblMeta.SchemaFile
+			}
+		}
+	}
+	return allFiles
+}
+
 func calculateFileBytes(ctx context.Context,
 	dataFile string,
 	compressType storage.CompressType,
