@@ -71,7 +71,6 @@ type DDLReorgMeta struct {
 	IsDistReorg       bool                             `json:"is_dist_reorg"`
 	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	ResourceGroupName string                           `json:"resource_group_name"`
-	AnalyzeState      int8                             `json:"analyze_state"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`
 	MaxNodeCount      int                              `json:"max_node_count"`

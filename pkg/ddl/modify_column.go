@@ -550,7 +550,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		switch job.ReorgMeta.AnalyzeState {
+		switch job.AnalyzeState {
 		case model.AnalyzeStateNone:
 			// reorg the index data.
 			var done bool
@@ -562,18 +562,18 @@ func (w *worker) doModifyColumnTypeWithData(
 			if !done {
 				return ver, err
 			}
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
+			job.AnalyzeState = model.AnalyzeStateRunning
 		case model.AnalyzeStateRunning:
 			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tbl.GetPartitionedTable() == nil {
 				// after all old index data are reorged. re-analyze it.
 				done := w.analyzeTableAfterCreateIndex(job, job.SchemaName, tblInfo.Name.L)
 				if done {
-					job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+					job.AnalyzeState = model.AnalyzeStateDone
 				}
 				// if not done yet, it will return ver=0 and nil directly back the main loop for a next ddl round.
 			} else {
 				// when TiDBEnableDDLAnalyze is default off, we just move to next DONE state for public this index.
-				job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+				job.AnalyzeState = model.AnalyzeStateDone
 			}
 		case model.AnalyzeStateDone:
 			failpoint.InjectCall("afterReorgWorkForModifyColumn")
