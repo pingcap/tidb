@@ -102,6 +102,8 @@ type BuildContext interface {
 	GetCharsetInfo() (string, string)
 	// GetDefaultCollationForUTF8MB4 returns the default collation of UTF8MB4.
 	GetDefaultCollationForUTF8MB4() string
+	// GetTiDBDefaultAutoIDCache returns the value of the 'tidb_auto_id_cache' system variable.
+	GetTiDBDefaultAutoIDCache() int
 	// GetBlockEncryptionMode returns the variable `block_encryption_mode`.
 	GetBlockEncryptionMode() string
 	// GetSysdateIsNow returns a bool to determine whether Sysdate is an alias of Now function.
