@@ -517,12 +517,6 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 			noMVIndexOrPrefixIndexOrColumnarIndex = false
 			break
 		}
-		for _, col := range idx.Columns {
-			if col.Length != types.UnspecifiedLength {
-				noMVIndexOrPrefixIndexOrColumnarIndex = false
-				break
-			}
-		}
 		if !noMVIndexOrPrefixIndexOrColumnarIndex {
 			break
 		}
