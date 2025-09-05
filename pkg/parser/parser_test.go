@@ -2981,6 +2981,8 @@ func TestDDL(t *testing.T) {
 		{"create table t (d date default date_format(now(),'%Y-%m'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m')))"},
 		{"create table t (d date default (date_format(now(),'%Y-%m')))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m')))"},
 		{"create table t (d date default date_format(now(),'%Y-%m-%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d')))"},
+		{"create table t (d date default date_format(now(),'%y%m%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%y%m%d')))"},
+		{"create table t (d date default date_format('2025-08-08 13:13:13','%y%m%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(_UTF8MB4'2025-08-08 13:13:13', _UTF8MB4'%y%m%d')))"},
 		{"create table t (d date default date_format(now(),'%Y-%m-%d %H.%i.%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H.%i.%s')))"},
 		{"create table t (d date default date_format(now(),'%Y-%m-%d %H:%i:%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H:%i:%s')))"},
 		{"create table t (d date default date_format(now(),'%b %d %Y %h:%i %p'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT (DATE_FORMAT(NOW(), _UTF8MB4'%b %d %Y %h:%i %p')))"},
