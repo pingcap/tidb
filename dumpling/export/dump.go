@@ -776,11 +776,22 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	// Set chunking mode based on field analysis
 	conf.IsStringChunking = isStringField
 
-	count := estimateCount(d.tctx, db, tbl, conn, field, conf)
+	// For string fields, use * for more accurate estimation
+	// This is especially important for composite string keys
+	estimateField := field
+	if isStringField {
+		estimateField = "*"
+	}
+	
+	count := estimateCount(d.tctx, db, tbl, conn, estimateField, conf)
 	tctx.L().Info("get estimated rows count",
 		zap.String("database", db),
 		zap.String("table", tbl),
-		zap.Uint64("estimateCount", count))
+		zap.Uint64("estimateCount", count),
+		zap.String("field", field),
+		zap.String("estimateField", estimateField),
+		zap.Bool("isStringField", isStringField))
+		
 	if count < conf.Rows {
 		// skip chunk logic if estimates are low
 		tctx.L().Info("fallback to sequential dump due to estimate count < rows. This won't influence the whole dump process",
