@@ -443,6 +443,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 }
 
 func (s *propConstSolver) solve(conditions []Expression) []Expression {
+	joinKeys := cloneJoinKeys(conditions)
 	s.conditions = slices.Grow(s.conditions, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
@@ -458,6 +459,9 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.conditions...)
+	// keep join keys in the results since they are crucial for join optimization like join reorder
+	// and index join selection. (#63314, #60076)
+	s.conditions = append(s.conditions, joinKeys...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return slices.Clone(s.conditions)
 }
@@ -518,28 +522,25 @@ func (s *propSpecialJoinConstSolver) Clear() {
 	propSpecialJoinConstSolverPool.Put(s)
 }
 
-func (s *propSpecialJoinConstSolver) cloneJoinKeys(exprs []Expression) (joinKeys []Expression) {
+func cloneJoinKeys(exprs []Expression) (joinKeys []Expression) {
 	for _, expr := range exprs {
-		if s.isJoinKey(expr) {
+		if maybeJoinKey(expr) {
 			joinKeys = append(joinKeys, expr.Clone())
 		}
 	}
 	return
 }
 
-func (s *propSpecialJoinConstSolver) isJoinKey(expr Expression) bool {
+// maybeJoinKey returns true if this expression could be a join key like `t1.col = t2.col`.
+// If these 2 columns are from the same table like `t1.col1 = t1.col1`, we still return true for simplification.
+func maybeJoinKey(expr Expression) bool {
 	binop, ok := expr.(*ScalarFunction)
 	if !ok || binop.FuncName.L != ast.EQ {
 		return false
 	}
-	col0, lOK := binop.GetArgs()[0].(*Column)
-	col1, rOK := binop.GetArgs()[1].(*Column)
-	if !lOK || !rOK {
-		return false
-	}
-	fromDifferentTables := (s.outerSchema.RetrieveColumn(col0) != nil && s.innerSchema.RetrieveColumn(col1) != nil) ||
-		(s.outerSchema.RetrieveColumn(col1) != nil && s.innerSchema.RetrieveColumn(col0) != nil)
-	return fromDifferentTables
+	_, lOK := binop.GetArgs()[0].(*Column)
+	_, rOK := binop.GetArgs()[1].(*Column)
+	return lOK && rOK
 }
 
 func (s *propSpecialJoinConstSolver) setConds2ConstFalse(filterConds bool) {
@@ -813,7 +814,7 @@ func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 }
 
 func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
-	joinKeys := append(s.cloneJoinKeys(joinConds), s.cloneJoinKeys(filterConds)...)
+	joinKeys := append(cloneJoinKeys(joinConds), cloneJoinKeys(filterConds)...)
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
