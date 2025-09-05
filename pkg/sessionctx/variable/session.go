@@ -1143,6 +1143,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
+	EnableNoDecorrelateInSelect bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
@@ -2210,6 +2213,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
 		CartesianJoinOrderThreshold:   vardef.DefOptCartesianJoinOrderThreshold,
 		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
 		RetryLimit:                    vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:              kv.PriorityLow,
