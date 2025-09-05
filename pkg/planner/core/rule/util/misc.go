@@ -160,10 +160,5 @@ var SetPredicatePushDownFlag func(uint64) uint64
 var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
 	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
 
-// ApplyPredicateSimplificationForJoin is a hook for other packages to simplify the expression for join.
-var ApplyPredicateSimplificationForJoin func(sctx base.PlanContext, predicates []expression.Expression,
-	outerSchema, innerSchema *expression.Schema,
-	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
-
 // BuildKeyInfoPortal is a hook for other packages to build key info for logical plan.
 var BuildKeyInfoPortal func(lp base.LogicalPlan)

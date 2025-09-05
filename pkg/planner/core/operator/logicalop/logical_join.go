@@ -215,9 +215,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
-		predicates = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), predicates,
-			p.Children()[0].Schema(), p.Children()[1].Schema(),
-			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, false, nil)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -236,9 +234,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
-		predicates = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), predicates,
-			p.Children()[1].Schema(), p.Children()[0].Schema(),
-			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true, nil)
 		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForRightOuterJoin)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -265,9 +261,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
-			p.Children()[0].Schema(), p.Children()[1].Schema(),
-			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
+		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -283,8 +277,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		rightCond = rightPushCond
 	case AntiSemiJoin:
 		predicates = p.joinPropConst(predicates, p.isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin)
-		predicates = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), predicates,
-			p.Children()[0].Schema(), p.Children()[1].Schema(),
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true,
 			p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
