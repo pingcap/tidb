@@ -389,7 +389,6 @@ func (s *propConstSolver) setConds2ConstFalse() {
 
 // pickNewEQConds tries to pick new equal conds and puts them to retMapper.
 func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Constant) {
-	evalCtx := s.ctx.GetEvalCtx()
 	retMapper = make(map[int]*Constant)
 	for i, cond := range s.conditions {
 		if visited[i] {
@@ -426,7 +425,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			return nil
 		}
 		if updated {
-			colType := col.GetType(evalCtx)
+			colType := col.GetType(s.ctx.GetEvalCtx())
 			conType := con.GetType(s.ctx.GetEvalCtx())
 			castedCon := con
 			if !colType.Equal(conType) {
