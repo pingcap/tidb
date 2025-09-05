@@ -23,5 +23,10 @@ import "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 
 func init() {
 	util.BuildKeyInfoPortal = buildKeyInfo
+<<<<<<< HEAD
+=======
+	util.ApplyPredicateSimplification = applyPredicateSimplification
+	util.ApplyPredicateSimplificationForJoin = applyPredicateSimplificationForJoin
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388))
 	util.SetPredicatePushDownFlag = setPredicatePushDownFlag
 }

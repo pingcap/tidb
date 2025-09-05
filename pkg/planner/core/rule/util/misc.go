@@ -44,3 +44,18 @@ func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expr
 
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
 var SetPredicatePushDownFlag func(uint64) uint64
+<<<<<<< HEAD
+=======
+
+// ApplyPredicateSimplificationForJoin is a hook for other packages to simplify the expression.
+var ApplyPredicateSimplificationForJoin func(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+
+// ApplyPredicateSimplification is a hook for other packages to simplify the expression.
+var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+
+// BuildKeyInfoPortal is a hook for other packages to build key info for logical plan.
+var BuildKeyInfoPortal func(lp base.LogicalPlan)
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388))

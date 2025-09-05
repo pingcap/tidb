@@ -139,6 +139,7 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
+<<<<<<< HEAD:pkg/planner/core/rule_predicate_simplification.go
 // splitCNF converts AND to list using SplitCNFItems. It is needed since simplification may lead to AND at the top level.
 // Several optimizations are based on a list of predicates and AND will block those.
 func splitCNF(conditions []expression.Expression) []expression.Expression {
@@ -153,6 +154,49 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	simplifiedPredicate := mergeInAndNotEQLists(sctx, predicates)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = splitCNF(simplifiedPredicate)
+=======
+func applyPredicateSimplificationForJoin(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
+	return applyPredicateSimplificationHelper(sctx, predicates, schema1, schema2, true, propagateConstant, filter)
+}
+
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool,
+	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
+	return applyPredicateSimplificationHelper(sctx, predicates, nil, nil,
+		false, propagateConstant, vaildConstantPropagationExpressionFunc)
+}
+
+func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema, forJoin, propagateConstant bool,
+	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
+	if len(predicates) == 0 {
+		return predicates
+	}
+	simplifiedPredicate := predicates
+	exprCtx := sctx.GetExprCtx()
+	simplifiedPredicate = PushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
+	// In some scenarios, we need to perform constant propagation,
+	// while in others, we merely aim to achieve simplification.
+	// Thus, we utilize a switch to govern this particular logic.
+	if propagateConstant {
+		if forJoin {
+			simplifiedPredicate = expression.PropagateConstantForJoin(exprCtx, schema1, schema2, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+		} else {
+			simplifiedPredicate = expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+		}
+	} else {
+		exprs := expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+		if len(exprs) == 1 {
+			simplifiedPredicate = exprs
+		}
+	}
+	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
+	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
+	removeRedundantORBranch(sctx, simplifiedPredicate)
+	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
+	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
+>>>>>>> 307a2c7686c (planner: refactor some code related to constant propagation for join (#63388)):pkg/planner/core/rule/rule_predicate_simplification.go
 	return simplifiedPredicate
 }
 
