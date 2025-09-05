@@ -98,7 +98,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
-	cartesianThredhols := s.ctx.GetSessionVars().CartesianJoinOrderThreshold
+	cartesianThreshold := s.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	for {
 		bestCost := math.MaxFloat64
 		bestIdx, whateverValidOneIdx, bestIsCartesian := -1, -1, false
@@ -107,7 +107,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		for i, node := range s.curJoinGroup {
 			newJoin, remainOthers, isCartesian := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
 			if newJoin == nil || // can't yield a valid join
-				(cartesianThredhols <= 0 && isCartesian) { // disable cartesian join
+				(cartesianThreshold <= 0 && isCartesian) { // disable cartesian join
 				continue
 			}
 			_, _, err := newJoin.RecursiveDeriveStats(nil)
@@ -125,9 +125,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			// Only select a cartesian join when cost(cartesian)*ratio < cost(non-cartesian).
 			curIsBetter := false
 			if !bestIsCartesian && isCartesian {
-				curIsBetter = curCost*cartesianThredhols < bestCost
+				curIsBetter = curCost*cartesianThreshold < bestCost
 			} else if bestIsCartesian && !isCartesian {
-				curIsBetter = curCost < bestCost*cartesianThredhols
+				curIsBetter = curCost < bestCost*cartesianThreshold
 			} else {
 				curIsBetter = curCost < bestCost
 			}
