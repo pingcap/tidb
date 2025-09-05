@@ -41,4 +41,5 @@ func TestNextGenTiKVRegionStatus(t *testing.T) {
 	require.Equal(t, 1, len(tikvRegions), tikvRegions)
 	t.Log(tikvRegions)
 	require.Equal(t, showRegions[0][0], tikvRegions[0][0])
+	tk.MustExec("drop table t;")
 }
