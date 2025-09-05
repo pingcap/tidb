@@ -809,7 +809,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 				return rows.Scan(&directCount)
 			}
 			return nil
-		}, countQuery)
+		}, func() {}, countQuery)
 		if err == nil && directCount.Valid && directCount.Int64 > 0 {
 			count = uint64(directCount.Int64)
 			tctx.L().Info("using direct count result",
