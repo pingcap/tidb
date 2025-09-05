@@ -21,7 +21,7 @@ for data in "$DUMPLING_BASE_NAME"/data/*; do
 done
 
 # Run dumpling with --rows parameter to force chunking
-# With --rows 5 and tables containing 10 rows, we expect 2 chunk files
+# With --rows 5, tables will be split into multiple chunks
 # Each chunk should contain a complete INSERT statement with ~5 rows
 run_dumpling --rows 5
 
@@ -32,9 +32,27 @@ for file_path in "$DUMPLING_BASE_NAME"/data/*; do
   # Count the number of chunk files created
   chunk_count=$(ls -1 "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql 2>/dev/null | wc -l)
   
-  # For tables with 10 rows and --rows 5, we expect 2 chunks
-  if [ "$chunk_count" -lt 2 ]; then
-    echo "ERROR: Expected at least 2 chunks for $table_name, but found $chunk_count"
+  # Determine expected chunks based on table row counts
+  # With --rows 5:
+  # comp_str_case_0: 10 rows -> 2 chunks
+  # comp_str_case_1: 10 rows -> 2 chunks  
+  # comp_str_case_2: 12 rows -> 3 chunks
+  # comp_str_case_3: 12 rows -> 3 chunks
+  case "$table_name" in
+    "comp_str_case_0" | "comp_str_case_1")
+      expected_chunks=2
+      ;;
+    "comp_str_case_2" | "comp_str_case_3")
+      expected_chunks=3
+      ;;
+    *)
+      echo "ERROR: Unknown table $table_name"
+      exit 1
+      ;;
+  esac
+  
+  if [ "$chunk_count" -ne "$expected_chunks" ]; then
+    echo "ERROR: Expected $expected_chunks chunks for $table_name, but found $chunk_count"
     exit 1
   fi
   
