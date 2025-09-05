@@ -154,14 +154,23 @@
         "Result": [
           "Projection 10.00 root  test.orders.o_orderdate, Column#26",
           "└─TopN 10.00 root  Column#26:desc, offset:0, count:10",
-          "  └─HashAgg 200.00 root  group by:Column#34, funcs:sum(Column#33)->Column#26, funcs:firstrow(Column#34)->test.orders.o_orderdate",
-          "    └─Projection 312.50 root  mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#33, test.orders.o_orderdate->Column#34",
-          "      └─IndexHashJoin 312.50 root  inner join, inner:TableReader, outer key:test.orders.o_orderkey, inner key:test.lineitem.l_orderkey, equal cond:eq(test.orders.o_orderkey, test.lineitem.l_orderkey)",
-          "        ├─TableReader(Build) 250.00 root  MppVersion: 3, data:ExchangeSender",
-          "        │ └─ExchangeSender 250.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "        │   └─TableFullScan 250.00 mpp[tiflash] table:o pushed down filter:ge(test.orders.o_orderdate, 1994-01-01 00:00:00.000000), le(test.orders.o_orderdate, 1994-12-31 00:00:00.000000), keep order:false, stats:pseudo",
-          "        └─TableReader(Probe) 250.00 root  data:TableRangeScan",
-          "          └─TableRangeScan 250.00 cop[tikv] table:l range: decided by [eq(test.lineitem.l_orderkey, test.orders.o_orderkey)], keep order:false, stats:pseudo"
+          "  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#26:desc, offset:0, count:10",
+          "        └─Projection 200.00 mpp[tiflash]  Column#26, test.orders.o_orderdate",
+          "          └─HashAgg 200.00 mpp[tiflash]  group by:test.orders.o_orderdate, funcs:sum(Column#31)->Column#26, funcs:firstrow(test.orders.o_orderdate)->test.orders.o_orderdate",
+          "            └─ExchangeReceiver 200.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_orderdate, collate: binary]",
+          "                └─HashAgg 200.00 mpp[tiflash]  group by:Column#34, funcs:sum(Column#33)->Column#31",
+          "                  └─Projection 312.50 mpp[tiflash]  mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#33, test.orders.o_orderdate->Column#34",
+          "                    └─Projection 312.50 mpp[tiflash]  test.orders.o_orderdate, test.lineitem.l_extendedprice, test.lineitem.l_discount, test.lineitem.l_orderkey",
+          "                      └─HashJoin 312.50 mpp[tiflash]  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",
+          "                        ├─ExchangeReceiver(Build) 250.00 mpp[tiflash]  ",
+          "                        │ └─ExchangeSender 250.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_orderkey, collate: binary]",
+          "                        │   └─TableFullScan 250.00 mpp[tiflash] table:o pushed down filter:ge(test.orders.o_orderdate, 1994-01-01 00:00:00.000000), le(test.orders.o_orderdate, 1994-12-31 00:00:00.000000), keep order:false, stats:pseudo",
+          "                        └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
+          "                          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary]",
+          "                            └─TableFullScan 10000.00 mpp[tiflash] table:l keep order:false, stats:pseudo"
         ]
       }
     ]
