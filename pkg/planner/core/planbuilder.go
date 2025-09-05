@@ -3990,7 +3990,7 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 	if err != nil {
 		return nil, err
 	}
-	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
+	return &expression.Constant{Value: value, RetType: col.FieldType.DeepClone()}, nil
 }
 
 // resolveGeneratedColumns resolves generated columns with their generation expressions respectively.

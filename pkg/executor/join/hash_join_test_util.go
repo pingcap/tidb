@@ -109,12 +109,12 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 	leftExecTypes, rightExecTypes := exec.RetTypes(info.leftExec), exec.RetTypes(info.rightExec)
 	leftTypes, rightTypes := make([]*types.FieldType, 0, len(leftJoinKeys)), make([]*types.FieldType, 0, len(rightJoinKeys))
 	for i, col := range leftJoinKeys {
-		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].DeepClone())
 		leftTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 
 	for i, col := range rightJoinKeys {
-		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].DeepClone())
 		rightTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 

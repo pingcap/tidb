@@ -543,7 +543,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 			}
 			con = &Constant{
 				Value:         types.NewMysqlEnumDatum(enum),
-				RetType:       col.RetType.Clone(),
+				RetType:       col.RetType.DeepClone(),
 				collationInfo: col.collationInfo,
 			}
 		case types.KindString:
@@ -554,7 +554,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 			}
 			con = &Constant{
 				Value:         types.NewMysqlEnumDatum(enum),
-				RetType:       col.RetType.Clone(),
+				RetType:       col.RetType.DeepClone(),
 				collationInfo: col.collationInfo,
 			}
 		case types.KindMysqlEnum, types.KindMysqlSet:

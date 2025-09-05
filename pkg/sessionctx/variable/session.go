@@ -700,7 +700,7 @@ func (s *UserVars) Clone() UserVarsReader {
 		cloned.values[name] = *userVar.Clone()
 	}
 	for name, userVarType := range s.types {
-		cloned.types[name] = userVarType.Clone()
+		cloned.types[name] = userVarType.DeepClone()
 	}
 	return cloned
 }
@@ -2940,7 +2940,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
 	for name, userVarType := range s.UserVars.types {
-		sessionStates.UserVarTypes[name] = userVarType.Clone()
+		sessionStates.UserVarTypes[name] = userVarType.DeepClone()
 	}
 	s.UserVars.lock.RUnlock()
 
@@ -2976,7 +2976,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 		s.SetUserVarVal(name, *userVar.Clone())
 	}
 	for name, userVarType := range sessionStates.UserVarTypes {
-		s.SetUserVarType(name, userVarType.Clone())
+		s.SetUserVarType(name, userVarType.DeepClone())
 	}
 
 	// Decode other session contexts.

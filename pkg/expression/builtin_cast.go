@@ -2581,7 +2581,7 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 	if expr.GetType(ctx.GetEvalCtx()).GetCollate() == ec.Collation {
 		return expr
 	}
-	tp := expr.GetType(ctx.GetEvalCtx()).Clone()
+	tp := expr.GetType(ctx.GetEvalCtx()).DeepClone()
 	if expr.GetType(ctx.GetEvalCtx()).Hybrid() {
 		if !enumOrSetRealTypeIsStr {
 			return expr
@@ -2669,12 +2669,12 @@ func WrapWithCastAsInt(ctx BuildContext, expr Expression, targetType *types.Fiel
 		// clone the one out with its field type as well before change the flag inside.
 		if col, ok := expr.(*Column); ok {
 			col = col.Clone().(*Column)
-			col.RetType = col.RetType.Clone()
+			col.RetType = col.RetType.DeepClone()
 			expr = col
 		}
 		if col, ok := expr.(*CorrelatedColumn); ok {
 			col = col.Clone().(*CorrelatedColumn)
-			col.RetType = col.RetType.Clone()
+			col.RetType = col.RetType.DeepClone()
 			expr = col
 		}
 		expr.GetType(ctx.GetEvalCtx()).AddFlag(mysql.EnumSetAsIntFlag)

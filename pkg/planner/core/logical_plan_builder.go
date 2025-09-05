@@ -172,7 +172,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 		col := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			// clone it rather than using it directly,
-			RetType: expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+			RetType: expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).DeepClone(),
 		}
 
 		projSchema.Append(col)
@@ -229,7 +229,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 		// the last two col of the schema should be gid & gpos
 		gpos := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  tp.Clone(),
+			RetType:  tp.DeepClone(),
 			OrigName: "gpos",
 		}
 		expand.GPos = gpos
@@ -4710,7 +4710,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
+			RetType:  col.FieldType.DeepClone(),
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
@@ -7525,7 +7525,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
 	res := seedSchema.Clone()
 	for _, col := range res.Columns {
-		col.RetType = col.RetType.Clone()
+		col.RetType = col.RetType.DeepClone()
 		col.UniqueID = svar.AllocPlanColumnID()
 		col.RetType.DelFlag(mysql.NotNullFlag)
 		// Since you have reallocated unique id here, the old-cloned-cached hash code is not valid anymore.

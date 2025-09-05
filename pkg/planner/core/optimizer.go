@@ -592,7 +592,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *physicalop.PhysicalTableScan,
 				resultColumn = &expression.Column{
 					UniqueID: physicalTableScan.SCtx().GetSessionVars().AllocPlanColumnID(),
 					ID:       resultColumnInfo.ID,
-					RetType:  resultColumnInfo.FieldType.Clone(),
+					RetType:  resultColumnInfo.FieldType.DeepClone(),
 					OrigName: fmt.Sprintf("%s.%s.%s", physicalTableScan.DBName.L, physicalTableScan.Table.Name.L, resultColumnInfo.Name),
 				}
 			}

@@ -226,7 +226,7 @@ func (p *LogicalExpand) GenLevelProjections() {
 					levelProj = append(levelProj, oneCol)
 				} else {
 					// un-needed col in current grouping set: project it as null value.
-					nullValue := expression.NewNullWithFieldType(oneCol.RetType.Clone())
+					nullValue := expression.NewNullWithFieldType(oneCol.RetType.DeepClone())
 					levelProj = append(levelProj, nullValue)
 				}
 			} else {
@@ -239,14 +239,14 @@ func (p *LogicalExpand) GenLevelProjections() {
 		if p.GroupingMode == tipb.GroupingMode_ModeNumericSet {
 			gid = p.GenerateGroupingIDIncrementModeNumericSet(offset)
 		}
-		gidValue := expression.NewUInt64ConstWithFieldType(gid, gidCol.RetType.Clone())
+		gidValue := expression.NewUInt64ConstWithFieldType(gid, gidCol.RetType.DeepClone())
 		levelProj = append(levelProj, gidValue)
 
 		// generate the grouping_pos projection expr, project it as uint64 if any.
 		if hasDuplicateGroupingSet {
 			gposCol := schemaCols[len(schemaCols)-1]
 			// gpos value can equal the grouping set index offset.
-			gpos := expression.NewUInt64ConstWithFieldType(uint64(offset), gposCol.RetType.Clone())
+			gpos := expression.NewUInt64ConstWithFieldType(uint64(offset), gposCol.RetType.DeepClone())
 			// gen-col: project it as uint64.
 			levelProj = append(levelProj, gpos)
 		}

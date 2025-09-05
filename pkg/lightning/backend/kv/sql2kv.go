@@ -92,7 +92,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 			ColName:     col.Name,
 		})
 		exprColumns = append(exprColumns, &expression.Column{
-			RetType:  col.FieldType.Clone(),
+			RetType:  col.FieldType.DeepClone(),
 			ID:       col.ID,
 			UniqueID: int64(i),
 			Index:    col.Offset,

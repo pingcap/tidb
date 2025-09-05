@@ -210,9 +210,9 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 			a.RetTp.SetDecimal(mysql.MaxDecimalScale)
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
-		a.RetTp = a.Args[0].GetType(ctx).Clone()
+		a.RetTp = a.Args[0].GetType(ctx).DeepClone()
 	default:
-		a.RetTp = a.Args[0].GetType(ctx).Clone()
+		a.RetTp = a.Args[0].GetType(ctx).DeepClone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	return nil
@@ -266,7 +266,7 @@ func (a *baseFuncDesc) TypeInfer4AvgSum(ctx expression.EvalContext, avgRetType *
 
 // TypeInfer4FinalCount infers the type of sum agg which is rewritten from final count agg run on MPP mode.
 func (a *baseFuncDesc) TypeInfer4FinalCount(finalCountRetType *types.FieldType) {
-	a.RetTp = finalCountRetType.Clone()
+	a.RetTp = finalCountRetType.DeepClone()
 }
 
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
@@ -329,7 +329,7 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext) {
 	a.RetTp = a.Args[0].GetType(ctx.GetEvalCtx())
 	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin ||
 		a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag {
-		a.RetTp = a.Args[0].GetType(ctx.GetEvalCtx()).Clone()
+		a.RetTp = a.Args[0].GetType(ctx.GetEvalCtx()).DeepClone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	// issue #13027, #13961
