@@ -1269,7 +1269,7 @@ func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base
 
 func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
-		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
+		return join.JoinType == base.InnerJoin || join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin
 	}
 	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }

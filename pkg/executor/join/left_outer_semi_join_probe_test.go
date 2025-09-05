@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -193,14 +193,14 @@ func testLeftOuterSemiOrSemiJoinProbeBasic(t *testing.T, isLeftOuter bool, isAnt
 		hasFilter = append(hasFilter, true)
 	}
 
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isLeftOuter {
-		joinType = logicalop.LeftOuterSemiJoin
+		joinType = base.LeftOuterSemiJoin
 		if isAnti {
-			joinType = logicalop.AntiLeftOuterSemiJoin
+			joinType = base.AntiLeftOuterSemiJoin
 		}
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 
 	testCases := []testCase{
@@ -281,14 +281,14 @@ func testLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T, isLeftOuter bool, isAnt
 	rTypes := lTypes
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := []int{}
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isLeftOuter {
-		joinType = logicalop.LeftOuterSemiJoin
+		joinType = base.LeftOuterSemiJoin
 		if isAnti {
-			joinType = logicalop.AntiLeftOuterSemiJoin
+			joinType = base.AntiLeftOuterSemiJoin
 		}
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 	partitionNumber := 4
 
@@ -366,14 +366,14 @@ func testLeftOuterSemiJoinProbeOtherCondition(t *testing.T, isLeftOuter bool, is
 	otherCondition2 := make(expression.CNFExprs, 0)
 	otherCondition2 = append(otherCondition2, sf2)
 
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isLeftOuter {
-		joinType = logicalop.LeftOuterSemiJoin
+		joinType = base.LeftOuterSemiJoin
 		if isAnti {
-			joinType = logicalop.AntiLeftOuterSemiJoin
+			joinType = base.AntiLeftOuterSemiJoin
 		}
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 
 	simpleFilter := createSimpleFilter(t)
@@ -434,14 +434,14 @@ func testLeftOuterSemiJoinProbeWithSel(t *testing.T, isLeftOuter bool, isAnti bo
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isLeftOuter {
-		joinType = logicalop.LeftOuterSemiJoin
+		joinType = base.LeftOuterSemiJoin
 		if isAnti {
-			joinType = logicalop.AntiLeftOuterSemiJoin
+			joinType = base.AntiLeftOuterSemiJoin
 		}
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 
 	rightAsBuildSide := []bool{true}
@@ -521,9 +521,9 @@ func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinBuildResultFastPath(t *testing.
 	otherCondition = append(otherCondition, sf)
 	otherCondition2 := make(expression.CNFExprs, 0)
 	otherCondition2 = append(otherCondition2, sf2)
-	joinType := logicalop.LeftOuterSemiJoin
+	joinType := base.LeftOuterSemiJoin
 	if isAnti {
-		joinType = logicalop.AntiLeftOuterSemiJoin
+		joinType = base.AntiLeftOuterSemiJoin
 	}
 	simpleFilter := createSimpleFilter(t)
 	hasFilter := []bool{false, true}
@@ -597,9 +597,9 @@ func testLeftOuterSemiJoinOrLeftOuterAntiSemiJoinSpill(t *testing.T, isAnti bool
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinType := logicalop.LeftOuterSemiJoin
+	joinType := base.LeftOuterSemiJoin
 	if isAnti {
-		joinType = logicalop.AntiLeftOuterSemiJoin
+		joinType = base.AntiLeftOuterSemiJoin
 	}
 	params := []spillTestParam{
 		// basic case

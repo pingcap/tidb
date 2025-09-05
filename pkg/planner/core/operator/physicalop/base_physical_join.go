@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
@@ -27,28 +26,19 @@ import (
 )
 
 var (
-	_ PhysicalJoin = &PhysicalHashJoin{}
-	_ PhysicalJoin = &PhysicalMergeJoin{}
-	_ PhysicalJoin = &PhysicalIndexJoin{}
-	_ PhysicalJoin = &PhysicalIndexHashJoin{}
-	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
+	_ base.PhysicalJoin = &PhysicalHashJoin{}
+	_ base.PhysicalJoin = &PhysicalMergeJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexHashJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
-
-// PhysicalJoin provides some common methods for join operators.
-// Note that PhysicalApply is deliberately excluded from this interface.
-type PhysicalJoin interface {
-	base.PhysicalPlan
-	PhysicalJoinImplement()
-	GetInnerChildIdx() int
-	GetJoinType() logicalop.JoinType
-}
 
 // BasePhysicalJoin is the base struct for all physical join operators.
 // TODO: it is temporarily to be public for all physical join operators to embed it.
 type BasePhysicalJoin struct {
 	PhysicalSchemaProducer
 
-	JoinType logicalop.JoinType
+	JoinType base.JoinType
 
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
@@ -71,7 +61,7 @@ type BasePhysicalJoin struct {
 }
 
 // GetJoinType returns the type of the join operation.
-func (p *BasePhysicalJoin) GetJoinType() logicalop.JoinType {
+func (p *BasePhysicalJoin) GetJoinType() base.JoinType {
 	return p.JoinType
 }
 

@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/texttree"
@@ -293,7 +292,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 				label[1-plan.InnerChildIdx] = ProbeSide
 			}
 		case *physicalop.PhysicalMergeJoin:
-			if plan.JoinType == logicalop.RightOuterJoin {
+			if plan.JoinType == base.RightOuterJoin {
 				label[0] = BuildSide
 				label[1] = ProbeSide
 			} else {

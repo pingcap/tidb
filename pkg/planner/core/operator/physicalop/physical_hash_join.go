@@ -34,13 +34,13 @@ import (
 )
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
-func CanUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+func CanUseHashJoinV2(joinType base.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
 	if !IsGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
 		return false
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin,
-		logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case base.LeftOuterJoin, base.RightOuterJoin, base.InnerJoin, base.LeftOuterSemiJoin,
+		base.SemiJoin, base.AntiSemiJoin, base.AntiLeftOuterSemiJoin:
 		// null aware join is not supported yet
 		if len(leftNAJoinKeys) > 0 {
 			return false
@@ -62,7 +62,7 @@ func CanUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Co
 }
 
 // IsGAForHashJoinV2 judges if this hash join is GA
-func IsGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+func IsGAForHashJoinV2(joinType base.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
 	// nullaware join
 	if len(leftNAJoinKeys) > 0 {
 		return false
@@ -78,7 +78,7 @@ func IsGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.C
 		}
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.AntiSemiJoin, logicalop.SemiJoin:
+	case base.LeftOuterJoin, base.RightOuterJoin, base.InnerJoin, base.AntiSemiJoin, base.SemiJoin:
 		return true
 	default:
 		return false
@@ -164,7 +164,7 @@ func (p *PhysicalHashJoin) CanTiFlashUseHashJoinV2(sctx base.PlanContext) bool {
 		return false
 	}
 	switch p.JoinType {
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		// null aware join is not supported yet
 		if len(p.LeftNAJoinKeys) > 0 {
 			return false
@@ -448,7 +448,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 
 	colsNeedResolving := p.Schema().Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.
@@ -554,7 +554,7 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 	var otherEqConditionsFromIn expression.CNFExprs
 	/// For anti join, equal conditions from `in` clause requires additional processing,
 	/// for example, treat `null` as true.
-	if p.JoinType == logicalop.AntiSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin || p.JoinType == logicalop.LeftOuterSemiJoin {
+	if p.JoinType == base.AntiSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin || p.JoinType == base.LeftOuterSemiJoin {
 		for _, condition := range p.OtherConditions {
 			if expression.IsEQCondFromIn(condition) {
 				otherEqConditionsFromIn = append(otherEqConditionsFromIn, condition)
@@ -576,17 +576,17 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 
 	pbJoinType := tipb.JoinType_TypeInnerJoin
 	switch p.JoinType {
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
-	case logicalop.SemiJoin:
+	case base.SemiJoin:
 		pbJoinType = tipb.JoinType_TypeSemiJoin
-	case logicalop.AntiSemiJoin:
+	case base.AntiSemiJoin:
 		pbJoinType = tipb.JoinType_TypeAntiSemiJoin
-	case logicalop.LeftOuterSemiJoin:
+	case base.LeftOuterSemiJoin:
 		pbJoinType = tipb.JoinType_TypeLeftOuterSemiJoin
-	case logicalop.AntiLeftOuterSemiJoin:
+	case base.AntiLeftOuterSemiJoin:
 		pbJoinType = tipb.JoinType_TypeAntiLeftOuterSemiJoin
 	}
 

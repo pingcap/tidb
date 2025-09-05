@@ -21,14 +21,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
-	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan
+	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType base.JoinType, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan
 }
 
 type joinGroupEqEdge struct {
@@ -253,7 +252,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 			eqConds = append(eqConds, newSf)
 		}
 	}
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin, opt)
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, base.InnerJoin, opt)
 	_, _, err := join.RecursiveDeriveStats(nil)
 	return join, err
 }
@@ -275,7 +274,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPla
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, logicalop.InnerJoin, opt))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, base.InnerJoin, opt))
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}
