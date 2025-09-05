@@ -50,6 +50,8 @@ function cleanup() {
         killall -9 -r -q tikv-server || true
         killall -9 -r -q pd-server || true
     fi
+
+    make failpoint-disable
 }
 
 exit_code=0
