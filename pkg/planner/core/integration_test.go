@@ -1664,8 +1664,8 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 
 		// If using `set_var` to set sql mode to non-strict mode, read should push down to tiflash
-		hinted_query := "explain " + prefix + " /*+ SET_VAR(sql_mode='') */ " + suffix
-		rs = tk.MustQuery(hinted_query).Rows()
+		hintedQuery := "explain " + prefix + " /*+ SET_VAR(sql_mode='') */ " + suffix
+		rs = tk.MustQuery(hintedQuery).Rows()
 		checkRes(rs, 2, "mpp[tiflash]")
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 
@@ -1684,8 +1684,8 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 
 		// If using `set_var` to set sql mode to strict mode, read should not push down to tiflash
-		hinted_query = "explain " + prefix + " /*+ SET_VAR(sql_mode='strict_trans_tables') */ " + suffix
-		rs = tk.MustQuery(hinted_query).Rows()
+		hintedQuery = "explain " + prefix + " /*+ SET_VAR(sql_mode='strict_trans_tables') */ " + suffix
+		rs = tk.MustQuery(hintedQuery).Rows()
 		checkRes(rs, 2, "cop[tikv]")
 		rs = tk.MustQuery("show warnings").Rows()
 		checkRes(rs, 2, "MPP mode may be blocked because the query is not readonly and sql mode is strict.")
