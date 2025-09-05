@@ -1922,7 +1922,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		}
 	}
 
-	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil { // 这里是统筹处理 multi schema change 的地方
+	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
 		info := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
 		err = e.multiSchemaChange(sctx, ident, info)

@@ -415,9 +415,10 @@ func NewAddIndexEvent(
 func (s *SchemaChangeEvent) GetAddIndexInfo() (
 	tableInfo *model.TableInfo,
 	indexes []*model.IndexInfo,
+	analyzed bool,
 ) {
 	intest.Assert(s.inner.Tp == model.ActionAddIndex)
-	return s.inner.TableInfo, s.inner.Indexes
+	return s.inner.TableInfo, s.inner.Indexes, s.inner.Analyzed
 }
 
 // NewFlashbackClusterEvent creates a schema change event whose type is
