@@ -62,12 +62,6 @@ var (
 	_ base.PhysicalPlan = &physicalop.BatchPointGetPlan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableSample{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSequence{}
-
-	_ PhysicalJoin = &physicalop.PhysicalHashJoin{}
-	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
-	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
-	_ PhysicalJoin = &physicalop.PhysicalIndexHashJoin{}
-	_ PhysicalJoin = &physicalop.PhysicalIndexMergeJoin{}
 )
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
@@ -110,15 +104,6 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 		ID:       model.ExtraPhysTblID,
 	})
 	return columns, schema, true
-}
-
-// PhysicalJoin provides some common methods for join operators.
-// Note that PhysicalApply is deliberately excluded from this interface.
-type PhysicalJoin interface {
-	base.PhysicalPlan
-	PhysicalJoinImplement()
-	GetInnerChildIdx() int
-	GetJoinType() logicalop.JoinType
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.

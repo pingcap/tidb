@@ -26,6 +26,23 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
+var (
+	_ PhysicalJoin = &PhysicalHashJoin{}
+	_ PhysicalJoin = &PhysicalMergeJoin{}
+	_ PhysicalJoin = &PhysicalIndexJoin{}
+	_ PhysicalJoin = &PhysicalIndexHashJoin{}
+	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
+)
+
+// PhysicalJoin provides some common methods for join operators.
+// Note that PhysicalApply is deliberately excluded from this interface.
+type PhysicalJoin interface {
+	base.PhysicalPlan
+	PhysicalJoinImplement()
+	GetInnerChildIdx() int
+	GetJoinType() logicalop.JoinType
+}
+
 // BasePhysicalJoin is the base struct for all physical join operators.
 // TODO: it is temporarily to be public for all physical join operators to embed it.
 type BasePhysicalJoin struct {
