@@ -91,8 +91,9 @@ type ShowExec struct {
 
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            pmodel.CIStr
-	Table             *resolve.TableNameW  // Used for showing columns.
-	Partition         pmodel.CIStr         // Used for showing partition
+	Table             *resolve.TableNameW // Used for showing columns.
+	Partition         pmodel.CIStr        // Used for showing partition
+	Procedure         *ast.TableName
 	Column            *ast.ColumnName      // Used for `desc table column`.
 	IndexName         pmodel.CIStr         // Used for show table regions.
 	ResourceGroupName pmodel.CIStr         // Used for showing resource group
@@ -183,6 +184,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowClusterConfigs()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateProcedure:
+		return e.fetchShowCreateProcdure(ctx)
 	case ast.ShowCreateSequence:
 		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
@@ -204,7 +207,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowIndex:
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
-		return e.fetchShowProcedureStatus()
+		return e.fetchShowProcedureStatus(ctx, "PROCEDURE")
+	case ast.ShowFunctionStatus:
+		return e.fetchShowProcedureStatus(ctx, "FUNCTION")
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
@@ -694,9 +699,22 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
+	passTblPrivCheck, passColPrivCheck := false, false
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
+	priv := mysql.InsertPriv | mysql.SelectPriv | mysql.UpdatePriv | mysql.ReferencesPriv
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		// check privileges in table level
+		if tb.Meta().TempTableType == model.TempTableLocal {
+			priv |= mysql.CreateTMPTablePriv
+		}
+		if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", priv) {
+			passTblPrivCheck = true
+		}
+	} else {
+		passTblPrivCheck = true
+	}
+	if !passTblPrivCheck && e.Ctx().GetSessionVars().StmtCtx.InExplainStmt {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -711,11 +729,19 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if err := tryFillViewColumnType(ctx, e.Ctx(), e.is, e.DBName, tb.Meta()); err != nil {
 		return err
 	}
+	priv = mysql.InsertPriv | mysql.SelectPriv | mysql.UpdatePriv | mysql.ReferencesPriv
 	for _, col := range cols {
 		if fieldFilter != "" && col.Name.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
+		}
+		if !passTblPrivCheck {
+			if !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, priv) {
+				// check privileges in column level
+				continue
+			}
+			passColPrivCheck = true
 		}
 		desc := table.NewColDesc(col)
 		var columnDefault any
@@ -763,6 +789,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			})
 		}
 	}
+	if !passTblPrivCheck && !passColPrivCheck {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
 	return nil
 }
 
@@ -777,10 +806,20 @@ func (e *ShowExec) fetchShowIndex() error {
 
 	statsTbl := h.GetTableStats(tb.Meta())
 
+	// SHOW INDEX requires some privilege for any column in the table.
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
-		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		passCheck := false
+		for _, col := range tb.VisibleCols() {
+			if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, mysql.AllPrivMask) {
+				passCheck = true
+				break
+			}
+		}
+		if !passCheck {
+			return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+		}
 	}
 
 	if tb.Meta().PKIsHandle {
@@ -1748,7 +1787,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
-        user_attributes->>'$.Password_locking.password_lock_time_days'
+        user_attributes->>'$.Password_locking.password_lock_time_days',
+		Max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1823,6 +1863,13 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
 		}
 	}
+
+	maxUserConnections := rows[0].GetInt64(10)
+	maxUserConnectionsStr := ""
+	if maxUserConnections > 0 {
+		maxUserConnectionsStr = fmt.Sprintf(" WITH MAX_USER_CONNECTIONS %d", maxUserConnections)
+	}
+
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1846,8 +1893,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }
@@ -1941,10 +1988,6 @@ func (*ShowExec) fetchShowTriggers() error {
 	return nil
 }
 
-func (*ShowExec) fetchShowProcedureStatus() error {
-	return nil
-}
-
 func (e *ShowExec) fetchShowPlugins() error {
 	tiPlugins := plugin.GetAll()
 	for _, ps := range tiPlugins {
@@ -1975,6 +2018,8 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		case *terror.Error:
 			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]any{w.Level, int64(sqlErr.Code), sqlErr.Message})
+		case *terror.TiDBError:
+			e.appendRow([]any{w.Level, x.MYSQLERRNO, x.MESSAGETEXT})
 		default:
 			var err string
 			if warn != nil {
@@ -2010,12 +2055,7 @@ func (e *ShowExec) dbAccessDenied() error {
 
 func (e *ShowExec) tableAccessDenied(access string, table string) error {
 	user := e.Ctx().GetSessionVars().User
-	u := user.Username
-	h := user.Hostname
-	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
-		u = user.AuthUsername
-		h = user.AuthHostname
-	}
+	u, h := auth.GetUserAndHostName(user)
 	return exeerrors.ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
 }
 

@@ -43,6 +43,7 @@ func PrintTiDBInfo() {
 		zap.String("Git Branch", versioninfo.TiDBGitBranch),
 		zap.String("UTC Build Time", versioninfo.TiDBBuildTS),
 		zap.String("GoVersion", buildVersion),
+		zap.Bool("Fusion", versioninfo.TiDBXMode),
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
 	}
@@ -59,6 +60,9 @@ func PrintTiDBInfo() {
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
 func GetTiDBInfo() string {
+	if versioninfo.TiDBXMode {
+		return versioninfo.GetTiDBXInfo()
+	}
 	enterpriseVersion := ""
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		enterpriseVersion = fmt.Sprintf("\nEnterprise Extension Commit Hash: %s", versioninfo.TiDBEnterpriseExtensionGitHash)

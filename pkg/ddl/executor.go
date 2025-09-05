@@ -23,6 +23,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -48,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -68,6 +71,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -978,7 +983,52 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 	return nil
 }
 
+func (e *executor) handleCreateTableSelect(schema *model.DBInfo, s *ast.CreateTableStmt, tempTableName string, originTableName string, useImportInto bool) error {
+	intest.Assert(s.Select != nil, "s.Select must be not nil")
+	sctx, err := e.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer e.sessPool.Put(sctx)
+
+	// if isTikvStore is true and tidb_create_table_as_select_use_import_into is true, use import into instead of insert into
+	insertSQL, err := buildInsertSQL(schema.Name.L, tempTableName, s, useImportInto)
+	if err != nil {
+		return err
+	}
+	// insert data into temporary table
+	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSQL); err != nil {
+		// if insert data into temporary table failed, drop the temporary table (like rollback)
+		dropSQL := buildDropSQL(schema.Name.L, tempTableName)
+		if _, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSQL); dropErr != nil {
+			return errors.Trace(dropErr)
+		}
+		return errors.Trace(err)
+	}
+
+	// rename the temporary table to the original table
+	renameSQL := buildRenameSQL(schema.Name.L, tempTableName, originTableName)
+	if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSQL); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+	var tempTableName string
+	var originTableName = s.Table.Name.L
+
+	// if s.Select is not nil, it means the table is created from a select statement
+	// we need to create a temporary table and insert the data from the select statement
+	// and then rename the temporary table to the original table
+	if s.Select != nil {
+		tempTableName = s.Table.Name.L
+		if len(tempTableName) > 32 {
+			tempTableName = tempTableName[:32]
+		}
+		tempTableName = tempTableName + "_tmp_" + strconv.Itoa(rand.Intn(1000000))
+		s.Table.Name = pmodel.NewCIStr(tempTableName)
+	}
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -1034,8 +1084,61 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if s.IfNotExists {
 		onExist = OnExistIgnore
 	}
+	if err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist)); err != nil {
+		return err
+	}
 
-	return e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
+	// if the TiDB node crash after running here, the DDL framekwork will think the CREATE TABLE job is finished
+	// the new insert and rename stuff will not be fallover to another node.
+	if s.Select != nil {
+		// if the TiKV node, and tidb_create_from_select_using_import is true, use import into instead of insert into
+		useImportInto := strings.ToLower(e.store.Name()) == kv.TiKV.Name() && ctx.GetSessionVars().CreateFromSelectUsingImport
+		if err = e.handleCreateTableSelect(schema, s, tempTableName, originTableName, useImportInto); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildDropSQL(dbName, tempTableName string) string {
+	sql, err := sqlescape.EscapeSQL("DROP TABLE %n.%n", dbName, tempTableName)
+	if err != nil {
+		// This should never happen as we control the input
+		panic(err)
+	}
+	return sql
+}
+
+func buildRenameSQL(dbName string, tempTableName string, originTableName string) string {
+	sql, err := sqlescape.EscapeSQL("RENAME TABLE %n.%n TO %n.%n", dbName, tempTableName, dbName, originTableName)
+	if err != nil {
+		// This should never happen as we control the input
+		panic(err)
+	}
+	return sql
+}
+
+func buildInsertSQL(dbName, tableName string, s *ast.CreateTableStmt, useImportInto bool) (string, error) {
+	if s.Select == nil {
+		return "", nil
+	}
+
+	var res strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
+	if err := s.Select.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	selectStmt := res.String()
+	selectedColName := make([]string, len(s.SelectColumns))
+	for i, col := range s.SelectColumns {
+		selectedColName[i] = sqlescape.MustEscapeSQL("%n", col.L)
+	}
+
+	if !useImportInto {
+		// example: "INSERT INTO `test`.`t13_nonpublic_xxxxxxxx`(`id`,`b`) SELECT `id`,`b` FROM `test`.`t1`"
+		return sqlescape.MustEscapeSQL("INSERT INTO %n.%n(", dbName, tableName) + strings.Join(selectedColName, ",") + ") " + selectStmt, nil
+	}
+	return sqlescape.MustEscapeSQL("IMPORT INTO %n.%n(", dbName, tableName) + strings.Join(selectedColName, ",") + ") FROM " + selectStmt, nil
 }
 
 // createTableWithInfoJob returns the table creation job.

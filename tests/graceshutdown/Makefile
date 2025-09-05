@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-BASE_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
-OUT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/bin)
-
-include $(BASE_DIR)/Makefile.common
-
 .PHONY: server buildsucc
 
 default: server buildsucc
@@ -25,10 +20,7 @@ buildsucc:
 	@echo "Build TiDB Server successfully!"
 
 server:
-ifeq ($(TARGET), "")
-	cd ${BASE_DIR} && \
-	CGO_ENABLED=1 $(GOBUILD) -ldflags '$(LDFLAGS)' -o $(OUT_DIR)/tidb-server ${BASE_DIR}/cmd/tidb-server
-else
-	cd ${BASE_DIR} && \
-	CGO_ENABLED=1 $(GOBUILD) -ldflags '$(LDFLAGS)' -o '$(TARGET)' ${BASE_DIR}/cmd/tidb-server
-endif
+	[ -d bin ] || mkdir bin && \
+	cd ../.. && \
+	make server && \
+	mv bin/tidb-server tests/graceshutdown/bin/tidb-server

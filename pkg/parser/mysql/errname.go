@@ -892,6 +892,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrAlterOperationNotSupportedReasonNotNull:               Message("cannot silently convert NULL values, as required in this SQLMODE", nil),
 	ErrMustChangePasswordLogin:                               Message("Your password has expired. To log in you must change it using a client that supports expired passwords.", nil),
 	ErrRowInWrongPartition:                                   Message("Found a row in wrong partition %s", nil),
+	ErrGetStackedDaWithoutActiveHandler:                      Message("GET STACKED DIAGNOSTICS when handler not active", nil),
 	ErrGeneratedColumnFunctionIsNotAllowed:                   Message("Expression of generated column '%s' contains a disallowed function.", nil),
 	ErrUnsupportedAlterInplaceOnVirtualColumn:                Message("INPLACE ADD or DROP of virtual columns cannot be combined with other ALTER TABLE actions.", nil),
 	ErrWrongFKOptionForGeneratedColumn:                       Message("Cannot define foreign key with %s clause on a generated column.", nil),

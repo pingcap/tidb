@@ -233,6 +233,7 @@ var funcName2Alias = map[string]string{
 	"from_base64":                ast.FromBase64,
 	"insert_func":                ast.InsertFunc,
 	"instr":                      ast.Instr,
+	"label_accessible":           ast.LabelAceesible,
 	"lcase":                      ast.Lcase,
 	"left":                       ast.Left,
 	"length":                     ast.Length,
