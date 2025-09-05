@@ -339,11 +339,11 @@ const (
 	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
 	TiDBOptRiskGroupNDVSkewRatio = "tidb_opt_group_ndv_skew_ratio"
 
-	// TiDBOptRiskCartesianJoinOrderRatio controls whether to allow do Cartesian Join first in Join Reorder.
+	// TiDBOptCartesianJoinOrderThreshold controls whether to allow do Cartesian Join first in Join Reorder.
 	// This variable is used as a penalty to trade off the risk and join order quality.
 	// When 0: never do Cartesian Join first.
-	// When > 0: allow Cartesian Join if cost(cartesian join) * ratio < cost(non cartesian join).
-	TiDBOptRiskCartesianJoinOrderRatio = "tidb_opt_risk_cartesian_join_order_ratio"
+	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
+	TiDBOptCartesianJoinOrderThreshold = "tidb_opt_cartesian_join_order_threshold"
 
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
@@ -1360,7 +1360,7 @@ const (
 	DefOptRiskRangeSkewRatio                = 0.0
 	DefOptRiskScaleNDVSkewRatio             = 1.0
 	DefOptRiskGroupNDVSkewRatio             = 0.0
-	DefOptRiskCartesianJoinOrderRatio       = 0.0
+	DefOptCartesianJoinOrderThreshold       = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0

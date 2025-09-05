@@ -98,7 +98,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
-	cartesianRiskRatio := s.ctx.GetSessionVars().RiskCartesianJoinOrderRatio
+	cartesianThredhols := s.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	for {
 		bestCost := math.MaxFloat64
 		bestIdx, whateverValidOneIdx, bestIsCartesian := -1, -1, false
@@ -107,7 +107,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		for i, node := range s.curJoinGroup {
 			newJoin, remainOthers, isCartesian := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
 			if newJoin == nil || // can't yield a valid join
-				(cartesianRiskRatio <= 0 && isCartesian) { // disable cartesian join
+				(cartesianThredhols <= 0 && isCartesian) { // disable cartesian join
 				continue
 			}
 			_, _, err := newJoin.RecursiveDeriveStats(nil)
@@ -125,9 +125,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			// Only select a cartesian join when cost(cartesian)*ratio < cost(non-cartesian).
 			curIsBetter := false
 			if !bestIsCartesian && isCartesian {
-				curIsBetter = curCost*cartesianRiskRatio < bestCost
+				curIsBetter = curCost*cartesianThredhols < bestCost
 			} else if bestIsCartesian && !isCartesian {
-				curIsBetter = curCost < bestCost*cartesianRiskRatio
+				curIsBetter = curCost < bestCost*cartesianThredhols
 			} else {
 				curIsBetter = curCost < bestCost
 			}
@@ -167,7 +167,7 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 && // cartesian join
 		(!s.allInnerJoin || // not all joins are inner joins
-			s.ctx.GetSessionVars().RiskCartesianJoinOrderRatio <= 0) { // cartesian join is disabled
+			s.ctx.GetSessionVars().CartesianJoinOrderThreshold <= 0) { // cartesian join is disabled
 		// For outer joins like `t1 left join t2 left join t3`, we have to ensure t1 participates join before
 		// t2 and t3, and cartesian join between t2 and t3 might lead to incorrect results.
 		// For safety we don't allow cartesian outer join here.

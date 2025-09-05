@@ -2042,8 +2042,8 @@ var defaultSysVars = []*SysVar{
 		s.RiskScaleNDVSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskScaleNDVSkewRatio)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskCartesianJoinOrderRatio, Value: strconv.FormatFloat(vardef.DefOptRiskCartesianJoinOrderRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
-		s.RiskCartesianJoinOrderRatio = tidbOptFloat64(val, vardef.DefOptRiskCartesianJoinOrderRatio)
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCartesianJoinOrderThreshold, Value: strconv.FormatFloat(vardef.DefOptCartesianJoinOrderThreshold, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.CartesianJoinOrderThreshold = tidbOptFloat64(val, vardef.DefOptCartesianJoinOrderThreshold)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskEqSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskEqSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
