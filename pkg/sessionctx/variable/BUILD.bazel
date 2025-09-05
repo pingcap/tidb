@@ -76,6 +76,7 @@ go_library(
         "//pkg/util/topsql/state",
         "//pkg/util/versioninfo",
         "@com_github_docker_go_units//:go-units",
+        "@com_github_grafana_regexp//:regexp",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_tipb//go-tipb",
@@ -111,6 +112,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/executor",
         "//pkg/executor/join/joinversion",
         "//pkg/kv",

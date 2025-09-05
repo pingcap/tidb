@@ -428,10 +428,10 @@ t	executor__infoschema_reader
 select table_name from information_schema.tables where table_name = 't';
 table_name
 t
-explain format='brief' select table_name, table_schema from information_schema.tables;
-id	estRows	task	access object	operator info
-Projection	10000.00	root		Column#3, Column#2
-└─MemTableScan	10000.00	root	table:TABLES	
+explain format='plan_tree' select table_name, table_schema from information_schema.tables;
+id	task	access object	operator info
+Projection	root		Column#3, Column#2
+└─MemTableScan	root	table:TABLES	
 select count(*) from information_schema.tables where table_name = 't';
 count(*)
 1

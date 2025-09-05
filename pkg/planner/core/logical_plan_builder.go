@@ -691,12 +691,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 			return sel, nil
 		}
 		joinPlan.AttachOnConds(onCondition)
-	} else if joinPlan.JoinType == logicalop.InnerJoin {
-		// If a inner join without "ON" or "USING" clause, it's a cartesian
-		// product over the join tables.
-		joinPlan.CartesianJoin = true
 	}
-
 	return joinPlan, nil
 }
 
@@ -1997,7 +1992,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	// Check if referenced columns of expressions in ORDER BY whole match some fields in DISTINCT,
 	// both original expression and alias can be referenced.
 	// e.g.
-	// select distinct a from t order by sin(a);                            ✔
+	// select distinct sin(a) from t order by a;                            ✔
 	// select distinct a, b from t order by a+b;                            ✔
 	// select distinct count(a), sum(a) from t group by b order by sum(a);  ✔
 	cols := expression.ExtractColumns(expr)
@@ -2551,6 +2546,10 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 			corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 			cols = append(cols, expression.ExtractColumns(expr)...)
 		}
+		// If decorrelation is disabled, don't extract correlated aggregates
+		if b.noDecorrelate && len(corCols) > 0 {
+			continue
+		}
 		if len(corCols) > 0 && len(cols) == 0 {
 			outer = append(outer, agg)
 		}
@@ -2615,6 +2614,9 @@ type correlatedAggregateResolver struct {
 
 	// correlatedAggFuncs stores aggregate functions which belong to outer query
 	correlatedAggFuncs []*ast.AggregateFuncExpr
+
+	// noDecorrelate indicates whether decorrelation should be disabled for this resolver
+	noDecorrelate bool
 }
 
 // Enter implements Visitor interface.
@@ -2789,9 +2791,10 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 // in the outer query from all the sub-queries inside SELECT fields.
 func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan) (map[*ast.AggregateFuncExpr]int, error) {
 	resolver := &correlatedAggregateResolver{
-		ctx:       ctx,
-		b:         b,
-		outerPlan: p,
+		ctx:           ctx,
+		b:             b,
+		outerPlan:     p,
+		noDecorrelate: b.noDecorrelate,
 	}
 	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
@@ -3236,12 +3239,26 @@ func extractSingeValueColNamesFromWhere(p base.LogicalPlan, where ast.ExprNode, 
 			continue
 		}
 		if colExpr, ok := binOpExpr.L.(*ast.ColumnNameExpr); ok {
+			// a = value
 			if _, ok := binOpExpr.R.(ast.ValueExpr); ok {
 				addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
 			}
+			// a = - value
+			if u, ok := binOpExpr.R.(*ast.UnaryOperationExpr); ok {
+				if _, ok := u.V.(ast.ValueExpr); ok {
+					addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+				}
+			}
 		} else if colExpr, ok := binOpExpr.R.(*ast.ColumnNameExpr); ok {
+			// value = a
 			if _, ok := binOpExpr.L.(ast.ValueExpr); ok {
 				addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+			}
+			// - value = a
+			if u, ok := binOpExpr.L.(*ast.UnaryOperationExpr); ok {
+				if _, ok := u.V.(ast.ValueExpr); ok {
+					addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+				}
 			}
 		}
 	}
@@ -4177,7 +4194,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 				allowPseudoTblTriggerLoading = true
 			}
 			// Copy it so we can modify the ModifyCount and the RealtimeCount safely.
-			statsTbl = statsTbl.ShallowCopy()
+			statsTbl = statsTbl.CopyAs(statistics.MetaOnly)
 			statsTbl.RealtimeCount = analyzeCount
 			statsTbl.ModifyCount = 0
 		}

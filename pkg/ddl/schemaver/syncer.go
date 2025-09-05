@@ -27,14 +27,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -104,6 +105,10 @@ type Syncer interface {
 	WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, checkAssumedSvr bool) (*SyncSummary, error)
 	// SyncJobSchemaVerLoop syncs the schema versions on all TiDB nodes for DDL jobs.
 	SyncJobSchemaVerLoop(ctx context.Context)
+	// SetServerInfoSyncer sets the server info syncer.
+	// server info syncer is only used in WaitVersionSynced, so if it's this syncer
+	// is not used for DDL schema version synchronization, it can be nil.
+	SetServerInfoSyncer(svrInfoSyncer *serverinfo.Syncer)
 	// Close ends Syncer.
 	Close()
 }
@@ -195,6 +200,9 @@ type etcdSyncer struct {
 	mu               sync.RWMutex
 	jobNodeVersions  map[int64]*nodeVersions
 	jobNodeVerPrefix string
+
+	// only used if this instance is used by DDL.
+	svrInfoSyncer *serverinfo.Syncer
 }
 
 // NewEtcdSyncer creates a new Syncer.
@@ -275,7 +283,7 @@ func (s *etcdSyncer) Restart(ctx context.Context) error {
 	}
 	s.storeSession(session)
 
-	childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
+	childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 	defer cancel()
 	err = util.PutKVToEtcd(childCtx, s.etcdCli, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.loadSession().Lease()))
@@ -335,7 +343,7 @@ func (s *etcdSyncer) removeSelfVersionPath() error {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerClear, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	err = util.DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli, keyOpDefaultRetryCnt, util.KeyOpDefaultTimeout)
+	err = etcd.DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli, keyOpDefaultRetryCnt, etcd.KeyOpDefaultTimeout)
 	return errors.Trace(err)
 }
 
@@ -406,7 +414,7 @@ func (s *etcdSyncer) waitVersionSyncedWithMDL(
 	jobID, latestVer int64,
 	checkAssumedSvr bool,
 ) (*SyncSummary, bool, error) {
-	serverInfos, err := infosync.GetServersForISSync(ctx, checkAssumedSvr)
+	serverInfos, err := s.getServersForISSync(ctx, checkAssumedSvr)
 	if err != nil {
 		return nil, false, err
 	}
@@ -456,6 +464,21 @@ func (s *etcdSyncer) waitVersionSyncedWithMDL(
 		}
 	}
 	return nil, false, nil
+}
+
+func (s *etcdSyncer) getServersForISSync(ctx context.Context, checkAssumedSvr bool) (map[string]*serverinfo.ServerInfo, error) {
+	svrs, err := s.svrInfoSyncer.GetAllServerInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if kerneltype.IsNextGen() && !checkAssumedSvr {
+		for k, svr := range svrs {
+			if svr.IsAssumed() {
+				delete(svrs, k)
+			}
+		}
+	}
+	return svrs, nil
 }
 
 // SyncJobSchemaVerLoop implements Syncer.SyncJobSchemaVerLoop interface.
@@ -562,6 +585,10 @@ func (s *etcdSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(map[string
 		s.jobNodeVersions[jobID] = item
 	}
 	return item
+}
+
+func (s *etcdSyncer) SetServerInfoSyncer(syncer *serverinfo.Syncer) {
+	s.svrInfoSyncer = syncer
 }
 
 func decodeJobVersionEvent(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType, prefix string) (jobID int64, tidbID string, schemaVer int64, valid bool) {

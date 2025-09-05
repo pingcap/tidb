@@ -63,6 +63,9 @@ type DataSource struct {
 	// in predicate push down and used in partition pruning/index merge.
 	AllConds []expression.Expression `hash64-equals:"true"`
 
+	// The following property is used to cache the original statistic information of the table.
+	// It will be initialized by the function initStats(ds *logicalop.DataSource) in stats.go and never modified after that.
+	// The TableStats.RowCount is the original row count of the table, which is equal to the StatisticTable.RealtimeCount.
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 

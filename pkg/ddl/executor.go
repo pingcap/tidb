@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -74,7 +73,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -82,7 +80,7 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
-	removingObjPrefix     = "_Tomestone$_"
+	removingObjPrefix     = "_Tombstone$_"
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
@@ -1978,7 +1976,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2409,7 +2407,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return err
 	}
@@ -2478,7 +2476,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2547,7 +2545,7 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3356,7 +3354,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, tbl, ctx)
 	if err != nil {
 		return err
 	}
@@ -4635,7 +4633,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		OpType: model.OpAddIndex,
 	}
 
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return err
 	}
@@ -4924,7 +4922,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 
-	err = initJobReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4949,111 +4947,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return nil
 	}
 	return errors.Trace(err)
-}
-
-// GetDXFDefaultMaxNodeCntAuto calcuates a default max node count for distributed task execution.
-func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
-	tikvStore, ok := store.(tikv.Storage)
-	if !ok {
-		logutil.DDLLogger().Warn("not an TiKV or TiFlash store instance", zap.String("type", fmt.Sprintf("%T", store)))
-		return 0
-	}
-	pdClient := tikvStore.GetRegionCache().PDClient()
-	if pdClient == nil {
-		logutil.DDLLogger().Warn("pd unavailable when get default max node count")
-		return 0
-	}
-	stores, err := pdClient.GetAllStores(context.Background())
-	if err != nil {
-		logutil.DDLLogger().Warn("get all stores failed when get default max node count", zap.Error(err))
-		return 0
-	}
-	return max(3, len(stores)/3)
-}
-
-func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
-	m := NewDDLReorgMeta(sctx)
-
-	setReorgParam := func() {
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
-			m.SetConcurrency(variable.TidbOptInt(sv, 0))
-		}
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
-			m.SetBatchSize(variable.TidbOptInt(sv, 0))
-		}
-		m.SetMaxWriteSpeed(int(vardef.DDLReorgMaxWriteSpeed.Load()))
-	}
-	setDistTaskParam := func() error {
-		m.IsDistReorg = vardef.EnableDistTask.Load()
-		m.IsFastReorg = vardef.EnableFastReorg.Load()
-		m.TargetScope = dxfhandle.GetTargetScope()
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
-			m.MaxNodeCount = variable.TidbOptInt(sv, 0)
-			if m.MaxNodeCount == -1 { // -1 means calculate automatically
-				m.MaxNodeCount = GetDXFDefaultMaxNodeCntAuto(sctx.GetStore())
-			}
-		}
-		if hasSysDB(job) {
-			if m.IsDistReorg {
-				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
-					zap.Stringer("job", job))
-			}
-			m.IsDistReorg = false
-			m.IsFastReorg = false
-			failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
-				LastReorgMetaFastReorgDisabled = true
-			})
-		}
-		if m.IsDistReorg && !m.IsFastReorg {
-			return dbterror.ErrUnsupportedDistTask
-		}
-		return nil
-	}
-
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		setReorgParam()
-		err := setDistTaskParam()
-		if err != nil {
-			return err
-		}
-	case model.ActionReorganizePartition,
-		model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning,
-		model.ActionModifyColumn:
-		setReorgParam()
-	case model.ActionMultiSchemaChange:
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			switch sub.Type {
-			case model.ActionAddIndex, model.ActionAddPrimaryKey:
-				setReorgParam()
-				err := setDistTaskParam()
-				if err != nil {
-					return err
-				}
-			case model.ActionReorganizePartition,
-				model.ActionRemovePartitioning,
-				model.ActionAlterTablePartitioning,
-				model.ActionModifyColumn:
-				setReorgParam()
-			}
-		}
-	default:
-		return nil
-	}
-	job.ReorgMeta = m
-	logutil.DDLLogger().Info("initialize reorg meta",
-		zap.String("jobSchema", job.SchemaName),
-		zap.String("jobTable", job.TableName),
-		zap.Stringer("jobType", job.Type),
-		zap.Bool("enableDistTask", m.IsDistReorg),
-		zap.Bool("enableFastReorg", m.IsFastReorg),
-		zap.String("targetScope", m.TargetScope),
-		zap.Int("maxNodeCount", m.MaxNodeCount),
-		zap.Int("concurrency", m.GetConcurrency()),
-		zap.Int("batchSize", m.GetBatchSize()),
-	)
-	return nil
 }
 
 func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {

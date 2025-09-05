@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
@@ -66,7 +65,7 @@ type TableReaderImpl struct {
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *logicalop.DataSource) *TableReaderImpl {
+func NewTableReaderImpl(reader *physicalop.PhysicalTableReader, source *logicalop.DataSource) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
@@ -78,7 +77,7 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *logical
 
 // CalcCost calculates the cost of the table reader Implementation.
 func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	reader := impl.plan.(*physicalop.PhysicalTableReader)
 	width := cardinality.GetAvgRowSize(impl.plan.SCtx(), impl.tblColHists, reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
 	// TableReaderImpl don't have tableInfo property, so using nil to replace it.
@@ -95,7 +94,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 
 // GetCostLimit implements Implementation interface.
 func (impl *TableReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	reader := impl.plan.(*physicalop.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
@@ -144,7 +143,7 @@ type IndexReaderImpl struct {
 
 // GetCostLimit implements Implementation interface.
 func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalIndexReader)
+	reader := impl.plan.(*physicalop.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
@@ -155,7 +154,7 @@ func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implement
 
 // CalcCost implements Implementation interface.
 func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalIndexReader)
+	reader := impl.plan.(*physicalop.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) *
 		cardinality.GetAvgRowSize(reader.SCtx(), impl.tblColHists, children[0].GetPlan().Schema().Columns,
@@ -166,7 +165,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 }
 
 // NewIndexReaderImpl creates a new IndexReader Implementation.
-func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *logicalop.DataSource) *IndexReaderImpl {
+func NewIndexReaderImpl(reader *physicalop.PhysicalIndexReader, source *logicalop.DataSource) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
 		tblInfo:     source.TableInfo,

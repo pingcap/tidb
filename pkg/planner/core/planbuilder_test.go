@@ -261,17 +261,17 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	tableScan.SetSchema(schema)
 
 	// table reader
-	tableReader := &PhysicalTableReader{
-		tablePlan:  tableScan,
+	tableReader := &physicalop.PhysicalTableReader{
+		TablePlan:  tableScan,
 		TablePlans: []base.PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
 	clonedPlan, err := tableReader.Clone(ctx)
 	require.NoError(t, err)
-	newTableReader, ok := clonedPlan.(*PhysicalTableReader)
+	newTableReader, ok := clonedPlan.(*physicalop.PhysicalTableReader)
 	require.True(t, ok)
-	require.True(t, newTableReader.tablePlan == newTableReader.TablePlans[0])
+	require.True(t, newTableReader.TablePlan == newTableReader.TablePlans[0])
 }
 
 func TestPhysicalPlanClone(t *testing.T) {
@@ -297,8 +297,8 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(tableScan))
 
 	// table reader
-	tableReader := &PhysicalTableReader{
-		tablePlan:  tableScan,
+	tableReader := &physicalop.PhysicalTableReader{
+		TablePlan:  tableScan,
 		TablePlans: []base.PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
@@ -317,8 +317,8 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(indexScan))
 
 	// index reader
-	indexReader := &PhysicalIndexReader{
-		indexPlan:     indexScan,
+	indexReader := &physicalop.PhysicalIndexReader{
+		IndexPlan:     indexScan,
 		IndexPlans:    []base.PhysicalPlan{indexScan},
 		OutputColumns: []*expression.Column{col, col},
 	}
@@ -326,11 +326,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(indexReader))
 
 	// index lookup
-	indexLookup := &PhysicalIndexLookUpReader{
+	indexLookup := &physicalop.PhysicalIndexLookUpReader{
 		IndexPlans:     []base.PhysicalPlan{indexReader},
-		indexPlan:      indexScan,
+		IndexPlan:      indexScan,
 		TablePlans:     []base.PhysicalPlan{tableReader},
-		tablePlan:      tableScan,
+		TablePlan:      tableScan,
 		ExtraHandleCol: col,
 		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}

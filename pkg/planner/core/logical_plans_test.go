@@ -1870,6 +1870,51 @@ func pathsName(paths []*candidatePath) string {
 	return strings.Join(names, ",")
 }
 
+// TestSkylinePruning tests the skyline pruning optimization for index selection.
+//
+// Use the following DDL if trying to reproduce the test environment locally:
+//
+//  1. Table 't' (MockSignedTable):
+/*     CREATE TABLE t (
+       a BIGINT NOT NULL PRIMARY KEY,
+       b BIGINT NOT NULL,
+       c BIGINT NOT NULL,
+       d BIGINT NOT NULL,
+       e BIGINT,
+       c_str VARCHAR(255),
+       d_str VARCHAR(255),
+       e_str VARCHAR(255),
+       f BIGINT NOT NULL,
+       g BIGINT NOT NULL,
+       h BIGINT,
+       i_date DATE,
+       UNIQUE KEY c_d_e (c, d, e),
+       UNIQUE KEY x (e),  -- write-only state
+       UNIQUE KEY f (f),
+       KEY g (g),
+       UNIQUE KEY f_g (f, g),
+       KEY c_d_e_str (c_str, d_str, e_str),
+       KEY e_d_c_str_prefix (e_str, d_str, c_str(10))
+       );
+/*
+//  2. Table 'pt2_global_index' (MockGlobalIndexHashPartitionTable):
+/*     CREATE TABLE pt2_global_index (
+       a BIGINT NOT NULL,
+       b BIGINT NOT NULL,
+       c BIGINT NOT NULL,
+       d BIGINT NOT NULL,
+       e BIGINT,
+       f BIGINT NOT NULL,
+       g BIGINT NOT NULL,
+       h BIGINT,
+       ptn BIGINT,
+       PRIMARY KEY (a, ptn),
+       KEY b (b),
+       UNIQUE KEY b_global (b) GLOBAL,
+       KEY b_c (b, c),
+     UNIQUE KEY b_c_global (b, c) GLOBAL
+     ) PARTITION BY HASH(ptn) PARTITIONS 2;
+*/
 func TestSkylinePruning(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`))
 	defer func() {
@@ -1913,6 +1958,26 @@ func TestSkylinePruning(t *testing.T) {
 			result: "f_g",
 		},
 		{
+			sql:    "select * from t where f = 1 and c = 1 and d = 1",
+			result: "f", // Keep f only, since f is unique
+		},
+		{
+			sql:    "select * from t where f = 1 and g = 1",
+			result: "f_g", // Keep f_g only, since (f, g) is unique and has more columns than f alone
+		},
+		{
+			sql:    "select * from t where e_str = 'a' and d_str = 'b' and c_str = 'c'",
+			result: "c_d_e_str,e_d_c_str_prefix", // TODO: Refine skyline pruning for string prefix indexes
+		},
+		{
+			sql:    "select * from t where e_str = 'a' and d_str = 'b' and c_str = '1234567890a'",
+			result: "c_d_e_str,e_d_c_str_prefix", // TODO: Refine skyline pruning for string prefix indexes
+		},
+		{
+			sql:    "select * from t where (f = 1 and g = 1) or (f = 2 and g = 2)",
+			result: "f_g",
+		},
+		{
 			sql:    "select count(1) from t",
 			result: "PRIMARY_KEY,c_d_e,f,g,f_g,c_d_e_str,e_d_c_str_prefix",
 		},
@@ -1930,7 +1995,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
-			result: "PRIMARY_KEY,c_d_e,g,f_g",
+			result: "PRIMARY_KEY,c_d_e,f_g",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
@@ -1946,7 +2011,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c`
+			result: "PRIMARY_KEY,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -1955,6 +2020,10 @@ func TestSkylinePruning(t *testing.T) {
 		{
 			sql:    "select * from pt2_global_index where c > 1 and d > 1 and e > 1",
 			result: "c_d_e", // will prune `b_c` and `b_c_global`
+		},
+		{
+			sql:    "select * from pt2_global_index where (b = 1 and c = 1) or (b = 2 and c = 2)",
+			result: "b_c_global",
 		},
 	}
 	s := coretestsdk.CreatePlannerSuiteElems()

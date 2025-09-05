@@ -17,7 +17,6 @@ package mpp
 import (
 	"testing"
 
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -30,7 +29,7 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
 	passSender.SetID(10)
-	tableReader := &plannercore.PhysicalTableReader{}
+	tableReader := &physicalop.PhysicalTableReader{}
 	tableReader.SetTablePlanForTest(passSender)
 	limitTIDB := &physicalop.PhysicalLimit{}
 	limitTIDB.SetChildren(tableReader)
@@ -47,7 +46,7 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 	join := &physicalop.PhysicalHashJoin{}
 	tableScan2 := &physicalop.PhysicalTableScan{}
 	tableScan2.SetID(20)
-	tableReader2 := &plannercore.PhysicalTableReader{}
+	tableReader2 := &physicalop.PhysicalTableReader{}
 	tableReader2.SetTablePlanForTest(tableScan2)
 	join.SetChildren(tableReader2, projection)
 	limitTIDB2 := &physicalop.PhysicalLimit{}

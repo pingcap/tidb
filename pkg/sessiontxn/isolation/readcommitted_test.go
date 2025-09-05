@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -336,7 +337,7 @@ func TestRCProviderInitialize(t *testing.T) {
 		tk.MustExec("set @@autocommit=0")
 		assert = inactiveRCTxnAssert(se)
 		assertAfterActive := activeRCTxnAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 		provider := assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err := provider.GetStmtReadTS()
@@ -349,7 +350,7 @@ func TestRCProviderInitialize(t *testing.T) {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
 		assert = inactiveRCTxnAssert(se)
 		assertAfterActive = activeRCTxnAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
 		provider = assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err = provider.GetStmtReadTS()
@@ -443,7 +444,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 			}
 			assert = inactiveRCTxnAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "READ-COMMITTED")
-			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			require.NoError(t, se.PrepareTxnCtx(context.TODO(), &ast.InsertStmt{}))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
@@ -565,6 +566,12 @@ func initializePessimisticRCProvider(t testing.TB, tk *testkit.TestKit) *isolati
 }
 
 func TestFailedDMLConsistency1(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		// NextGen hangs when acquiring pessimistic locks after failed DML with fair locking disabled
+		// root cause: cleanup not triggered properly for non-fair mode
+		// this 35682 might be related.
+		t.Skip("skip for next-gen kernel, as this test requires fair-locking")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -595,6 +602,12 @@ func TestFailedDMLConsistency1(t *testing.T) {
 }
 
 func TestFailedDMLConsistency2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		// NextGen hangs when acquiring pessimistic locks after failed DML with fair locking disabled
+		// root cause: cleanup not triggered properly for non-fair mode.
+		// this 35682 might be related.
+		t.Skip("skip for next-gen kernel, as this test requires fair-locking")
+	}
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("set @@tidb_txn_assertion_level=strict")

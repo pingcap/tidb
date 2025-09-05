@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -176,20 +177,20 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		view.Stop()
 	})
 	gctuner.GlobalMemoryLimitTuner.Stop()
-	tryMakeImage()
+	tryMakeImage(t)
 	store, _ := CreateMockStoreAndDomain(t, opts...)
 	_ = store.(helper.Storage)
 	return store
 }
 
 // tryMakeImage tries to create a bootstraped storage, the store is used as image for testing later.
-func tryMakeImage(opts ...mockstore.MockTiKVStoreOption) {
+func tryMakeImage(t testing.TB, opts ...mockstore.MockTiKVStoreOption) {
 	if mockstore.ImageAvailable() {
 		return
 	}
 	retry, err := false, error(nil)
 	for err == nil {
-		retry, err = tryMakeImageOnce()
+		retry, err = tryMakeImageOnce(t)
 		if !retry {
 			break
 		}
@@ -197,7 +198,7 @@ func tryMakeImage(opts ...mockstore.MockTiKVStoreOption) {
 	}
 }
 
-func tryMakeImageOnce() (retry bool, err error) {
+func tryMakeImageOnce(t testing.TB) (retry bool, err error) {
 	const lockFile = "/tmp/tidb-unistore-bootstraped-image-lock-file"
 	lock, err := os.Create(lockFile)
 	if err != nil {
@@ -219,6 +220,10 @@ func tryMakeImageOnce() (retry bool, err error) {
 		mockstore.WithPath(mockstore.ImageFilePath))
 	if err != nil {
 		return false, err
+	}
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+		kvstore.SetSystemStorage(store)
 	}
 
 	vardef.SetSchemaLease(500 * time.Millisecond)
@@ -295,7 +300,7 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 
 // NewDistExecutionContextWithLease create DistExecutionContext for testing.
 func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Duration) *DistExecutionContext {
-	store, err := mockstore.NewMockStore()
+	store, err := teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
 	domains := make([]*domain.Domain, 0, serverNum)
@@ -334,6 +339,9 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	})
 	store = schematracker.UnwrapStorage(store)
 	_ = store.(helper.Storage)
+	if kerneltype.IsNextGen() && store.GetKeyspace() == keyspace.System {
+		kvstore.SetSystemStorage(store)
+	}
 	return store, dom
 }
 
