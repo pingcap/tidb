@@ -84,7 +84,11 @@ go_test(
     ],
     embed = [":snap_client"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 18,
+=======
+    shard_count = 27,
+>>>>>>> 19cc638d3af (br: fix stats meta count is zero if backup has no checksum (#60979))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/glue",
@@ -102,11 +106,17 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/session",
+        "//pkg/statistics/handle/types",
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/codec",
+<<<<<<< HEAD
+=======
+        "//pkg/util/mock",
+        "@com_github_google_uuid//:uuid",
+>>>>>>> 19cc638d3af (br: fix stats meta count is zero if backup has no checksum (#60979))
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
