@@ -341,6 +341,10 @@ func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
 			pp.resetReader()
 		}
 		pp.curRowGroup++
+		if pp.curRowGroup >= pp.totalRowGroup {
+			return io.EOF
+		}
+
 		for c := range len(pp.dumpers) {
 			rowGroup := pp.readers[c].RowGroup(pp.curRowGroup)
 			colReader, err := rowGroup.Column(c)
