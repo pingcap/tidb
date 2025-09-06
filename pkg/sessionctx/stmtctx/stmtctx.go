@@ -333,7 +333,9 @@ type StatementContext struct {
 	}
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
-	BindSQL string
+	BindSQL        string
+	ExecRetryCount uint64
+	ExecSuccess    bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
