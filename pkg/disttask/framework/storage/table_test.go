@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"slices"
 	"sort"
 	"testing"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -1280,6 +1282,24 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 }
 
 func TestTaskManagerEntrySize(t *testing.T) {
+	//	t.Skip(`this case is used to verify that the global TxnEntrySizeLimit is used in DXF,
+	//it success in local test, and success in CI in most cases, but it times out sometimes,
+	//one guess is it's related to the uni-store storage badger,
+	//to avoid block CI, skip it, as we have already verified it works`)
+	var wg tidbutil.WaitGroupWrapper
+	bgCtx, cancelFunc := context.WithCancel(context.Background())
+	wg.Run(func() {
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-time.After(10 * time.Second):
+			}
+			buf := make([]byte, 8<<20)
+			stackLen := runtime.Stack(buf, true)
+			t.Logf("\n\n\n\n=== dump goroutine stack. ===\n%s\n\n\n", string(buf[:stackLen]))
+		}
+	})
 	store, tm, ctx := testutil.InitTableTest(t)
 	getMeta := func(l int) []byte {
 		meta := make([]byte, l)
@@ -1304,4 +1324,6 @@ func TestTaskManagerEntrySize(t *testing.T) {
 	require.NoError(t, insertSubtask(meta6m))
 	// TiKV also have a limit raftstore.raft-entry-max-size which is 8M by default,
 	// we won't test that param here
+	cancelFunc()
+	wg.Wait()
 }
