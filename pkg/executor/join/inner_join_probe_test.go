@@ -38,7 +38,7 @@ import (
 func toNullableTypes(tps []*types.FieldType) []*types.FieldType {
 	ret := make([]*types.FieldType, 0, len(tps))
 	for _, tp := range tps {
-		nullableTp := tp.Clone()
+		nullableTp := tp.DeepClone()
 		nullableTp.DelFlag(mysql.NotNullFlag)
 		ret = append(ret, nullableTp)
 	}
@@ -286,13 +286,13 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	joinedTypes = append(joinedTypes, rightTypes...)
 	resultTypes := make([]*types.FieldType, 0, len(leftUsed)+len(rightUsed))
 	for _, colIndex := range leftUsed {
-		resultTypes = append(resultTypes, leftTypes[colIndex].Clone())
+		resultTypes = append(resultTypes, leftTypes[colIndex].DeepClone())
 		if joinType == logicalop.RightOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
 	for _, colIndex := range rightUsed {
-		resultTypes = append(resultTypes, rightTypes[colIndex].Clone())
+		resultTypes = append(resultTypes, rightTypes[colIndex].DeepClone())
 		if joinType == logicalop.LeftOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}

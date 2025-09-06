@@ -586,7 +586,7 @@ func (p *LogicalProjection) AppendExpr(expr expression.Expression) *expression.C
 
 	col := &expression.Column{
 		UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()).Clone(),
+		RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()).DeepClone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
 	col.SetRepertoire(expr.Repertoire())

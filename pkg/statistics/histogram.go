@@ -121,7 +121,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		// The histogram will store the string value's 'sort key' representation of its collation.
 		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
 		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
-		tp = tp.Clone()
+		tp = tp.DeepClone()
 		tp.SetCollate(charset.CollationBin)
 	}
 	return &Histogram{

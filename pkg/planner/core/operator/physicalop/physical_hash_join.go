@@ -599,7 +599,7 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 	probeFiledTypes := make([]*tipb.FieldType, 0, len(equalConditions))
 	buildFiledTypes := make([]*tipb.FieldType, 0, len(equalConditions))
 	for _, equalCondition := range equalConditions {
-		retType := equalCondition.RetType.Clone()
+		retType := equalCondition.RetType.DeepClone()
 		chs, coll := equalCondition.CharsetAndCollation()
 		retType.SetCharset(chs)
 		retType.SetCollate(coll)

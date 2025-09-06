@@ -239,7 +239,7 @@ func (b *mppExecBuilder) buildExpand(pb *tipb.Expand) (mppExec, error) {
 	mutatedFieldTypes := make([]*types.FieldType, 0, len(childFieldTypes))
 	// change the field types return from children tobe nullable.
 	for offset, f := range childFieldTypes {
-		cf := f.Clone()
+		cf := f.DeepClone()
 		if _, ok := inGroupingSetMap[offset]; ok {
 			// remove the not null flag, make it nullable.
 			cf.SetFlag(cf.GetFlag() & ^mysql.NotNullFlag)

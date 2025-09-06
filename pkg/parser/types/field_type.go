@@ -61,8 +61,8 @@ type FieldType struct {
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
-// DeepCopy returns a deep copy of the FieldType.
-func (ft *FieldType) DeepCopy() *FieldType {
+// DeepClone returns a deep copy of the FieldType.
+func (ft *FieldType) DeepClone() *FieldType {
 	if ft == nil {
 		return nil
 	}
@@ -324,7 +324,7 @@ func (ft *FieldType) ArrayType() *FieldType {
 	if !ft.array {
 		return ft
 	}
-	clone := ft.Clone()
+	clone := ft.DeepClone()
 	clone.SetArray(false)
 	return clone
 }
@@ -362,6 +362,8 @@ func (ft *FieldType) CleanElemIsBinaryLit() {
 }
 
 // Clone returns a copy of itself.
+// Deprecated: tp clone() should be a deep-cloned, otherwise the underlying
+// elems and elemsIsBinaryLit is commonly shared.
 func (ft *FieldType) Clone() *FieldType {
 	ret := *ft
 	return &ret

@@ -543,7 +543,7 @@ func convertStringFTToBinaryCollate(ft *types.FieldType) *types.FieldType {
 		ft.GetType() == mysql.TypeSet {
 		return ft
 	}
-	newTp := ft.Clone()
+	newTp := ft.DeepClone()
 	newTp.SetCharset(charset.CharsetBin)
 	newTp.SetCollate(charset.CollationBin)
 	return newTp
