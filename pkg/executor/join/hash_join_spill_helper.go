@@ -81,10 +81,15 @@ type hashJoinSpillHelper struct {
 	spillTriggedInBuildingStageForTest           bool
 	spillTriggeredBeforeBuildingHashTableForTest bool
 	allPartitionsSpilledForTest                  bool
+<<<<<<< HEAD
 	skipProbeInRestoreForTest                    bool
+=======
+	skipProbeInRestoreForTest                    atomic.Bool
+	fileNamePrefixForTest                        string
+>>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 }
 
-func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
+func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType, fileNamePrefixForTest string) *hashJoinSpillHelper {
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
 	helper.cond = sync.NewCond(new(sync.Mutex))
 	helper.buildSpillChkFieldTypes = make([]*types.FieldType, 0, 3)
@@ -98,6 +103,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.spilledPartitions = make([]bool, partitionNum)
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
+	helper.fileNamePrefixForTest = fileNamePrefixForTest
 
 	// hashJoinExec may be nill in ut
 	if hashJoinExec != nil {
@@ -307,11 +313,11 @@ func (h *hashJoinSpillHelper) spillBuildSegmentToDisk(workerID int, partID int, 
 	}
 
 	if h.buildRowsInDisk[workerID][partID] == nil {
-		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
+		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes, h.fileNamePrefixForTest)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
 		h.buildRowsInDisk[workerID][partID] = inDisk
 
-		inDisk = chunk.NewDataInDiskByChunks(h.probeSpillFieldTypes)
+		inDisk = chunk.NewDataInDiskByChunks(h.probeSpillFieldTypes, h.fileNamePrefixForTest)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
 		h.probeRowsInDisk[workerID][partID] = inDisk
 	}
