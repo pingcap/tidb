@@ -448,7 +448,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			castedCon := con
 			if !colType.Equal(conType) {
 				oriWarningCnt := s.ctx.GetEvalCtx().WarningCount()
-				newExpr := BuildCastFunction(s.ctx, con, col.GetType(s.ctx.GetEvalCtx()))
+				newExpr := BuildCastFunction(s.ctx, con, colType.DeepCopy())
 				s.ctx.GetEvalCtx().TruncateWarnings(oriWarningCnt)
 				if newCon, ok := newExpr.(*Constant); ok {
 					castedCon = newCon
