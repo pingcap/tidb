@@ -728,6 +728,24 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 	return p.PlanCostVer2, nil
 }
 
+func isTheSameKvType(a, b base.PhysicalPlan) bool {
+	aType := physicalop.GetStoreType(a)
+	if aType == kv.UnSpecified {
+		return true
+	}
+	bType := physicalop.GetStoreType(b)
+	if aType == kv.UnSpecified {
+		return true
+	}
+	if aType == bType {
+		return true
+	}
+	if aType == kv.TiFlash || bType == kv.TiFlash {
+		return false
+	}
+	return true
+}
+
 func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, indexJoinType int) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalIndexJoin)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -735,6 +753,7 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	}
 
 	build, probe := p.Children()[1-p.InnerChildIdx], p.Children()[p.InnerChildIdx]
+	isSameStorageType := isTheSameKvType(build, probe)
 	buildRows := getCardinality(build, option.CostFlag)
 	buildRowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
 	probeRowsOne := getCardinality(probe, option.CostFlag)
@@ -773,7 +792,6 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	default: // IndexJoin
 		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, float64(len(p.LeftJoinKeys)), cpuFactor, memFactor)
 	}
-
 	// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
 	//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
 	// Use an empirical value batchRatio to handle this now.
@@ -795,6 +813,9 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
+	if !isSameStorageType {
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 100)
+	}
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
