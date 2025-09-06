@@ -50,24 +50,22 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	var setDistTaskParam bool
 
 	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
 		setReorgParam = true
 		setDistTaskParam = true
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning,
-		model.ActionModifyColumn:
+		model.ActionAlterTablePartitioning:
 		setReorgParam = true
 	case model.ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			switch sub.Type {
-			case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
 				setReorgParam = true
 				setDistTaskParam = true
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
-				model.ActionAlterTablePartitioning,
-				model.ActionModifyColumn:
+				model.ActionAlterTablePartitioning:
 				setReorgParam = true
 			}
 		}

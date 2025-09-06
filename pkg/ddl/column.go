@@ -17,7 +17,6 @@ package ddl
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math/bits"
 	"slices"
@@ -589,54 +588,6 @@ func (w *worker) updateCurrentElement(
 		// TODO: remove when modify column of partitioned table is supported
 		// https://github.com/pingcap/tidb/issues/38297
 		return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
-	}
-	// Get the original start handle and end handle.
-	currentVer, err := getValidCurrentVersion(reorgInfo.jobCtx.store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	//nolint:forcetypeassert
-	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.jobCtx.store, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	startElementOffset := 0
-	startElementOffsetToResetHandle := -1
-	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
-	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
-		for i, element := range reorgInfo.elements[1:] {
-			if reorgInfo.currElement.ID == element.ID {
-				startElementOffset = i
-				startElementOffsetToResetHandle = i
-				break
-			}
-		}
-	}
-
-	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
-		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
-		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
-		if i == startElementOffsetToResetHandle+1 {
-			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
-		}
-
-		// Update the element in the reorgInfo for updating the reorg meta below.
-		reorgInfo.currElement = reorgInfo.elements[i+1]
-		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
-		logutil.DDLLogger().Info("update column and indexes",
-			zap.Int64("job ID", reorgInfo.Job.ID),
-			zap.Stringer("element", reorgInfo.currElement),
-			zap.String("start key", hex.EncodeToString(reorgInfo.StartKey)),
-			zap.String("end key", hex.EncodeToString(reorgInfo.EndKey)))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = w.addTableIndex(jobCtx, t, reorgInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 	return nil
 }

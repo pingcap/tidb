@@ -777,11 +777,11 @@ func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv
 }
 
 // deleteDDLReorgHandle deletes the handle for ddl reorg.
-func removeDDLReorgHandle(se *sess.Session, job *model.Job, elements []*meta.Element) error {
+func removeDDLReorgHandle(se *sess.Session, jobID int64, elements []*meta.Element) error {
 	if len(elements) == 0 {
 		return nil
 	}
-	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
 	return se.RunInTxn(func(se *sess.Session) error {
 		_, err := se.Execute(context.Background(), sql, "remove_handle")
 		return err

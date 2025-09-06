@@ -53,6 +53,7 @@ func convertAddIdxJob2RollbackJob(
 			failpoint.Return(0, errors.New("mock convert add index job to rollback job error"))
 		}
 	})
+	// TODO(cbc): convertAddIdxJob2RollbackJob will assume that args of the job is AddIndex
 
 	dropArgs := &model.ModifyIndexArgs{
 		PartitionIDs: getPartitionIDs(tblInfo),
