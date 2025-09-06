@@ -75,6 +75,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const requestDefaultTimeout = 10 * time.Second
+
 // SettingsHandler is the handler for list tidb server settings.
 type SettingsHandler struct {
 	*handler.TikvHandlerTool
@@ -2013,7 +2015,7 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
 		if err := infosync.UpdateServerLabel(ctx, labels); err != nil {
 			logutil.BgLogger().Error("update etcd labels failed", zap.Any("labels", cfg.Labels), zap.Error(err))
 		}
@@ -2165,4 +2167,40 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		handler.WriteError(w, errors.New("method not allowed"))
 	}
+}
+
+// TxnGCStatesHandler is the handler for GC related API.
+type TxnGCStatesHandler struct {
+	store kv.Storage
+}
+
+// NewTxnGCStatesHandler creates a TxnGCStatesHandler.
+func NewTxnGCStatesHandler(store kv.Storage) *TxnGCStatesHandler {
+	return &TxnGCStatesHandler{
+		store: store,
+	}
+}
+
+// ServeHTTP implements the HTTP handler interface.
+func (gc *TxnGCStatesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "This API only supports GET method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pdStoreBackend, ok := gc.store.(kv.StorageWithPD)
+	if !ok {
+		handler.WriteError(w, errors.New("GC API only support storage with PD"))
+		return
+	}
+
+	pdCli := pdStoreBackend.GetPDClient()
+	keyspaceID := gc.store.GetCodec().GetKeyspaceID()
+	gcCli := pdCli.GetGCStatesClient(uint32(keyspaceID))
+	state, err := gcCli.GetGCState(context.Background())
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	handler.WriteData(w, state)
 }

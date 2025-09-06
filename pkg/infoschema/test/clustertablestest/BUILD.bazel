@@ -12,6 +12,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/errno",
         "//pkg/executor",
@@ -30,6 +31,7 @@ go_test(
         "//pkg/privilege/privileges",
         "//pkg/server",
         "//pkg/session",
+        "//pkg/session/sessmgr",
         "//pkg/session/txninfo",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
@@ -39,7 +41,6 @@ go_test(
         "//pkg/testkit/external",
         "//pkg/testkit/testsetup",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/gctuner",
         "//pkg/util/logutil",

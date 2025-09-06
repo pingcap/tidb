@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -45,12 +47,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -117,6 +119,9 @@ func TestGetTimeZone(t *testing.T) {
 }
 
 func TestIssue22819(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -602,6 +607,9 @@ func TestCancelJobWriteConflict(t *testing.T) {
 }
 
 func TestTxnSavepointWithDDL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -674,9 +682,10 @@ func TestSnapshotVersion(t *testing.T) {
 
 	// For updating the self schema version.
 	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err := dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion())
+	sum, err := dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion(), false)
 	cancel()
 	require.NoError(t, err)
+	require.EqualValues(t, &schemaver.SyncSummary{ServerCount: 1}, sum)
 
 	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
 	require.NotNil(t, snapIs)
@@ -684,9 +693,10 @@ func TestSnapshotVersion(t *testing.T) {
 
 	// Make sure that the self schema version doesn't be changed.
 	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err = dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion())
+	sum, err = dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion(), false)
 	cancel()
 	require.NoError(t, err)
+	require.EqualValues(t, &schemaver.SyncSummary{ServerCount: 1}, sum)
 
 	// for GetSnapshotInfoSchema
 	currSnapTS := oracle.GoTimeToTS(time.Now())
@@ -820,7 +830,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 
 	infoSyncer := dom.InfoSyncer()
 	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+		PS: make([]*sessmgr.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)
 	beforeTS := oracle.GoTimeToTS(time.Now())
@@ -831,7 +841,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	now := time.Now()
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
-	sm.PS = []*util.ProcessInfo{
+	sm.PS = []*sessmgr.ProcessInfo{
 		{CurTxnStartTS: 0},
 		{CurTxnStartTS: math.MaxUint64},
 		{CurTxnStartTS: lowerLimit},
@@ -1354,6 +1364,9 @@ func TestGetAllTableInfos(t *testing.T) {
 }
 
 func TestGetVersionFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

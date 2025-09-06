@@ -15,6 +15,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 26,
     deps = [
         "//br/pkg/glue",
         "//br/pkg/gluetidb",
@@ -33,6 +34,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/printer",
         "//pkg/util/table-filter",

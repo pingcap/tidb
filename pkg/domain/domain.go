@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
+	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
@@ -75,6 +76,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -125,7 +127,9 @@ var (
 )
 
 const (
-	indexUsageGCDuration = 30 * time.Minute
+	indexUsageGCDuration  = 30 * time.Minute
+	systemSessionPoolSize = 200
+	dxfSessionPoolSize    = 100
 )
 
 // NewMockDomain is only used for test
@@ -160,6 +164,7 @@ type Domain struct {
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
 	// Deprecated: Use `advancedSysSessionPool` instead.
 	sysSessionPool util.DestroyableSessionPool
+	dxfSessionPool util.DestroyableSessionPool
 	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
@@ -225,7 +230,7 @@ type Domain struct {
 
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory
+	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -291,6 +296,11 @@ func (do *Domain) DDL() ddl.DDL {
 // DDLExecutor gets the ddl executor from domain.
 func (do *Domain) DDLExecutor() ddl.Executor {
 	return do.ddlExecutor
+}
+
+// GetDDLOwnerMgr implements the sqlsvrapi.Server interface.
+func (do *Domain) GetDDLOwnerMgr() owner.Manager {
+	return do.DDL().OwnerManager()
 }
 
 // SetDDL sets DDL to domain, it's only used in tests.
@@ -424,8 +434,15 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
 	defer do.sysSessionPool.Put(se)
-	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
+	start, end, ok := autoanalyze.CheckAutoAnalyzeWindow(sctx)
+	if !ok {
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			statslogutil.StatsLogger().Warn("Kill auto analyze process because it exceeded the window",
+				zap.Uint64("processID", id),
+				zap.Time("now", time.Now()),
+				zap.String("start", start),
+				zap.String("end", end),
+			)
 			do.SysProcTracker().KillSysProcess(id)
 		}
 	}
@@ -499,6 +516,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
+	do.dxfSessionPool.Close()
 	do.advancedSysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
@@ -533,35 +551,15 @@ func NewDomainWithEtcdClient(
 	statsLease time.Duration,
 	dumpFileGcLease time.Duration,
 	factory pools.Factory,
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory,
+	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
-	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store: store,
-		exit:  make(chan struct{}),
-		sysSessionPool: util.NewSessionPool(
-			capacity, factory,
-			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				infosync.StoreInternalSession(r)
-			},
-			func(r pools.Resource) {
-				sctx, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				intest.AssertFunc(func() bool {
-					txn, _ := sctx.Txn(false)
-					return txn == nil || !txn.Valid()
-				})
-				infosync.DeleteInternalSession(r)
-			},
-			func(r pools.Resource) {
-				intest.Assert(r != nil)
-				infosync.DeleteInternalSession(r)
-			},
-		),
+		store:             store,
+		exit:              make(chan struct{}),
+		sysSessionPool:    createInternelSessionPool(systemSessionPoolSize, factory),
+		dxfSessionPool:    createInternelSessionPool(dxfSessionPoolSize, factory),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
@@ -570,7 +568,7 @@ func NewDomainWithEtcdClient(
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
 	}
 
-	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
+	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
 		r, err := factory()
 		if err != nil {
 			return nil, err
@@ -597,11 +595,36 @@ func NewDomainWithEtcdClient(
 		do.infoCache,
 		do.schemaLease,
 		do.sysSessionPool,
+		isvalidator.New(do.schemaLease),
 	)
 	do.initDomainSysVars()
 
-	do.crossKSSessMgr = crossks.NewManager()
+	do.crossKSSessMgr = crossks.NewManager(do.store)
 	return do
+}
+
+func createInternelSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
+	return util.NewSessionPool(
+		capacity, factory,
+		func(r pools.Resource) {
+			_, ok := r.(sessionctx.Context)
+			intest.Assert(ok)
+			infosync.StoreInternalSession(r)
+		},
+		func(r pools.Resource) {
+			sctx, ok := r.(sessionctx.Context)
+			intest.Assert(ok)
+			intest.AssertFunc(func() bool {
+				txn, _ := sctx.Txn(false)
+				return txn == nil || !txn.Valid()
+			})
+			infosync.DeleteInternalSession(r)
+		},
+		func(r pools.Resource) {
+			intest.Assert(r != nil)
+			infosync.DeleteInternalSession(r)
+		},
+	)
 }
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
@@ -670,8 +693,9 @@ func (do *Domain) Init(
 			do.ddlExecutor = eBak
 		}
 	})
+	var checker *schematracker.Checker
 	if ddlInjector != nil {
-		checker := ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
+		checker = ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
 		checker.CreateTestDB(nil)
 		do.ddl = checker
 		do.ddlExecutor = checker
@@ -687,10 +711,12 @@ func (do *Domain) Init(
 		return err
 	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
-	err = do.ddl.SchemaSyncer().Init(ctx)
+	schemaVerSyncer := do.ddl.SchemaSyncer()
+	err = schemaVerSyncer.Init(ctx)
 	if err != nil {
 		return err
 	}
+	schemaVerSyncer.SetServerInfoSyncer(do.info.ServerInfoSyncer())
 
 	// step 2: initialize the global kill, which depends on `globalInfoSyncer`.`
 	if config.GetGlobalConfig().EnableGlobalKill {
@@ -722,13 +748,26 @@ func (do *Domain) Init(
 	}
 
 	do.isSyncer.InitRequiredFields(
-		do.info, do.ddl.SchemaSyncer(), do.autoidClient,
+		func() sessmgr.InfoSchemaCoordinator {
+			if do.info == nil {
+				return nil
+			}
+			return do.info.GetSessionManager()
+		},
+		schemaVerSyncer,
+		do.autoidClient,
 		func() (pools.Resource, error) {
 			return do.sysExecutorFactory(do)
 		},
 	)
 	// step 3: domain reload the infoSchema.
-	return do.isSyncer.Reload()
+	if err = do.isSyncer.Reload(); err != nil {
+		return err
+	}
+	if checker != nil {
+		checker.InitFromIS(do.InfoSchema())
+	}
+	return nil
 }
 
 // Start starts the domain. After start, DDLs can be executed using session, see
@@ -793,7 +832,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
-	if keyspace.IsRunningOnUser() && startMode == ddl.Normal {
+	if kv.IsUserKS(do.store) && startMode == ddl.Normal {
 		if err = do.loadSysKSInfoSchema(); err != nil {
 			return err
 		}
@@ -840,6 +879,18 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 	return mgr.SessPool(), nil
 }
 
+// CloseKSSessMgr closes the session manager for the given keyspace.
+// it's exported for test only.
+func (do *Domain) CloseKSSessMgr(targetKS string) {
+	do.crossKSSessMgr.CloseKS(targetKS)
+}
+
+// GetCrossKSMgr returns the cross keyspace session manager.
+// it's exported for test only.
+func (do *Domain) GetCrossKSMgr() *crossks.Manager {
+	return do.crossKSSessMgr
+}
+
 // GetSchemaLease return the schema lease.
 func (do *Domain) GetSchemaLease() time.Duration {
 	return do.schemaLease
@@ -875,9 +926,9 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
 	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
-	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration)
+	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
@@ -1019,10 +1070,10 @@ func (do *Domain) InitDistTaskLoop() error {
 		}
 	})
 
-	taskManager := storage.NewTaskManager(do.sysSessionPool)
+	taskManager := storage.NewTaskManager(do.dxfSessionPool)
 	storage.SetTaskManager(taskManager)
 
-	if keyspace.IsRunningOnUser() {
+	if kv.IsUserKS(do.store) {
 		sp, err := do.GetKSSessPool(keyspace.System)
 		if err != nil {
 			return err
@@ -1056,7 +1107,7 @@ func (do *Domain) InitDistTaskLoop() error {
 		return err
 	}
 	disthandle.SetNodeResource(nodeRes)
-	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
+	executorManager, err := taskexecutor.NewManager(managerCtx, do.store, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
 	}
@@ -1128,7 +1179,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
-		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID, nodeRes)
+		schedulerManager = scheduler.NewManager(ctx, do.store, taskManager, serverID, nodeRes)
 		schedulerManager.Start()
 	}
 	stopSchedulerMgrIfNeeded := func() {
@@ -2365,7 +2416,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		if uint64(len(data)) > size.MB {
 			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
 		}
-		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, privilegeKey, string(data))
+		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, etcd.KeyOpDefaultRetryCnt, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -2386,7 +2437,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
@@ -2591,7 +2642,7 @@ func (do *Domain) releaseServerID(context.Context) {
 		return
 	}
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
-	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
+	err := etcd.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
 	} else {
@@ -2909,10 +2960,10 @@ func (s *SysProcesses) UnTrack(id uint64) {
 }
 
 // GetSysProcessList gets list of system ProcessInfo
-func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+func (s *SysProcesses) GetSysProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo)
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for connID, proc := range s.procMap {
 		// if session is still tracked in this map, it's not returned to sysSessionPool yet
 		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {

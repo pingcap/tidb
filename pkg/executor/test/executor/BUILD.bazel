@@ -11,6 +11,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/domain/infosync",
@@ -31,7 +32,9 @@ go_test(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/session",
+        "//pkg/session/sessmgr",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",

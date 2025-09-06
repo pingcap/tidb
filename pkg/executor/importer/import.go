@@ -29,15 +29,16 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -67,7 +68,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/naming"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -98,6 +100,7 @@ const (
 	fieldsDefinedNullByOption = "fields_defined_null_by"
 	linesTerminatedByOption   = "lines_terminated_by"
 	skipRowsOption            = "skip_rows"
+	groupKeyOption            = "group_key"
 	splitFileOption           = "split_file"
 	diskQuotaOption           = "disk_quota"
 	threadOption              = "thread"
@@ -116,7 +119,7 @@ const (
 	//
 	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
-	cloudStorageURIOption       = "cloud_storage_uri"
+	cloudStorageURIOption       = ast.CloudStorageURI
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption  = "__max_engine_size"
@@ -135,6 +138,7 @@ var (
 		fieldsDefinedNullByOption:   true,
 		linesTerminatedByOption:     true,
 		skipRowsOption:              true,
+		groupKeyOption:              true,
 		splitFileOption:             false,
 		diskQuotaOption:             true,
 		threadOption:                true,
@@ -167,6 +171,7 @@ var (
 		diskQuotaOption:       {},
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
+		threadOption:          {},
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
@@ -278,6 +283,7 @@ type Plan struct {
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
+	GroupKey              string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -300,6 +306,8 @@ type Plan struct {
 	ForceMergeStep bool
 	// see ManualRecovery in proto.ExtraParams
 	ManualRecovery bool
+	// the keyspace name when submitting this job, only for import-into
+	Keyspace string
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -484,6 +492,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		InImportInto:           true,
 		DataSourceType:         getDataSourceType(plan),
 		User:                   userSctx.GetSessionVars().User.String(),
+		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
@@ -612,11 +621,11 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
-	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+	var threadCnt int
+	threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
 		threadCnt = 2
 	}
-
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
@@ -661,7 +670,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	p.specifiedOptions = specifiedOptions
 
-	if kerneltype.IsNextGen() && sem.IsEnabled() {
+	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
+	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
+	if kerneltype.IsNextGen() && semv1.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
@@ -806,6 +817,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
+	if opt, ok := specifiedOptions[groupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.GroupKey = v
+	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		vInt, err := optAsInt64(opt)
 		if err != nil || vInt < -1 {
@@ -857,10 +875,12 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ManualRecovery = true
 	}
 
-	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
-		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
-		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
-			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+	if kerneltype.IsClassic() {
+		if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+			p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+			if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+				p.MaxNodeCnt = scheduler.CalcMaxNodeCountByStoresNum(ctx, seCtx.GetStore())
+			}
 		}
 	}
 
@@ -1300,7 +1320,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	// Fill memory usage info
 	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
 		// We may not be able to open ThreadCnt files concurrently due to memory usage
-		_, memoryUsage, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
+		_, _, memoryUsage, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
 		e.Plan.EncodeThreadCnt = mydump.AdjustEncodeThreadCnt(memoryUsage, e.Plan.ThreadCnt)
 
 		if err != nil {
@@ -1318,6 +1338,23 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
+
+	if kerneltype.IsNextGen() {
+		targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+		if err != nil {
+			return err
+		}
+		failpoint.InjectCall("mockImportDataSize", &totalSize)
+		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
+		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
+		e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
+		e.logger.Info("auto calculate resource related params",
+			zap.Int("thread count", e.ThreadCnt),
+			zap.Int("max node count", e.MaxNodeCnt),
+			zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
+			zap.Int("target node cpu count", targetNodeCPUCnt),
+			zap.String("total file size", units.BytesSize(float64(totalSize))))
+	}
 	return nil
 }
 
@@ -1621,6 +1658,3 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	}
 	return handle.GetCPUCountOfNode(ctx)
 }
-
-// TestSyncCh is used in unit test to synchronize the execution.
-var TestSyncCh = make(chan struct{})

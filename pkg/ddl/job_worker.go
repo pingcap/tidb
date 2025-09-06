@@ -308,7 +308,7 @@ func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		return nil
 	}
 	if ver == 0 {
@@ -1053,6 +1053,7 @@ func (w *worker) runOneJobStep(
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
+	job.LastSchemaVersion = ver
 
 	// there are too many job types, instead let every job type output its own
 	// updateRawArgs, we try to use these rules as a generalization:
@@ -1123,7 +1124,7 @@ func updateGlobalVersionAndWaitSynced(
 	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if vardef.EnableMDL.Load() {
+		if vardef.IsMDLEnabled() {
 			return err
 		}
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {

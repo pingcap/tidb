@@ -518,7 +518,7 @@ func NewMergeKVIter(
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
 	if outerConcurrency <= 0 {
-		outerConcurrency = 1
+		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 	}
 	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
 	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
@@ -535,8 +535,7 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
-			rd.byteReader.readDurHist = metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
-			rd.byteReader.readRateHist = metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
+			rd.byteReader.mergeSortReadCounter = metrics.MergeSortReadBytes
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],

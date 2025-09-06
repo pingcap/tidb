@@ -633,13 +633,14 @@ func SampleStatisticsFromParquet(
 	fileMeta SourceFileMeta,
 	store storage.ExternalStorage,
 ) (
+	rowCount int64,
 	avgRowSize float64,
 	memoryUsage int,
 	err error,
 ) {
 	r, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 
 	meta := GetDefaultParquetMeta()
@@ -647,20 +648,17 @@ func SampleStatisticsFromParquet(
 
 	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, meta)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 
 	//nolint: errcheck
 	defer parser.Close()
 
-	var (
-		rowSize  int64
-		rowCount int64
-	)
+	var rowSize int64
 
 	reader := parser.readers[0]
 	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
-		return 0, 0, nil
+		return 0, 0, 0, nil
 	}
 
 	totalReadRows := reader.MetaData().RowGroups[0].NumRows
@@ -670,7 +668,7 @@ func SampleStatisticsFromParquet(
 			if errors.Cause(err) == io.EOF {
 				break
 			}
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		lastRow := parser.LastRow()
 		rowSize += int64(lastRow.Length)
@@ -688,5 +686,5 @@ func SampleStatisticsFromParquet(
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
 	)
 
-	return avgRowSize, memoryUsage, err
+	return rowCount, avgRowSize, memoryUsage, err
 }

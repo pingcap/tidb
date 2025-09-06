@@ -27,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -430,7 +431,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		// TODO: Remove this check when we have implemented TiFlashAggregation.
 		return false
 	}
-	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
+	return physicalop.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
 }
 
 // OnTransform implements Transformation interface.
@@ -449,8 +450,8 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
 	copy(gbyItems, agg.GroupByItems)
 
-	partialPref, finalPref, firstRowFuncMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
-		&plannercore.AggInfo{
+	partialPref, finalPref, firstRowFuncMap := physicalop.BuildFinalModeAggregation(agg.SCtx(),
+		&physicalop.AggInfo{
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
 			Schema:       aggSchema,
@@ -460,7 +461,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
+		physicalop.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 
 	partialAgg := logicalop.LogicalAggregation{
 		AggFuncs:     partialPref.AggFuncs,
@@ -870,7 +871,7 @@ func (*pushDownJoin) predicatePushDown(
 		tempCond = append(tempCond, join.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), tempCond...)
+		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), nil, tempCond...)
 		// Return table dual when filter is constant false or null.
 		dual := logicalop.Conds2TableDual(join, tempCond)
 		if dual != nil {
@@ -901,9 +902,9 @@ func (*pushDownJoin) predicatePushDown(
 		copy(remainCond, predicates)
 		nullSensitive := join.JoinType == logicalop.AntiLeftOuterSemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin
 		if join.JoinType == logicalop.RightOuterJoin {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
+			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive, nil)
 		} else {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
+			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive, nil)
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)

@@ -268,6 +268,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 	if err != nil {
 		return nil, err
 	}
+	keyspace := helper.GetTiKVCodec().GetKeyspace()
 
 	return &TableImporter{
 		LoadDataController: e,
@@ -278,6 +279,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
 		},
+		keyspace:      keyspace,
 		encTable:      tbl,
 		dbID:          e.DBID,
 		logger:        e.logger.With(zap.String("import-id", id)),
@@ -430,6 +432,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 		DataInvalidCharReplace: string(utf8.RuneError),
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
+		SkipParquetRowCount:    common.SkipReadRowCount(e.Table.Meta()),
 	}
 	makeEngineCtx := logutil.WithLogger(ctx, e.logger)
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
@@ -860,6 +863,9 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 
 	failpoint.Inject("waitCtxDone", func() {
 		<-ctx.Done()
+	})
+	failpoint.Inject("retryableError", func() {
+		failpoint.Return(common.ErrWriteTooSlow)
 	})
 
 	remoteChecksum, err := getRemoteChecksumFn()

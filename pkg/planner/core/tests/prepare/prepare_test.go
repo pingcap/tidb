@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -36,9 +37,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -709,7 +710,7 @@ func TestIssue33031(t *testing.T) {
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.Regexp(t, "IndexLookUp", explain[1][0])
@@ -1349,6 +1350,9 @@ func TestCachedTable(t *testing.T) {
 }
 
 func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1390,6 +1394,9 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 }
 
 func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1466,6 +1473,9 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 }
 
 func TestCacheHitInRc(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1581,7 +1591,7 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 		if pruneMode == string(variable.Dynamic) {
@@ -1634,7 +1644,7 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 1"))
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	require.Equal(t, "Point_Get_1", explain.Rows()[0][0])

@@ -70,6 +70,7 @@ const (
 	defaultRegion = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
+	domainAWS    = "amazonaws.com"
 )
 
 var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
@@ -199,12 +200,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 			return errors.Errorf("host not found in endpoint")
 		}
 	}
-	// In some cases, we need to set ForcePathStyle to false.
-	// Refer to: https://rclone.org/s3/#s3-force-path-style
-	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
-		options.UseAccelerateEndpoint {
-		options.ForcePathStyle = false
-	}
+
 	// When not using a profile, if either key is provided, both must be provided
 	if options.Profile == "" {
 		if options.AccessKey == "" && options.SecretAccessKey != "" {
@@ -232,6 +228,27 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.Profile = options.Profile
 
 	return nil
+}
+
+// setForcePathStyle only set ForcePathStyle to False, which means use virtual-hosted-style path.
+func (options *S3BackendOptions) setForcePathStyle(rawURL string) {
+	// In some cases, we need to set ForcePathStyle to false.
+	// Refer to: https://rclone.org/s3/#s3-force-path-style
+	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
+		options.UseAccelerateEndpoint || useVirtualHostStyleForAWSS3(options, rawURL) {
+		options.ForcePathStyle = false
+	}
+}
+
+func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
+	// If user has explicitly specified ForcePathStyle, use the specified value
+	if rawURL == "" ||
+		strings.Contains(rawURL, "force-path-style") ||
+		strings.Contains(rawURL, "force_path_style") {
+		return false
+	}
+
+	return opts.Provider == "aws" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
 }
 
 // defineS3Flags defines the command line flags for S3BackendOptions.

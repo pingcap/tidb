@@ -1194,13 +1194,13 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	}
 	md.WriteParquetFile(s.sourceDir, fileName, pc, count)
 
-	rowSize, _, err := md.SampleStatisticsFromParquet(ctx, md.SourceFileMeta{
+	fileName := "test_1.t1.parquet"
+	err = store.WriteFile(ctx, fileName, bf.Bytes())
+	require.NoError(t, err)
+
+	rowCount, rowSize, _, err := md.SampleStatisticsFromParquet(ctx, md.SourceFileMeta{
 		Path: fileName,
 	}, store)
-	require.NoError(t, err)
-	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
-		Path: fileName,
-	})
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)

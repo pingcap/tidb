@@ -223,7 +223,7 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 }
 
 func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
-	sv := sessCtx.GetSessionVars()
+	sv := sessCtx.GetSessionVars() //nolint:forbidigo
 	rowEncoder := sv.RowEncoder.Enable
 	sqlMode := sv.SQLMode
 	var timezone *time.Location
@@ -236,7 +236,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	errLevels := sv.StmtCtx.ErrLevels()
 	resGroupName := sv.StmtCtx.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
-		uv := usedSessCtx.GetSessionVars()
+		uv := usedSessCtx.GetSessionVars() //nolint:forbidigo
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
@@ -274,7 +274,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			}
 
 			idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
-				job.ID, reorgInfo.elements, reorgInfo.currElement.TypeKey)
+				job, reorgInfo.elements, reorgInfo.currElement)
 			if err != nil {
 				return err
 			}

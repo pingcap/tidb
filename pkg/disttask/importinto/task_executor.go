@@ -28,6 +28,8 @@ import (
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -35,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -105,19 +107,48 @@ func getTableImporter(
 	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
-func (s *importStepExecutor) Init(ctx context.Context) error {
+func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
-
-	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
+	var tableImporter *importer.TableImporter
+	var taskManager *dxfstorage.TaskManager
+	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
 	}
 	s.tableImporter = tableImporter
+	defer func() {
+		if err == nil {
+			return
+		}
+		if err2 := s.tableImporter.Close(); err2 != nil {
+			s.logger.Warn("close importer failed", zap.Error(err2))
+		}
+	}()
 
 	if s.taskMeta.Plan.Format == importer.DataFormatParquet && s.tableImporter.EncodeThreadCnt > 0 {
 		s.tableImporter.Plan.ThreadCnt = s.tableImporter.EncodeThreadCnt
 	}
 
+	if kerneltype.IsClassic() {
+		taskManager, err = dxfstorage.GetTaskManager()
+		if err != nil {
+			return err
+		}
+		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			// User can write table between precheck and alter table mode to Import,
+			// so check table emptyness again.
+			isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
+			if err2 != nil {
+				return err2
+			}
+			if !isEmpty {
+				return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
@@ -237,7 +268,7 @@ outer:
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	s.summary.UpdateTime = time.Now()
+	s.summary.Update()
 	return &s.summary
 }
 
@@ -445,7 +476,7 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 }
 
 func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	m.summary.UpdateTime = time.Now()
+	m.summary.Update()
 	return &m.summary
 }
 
@@ -548,7 +579,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 }
 
 func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	e.summary.UpdateTime = time.Now()
+	e.summary.Update()
 	return &e.summary
 }
 
@@ -586,6 +617,7 @@ type postProcessStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	taskID       int64
 	store        tidbkv.Storage
+	taskTbl      taskexecutor.TaskTable
 	taskMeta     *TaskMeta
 	taskKeyspace string
 	logger       *zap.Logger
@@ -598,6 +630,7 @@ var _ execute.StepExecutor = &postProcessStepExecutor{}
 func NewPostProcessStepExecutor(
 	taskID int64,
 	store tidbkv.Storage,
+	taskTbl taskexecutor.TaskTable,
 	taskMeta *TaskMeta,
 	taskKeyspace string,
 	logger *zap.Logger,
@@ -605,6 +638,7 @@ func NewPostProcessStepExecutor(
 	return &postProcessStepExecutor{
 		taskID:       taskID,
 		store:        store,
+		taskTbl:      taskTbl,
 		taskMeta:     taskMeta,
 		taskKeyspace: taskKeyspace,
 		logger:       logger,
@@ -637,14 +671,13 @@ func NewImportExecutor(
 	ctx context.Context,
 	task *proto.Task,
 	param taskexecutor.Param,
-	store tidbkv.Storage,
 ) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, task, param),
-		store:            store,
+		store:            param.Store,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -671,12 +704,9 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
 	store := e.store
-	if keyspace.IsRunningOnSystem() && task.Keyspace != tidbconfig.GetGlobalKeyspaceName() {
-		taskMgr, err := dxfstorage.GetTaskManager()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+	if e.store.GetKeyspace() != task.Keyspace {
+		var err error
+		err = e.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
 			store, err = se.GetSQLServer().GetKSStore(task.Keyspace)
 			return err
 		})
@@ -707,7 +737,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			store:    store,
 		}, nil
 	case proto.ImportStepPostProcess:
-		return NewPostProcessStepExecutor(task.ID, store, &taskMeta, task.Keyspace, logger), nil
+		return NewPostProcessStepExecutor(task.ID, store, e.GetTaskTable(), &taskMeta, task.Keyspace, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}

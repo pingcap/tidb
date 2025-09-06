@@ -48,6 +48,7 @@ type hashJoinInfo struct {
 	lUsedInOtherCondition []int
 	rUsedInOtherCondition []int
 	equalConditions       []*expression.ScalarFunction
+	fileNamePrefixForTest string
 }
 
 func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
@@ -61,6 +62,7 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 			OtherCondition:  info.otherCondition,
 			partitionNumber: 4,
 		},
+		FileNamePrefixForTest: info.fileNamePrefixForTest,
 	}
 	e.HashJoinCtxV2.SessCtx = info.ctx
 	e.HashJoinCtxV2.JoinType = info.joinType
@@ -142,16 +144,6 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 	}
 
 	return e
-}
-
-func buildDataSource(sortCase *testutil.SortCase, schema *expression.Schema) *testutil.MockDataSource {
-	opt := testutil.MockDataSourceParameters{
-		DataSchema: schema,
-		Rows:       sortCase.Rows,
-		Ctx:        sortCase.Ctx,
-		Ndvs:       sortCase.Ndvs,
-	}
-	return testutil.BuildMockDataSource(opt)
 }
 
 func generateCMPFunc(fieldTypes []*types.FieldType) func(chunk.Row, chunk.Row) int {
