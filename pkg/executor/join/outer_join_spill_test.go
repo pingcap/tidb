@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -69,7 +69,7 @@ func prepareSimpleHashJoinEnv(fileNamePrefixForTest string) (*testutil.MockDataS
 
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
-	joinType := logicalop.InnerJoin
+	joinType := base.InnerJoin
 
 	returnTypes := getReturnTypes(joinType, param)
 
@@ -103,7 +103,7 @@ func prepareSimpleHashJoinEnv(fileNamePrefixForTest string) (*testutil.MockDataS
 	return leftDataSource, rightDataSource, info, newRootExceedAction
 }
 
-func testRandomFail(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, param spillTestParam, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
+func testRandomFail(t *testing.T, ctx *mock.Context, joinType base.JoinType, param spillTestParam, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1500000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
@@ -187,9 +187,9 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := make([]logicalop.JoinType, 0)
-	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
-	joinTypes = append(joinTypes, logicalop.RightOuterJoin)
+	joinTypes := make([]base.JoinType, 0)
+	joinTypes = append(joinTypes, base.LeftOuterJoin)
+	joinTypes = append(joinTypes, base.RightOuterJoin)
 
 	for _, joinType := range joinTypes {
 		for _, param := range params {
@@ -237,9 +237,9 @@ func TestOuterJoinSpillWithSel(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := make([]logicalop.JoinType, 0)
-	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
-	joinTypes = append(joinTypes, logicalop.RightOuterJoin)
+	joinTypes := make([]base.JoinType, 0)
+	joinTypes = append(joinTypes, base.LeftOuterJoin)
+	joinTypes = append(joinTypes, base.RightOuterJoin)
 
 	for _, joinType := range joinTypes {
 		for _, param := range params {
@@ -295,9 +295,9 @@ func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := make([]logicalop.JoinType, 0)
-	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
-	joinTypes = append(joinTypes, logicalop.RightOuterJoin)
+	joinTypes := make([]base.JoinType, 0)
+	joinTypes = append(joinTypes, base.LeftOuterJoin)
+	joinTypes = append(joinTypes, base.RightOuterJoin)
 
 	for _, joinType := range joinTypes {
 		for _, param := range params {
@@ -321,7 +321,7 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 		schema:           buildSchema(retTypes),
 		leftExec:         leftDataSource,
 		rightExec:        rightDataSource,
-		joinType:         logicalop.InnerJoin,
+		joinType:         base.InnerJoin,
 		rightAsBuildSide: true,
 		buildKeys: []*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -342,9 +342,9 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := make([]logicalop.JoinType, 0)
-	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
-	joinTypes = append(joinTypes, logicalop.RightOuterJoin)
+	joinTypes := make([]base.JoinType, 0)
+	joinTypes = append(joinTypes, base.LeftOuterJoin)
+	joinTypes = append(joinTypes, base.RightOuterJoin)
 
 	for _, joinType := range joinTypes {
 		info.joinType = joinType
@@ -432,10 +432,10 @@ func TestHashJoinRandomFail(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := make([]logicalop.JoinType, 0)
-	joinTypes = append(joinTypes, logicalop.InnerJoin)
-	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
-	joinTypes = append(joinTypes, logicalop.RightOuterJoin)
+	joinTypes := make([]base.JoinType, 0)
+	joinTypes = append(joinTypes, base.InnerJoin)
+	joinTypes = append(joinTypes, base.LeftOuterJoin)
+	joinTypes = append(joinTypes, base.RightOuterJoin)
 
 	for range 15 {
 		for _, joinType := range joinTypes {

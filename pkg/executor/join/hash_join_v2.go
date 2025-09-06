@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -764,10 +764,10 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 }
 
 func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
-	if fetcher.JoinType == logicalop.LeftOuterJoin && fetcher.RightAsBuildSide {
+	if fetcher.JoinType == base.LeftOuterJoin && fetcher.RightAsBuildSide {
 		return true
 	}
-	if fetcher.JoinType == logicalop.RightOuterJoin && !fetcher.RightAsBuildSide {
+	if fetcher.JoinType == base.RightOuterJoin && !fetcher.RightAsBuildSide {
 		return true
 	}
 	return false
@@ -775,13 +775,13 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 
 func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 	switch e.JoinType {
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		return true
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		return !e.RightAsBuildSide
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		return e.RightAsBuildSide
-	case logicalop.SemiJoin:
+	case base.SemiJoin:
 		return e.RightAsBuildSide
 	default:
 		return false
