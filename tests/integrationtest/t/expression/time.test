@@ -406,3 +406,68 @@ select addtime(col0, col1) from t order by col0, col1, col2 asc;
 select subtime(col0, col1) from t order by col0, col1, col2 asc;
 select addtime(col0, col2) from t order by col0, col1, col2 asc;
 select subtime(col0, col2) from t order by col0, col1, col2 asc;
+
+# Test implicit/explicit TIMESTAMP CAST compatibility with MySQL
+# Explicit cast of bad timestamp => null
+# implicit cast of bad timestamp => ZERO timestamp/datetime
+drop table if exists t;
+-- enable_warnings
+-- enable_info
+create table t (a int primary key, b timestamp, c varchar(255));
+set @old_sql_mode = @@sql_mode;
+set sql_mode = '';
+set time_zone = 'Europe/Amsterdam';
+insert into t values (1, CAST('NotTimestamp' AS DATETIME), 'NotTimestamp');
+insert into t values (2, 'NotTimestamp', 'NotTimestamp');
+insert into t values (3, DATE_ADD(CAST('NotTimestamp' AS DATETIME), INTERVAL 2000 YEAR), 'NotTimestamp');
+insert into t values (4, DATE_ADD('NotTimestamp', INTERVAL 2000 YEAR), 'NotTimestamp');
+insert into t values (5, '2025-03-30 02:30:00', '2025-03-30 02:30:00');
+insert into t values (6, '2025-03-30 02:40:00', '2025-03-30 02:40:00');
+insert into t values (7, '2025-03-30 02:50:00', '2025-03-30 02:50:00');
+select * from t order by a;
+update t set b = 'NotTimestamp' where a = 1;
+select * from t where a = 1;
+update t set b = CAST('NotTimestamp' AS DATETIME) where a = 2;
+select * from t where a = 2;
+update t set b = c where a = 3;
+select * from t where a = 3;
+update t set b = CAST(c AS DATETIME) where a = 4;
+select * from t where a = 4;
+-- error 8179
+update t set b = '2025-03-30 02:20:00' where a = 5;
+select * from t where a = 5;
+-- error 8179
+update t set b = c where a = 6;
+select * from t where a = 6;
+update t set b = CAST(c AS DATETIME) where a = 7;
+select * from t where a = 7;
+delete from t where b = 'NotTimestamp' and a = 1;
+select * from t where a = 1;
+delete from t where b <=> 'NotTimestamp' and a = 1;
+select * from t where a = 1;
+delete from t where b = CAST('NotTimestamp' AS DATETIME) and a = 2;
+select * from t where a = 2;
+delete from t where b <=> CAST('NotTimestamp' AS DATETIME) and a = 2;
+select * from t where a = 2;
+delete from t where b = c and a = 3;
+select * from t where a = 3;
+#insert into t values (3, '0000-00-00 00:00:00', 'NotTimestamp');
+delete from t where b <=> c and a = 3;
+select * from t where a = 3;
+delete from t where b = cast(c as datetime) and a = 4;
+select * from t where a = 4;
+delete from t where b <=> cast(c as datetime) and a = 4;
+select * from t where a = 4;
+delete from t where b = '2025-03-30 02:20:00' and a = 5;
+select * from t where a = 5;
+delete from t where b = c and a = 6;
+select * from t where a = 6;
+delete from t where b = CAST(c AS DATETIME) and a = 7;
+select * from t where a = 7;
+delete from t where b <=> CAST(c AS DATETIME) and a = 7;
+select * from t where a = 7;
+select * from t;
+set @@sql_mode = @old_sql_mode;
+-- disable_info
+-- disable_warnings
+
