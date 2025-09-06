@@ -323,7 +323,7 @@ w	0	3	3
 explain format='plan_tree' select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2;
 id	task	access object	operator info
 IndexLookUp	root		
-├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(a, b, c)	range:["t" 1,"t" 1], ["t" 2,"t" 2], ["w" 0,"w" 0], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(a, b, c)	range:["t" 1,"t" 2], ["w" 0,"w" 0], keep order:false, stats:pseudo
 └─Selection(Probe)	cop[tikv]		gt(util__ranger.t.d, 2)
   └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2;
@@ -331,6 +331,88 @@ a	b	c	d
 t	1	3	3
 t	2	1	3
 w	0	3	3
+drop table if exists t1;
+create table t1(a1 int, b1 int, c1 int, index idx(a1, b1));
+insert into t1 values (1,1,0), (2,2,1);
+insert into t1 select a1+1,b1+2, c1 from t1;
+insert into t1 select a1+1,b1+2, c1 from t1;
+explain format='plan_tree' select count(*) from t1 use index (idx) where a1 in (1,2);
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column#10)->Column#5
+└─IndexReader	root		index:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#10
+    └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1,2], keep order:false, stats:pseudo
+select count(*) from t1 use index (idx) where a1 in (1,2);
+count(*)
+4
+explain format='plan_tree' select count(*) from t1 use index (idx) where a1 = 1 or a1 = 2;
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column#10)->Column#5
+└─IndexReader	root		index:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#10
+    └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1,2], keep order:false, stats:pseudo
+select count(*) from t1 use index (idx) where a1 = 1 or a1 = 2;
+count(*)
+4
+explain format='plan_tree' select count(*) from t1 use index (idx) where a1 in (1,2) and b1 in (2,3);
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column#7)->Column#5
+└─IndexReader	root		index:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#7
+    └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1 2,1 3], [2 2,2 3], keep order:false, stats:pseudo
+select count(*) from t1 use index (idx) where a1 in (1,2) and b1 in (2,3);
+count(*)
+3
+explain format='plan_tree' select count(*) from t1 use index (idx) where (a1 = 1 or a1 = 2) and (b1 = 2 or b1 = 3);
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column#7)->Column#5
+└─IndexReader	root		index:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#7
+    └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1 2,1 3], [2 2,2 3], keep order:false, stats:pseudo
+select count(*) from t1 use index (idx) where (a1 = 1 or a1 = 2) and (b1 = 2 or b1 = 3);
+count(*)
+3
+explain format='plan_tree' select count(*) from t1 use index (idx) where a1 in (1,2,3) or a1 in (4,5,6);
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column#10)->Column#5
+└─IndexReader	root		index:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#10
+    └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1,6], keep order:false, stats:pseudo
+select count(*) from t1 use index (idx) where a1 in (1,2,3) or a1 in (4,5,6);
+count(*)
+8
+drop table if exists t1;
+create table t1(a1 int, b1 int, c1 int, index idx(a1, b1));
+explain format='plan_tree' select 1 from t1 where a1 in (1,3,4);
+id	task	access object	operator info
+Projection	root		1->Column#5
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1,1], [3,4], keep order:false, stats:pseudo
+explain format='plan_tree' select 1 from t1 where a1 = 1 or a1 = 3 or a1 = 4;
+id	task	access object	operator info
+Projection	root		1->Column#5
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1,1], [3,4], keep order:false, stats:pseudo
+explain format='plan_tree' select 1 from t1 where a1 in (1,3);
+id	task	access object	operator info
+Projection	root		1->Column#5
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1,1], [3,3], keep order:false, stats:pseudo
+explain format='plan_tree' select 1 from t1 where a1=1 or a1=3;
+id	task	access object	operator info
+Projection	root		1->Column#5
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[1,1], [3,3], keep order:false, stats:pseudo
+explain format='plan_tree' select 1 from t1 where a1 in (3,4);
+id	task	access object	operator info
+Projection	root		1->Column#5
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[3,4], keep order:false, stats:pseudo
+explain format='plan_tree' select 1 from t1 where a1=3 or a1=4;
+id	task	access object	operator info
+Projection	root		1->Column#5
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a1, b1)	range:[3,4], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int, primary key(a,b,c));
 insert into t values(1,1,1),(2,2,3);

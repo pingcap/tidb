@@ -1201,10 +1201,17 @@ create table t(
 		},
 		{
 			indexPos:    0,
+			exprStr:     `a = 'a' and b in (10, 20, 30)`,
+			accessConds: "[eq(test.t.a, a) in(test.t.b, 10, 20, 30)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\" 10,\"a\" 10] [\"a\" 20,\"a\" 20] [\"a\" 30,\"a\" 30]]",
+		},
+		{
+			indexPos:    0,
 			exprStr:     `a = 'a' and b in (1, 2, 3)`,
 			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]",
 			filterConds: "[]",
-			resultStr:   "[[\"a\" 1,\"a\" 1] [\"a\" 2,\"a\" 2] [\"a\" 3,\"a\" 3]]",
+			resultStr:   "[[\"a\" 1,\"a\" 3]]",
 		},
 		{
 			indexPos:    0,
@@ -1218,7 +1225,14 @@ create table t(
 			exprStr:     `a in ('a') and b in ('1', 2.0, NULL)`,
 			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
 			filterConds: "[]",
-			resultStr:   `[["a" 1,"a" 1] ["a" 2,"a" 2]]`,
+			resultStr:   `[["a" 1,"a" 2]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a in ('a1','a2') and b in ('1', 2.0, NULL)`,
+			accessConds: "[in(test.t.a, a1, a2) in(test.t.b, 1, 2, <nil>)]",
+			filterConds: "[]",
+			resultStr:   `[["a1" 1,"a1" 2] ["a2" 1,"a2" 2]]`,
 		},
 		{
 			indexPos:    1,

@@ -1034,7 +1034,14 @@ func DetachCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions [
 		convertToSortKey: true,
 		rangeMaxSize:     rangeMaxSize,
 	}
-	return d.detachCondAndBuildRangeForCols()
+	result, err := d.detachCondAndBuildRangeForCols()
+	// Apply a union to the final range results to consolidate them, if any.
+	ranges, errUnion := UnionRanges(d.sctx, result.Ranges, d.mergeConsecutive)
+	// Apply the union if no errors and number of ranges got reduced by merging them.
+	if errUnion == nil && len(ranges) < len(result.Ranges) {
+		result.Ranges = ranges
+	}
+	return result, err
 }
 
 // detachCondAndBuildRange detaches the index filters from table filters and uses them to build ranges.
