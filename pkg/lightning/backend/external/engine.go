@@ -378,7 +378,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 			if err = e.lazyInitDupWriter(ctx); err != nil {
 				return err
 			}
-			deduplicatedKVs, dups, dupCount = removeDuplicates(deduplicatedKVs, true)
+			deduplicatedKVs, dups, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, true)
 			e.recordedDupCnt += len(dups)
 			for _, p := range dups {
 				e.recordedDupSize += int64(len(p.key) + len(p.value))
@@ -387,7 +387,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 				}
 			}
 		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
-			deduplicatedKVs, _, dupCount = removeDuplicates(deduplicatedKVs, false)
+			deduplicatedKVs, _, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, false)
 		}
 		deduplicateDur = time.Since(start)
 	}

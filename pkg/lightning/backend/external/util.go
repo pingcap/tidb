@@ -482,20 +482,16 @@ func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
 }
 
-type elementWithGetter interface {
-	GetByte() []byte
-}
-
 // remove all duplicates inside sorted array in place, i.e. input elements will be changed.
-func removeDuplicates[E elementWithGetter](in []E, recordRemoved bool) ([]E, []E, int) {
-	return doRemoveDuplicates(in, 0, recordRemoved)
+func removeDuplicates[E any](in []E, keyGetter func(*E) []byte, recordRemoved bool) ([]E, []E, int) {
+	return doRemoveDuplicates(in, keyGetter, 0, recordRemoved)
 }
 
 // remove all duplicates inside sorted array in place if the duplicate count is
 // more than 2, and keep the first two duplicates.
 // we also return the total number of duplicates as the third return value.
-func removeDuplicatesMoreThanTwo[E elementWithGetter](in []E) (out []E, removed []E, totalDup int) {
-	return doRemoveDuplicates(in, 2, true)
+func removeDuplicatesMoreThanTwo[E any](in []E, keyGetter func(*E) []byte) (out []E, removed []E, totalDup int) {
+	return doRemoveDuplicates(in, keyGetter, 2, true)
 }
 
 // remove duplicates inside the sorted slice 'in', if keptDupCnt=2, we keep the
@@ -503,8 +499,9 @@ func removeDuplicatesMoreThanTwo[E elementWithGetter](in []E) (out []E, removed 
 // removed duplicates are returned in 'removed' if recordRemoved=true.
 // we also return the total number of duplicates, either it's removed or not, as
 // the third return value.
-func doRemoveDuplicates[E elementWithGetter](
+func doRemoveDuplicates[E any](
 	in []E,
+	keyGetter func(*E) []byte,
 	keptDupCnt int,
 	recordRemoved bool,
 ) (out []E, removed []E, totalDup int) {
@@ -513,15 +510,15 @@ func doRemoveDuplicates[E elementWithGetter](
 		return in, []E{}, 0
 	}
 	pivotIdx, fillIdx := 0, 0
-	pivot := in[pivotIdx].GetByte()
+	pivot := keyGetter(&in[pivotIdx])
 	if recordRemoved {
 		removed = make([]E, 0, 2)
 	}
 	for idx := 1; idx <= len(in); idx++ {
 		var key []byte
 		if idx < len(in) {
-			key = in[idx].GetByte()
-			if bytes.Equal(pivot, key) {
+			key = keyGetter(&in[idx])
+			if bytes.Compare(pivot, key) == 0 {
 				continue
 			}
 		}

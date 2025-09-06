@@ -469,7 +469,7 @@ func (p *kvPair) len() int {
 	return len(p.key) + len(p.value)
 }
 
-func (p kvPair) GetByte() []byte {
+func getPairKey(p *kvPair) []byte {
 	return p.key
 }
 

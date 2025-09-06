@@ -422,15 +422,6 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 	return GetMaxOverlapping(points)
 }
 
-type locationWithBuf struct {
-	loc membuf.SliceLocation
-	key []byte
-}
-
-func (l *locationWithBuf) GetByte() []byte {
-	return l.key
-}
-
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
@@ -444,9 +435,9 @@ type Writer struct {
 
 	memSizeLimit uint64
 
-	kvBuffer        *membuf.Buffer
-	locationWithBuf []*locationWithBuf
-	kvSize          int64
+	kvBuffer    *membuf.Buffer
+	kvLocations []membuf.SliceLocation
+	kvSize      int64
 
 	onClose OnCloseFunc
 	onDup   engineapi.OnDuplicateKey
@@ -495,10 +486,7 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	copy(dataBuf[2*lengthBytes:], key)
 	copy(dataBuf[2*lengthBytes+keyLen:], val)
 
-	w.locationWithBuf = append(w.locationWithBuf, &locationWithBuf{
-		loc: loc,
-		key: dataBuf[2*lengthBytes : 2*lengthBytes+keyLen],
-	})
+	w.kvLocations = append(w.kvLocations, loc)
 	// TODO: maybe we can unify the size calculation during write to store.
 	w.kvSize += int64(keyLen + len(val))
 	w.batchSize += uint64(length)
@@ -526,11 +514,11 @@ func (w *Writer) Close(ctx context.Context) error {
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
-		zap.Int("kv-cnt-cap", cap(w.locationWithBuf)),
+		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
-	w.locationWithBuf = nil
+	w.kvLocations = nil
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
 		GroupOffset:        w.groupOffset,
@@ -558,7 +546,7 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 const flushKVsRetryTimes = 3
 
 func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
-	if len(w.locationWithBuf) == 0 {
+	if len(w.kvLocations) == 0 {
 		return nil
 	}
 
@@ -569,13 +557,13 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	var (
 		dupFound bool
-		dupLoc   *locationWithBuf
+		dupLoc   *membuf.SliceLocation
 	)
-	slices.SortFunc(w.locationWithBuf, func(i, j *locationWithBuf) int {
-		res := bytes.Compare(i.key, j.key)
+	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
+		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
 		if res == 0 && !dupFound {
 			dupFound = true
-			dupLoc = i
+			dupLoc = &i
 		}
 		return res
 	})
@@ -583,9 +571,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
 
-	batchKVCnt := len(w.locationWithBuf)
+	batchKVCnt := len(w.kvLocations)
 	var (
-		dupLocs []*locationWithBuf
+		dupLocs []membuf.SliceLocation
 		dupCnt  int
 	)
 	if dupFound {
@@ -594,14 +582,14 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		case engineapi.OnDuplicateKeyRecord:
 			// we don't have a global view, so need to keep duplicates with duplicate
 			// count <= 2, so later we can find them.
-			w.locationWithBuf, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.locationWithBuf)
+			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyRemove:
-			w.locationWithBuf, _, dupCnt = removeDuplicates(w.locationWithBuf, false)
+			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
-			dupKey := slices.Clone(w.getKeyByLoc(&dupLoc.loc))
-			dupValue := slices.Clone(w.getValueByLoc(&dupLoc.loc))
+			dupKey := slices.Clone(w.getKeyByLoc(dupLoc))
+			dupValue := slices.Clone(w.getValueByLoc(dupLoc))
 			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
 	}
@@ -610,7 +598,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	var dataFile, statFile, dupFile string
 	// due to current semantic of OnDuplicateKeyRecord, if len(w.kvLocations) = 0,
 	// len(dupLocs) is also 0
-	if len(w.locationWithBuf) > 0 {
+	if len(w.kvLocations) > 0 {
 		for i := range flushKVsRetryTimes {
 			dataFile, statFile, dupFile, err = w.flushSortedKVs(ctx, dupLocs)
 			if err == nil || ctx.Err() != nil {
@@ -642,10 +630,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / totalDuration.Seconds())
 
 	// maintain 500-batch statistics
-	if len(w.locationWithBuf) > 0 {
-		w.totalCnt += uint64(len(w.locationWithBuf))
+	if len(w.kvLocations) > 0 {
+		w.totalCnt += uint64(len(w.kvLocations))
 
-		minKey, maxKey := w.locationWithBuf[0].key, w.locationWithBuf[len(w.locationWithBuf)-1].key
+		minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
 		w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 		w.addNewKVFile2MultiFileStats(dataFile, statFile, minKey, maxKey)
@@ -662,7 +650,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		})
 	}
 
-	w.locationWithBuf = w.locationWithBuf[:0]
+	w.kvLocations = w.kvLocations[:0]
 	w.kvSize = 0
 	w.kvBuffer.Reset()
 	w.batchSize = 0
@@ -692,7 +680,7 @@ func (w *Writer) addNewKVFile2MultiFileStats(dataFile, statFile string, minKey, 
 	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(maxKey).Clone())
 }
 
-func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []*locationWithBuf) (string, string, string, error) {
+func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocation) (string, string, string, error) {
 	logger := logutil.Logger(ctx).With(
 		zap.String("writer-id", w.writerID),
 		zap.Int("sequence-number", w.currentSeq),
@@ -715,8 +703,8 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []*locationWithBuf)
 	w.rc.reset()
 	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
-	for _, pair := range w.locationWithBuf {
-		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(&pair.loc))
+	for _, pair := range w.kvLocations {
+		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
 		if err != nil {
 			return "", "", "", err
 		}
@@ -761,7 +749,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []*locationWithBuf)
 	return dataFile, statFile, dupPath, nil
 }
 
-func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []*locationWithBuf) (string, error) {
+func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation) (string, error) {
 	dupPath, dupWriter, err := w.createDupWriter(ctx)
 	if err != nil {
 		return "", err
@@ -774,8 +762,8 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []*locationWithBuf) (st
 		}
 	}()
 	dupStore := NewKeyValueStore(ctx, dupWriter, nil)
-	for _, l := range kvLocs {
-		err = dupStore.addEncodedData(w.kvBuffer.GetSlice(&l.loc))
+	for _, pair := range kvLocs {
+		err = dupStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
 		if err != nil {
 			return "", err
 		}
@@ -803,8 +791,8 @@ func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
 
 func (w *Writer) reCalculateKVSize() int64 {
 	s := int64(0)
-	for _, loc := range w.locationWithBuf {
-		s += int64(loc.loc.Length) - 2*lengthBytes
+	for _, loc := range w.kvLocations {
+		s += int64(loc.Length) - 2*lengthBytes
 	}
 	return s
 }
