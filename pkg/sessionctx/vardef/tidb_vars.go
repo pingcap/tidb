@@ -1123,6 +1123,8 @@ const (
 	TiDBEnableFastCreateTable = "tidb_enable_fast_create_table"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
+	// TiDBEnableDDLAnalyze indicates whether ddl(create/reorg index) is with embedded index analyze.
+	TiDBEnableDDLAnalyze = "tidb_enable_ddl_analyze"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
@@ -1573,6 +1575,7 @@ const (
 	DefAdaptiveClosestReadThreshold                   = 4096
 	DefTiDBEnableAnalyzeSnapshot                      = false
 	DefTiDBGenerateBinaryPlan                         = true
+	DefTiDBEnableDDLAnalyze                           = false
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0.8
 	DefTiDBEnableTmpStorageOnOOM                      = true
