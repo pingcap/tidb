@@ -746,6 +746,7 @@ type IndexOption struct {
 	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 	SecondaryEngineAttr        string
 	AddColumnarReplicaOnDemand int
+	PartialCondition           ExprNode `json:"-"` // PartialCondition contains expr nodes, which cannot marshal for DDL job arguments.
 }
 
 // IsEmpty is true if only default options are given
@@ -759,7 +760,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
 		n.SplitOpt != nil ||
-		len(n.SecondaryEngineAttr) > 0 {
+		len(n.SecondaryEngineAttr) > 0 ||
+		n.PartialCondition != nil {
 		return false
 	}
 	return true
@@ -876,6 +878,16 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		//hasPrevOption = true
 	}
 
+	if n.PartialCondition != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("WHERE ")
+		if err := n.PartialCondition.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing IndexOption PartialCondition")
+		}
+	}
+
 	return nil
 }
 
@@ -918,6 +930,38 @@ const (
 	ConstraintVector
 	ConstraintColumnar
 )
+
+// String returns the string representation of ConstraintType.
+func (c ConstraintType) String() string {
+	switch c {
+	case ConstraintNoConstraint:
+		return "NO CONSTRAINT"
+	case ConstraintPrimaryKey:
+		return "PRIMARY KEY"
+	case ConstraintKey:
+		return "KEY"
+	case ConstraintIndex:
+		return "INDEX"
+	case ConstraintUniq:
+		return "UNIQUE"
+	case ConstraintUniqKey:
+		return "UNIQUE KEY"
+	case ConstraintUniqIndex:
+		return "UNIQUE INDEX"
+	case ConstraintForeignKey:
+		return "FOREIGN KEY"
+	case ConstraintFulltext:
+		return "FULLTEXT"
+	case ConstraintCheck:
+		return "CHECK"
+	case ConstraintVector:
+		return "VECTOR INDEX"
+	case ConstraintColumnar:
+		return "COLUMNAR INDEX"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 // Constraint is constraint for table definition.
 type Constraint struct {
@@ -1893,6 +1937,26 @@ const (
 	IndexKeyTypeVector
 	IndexKeyTypeColumnar
 )
+
+// String returns the string representation of IndexKeyType.
+func (t IndexKeyType) String() string {
+	switch t {
+	case IndexKeyTypeNone:
+		return "NONE"
+	case IndexKeyTypeUnique:
+		return "UNIQUE"
+	case IndexKeyTypeSpatial:
+		return "SPATIAL"
+	case IndexKeyTypeFulltext:
+		return "FULLTEXT"
+	case IndexKeyTypeVector:
+		return "VECTOR"
+	case IndexKeyTypeColumnar:
+		return "COLUMNAR"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 // CreateIndexStmt is a statement to create an index.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
