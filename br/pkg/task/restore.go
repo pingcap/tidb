@@ -924,6 +924,22 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}()
 
+	// Enable restore mode in PD before starting restore
+	if err := mgr.GetPDHTTPClient().SetPitrRestoreModeMark(c); err != nil {
+		return errors.Annotate(err, "failed to enable restore mode in PD")
+	}
+
+	// Ensure restore mode is disabled when function exits, fail restore if we cannot disable restore mode
+	defer func() {
+		if disableErr := mgr.GetPDHTTPClient().DeletePitrRestoreModeMark(c); disableErr != nil {
+			if restoreErr == nil {
+				restoreErr = errors.Annotate(disableErr, "failed to disable restore mode in PD")
+			} else {
+				log.Error("failed to disable restore mode in PD", zap.Error(disableErr))
+			}
+		}
+	}()
+
 	if err = g.UseOneShotSession(mgr.GetStorage(), false, func(se glue.Session) error {
 		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
 		if err != nil {
