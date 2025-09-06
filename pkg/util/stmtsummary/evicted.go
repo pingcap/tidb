@@ -364,6 +364,10 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	if addTo.maxMem < addWith.maxMem {
 		addTo.maxMem = addWith.maxMem
 	}
+	addTo.sumMemArbitration += addWith.sumMemArbitration
+	if addTo.maxMemArbitration < addWith.maxMemArbitration {
+		addTo.maxMemArbitration = addWith.maxMemArbitration
+	}
 	addTo.sumDisk += addWith.sumDisk
 	if addTo.maxDisk < addWith.maxDisk {
 		addTo.maxDisk = addWith.maxDisk

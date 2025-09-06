@@ -382,8 +382,6 @@ func TestActions(t *testing.T) {
 
 		require.Equal(t, outOfCapacityActionNum, 2)
 
-		root.ApproxAvailable()
-
 		require.Equal(t, root.mu.budget.used, b.Used())
 
 		b.Clear()
