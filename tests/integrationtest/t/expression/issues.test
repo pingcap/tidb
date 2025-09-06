@@ -2249,3 +2249,11 @@ insert into lrr_test values(-2,2295421130981788987);
 prepare stmt from 'select * from lrr_test t1 join lrr_test t2 on t1.col1 = t2.col1 where t1. col1 + 10 > ? + 10 or t2. col1 + 10 >= ? + 10;';
 set @a=NULL, @b=-2;
 execute stmt using @a,@b;
+
+# TestIssue63170
+use test;
+drop table if exists escape_like_test_1;
+drop table if exists escape_like_test_2;
+CREATE TABLE escape_like_test_1 (PersonID int);
+CREATE TABLE escape_like_test_2 (PersonID int);
+SELECT TABLE_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME LIKE 'escape_like_test!_%' ESCAPE '!';
