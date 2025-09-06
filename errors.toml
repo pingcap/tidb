@@ -3526,6 +3526,11 @@ error = '''
 Invalid default collation %s: utf8mb4_0900_ai_ci or utf8mb4_general_ci or utf8mb4_bin expected
 '''
 
+["variable:3722"]
+error = '''
+Invalid default collation %s: utf8_unicode_ci or utf8_general_ci or utf8_bin expected
+'''
+
 ["variable:8047"]
 error = '''
 variable '%s' does not yet support value: %s
