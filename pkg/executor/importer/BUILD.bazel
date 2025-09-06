@@ -78,7 +78,6 @@ go_library(
         "//pkg/util/sqlkiller",
         "//pkg/util/stringutil",
         "//pkg/util/syncutil",
-        "//pkg/util/timeutil",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
