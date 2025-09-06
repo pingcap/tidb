@@ -1885,6 +1885,12 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 	tnW := b.resolveCtx.GetTableName(tn)
 	indicesInfo := tnW.TableInfo.Indices
 	cols := tnW.TableInfo.Cols()
+
+	// admin check index range is not supported for non-common handle table.
+	if tnW.TableInfo.IsCommonHandle {
+		return nil, nil, errors.Errorf("table `%s` is a common handle table, check index range is not supported", tnW.TableInfo.Name.O)
+	}
+
 	for _, idxInfo := range indicesInfo {
 		if idxInfo.Name.L != indexName {
 			continue
@@ -1897,12 +1903,12 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 				DBName:  tn.Schema,
 			})
 			schema.Append(&expression.Column{
-				RetType:  &col.FieldType,
+				RetType:  col.FieldType.ArrayType(),
 				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				ID:       col.ID})
 		}
 		names = append(names, &types.FieldName{
-			ColName: ast.NewCIStr("extra_handle"),
+			ColName: ast.NewCIStr("handle"),
 			TblName: tn.Name,
 			DBName:  tn.Schema,
 		})
