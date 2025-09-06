@@ -227,6 +227,7 @@ type stmtSummaryByDigestElement struct {
 
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
+<<<<<<< HEAD
 	SchemaName          string
 	OriginalSQL         fmt.Stringer
 	Charset             string
@@ -255,6 +256,32 @@ type StmtExecInfo struct {
 	PlanInBinding       bool
 	ExecRetryCount      uint
 	ExecRetryTime       time.Duration
+=======
+	SchemaName     string
+	Charset        string
+	Collation      string
+	NormalizedSQL  string
+	Digest         string
+	PrevSQL        string
+	PrevSQLDigest  string
+	PlanDigest     string
+	User           string
+	TotalLatency   time.Duration
+	ParseLatency   time.Duration
+	CompileLatency time.Duration
+	StmtCtx        *stmtctx.StatementContext
+	CopTasks       *execdetails.CopTasksSummary
+	ExecDetail     execdetails.ExecDetails
+	MemMax         int64
+	DiskMax        int64
+	StartTime      time.Time
+	IsInternal     bool
+	Succeed        bool
+	PlanInCache    bool
+	PlanInBinding  bool
+	ExecRetryCount uint
+	ExecRetryTime  time.Duration
+>>>>>>> fc3c894e391 (stmtsummary: tiny optimize by avoiding unnecessary calculations (#58562))
 	execdetails.StmtExecDetails
 	ResultRows        int64
 	TiKVExecDetails   util.ExecDetails
