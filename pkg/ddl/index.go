@@ -1479,18 +1479,6 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
-func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
-	done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
-	if done {
-		// looks like we still need update version here, which couldn't be merged with the outer
-		if err == nil {
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
-		}
-	}
-	return done, ver, err
-}
-
 func doReorgWorkForCreateIndex(
 	w *worker,
 	jobCtx *jobContext,
