@@ -1166,10 +1166,12 @@ SwitchIndexState:
 		case model.AnalyzeStateNone:
 			// reorg the index data.
 			var done bool
-			if job.MultiSchemaInfo != nil {
-				done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, jobCtx, job, tbl, allIndexInfos)
-			} else {
-				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
+			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, allIndexInfos)
+			if done {
+				// when done is true, the index's BackfillStateInapplicable need to be stored back.
+				if err == nil {
+					ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+				}
 			}
 			if !done {
 				return ver, err
