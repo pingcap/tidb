@@ -739,16 +739,17 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	// Next simplify join children
 
 	combinedCond := mergeOnClausePredicates(p, predicates)
-	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
+	switch p.JoinType {
+	case LeftOuterJoin, RightOuterJoin:
 		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
 		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	} else if p.JoinType == InnerJoin || p.JoinType == SemiJoin {
+	case InnerJoin, SemiJoin:
 		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
 		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else if p.JoinType == AntiSemiJoin {
+	case AntiSemiJoin:
 		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else {
+		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
+	default:
 		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
 		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
 	}
