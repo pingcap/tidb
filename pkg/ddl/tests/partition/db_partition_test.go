@@ -75,11 +75,8 @@ func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *
 		if !it.Key().HasPrefix(prefix) {
 			break
 		}
-		tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(it.Key())
-		fmt.Println(tableID, indexID, indexValues)
 		segs := tablecodec.SplitIndexValue(it.Value())
 		require.NotNil(t, segs.PartitionID)
-
 		_, pi, err := codec.DecodeInt(segs.PartitionID)
 		require.NoError(t, err)
 		require.NotEqual(t, pid, pi)
