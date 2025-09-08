@@ -2862,7 +2862,7 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
 		for _, planDigest := range []string{"null", "'x'", "'y'"} {
 			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
-             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s)`,
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s, null)`,
 				sqlDigest, planDigest)
 			MustExec(t, seV245, insertStmt)
 			MustExec(t, seV245, insertStmt)
