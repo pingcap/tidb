@@ -217,7 +217,6 @@ go_test(
         "exhaust_physical_plans_test.go",
         "expression_test.go",
         "find_best_task_test.go",
-        "fragment_test.go",
         "hint_test.go",
         "indexmerge_intersection_test.go",
         "indexmerge_path_test.go",

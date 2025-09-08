@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "physicalop",
@@ -111,5 +111,17 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "physicalop_test",
+    timeout = "short",
+    srcs = ["fragment_test.go"],
+    embed = [":physicalop"],
+    flaky = True,
+    deps = [
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
     ],
 )
