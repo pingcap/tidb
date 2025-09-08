@@ -264,7 +264,7 @@ func TestIssue53872(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // no error
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 	tk.MustExec(`create table t1(id bigint primary key, name varchar(100));`)
-	tk.MustExec(`INSERT INTO t1 (id, name) VALUES (1, 'Alice'),(2, 'Bob'),(3, 'Charlie'),(4, 'David'),(5, 'Eve'),(6, 'Frank'),(7, 'Grace'),(8, 'Hannah'),(9, 'Ivy'),(10, 'Jack'),(11, null);`)
+	tk.MustExec(`INSERT INTO t1 (id, name) VALUES (1, 'Alice'),(2, 'Bob'),(3, 'Charlie'),(4, 'David'),(5, 'Eve'),(6, 'Frank'),(7, 'Grace'),(8, 'Hannah'),(9, 'Ivy'),(10, 'Jack'),(11, null),(12, 'Alice');`)
 	tk.MustExec(`prepare stmt from 'select name, ? from t1 group by name, ? order by name';`)
 	tk.MustExec(`set @a=1, @b=0;`)
 	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
@@ -301,6 +301,12 @@ func TestIssue53872(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		`Warning 1105 skip prepared plan-cache: query has 'group by ?' is un-cacheable`,
 		`Warning 1292 Truncated incorrect DOUBLE value: 'abc'`))
+	// with agg
+	tk.MustExec(`prepare stmt from 'select count(*),name from t1 group by name, ? order by name';`)
+	tk.MustExec(`set @a="abc";`)
+	tk.MustQuery(`execute stmt using @a;`).Check(testkit.Rows(
+		`1 <nil>`, `2 Alice`, `1 Bob`, `1 Charlie`, `1 David`,
+		`1 Eve`, `1 Frank`, `1 Grace`, `1 Hannah`, `1 Ivy`, `1 Jack`))
 	// this is incompatible with sql_mode=only_full_group_by
 	tk.MustGetErrCode(`prepare stmt from 'select name, ? from t1 group by ? order by name';`, 1055)
 	tk.MustExec(`prepare stmt from 'select name from t1 group by name,? order by name'`)
