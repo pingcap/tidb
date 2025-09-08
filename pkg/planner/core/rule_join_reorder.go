@@ -57,8 +57,8 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
-		(join.JoinType != logicalop.InnerJoin && join.JoinType != logicalop.LeftOuterJoin && join.JoinType != logicalop.RightOuterJoin) ||
-		((join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) && join.EqualConditions == nil) ||
+		(join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin) ||
+		((join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) && join.EqualConditions == nil) ||
 		// with NullEQ in the EQCond, the join order needs to consider the transitivity of null and avoid the wrong result.
 		// so we skip the join order when to meet the NullEQ in the EQCond
 		(slices.ContainsFunc(join.EqualConditions, func(e *expression.ScalarFunction) bool {
@@ -75,7 +75,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		}
 	}
 	// If the session var is set to off, we will still reject the outer joins.
-	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) {
+	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
 		return &joinGroupResult{
 			group:              []base.LogicalPlan{p},
 			joinOrderHintInfo:  joinOrderHintInfo,
@@ -95,16 +95,16 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			rightHasHint = true
 		}
 	}
-	hasOuterJoin = hasOuterJoin || (join.JoinType != logicalop.InnerJoin)
+	hasOuterJoin = hasOuterJoin || (join.JoinType != base.InnerJoin)
 	// If the left child has the hint, it means there are some join method hints want to specify the join method based on the left child.
 	// For example: `select .. from t1 join t2 join (select .. from t3 join t4) t5 where ..;` If there are some join method hints related to `t5`, we can't split `t5` into `t3` and `t4`.
 	// So we don't need to split the left child part. The right child part is the same.
-	if join.JoinType != logicalop.RightOuterJoin && !leftHasHint {
+	if join.JoinType != base.RightOuterJoin && !leftHasHint {
 		lhsJoinGroupResult := extractJoinGroup(join.Children()[0])
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsJoinOrderHintInfo, lhsJoinMethodHintInfo, lhsHasOuterJoin := lhsJoinGroupResult.group, lhsJoinGroupResult.eqEdges, lhsJoinGroupResult.otherConds, lhsJoinGroupResult.joinTypes, lhsJoinGroupResult.joinOrderHintInfo, lhsJoinGroupResult.joinMethodHintInfo, lhsJoinGroupResult.hasOuterJoin
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
-		if join.JoinType == logicalop.LeftOuterJoin {
+		if join.JoinType == base.LeftOuterJoin {
 			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
 			extractedCols := make(map[int64]*expression.Column, len(join.LeftConditions)+len(join.OtherConditions)+len(eqConds))
 			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
@@ -143,12 +143,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// You can see the comments in the upside part which we try to split the left child part. It's the same here.
-	if join.JoinType != logicalop.LeftOuterJoin && !rightHasHint {
+	if join.JoinType != base.LeftOuterJoin && !rightHasHint {
 		rhsJoinGroupResult := extractJoinGroup(join.Children()[1])
 		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsJoinOrderHintInfo, rhsJoinMethodHintInfo, rhsHasOuterJoin := rhsJoinGroupResult.group, rhsJoinGroupResult.eqEdges, rhsJoinGroupResult.otherConds, rhsJoinGroupResult.joinTypes, rhsJoinGroupResult.joinOrderHintInfo, rhsJoinGroupResult.joinMethodHintInfo, rhsJoinGroupResult.hasOuterJoin
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
-		if join.JoinType == logicalop.RightOuterJoin {
+		if join.JoinType == base.RightOuterJoin {
 			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
 			extractedCols := make(map[int64]*expression.Column, len(join.OtherConditions)+len(join.RightConditions)+len(eqConds))
 			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
@@ -191,7 +191,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	tmpOtherConds = append(tmpOtherConds, join.OtherConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.LeftConditions...)
 	tmpOtherConds = append(tmpOtherConds, join.RightConditions...)
-	if join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin || join.JoinType == logicalop.LeftOuterSemiJoin || join.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin || join.JoinType == base.LeftOuterSemiJoin || join.JoinType == base.AntiLeftOuterSemiJoin {
 		for range join.EqualConditions {
 			abType := &joinTypeWithExtMsg{JoinType: join.JoinType}
 			// outer join's other condition should be bound with the connecting edge.
@@ -229,7 +229,7 @@ type jrNode struct {
 }
 
 type joinTypeWithExtMsg struct {
-	logicalop.JoinType
+	base.JoinType
 	outerBindCondition []expression.Expression
 }
 
@@ -266,7 +266,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 		// Not support outer join reorder when using the DP algorithm
 		isSupportDP := true
 		for _, joinType := range joinTypes {
-			if joinType.JoinType != logicalop.InnerJoin {
+			if joinType.JoinType != base.InnerJoin {
 				isSupportDP = false
 				break
 			}
@@ -509,7 +509,7 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalP
 
 // checkConnection used to check whether two nodes have equal conditions or not.
 func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) {
-	joinType = &joinTypeWithExtMsg{JoinType: logicalop.InnerJoin}
+	joinType = &joinTypeWithExtMsg{JoinType: base.InnerJoin}
 	leftNode, rightNode = leftPlan, rightPlan
 	for idx, edge := range s.eqEdges {
 		lCol := edge.GetArgs()[0].(*expression.Column)
@@ -519,7 +519,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 			usedEdges = append(usedEdges, edge)
 		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
 			joinType = s.joinTypes[idx]
-			if joinType.JoinType != logicalop.InnerJoin {
+			if joinType.JoinType != base.InnerJoin {
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
@@ -584,7 +584,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.Logic
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
 
-	if joinType.JoinType == logicalop.LeftOuterJoin || joinType.JoinType == logicalop.RightOuterJoin || joinType.JoinType == logicalop.LeftOuterSemiJoin || joinType.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if joinType.JoinType == base.LeftOuterJoin || joinType.JoinType == base.RightOuterJoin || joinType.JoinType == base.LeftOuterSemiJoin || joinType.JoinType == base.AntiLeftOuterSemiJoin {
 		// the original outer join's other conditions has been bound to the outer join Edge,
 		// these remained other condition here shouldn't be appended to it because on-mismatch
 		// logic will produce more append-null rows which is banned in original semantic.
@@ -655,7 +655,7 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 		offset = -1
 	}
 	join := logicalop.LogicalJoin{
-		JoinType:  logicalop.InnerJoin,
+		JoinType:  base.InnerJoin,
 		Reordered: true,
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
@@ -665,14 +665,14 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.LogicalPlan,
-	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType base.JoinType, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
 	newJoin.OtherConditions = otherConds
 	newJoin.LeftConditions = leftConds
 	newJoin.RightConditions = rightConds
 	newJoin.JoinType = joinType
-	if newJoin.JoinType == logicalop.InnerJoin {
+	if newJoin.JoinType == base.InnerJoin {
 		if newJoin.LeftConditions != nil {
 			left := newJoin.Children()[0]
 			logicalop.AddSelection(newJoin, left, newJoin.LeftConditions, 0, opt)

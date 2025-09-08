@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -37,7 +37,7 @@ type hashJoinInfo struct {
 	ctx                   sessionctx.Context
 	schema                *expression.Schema
 	leftExec, rightExec   exec.Executor
-	joinType              logicalop.JoinType
+	joinType              base.JoinType
 	rightAsBuildSide      bool
 	buildKeys             []*expression.Column
 	probeKeys             []*expression.Column
