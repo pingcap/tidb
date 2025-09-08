@@ -53,7 +53,6 @@ func convertAddIdxJob2RollbackJob(
 			failpoint.Return(0, errors.New("mock convert add index job to rollback job error"))
 		}
 	})
-	// TODO(cbc): convertAddIdxJob2RollbackJob will assume that args of the job is AddIndex
 
 	dropArgs := &model.ModifyIndexArgs{
 		PartitionIDs: getPartitionIDs(tblInfo),
@@ -84,7 +83,16 @@ func convertAddIdxJob2RollbackJob(
 	}
 
 	// Convert to ModifyIndexArgs
-	job.FillFinishedArgs(dropArgs)
+	if job.Type == model.ActionModifyColumn {
+		origArgs, err1 := model.GetModifyColumnArgs(job)
+		if err1 != nil {
+			return 0, errors.Trace(err1)
+		}
+		origArgs.DropIndex = dropArgs
+		job.FillFinishedArgs(origArgs)
+	} else {
+		job.FillFinishedArgs(dropArgs)
+	}
 
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)

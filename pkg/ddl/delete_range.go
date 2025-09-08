@@ -437,6 +437,29 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
+		if args.DropIndex != nil {
+			for _, indexArg := range args.DropIndex.IndexArgs {
+				// Determine the index IDs to be added.
+				tempIdxID := tablecodec.TempIndexPrefix | indexArg.IndexID
+				var indexIDs []int64
+				if job.State == model.JobStateRollbackDone {
+					indexIDs = []int64{indexArg.IndexID, tempIdxID}
+				} else {
+					indexIDs = []int64{tempIdxID}
+				}
+				if indexArg.IsGlobal {
+					if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "modify column with index: physical table ID(s)"); err != nil {
+						return errors.Trace(err)
+					}
+				} else {
+					for _, pid := range partitionIDs {
+						if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "modify column with index: physical table ID(s)"); err != nil {
+							return errors.Trace(err)
+						}
+					}
+				}
+			}
+		}
 	}
 	return nil
 }

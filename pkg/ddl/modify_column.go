@@ -271,6 +271,9 @@ func rollbackModifyColumnJobWithData(
 	args.IndexIDs = changingIdxIDs
 	args.PartitionIDs = getPartitionIDs(tblInfo)
 	job.FillFinishedArgs(args)
+	// if args.DropIndex != nil {
+	// 	return onDropIndex(jobCtx, job)
+	// }
 	return ver, nil
 }
 

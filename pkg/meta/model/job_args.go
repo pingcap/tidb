@@ -1740,6 +1740,9 @@ type ModifyColumnArgs struct {
 	// IndexIDs stores index ids to be added to gc table.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+
+	// For rollback modify column with index
+	DropIndex *ModifyIndexArgs `json:"drop_idxs,omitempty"`
 }
 
 func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
