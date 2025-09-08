@@ -305,7 +305,6 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 		},
 		Remote: &chunk.FileMeta,
 	}
-
 	parser, err := ti.LoadDataController.GetParser(ctx, info)
 	if err != nil {
 		return nil, err
