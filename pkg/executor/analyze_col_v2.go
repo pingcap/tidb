@@ -719,6 +719,7 @@ workLoop:
 						continue
 					}
 					val := row.Columns[task.slicePos]
+					orig := val
 					// If this value is very big, we think that it is not a value that can occur many times. So we don't record it.
 					if len(val.GetBytes()) > statistics.MaxSampleValueLength {
 						continue
@@ -730,8 +731,9 @@ workLoop:
 						e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value:   val,
-						Ordinal: j,
+						Value:         val,
+						OriginalValue: orig,
+						Ordinal:       j,
 					})
 					// tmp memory usage
 					deltaSize := val.MemUsage() + 4 // content of SampleItem is copied
@@ -757,12 +759,25 @@ workLoop:
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
 				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
+
+				// If any column in the index is not binary collated, we need to store the original value.
+				// Because we need to show the original value in the histogram.
+				needStoreOrig := false
+				for _, col := range idx.Columns {
+					info := e.colsInfo[col.Offset]
+					if info.GetCollate() != "binary" {
+						needStoreOrig = true
+						break
+					}
+				}
+
 			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 						continue
 					}
 					b := make([]byte, 0, 8)
+					orig := make([]byte, 0, 8)
 					for _, col := range idx.Columns {
 						// If the index value contains one value which is too long, we think that it's a value that doesn't occur many times.
 						if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
@@ -779,15 +794,30 @@ workLoop:
 							}
 							continue
 						}
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+						d := row.Columns[col.Offset]
+						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, d)
 						err = errCtx.HandleError(err)
 						if err != nil {
 							resultCh <- err
 							continue workLoop
 						}
+						if needStoreOrig {
+							newD := d
+							newD.SetCollation("binary")
+							orig, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), orig, newD)
+							err = errCtx.HandleError(err)
+							if err != nil {
+								resultCh <- err
+								continue workLoop
+							}
+						}
+					}
+					if !needStoreOrig {
+						orig = b
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value: types.NewBytesDatum(b),
+						Value:         types.NewBytesDatum(b),
+						OriginalValue: types.NewBytesDatum(orig),
 					})
 					// tmp memory usage
 					deltaSize := sampleItems[len(sampleItems)-1].Value.MemUsage()

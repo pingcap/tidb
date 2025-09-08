@@ -286,6 +286,14 @@ func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, 
 	if len(remained) > 0 {
 		decodedVals = append(decodedVals, types.NewBytesDatum(remained))
 	}
+
+	for i, tp := range idxColumnTypes {
+		if types.IsTypeString(tp) {
+			b := decodedVals[i].GetBytes()
+			decodedVals[i].SetBytesAsString(b, "binary", uint32(len(b)))
+		}
+	}
+
 	str, err := types.DatumsToString(decodedVals, true)
 	return str, err
 }
