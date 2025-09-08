@@ -207,7 +207,8 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 	// Thus, we utilize a switch to govern this particular logic.
 	if propagateConstant {
 		if forJoin {
-			simplifiedPredicate = expression.PropagateConstantForJoin(exprCtx, schema1, schema2, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+			simplifiedPredicate = expression.PropagateConstantForJoin(exprCtx, sctx.GetSessionVars().AlwaysKeepJoinKey,
+				schema1, schema2, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 		} else {
 			simplifiedPredicate = expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 		}

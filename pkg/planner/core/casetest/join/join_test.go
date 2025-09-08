@@ -167,6 +167,7 @@ func TestKeepingJoinKeys(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec(`create table t1 (a int, b int, c int)`)
 		tk.MustExec(`create table t2 (a int, b int, c int)`)
+		tk.MustExec(`set @@tidb_opt_always_keep_join_key=true`)
 
 		// join keys are kept
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t1.a=1`).Check(testkit.Rows(
@@ -206,6 +207,7 @@ func TestIssue60076And63314(t *testing.T) {
 		tk.MustExec(`create table t2 (a int, b int, c int)`)
 		tk.MustExec(`create table t3 (a int, b int, c int)`)
 		tk.MustExec(`create table t4 (a int, b int, c int)`)
+		tk.MustExec(`set @@tidb_opt_always_keep_join_key=true`)
 
 		tk.MustQuery(`explain format='plan_tree' select /*+ leading(t1, t4) */ * from t1 join t2 on
              t1.a=t2.a join t3 on t1.a=t3.a join t4 on t1.a=t4.a`).Check(testkit.Rows(

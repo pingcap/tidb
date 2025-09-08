@@ -342,6 +342,11 @@ const (
 	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
 	TiDBOptRiskGroupNDVSkewRatio = "tidb_opt_group_ndv_skew_ratio"
 
+	// TiDBOptAlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	TiDBOptAlwaysKeepJoinKey = "tidb_opt_always_keep_join_key"
+
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// TiDBOptCopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -1357,6 +1362,7 @@ const (
 	DefOptRiskRangeSkewRatio                = 0.0
 	DefOptRiskScaleNDVSkewRatio             = 1.0
 	DefOptRiskGroupNDVSkewRatio             = 0.0
+	DefOptAlwaysKeepJoinKey                 = false
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0

@@ -1032,6 +1032,11 @@ type SessionVars struct {
 	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
 	RiskGroupNDVSkewRatio float64
 
+	// AlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	AlwaysKeepJoinKey bool
+
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -2205,6 +2210,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
 		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
+		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
 		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
 		RetryLimit:                    vardef.DefTiDBRetryLimit,
