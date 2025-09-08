@@ -1741,7 +1741,7 @@ type ModifyColumnArgs struct {
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 
-	// For rollback modify column with index
+	// For rollback modify column with index. It is only assigned in JobVersion2
 	DropIndex *ModifyIndexArgs `json:"drop_idxs,omitempty"`
 }
 

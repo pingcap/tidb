@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -84,6 +85,7 @@ func convertAddIdxJob2RollbackJob(
 
 	// Convert to ModifyIndexArgs
 	if job.Type == model.ActionModifyColumn {
+		intest.Assert(job.Version == model.JobVersion2)
 		origArgs, err1 := model.GetModifyColumnArgs(job)
 		if err1 != nil {
 			return 0, errors.Trace(err1)

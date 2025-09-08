@@ -222,27 +222,39 @@ func TestAddIndexOnGB18030Bin(t *testing.T) {
 	tk.MustExec("admin check table t;")
 }
 
-func TestModifyColumnWithIndex(t *testing.T) {
+func TestModifyColumnWithMultipleIndex(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = on;")
-	for _, enableDistTask := range []string{"on", "off"} {
-		tk.MustExec("DROP TABLE IF EXISTS t")
-		tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", enableDistTask))
-		tk.MustExec(`CREATE TABLE t (
-			a int(11) DEFAULT NULL,
-			b varchar(10) DEFAULT NULL,
-			c decimal(10,2) DEFAULT NULL,
-			KEY idx1 (a),
-			UNIQUE KEY idx2 (a),
-			KEY idx3 (a,b),
-			KEY idx4 (a,b,c)
-			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-		tk.MustExec("insert into t values(19,1,1),(17,2,2)")
-		tk.MustExec("admin check table t;")
-		tk.MustExec("alter table t modify a bit(5) not null")
-		tk.MustExec("admin check table t;")
+	testcases := []struct {
+		caseName        string
+		enableDistTask  string
+		enableFastReorg string
+	}{
+		{"txn", "off", "off"},
+		{"local ingest", "off", "on"},
+		{"dxf ingest", "on", "on"},
+	}
+	createTableSQL := `CREATE TABLE t (
+		a int(11) DEFAULT NULL,
+		b varchar(10) DEFAULT NULL,
+		c decimal(10,2) DEFAULT NULL,
+		KEY idx1 (a),
+		UNIQUE KEY idx2 (a),
+		KEY idx3 (a,b),
+		KEY idx4 (a,b,c)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_ddl_enable_fast_reorg = %s;", tc.enableFastReorg))
+			tk.MustExec("DROP TABLE IF EXISTS t")
+			tk.MustExec(createTableSQL)
+			tk.MustExec("insert into t values(19,1,1),(17,2,2)")
+			tk.MustExec("admin check table t;")
+			tk.MustExec("alter table t modify a bit(5) not null")
+			tk.MustExec("admin check table t;")
+		})
 	}
 }
 
