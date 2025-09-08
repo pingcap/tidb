@@ -193,8 +193,7 @@ func skipMergeSort(stats []external.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return true
-	// return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
+	return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 // OnDone implements scheduler.Extension interface.
