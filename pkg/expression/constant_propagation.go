@@ -461,6 +461,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 }
 
 func (s *propConstSolver) solve(conditions []Expression) []Expression {
+	joinKeys := cloneJoinKeys(conditions, s.schema1, s.schema2)
 	s.conditions = slices.Grow(s.conditions, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
@@ -476,6 +477,9 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.conditions...)
+	// keep join keys in the results since they are crucial for join optimization like join reorder
+	// and index join selection. (#63314, #60076)
+	s.conditions = append(s.conditions, joinKeys...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return slices.Clone(s.conditions)
 }
@@ -826,6 +830,7 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 }
 
 func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
+	joinKeys := cloneJoinKeys(joinConds, s.outerSchema, s.innerSchema)
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		s.insertCols(ExtractColumns(cond)...)
@@ -845,7 +850,12 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
-	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
+
+	// keep join keys in the results since they are crucial for join optimization like join reorder
+	// and index join selection. (#63314, #60076)
+	joinConds = append(slices.Clone(s.joinConds), joinKeys...)
+	joinConds = RemoveDupExprs(joinConds)
+	return joinConds, slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
@@ -889,4 +899,33 @@ type PropagateConstantSolver interface {
 		schema1, schema2 *Schema,
 		filter VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression
 	Clear()
+}
+
+func cloneJoinKeys(exprs []Expression, schema1, schema2 *Schema) (joinKeys []Expression) {
+	if schema1 == nil || schema2 == nil {
+		return nil
+	}
+	for _, expr := range exprs {
+		if maybeJoinKey(expr, schema1, schema2) {
+			joinKeys = append(joinKeys, expr.Clone())
+		}
+	}
+	return
+}
+
+// maybeJoinKey returns true if this expression could be a join key like `t1.col = t2.col`.
+// If these 2 columns are from the same table like `t1.col1 = t1.col1`, we still return true for simplification.
+func maybeJoinKey(expr Expression, schema1, schema2 *Schema) bool {
+	binop, ok := expr.(*ScalarFunction)
+	if !ok || binop.FuncName.L != ast.EQ {
+		return false
+	}
+	col1, lOK := binop.GetArgs()[0].(*Column)
+	col2, rOK := binop.GetArgs()[1].(*Column)
+	if !lOK || !rOK {
+		return false
+	}
+	// from different tables
+	return (schema1.Contains(col1) && schema2.Contains(col2)) ||
+		(schema1.Contains(col2) && schema2.Contains(col1))
 }
