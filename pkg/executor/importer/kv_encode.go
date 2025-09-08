@@ -158,64 +158,63 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	return newRow, nil
 }
 
-// getRow gets the row which from `insert into select from` or `load data`.
-// The input values from these two statements are datums instead of
-// expressions which are used in `insert into set x=y`.
-// copied from InsertValues
-func (en *TableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
+func (en *TableKVEncoder) resetRowCache() {
 	rowLen := len(en.Columns)
 	if cap(en.rowCache) < rowLen || cap(en.hasValueCache) < rowLen {
 		en.rowCache = make([]types.Datum, rowLen)
 		en.hasValueCache = make([]bool, rowLen)
 	} else {
-		en.rowCache = en.rowCache[:0]
-		en.hasValueCache = en.hasValueCache[:0]
-		for range rowLen {
-			en.rowCache = append(en.rowCache, types.Datum{})
-			en.hasValueCache = append(en.hasValueCache, false)
+		en.rowCache = en.rowCache[:rowLen]
+		en.hasValueCache = en.hasValueCache[:rowLen]
+		for i := range rowLen {
+			en.rowCache[i].SetNull()
+			en.hasValueCache[i] = false
 		}
 	}
+}
+
+// getRow gets the row which from `insert into select from` or `load data`.
+// The input values from these two statements are datums instead of
+// expressions which are used in `insert into set x=y`.
+// copied from InsertValues
+func (en *TableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
+	en.resetRowCache()
 	row := en.rowCache
 	hasValue := en.hasValueCache
-	for i := range en.insertColumns {
-		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
+	for i, col := range en.insertColumns {
+		offset := col.Offset
+		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], col.ToInfo(), false, false)
 		if err != nil {
-			return nil, err
+			return nil, en.LogKVConvertFailed(row, offset, col.ToInfo(), err)
 		}
 
-		offset := en.insertColumns[i].Offset
 		row[offset] = casted
 		hasValue[offset] = true
 	}
-
-	return en.fillRow(row, hasValue, rowID)
-}
-
-func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
-	var value types.Datum
-	var err error
-
-	record := en.GetOrCreateRecord()
+	// fill value for missing columns and handle bad null value
 	for i, col := range en.Columns {
-		var theDatum *types.Datum
-		doCast := true
-		if hasValue[i] {
-			theDatum = &row[i]
-			doCast = false
+		isBadNullValue := false
+		if hasValue[i] && col.CheckNotNull(&row[i], 0) != nil {
+			isBadNullValue = true
 		}
-		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
-		if err != nil {
+
+		if !hasValue[i] || isBadNullValue {
+			value, err := en.HandleSpecialValue(col, rowID, isBadNullValue)
+			if err != nil {
+				return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
+			}
+			row[i] = value
+		}
+
+		if err := en.RebaseAutoID(col, rowID, &row[i]); err != nil {
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}
-
-		record = append(record, value)
 	}
 
 	if common.TableHasAutoRowID(en.TableMeta()) {
 		rowValue := rowID
 		newRowID := en.AutoIDFn(rowID)
-		value = types.NewIntDatum(newRowID)
-		record = append(record, value)
+		row = append(row, types.NewIntDatum(newRowID))
 		alloc := en.TableAllocators().Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
@@ -223,12 +222,12 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	}
 
 	if len(en.GenCols) > 0 {
-		if errCol, err := en.EvalGeneratedColumns(record, en.Columns); err != nil {
+		if errCol, err := en.EvalGeneratedColumns(row, en.Columns); err != nil {
 			return nil, en.LogEvalGenExprFailed(row, errCol, err)
 		}
 	}
 
-	return record, nil
+	return row, nil
 }
 
 // Close the TableKVEncoder.

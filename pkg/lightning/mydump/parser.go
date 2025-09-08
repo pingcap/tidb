@@ -160,7 +160,15 @@ type Parser interface {
 	// ScannedPos always returns the current file reader pointer's location
 	ScannedPos() (int64, error)
 	Close() error
+
+	// ReadRow reads a row from the datafile.
 	ReadRow() error
+
+	// ReadRowUnsafe reads a row from the datafile,
+	// and the returned Row is only valid until the
+	// next call to ReadRow or ReadRowUnsafe.
+	ReadRowUnsafe() error
+
 	LastRow() Row
 	RecycleRow(row Row)
 
@@ -391,6 +399,10 @@ func (parser *ChunkParser) unescapeString(input string) string {
 		}
 	}
 	return input
+}
+
+func (parser *ChunkParser) ReadRowUnsafe() error {
+	return parser.ReadRow()
 }
 
 // ReadRow reads a row from the datafile.
@@ -680,7 +692,7 @@ func OpenReader(
 ) (reader storage.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Type == SourceTypeParquet:
-		reader, err = OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
+		reader, err = OpenParquetReader(ctx, store, fileMeta.Path)
 	case fileMeta.Compression != CompressionNone:
 		compressType, err2 := ToStorageCompressType(fileMeta.Compression)
 		if err2 != nil {

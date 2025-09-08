@@ -358,7 +358,6 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if l.TableConcurrency == 0 {
 			l.TableConcurrency = DefaultTableConcurrency
 		}
-
 		if len(l.MetaSchemaName) == 0 {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}

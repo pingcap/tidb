@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -42,7 +43,7 @@ import (
 // MiniTaskExecutor is the interface for a minimal task executor.
 // exported for testing.
 type MiniTaskExecutor interface {
-	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter, collector execute.Collector) error
+	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter, collector execute.Collector, pool *mydump.Pool) error
 }
 
 // importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
@@ -62,6 +63,7 @@ func (e *importMinimalTaskExecutor) Run(
 	ctx context.Context,
 	dataWriter, indexWriter backend.EngineWriter,
 	collector execute.Collector,
+	pool *mydump.Pool,
 ) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("execute chunk")
@@ -70,8 +72,15 @@ func (e *importMinimalTaskExecutor) Run(
 		failpoint.Return(errors.New("occur an error when sort chunk"))
 	})
 	failpoint.InjectCall("syncBeforeSortChunk")
-	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
+
+	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
+	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
+		MemoryPool:  pool,
+		MemoryUsage: sharedVars.TableImporter.ParquetFileMemoryUsage,
+		Loc:         sharedVars.TableImporter.Location,
+	}
+
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
 	if sharedVars.TableImporter.IsLocalSort() {
 		if err := importer.ProcessChunk(

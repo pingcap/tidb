@@ -628,6 +628,12 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 	return replaced
 }
 
+// ReadRowUnsafe implements the Parser interface.
+// TODO(joechenrh): implement unsafe read for CSV parser
+func (parser *CSVParser) ReadRowUnsafe() error {
+	return parser.ReadRow()
+}
+
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
 	row := &parser.lastRow
