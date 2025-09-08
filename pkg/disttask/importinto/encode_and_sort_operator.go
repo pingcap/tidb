@@ -232,20 +232,16 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 	return path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
 }
 
-func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
+func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan, encodeStep bool) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
-
-	threadCnt := plan.ThreadCnt
-	if plan.EncodeThreadCnt > 0 {
-		threadCnt = plan.EncodeThreadCnt
-	}
 
 	// We use a portion of the total available memory for data writer, which is depended
 	// on the data format, and the other half for encoding and other stuffs, it's an
 	// experience value, might not optimal.
-	memPerCon := resource.Mem.Capacity() / int64(threadCnt)
-	memForWriter := mydump.GetMemoryForWriter(plan.Format, int(memPerCon))
+	memForWriter := mydump.GetMemoryForWriter(
+		encodeStep, plan.ParquetFileMemoryUsage,
+		plan.ThreadCnt, int(resource.Mem.Capacity()))
 
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer
 	// takes 3 shares, and each index KV writer takes 1 share.

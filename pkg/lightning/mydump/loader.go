@@ -114,7 +114,8 @@ type SourceFileMeta struct {
 	RealSize int64
 	Rows     int64
 
-	ParquetMeta ParquetFileMeta // only for parquet
+	// ParquetMeta store meta only used for parquet
+	ParquetMeta ParquetFileMeta
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.

@@ -254,7 +254,10 @@ type Plan struct {
 	// in parquet is always adjusted to UTC, see
 	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
 	Location *time.Location
-	SQLMode  mysql.SQLMode
+	// ParquetFileMemoryUsage is the estimated memory usage of each parquet parser.
+	ParquetFileMemoryUsage int
+
+	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
 	// for IMPORT INTO, it is always non-nil and default to be defaultCharacterSet.
@@ -273,7 +276,6 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
-	EncodeThreadCnt       int
 	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
@@ -1319,18 +1321,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	// Fill memory usage info
 	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
-		// We may not be able to open ThreadCnt files concurrently due to memory usage
 		_, _, memoryUsage, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
-		e.Plan.EncodeThreadCnt = mydump.AdjustEncodeThreadCnt(memoryUsage, e.Plan.ThreadCnt)
-
+		e.Plan.ParquetFileMemoryUsage = memoryUsage
 		if err != nil {
 			return errors.Trace(err)
-		}
-		for _, dataFile := range dataFiles {
-			// To reduce the memory usage, we only use streaming mode to read file.
-			dataFile.ParquetMeta = mydump.ParquetFileMeta{
-				MemoryUsage: memoryUsage,
-			}
 		}
 	}
 

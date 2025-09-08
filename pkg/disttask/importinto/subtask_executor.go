@@ -72,9 +72,15 @@ func (e *importMinimalTaskExecutor) Run(
 		failpoint.Return(errors.New("occur an error when sort chunk"))
 	})
 	failpoint.InjectCall("syncBeforeSortChunk")
-	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
-	chunkCheckpoint.FileMeta.ParquetMeta.MemoryPool = pool
 	sharedVars := e.mTtask.SharedVars
+
+	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
+	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
+		MemoryPool:  pool,
+		MemoryUsage: sharedVars.TableImporter.ParquetFileMemoryUsage,
+		Loc:         sharedVars.TableImporter.Location,
+	}
+
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
 	if sharedVars.TableImporter.IsLocalSort() {
 		if err := importer.ProcessChunk(

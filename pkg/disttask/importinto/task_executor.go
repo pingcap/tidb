@@ -125,10 +125,6 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}
 	}()
 
-	if s.taskMeta.Plan.Format == importer.DataFormatParquet && s.tableImporter.EncodeThreadCnt > 0 {
-		s.tableImporter.Plan.ThreadCnt = s.tableImporter.EncodeThreadCnt
-	}
-
 	if kerneltype.IsClassic() {
 		taskManager, err = dxfstorage.GetTaskManager()
 		if err != nil {
@@ -160,7 +156,8 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 			s.tableImporter.CheckDiskQuota(s.importCtx)
 		}()
 	}
-	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
+	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(
+		s.GetResource(), s.tableImporter.Plan, true)
 	s.dataBlockSize = external.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
 	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
 	s.logger.Info("KV writer memory buf info",
@@ -375,7 +372,7 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	m.sortStore = store
-	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
+	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan, false)
 	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 	m.indexKVPartSize = max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 

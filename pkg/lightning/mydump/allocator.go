@@ -17,50 +17,38 @@ package mydump
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/util/cpu"
-	tidbmemory "github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 )
 
 var (
 	// arenaSize is the size of each arena
 	arenaSize = 64 << 20
 
-	// parserMemoryPercent defines the percentage of memory used for parser
-	parserMemoryPercent = 0.3
-
-	// parquetWriterPercent defines the percentage of memory used for parquet writer
-	parquetWriterPercent = 0.4
-
-	// otherWriterPercent defines the percentage of memory used for csv writer
-	otherWriterPercent = 0.5
+	// maxParquetMemoryPercent defines the maximum percentage of memory used for parquet parser
+	// Because less memory for writer can make more small files, which may affect performance
+	// merge and ingest steps, so we set a limit here.
+	maxParquetMemoryPercent = 40
 )
 
-// GetMemoryForWriter gets the memory for writer according to the file type.
-func GetMemoryForWriter(tp string, memPerCon int) int {
-	switch tp {
-	case "parquet":
-		return int(float64(memPerCon) * parquetWriterPercent)
-	default:
-		return int(float64(memPerCon) * otherWriterPercent)
-	}
-}
+// GetMemoryForWriter gets the memory for writer
+func GetMemoryForWriter(encodeStep bool, parquetMemUsage, threadCnt, totalMem int) int64 {
+	memPerCon := totalMem / threadCnt
 
-// AdjustEncodeThreadCnt adjusts the concurrency in encode&sort step for parquet IMPORT INTO.
-func AdjustEncodeThreadCnt(memoryPerFile, threadCnt int) int {
-	totalCPU := cpu.GetCPUCount()
-	totalMem, err := tidbmemory.MemTotal()
-	if err != nil {
-		return threadCnt
+	writerPercent := 50
+	if encodeStep {
+		upperLimit := totalMem * maxParquetMemoryPercent / 100
+		if parquetMemUsage >= upperLimit {
+			log.L().Warn("parquet parser memory usage is too high, may cause OOM")
+		}
+		actualUsage := min(parquetMemUsage*threadCnt, upperLimit)
+		parserPercent := (actualUsage*100/totalMem + 9) / 10 * 10
+		writerPercent = (100 - parserPercent) / 2
 	}
 
-	if totalCPU <= 0 || totalMem <= 0 {
-		return threadCnt
-	}
-
-	// Use half of memory per conn for parquet parser
-	memForImport := int(float64(int(totalMem)/totalCPU)*parserMemoryPercent) * threadCnt
-	optimalThreads := memForImport / memoryPerFile
-	return max(1, min(optimalThreads, threadCnt))
+	// Use half of the remaining memory for writer
+	return int64(memPerCon * writerPercent / 100)
 }
 
 // Pool manages a pool of reusable byte buffers to reduce memory allocation overhead.
@@ -68,15 +56,31 @@ func AdjustEncodeThreadCnt(memoryPerFile, threadCnt int) int {
 type Pool struct {
 	blockSize  int
 	blockCache chan []byte
+	limit      int
+	// As we may not be able to open all files concurrently due to memory usage,
+	// we use a memory limiter to limit the memory usage of parquet parser.
+	limiter *membuf.Limiter
 }
 
 // GetPool gets a pool with the given capacity.
 func GetPool(capacity int) *Pool {
-	mem := int(float64(capacity) * parserMemoryPercent)
+	limit := capacity * maxParquetMemoryPercent / 100
 	return &Pool{
 		blockSize:  arenaSize,
-		blockCache: make(chan []byte, (mem+arenaSize-1)/arenaSize),
+		blockCache: make(chan []byte, (limit+arenaSize-1)/arenaSize),
+		limit:      limit,
+		limiter:    membuf.NewLimiter(limit),
 	}
+}
+
+// Acquire acquires memory from the pool.
+func (p *Pool) Acquire(quota int) {
+	p.limiter.Acquire(quota)
+}
+
+// Release releases memory to the pool.
+func (p *Pool) Release(quota int) {
+	p.limiter.Release(quota)
 }
 
 // Get retrieves a buffer from the pool or allocates a new one if the pool is empty.
@@ -115,4 +119,9 @@ type arena interface {
 	allocate(int) []byte
 	free([]byte)
 	reset()
+}
+
+type AllocatorWithClose interface {
+	memory.Allocator
+	Close()
 }

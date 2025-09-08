@@ -27,7 +27,7 @@ func TestSimpleAllocator(t *testing.T) {
 	arenaSize = 16 << 20
 
 	pool := GetPool(16 << 23)
-	a := NewAppendOnlyAllocator(pool)
+	a := NewAppendOnlyAllocator(pool, 0)
 
 	var (
 		lk sync.Mutex

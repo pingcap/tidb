@@ -560,7 +560,7 @@ func NewParquetParser(
 	var allocator memory.Allocator
 	allocator = memory.NewGoAllocator()
 	if meta.MemoryPool != nil {
-		allocator = NewAppendOnlyAllocator(meta.MemoryPool)
+		allocator = NewAppendOnlyAllocator(meta.MemoryPool, meta.MemoryUsage)
 	}
 
 	prop := parquet.NewReaderProperties(allocator)
@@ -648,7 +648,7 @@ func SampleStatisticsFromParquet(
 	}
 
 	meta := GetDefaultParquetMeta()
-	meta.MemoryPool = GetPool(2 << 30) // use up to 2GB memory for sampling
+	meta.MemoryPool = GetPool(10 << 30) // use up to 4GiB memory for sampling
 
 	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, meta)
 	if err != nil {

@@ -31,7 +31,6 @@ func toChunkCheckpoint(chunk importer.Chunk) checkpoints.ChunkCheckpoint {
 			Type:        chunk.Type,
 			Compression: chunk.Compression,
 			FileSize:    chunk.FileSize,
-			ParquetMeta: chunk.ParquetMeta,
 		},
 		Chunk: mydump.Chunk{
 			PrevRowIDMax: chunk.PrevRowIDMax,
@@ -54,6 +53,5 @@ func toChunk(chunkCheckpoint checkpoints.ChunkCheckpoint) importer.Chunk {
 		Type:         chunkCheckpoint.FileMeta.Type,
 		Compression:  chunkCheckpoint.FileMeta.Compression,
 		Timestamp:    chunkCheckpoint.Timestamp,
-		ParquetMeta:  chunkCheckpoint.FileMeta.ParquetMeta,
 	}
 }

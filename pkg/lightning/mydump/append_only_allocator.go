@@ -57,15 +57,21 @@ type appendOnlyAllocator struct {
 	slicesMutex sync.RWMutex
 	mapper      sync.Map
 
+	memUsage int
+
 	nextAllocIdx atomic.Int32
 
 	externalMemoryCurrent atomic.Int64
 	externalMemoryMax     atomic.Int64
 }
 
-func NewAppendOnlyAllocator(pool *Pool) *appendOnlyAllocator {
+// NewAppendOnlyAllocator creates a new appendOnlyAllocator with the given memory pool
+func NewAppendOnlyAllocator(pool *Pool, memUsage int) *appendOnlyAllocator {
+	memUsage = min(memUsage, pool.limit)
+	pool.Acquire(memUsage)
 	alloc := &appendOnlyAllocator{
-		pool: pool,
+		pool:     pool,
+		memUsage: memUsage,
 	}
 	for range 2 {
 		alloc.slices = append(alloc.slices, &appendOnlySlice{buf: pool.Get()})
@@ -153,6 +159,7 @@ func (a *appendOnlyAllocator) Close() {
 	for _, s := range a.slices {
 		a.pool.Put(s.buf)
 	}
+	a.pool.Release(a.memUsage)
 }
 
 func (a *appendOnlyAllocator) check() {
