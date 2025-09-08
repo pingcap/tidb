@@ -3978,6 +3978,34 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
+func (lt *LeadingExpr) Restore(ctx *format.RestoreCtx) error {
+	if lt == nil {
+		return nil
+	}
+
+	// 叶子节点：直接还原表名（HintTable.Restore 没有返回值）
+	if lt.Table != nil {
+		lt.Table.Restore(ctx)
+		return nil
+	}
+
+	// 内部节点：递归还原左右子树
+	ctx.WritePlain("(")
+	if lt.Left != nil {
+		if err := lt.Left.Restore(ctx); err != nil {
+			return err
+		}
+	}
+	ctx.WritePlain(", ")
+	if lt.Right != nil {
+		if err := lt.Right.Restore(ctx); err != nil {
+			return err
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
 // Restore implements Node interface.
 func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
@@ -4009,8 +4037,23 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
+	case "leading":
+		// 用递归结构来 restore
+		if order, ok := n.HintData.(*LeadingExpr); ok && order != nil {
+			if err := order.Restore(ctx); err != nil {
+				return err
+			}
+		} else if len(n.Tables) > 0 {
+			// 兼容老的平铺写法
+			for i, table := range n.Tables {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				table.Restore(ctx)
+			}
+		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
-		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",
 		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {

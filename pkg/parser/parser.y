@@ -12272,11 +12272,11 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
-| 	"IMPORT" "GROUPS"
+|	"IMPORT" "GROUPS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups}
 	}
-| 	"IMPORT" "GROUP" stringLit 
+|	"IMPORT" "GROUP" stringLit
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
 	}
