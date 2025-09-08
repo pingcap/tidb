@@ -348,6 +348,14 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		builder.FullTextInfo.TableID = e.table.Meta().ID
 		builder.FullTextInfo.IndexID = e.index.ID
 		builder.FullTextInfo.ExecutorID = e.plans[0].ExplainID().String()
+
+		id := e.Table().Meta().ID
+		startKey := tablecodec.EncodeTablePrefix(id)
+		endKey := tablecodec.EncodeTablePrefix(id + 1)
+		kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
+		kvRanges := make([]kv.KeyRange, 0, 1)
+		kvRanges = append(kvRanges, kvRange)
+		builder.SetKeyRanges(kvRanges)
 	}
 	kvReq, err := builder.Build()
 	return kvReq, err
