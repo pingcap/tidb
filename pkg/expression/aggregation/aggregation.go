@@ -253,6 +253,8 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	case kv.TiKV:
 		// TiKV does not support group_concat now
 		ret = aggFunc.Name != ast.AggFuncGroupConcat
+	case kv.TiCI:
+		ret = aggFunc.Name == ast.AggFuncCount
 	default:
 		return false
 	}
