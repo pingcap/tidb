@@ -1751,30 +1751,26 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 		if !ok {
 			return false
 		}
-
-		// Reject NOT operators - they can make predicates non-equal
-		if sf.FuncName.L == ast.UnaryNot {
+		switch sf.FuncName.L {
+		case ast.UnaryNot:
+			// Reject NOT operators - they can make predicates non-equal
 			return false
-		}
-
-		if sf.FuncName.L == ast.LogicOr || sf.FuncName.L == ast.LogicAnd {
+		case ast.LogicOr, ast.LogicAnd:
 			for _, arg := range sf.GetArgs() {
 				if !isEqualPredicateOrOr(arg) {
 					return false
 				}
 			}
 			return true
-		}
-
-		// Check if it's an equal predicate (eq) or IN predicate (in)
-		// Also reject any other comparison operators that are not equal/IN
-		if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
+		case ast.EQ, ast.In:
+			// Check if it's an equal predicate (eq) or IN predicate (in)
+			// Also reject any other comparison operators that are not equal/IN
 			return true
+		default:
+			// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
+			// and any other functions that are not equal/IN predicates
+			return false
 		}
-
-		// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
-		// and any other functions that are not equal/IN predicates
-		return false
 	}
 
 	// Check all access conditions

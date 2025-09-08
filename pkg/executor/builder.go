@@ -1647,7 +1647,7 @@ func (b *executorBuilder) buildMergeJoin(v *physicalop.PhysicalMergeJoin) exec.E
 
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
-		if v.JoinType == logicalop.RightOuterJoin {
+		if v.JoinType == base.RightOuterJoin {
 			defaultValues = make([]types.Datum, leftExec.Schema().Len())
 		} else {
 			defaultValues = make([]types.Datum, rightExec.Schema().Len())
@@ -1655,7 +1655,7 @@ func (b *executorBuilder) buildMergeJoin(v *physicalop.PhysicalMergeJoin) exec.E
 	}
 
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 
@@ -1666,7 +1666,7 @@ func (b *executorBuilder) buildMergeJoin(v *physicalop.PhysicalMergeJoin) exec.E
 		Joiner: join.NewJoiner(
 			b.ctx,
 			v.JoinType,
-			v.JoinType == logicalop.RightOuterJoin,
+			v.JoinType == base.RightOuterJoin,
 			defaultValues,
 			v.OtherConditions,
 			exec.RetTypes(leftExec),
@@ -1689,7 +1689,7 @@ func (b *executorBuilder) buildMergeJoin(v *physicalop.PhysicalMergeJoin) exec.E
 		Filters:    v.RightConditions,
 	}
 
-	if v.JoinType == logicalop.RightOuterJoin {
+	if v.JoinType == base.RightOuterJoin {
 		e.InnerTable = leftTable
 		e.OuterTable = rightTable
 	} else {
@@ -1842,7 +1842,7 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 	}
 
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		// the matched column is added inside join
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
@@ -2014,7 +2014,7 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 	}
 	isNAJoin := len(v.LeftNAJoinKeys) > 0
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
@@ -2738,7 +2738,7 @@ func (b *executorBuilder) buildApply(v *physicalop.PhysicalApply) exec.Executor 
 			OuterExec:    outerExec,
 			OuterFilter:  outerFilter,
 			InnerFilter:  innerFilter,
-			Outer:        v.JoinType != logicalop.InnerJoin,
+			Outer:        v.JoinType != base.InnerJoin,
 			Joiner:       tupleJoiner,
 			OuterSchema:  v.OuterSchema,
 			Sctx:         b.ctx,
@@ -2781,7 +2781,7 @@ func (b *executorBuilder) buildApply(v *physicalop.PhysicalApply) exec.Executor 
 			outerExec:    outerExec,
 			outerFilter:  outerFilter,
 			innerFilter:  innerFilters,
-			outer:        v.JoinType != logicalop.InnerJoin,
+			outer:        v.JoinType != base.InnerJoin,
 			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
@@ -3622,7 +3622,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 		Finished:      &atomic.Value{},
 	}
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
@@ -3748,7 +3748,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *physicalop.PhysicalIndexM
 		LastColHelper: v.CompareFilters,
 	}
 	colsFromChildren := v.Schema().Columns
-	if v.JoinType == logicalop.LeftOuterSemiJoin || v.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
