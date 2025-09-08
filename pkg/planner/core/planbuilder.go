@@ -1892,8 +1892,12 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 		}
 		for _, idxCol := range idxInfo.Columns {
 			col := cols[idxCol.Offset]
+			colName := idxCol.Name
+			if col.Hidden && !col.IsGenerated() {
+				colName = col.Name
+			}
 			names = append(names, &types.FieldName{
-				ColName: idxCol.Name,
+				ColName: colName,
 				TblName: tn.Name,
 				DBName:  tn.Schema,
 			})
@@ -1903,7 +1907,7 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 				ID:       col.ID})
 		}
 		names = append(names, &types.FieldName{
-			ColName: ast.NewCIStr("handle"),
+			ColName: ast.NewCIStr("extra_handle"),
 			TblName: tn.Name,
 			DBName:  tn.Schema,
 		})
