@@ -2884,7 +2884,7 @@ func exhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *proper
 	return ret, true, nil
 }
 
-func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (meetThreshold bool, preferPushDown bool) {
+func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (preferPushDown bool, meetThreshold bool) {
 	switch lp := p.(type) {
 	case *logicalop.LogicalTopN:
 		preferPushDown = lp.PreferLimitToCop
@@ -2898,15 +2898,15 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (meetThre
 		}
 	case *logicalop.LogicalLimit:
 		preferPushDown = lp.PreferLimitToCop
-		// always push Limit down in this case since it has no side effect
+		// Always push Limit down in this case since it has no side effect
 		meetThreshold = true
 	default:
-		return preferPushDown, meetThreshold
+		return
 	}
 
 	// we remove the child subTree check, each logical operator only focus on themselves.
 	// for current level, they prefer a push-down copTask.
-	return preferPushDown, meetThreshold
+	return
 }
 
 func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
