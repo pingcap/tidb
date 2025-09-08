@@ -2180,8 +2180,8 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 	missFunc := func() {
 		missNum.Add(1)
 	}
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheHit", hitFunc)
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheMiss", missFunc)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/mppTaskGeneratorTableReaderCacheHit", hitFunc)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/mppTaskGeneratorTableReaderCacheMiss", missFunc)
 	for _, tc := range testCases {
 		hitNum.Store(0)
 		missNum.Store(0)
