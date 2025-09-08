@@ -558,7 +558,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		leftJoinKeys, rightJoinKeys,
 		childSchema[0], childSchema[1],
 		nil, nil)
-	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+	if p.JoinType == AntiSemiJoin {
 		p.SetStats(&property.StatsInfo{
 			RowCount: leftProfile.RowCount * cost.SelectionFactor,
 			ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
