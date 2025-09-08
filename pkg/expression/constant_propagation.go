@@ -901,21 +901,22 @@ type PropagateConstantSolver interface {
 	Clear()
 }
 
+// cloneJoinKeys clones all join keys like `t1.col = t2.col` in these expressions.
+// schema1 and schema2 are used to identify join keys.
 func cloneJoinKeys(exprs []Expression, schema1, schema2 *Schema) (joinKeys []Expression) {
 	if schema1 == nil || schema2 == nil {
 		return nil
 	}
 	for _, expr := range exprs {
-		if maybeJoinKey(expr, schema1, schema2) {
+		if isJoinKey(expr, schema1, schema2) {
 			joinKeys = append(joinKeys, expr.Clone())
 		}
 	}
 	return
 }
 
-// maybeJoinKey returns true if this expression could be a join key like `t1.col = t2.col`.
-// If these 2 columns are from the same table like `t1.col1 = t1.col1`, we still return true for simplification.
-func maybeJoinKey(expr Expression, schema1, schema2 *Schema) bool {
+// isJoinKey returns true if this expression could be a join key like `t1.col = t2.col`.
+func isJoinKey(expr Expression, schema1, schema2 *Schema) bool {
 	binop, ok := expr.(*ScalarFunction)
 	if !ok || binop.FuncName.L != ast.EQ {
 		return false
