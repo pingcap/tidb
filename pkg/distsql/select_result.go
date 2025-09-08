@@ -82,10 +82,10 @@ type SelectResult interface {
 
 // SelectResultRow indicates the row returned by the SelectResultIter
 type SelectResultRow struct {
-	// `Channel` indicates the index where this row locates.
-	// When Channel < len(IntermediateChannels), it means this row is from intermediate result.
-	// Otherwise, if Channel == len(IntermediateChannels), it means this row is from final result.
-	Channel int
+	// `ChannelIndex` indicates the index where this row locates.
+	// When ChannelIndex < len(IntermediateChannels), it means this row is from intermediate result.
+	// Otherwise, if ChannelIndex == len(IntermediateChannels), it means this row is from final result.
+	ChannelIndex int
 	// Row is the actual data of this row.
 	chunk.Row
 }
@@ -825,8 +825,8 @@ func (iter *selRespChannelIter) Next() (SelectResultRow, error) {
 	if iter.chk != nil && iter.chkOffset < iter.chk.NumRows() {
 		iter.chkOffset++
 		return SelectResultRow{
-			Channel: iter.channel,
-			Row:     iter.chk.GetRow(iter.chkOffset - 1),
+			ChannelIndex: iter.channel,
+			Row:          iter.chk.GetRow(iter.chkOffset - 1),
 		}, nil
 	}
 
@@ -836,8 +836,8 @@ func (iter *selRespChannelIter) Next() (SelectResultRow, error) {
 
 	iter.chkOffset = 1
 	return SelectResultRow{
-		Channel: iter.channel,
-		Row:     iter.chk.GetRow(0),
+		ChannelIndex: iter.channel,
+		Row:          iter.chk.GetRow(0),
 	}, nil
 }
 

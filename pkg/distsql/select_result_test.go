@@ -257,7 +257,7 @@ func TestSelRespChannelIterRead(t *testing.T) {
 				require.True(t, row.IsEmpty())
 			} else {
 				require.False(t, row.IsEmpty())
-				require.Equal(t, 1, row.Channel)
+				require.Equal(t, 1, row.ChannelIndex)
 				strVal := row.GetString(0)
 				intVal := row.GetInt64(1)
 				tmVal, err := row.GetTime(2).GoTime(loc)
@@ -410,14 +410,14 @@ func TestSelectResultIter(t *testing.T) {
 				if row.IsEmpty() {
 					break
 				}
-				require.LessOrEqual(t, row.Channel, len(intermediateOutputTypes))
-				channels = append(channels, row.Channel)
-				if row.Channel == 2 {
+				require.LessOrEqual(t, row.ChannelIndex, len(intermediateOutputTypes))
+				channels = append(channels, row.ChannelIndex)
+				if row.ChannelIndex == 2 {
 					rows = append(rows, fmt.Sprintf(
 						"%d_%d_%d_%d",
 						row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3),
 					))
-				} else if row.Channel == 0 {
+				} else if row.ChannelIndex == 0 {
 					rows = append(rows, row.GetInt64(0))
 				} else {
 					rows = append(rows, row.GetString(0))
