@@ -174,7 +174,7 @@ const updateBindingUsageInfoBatchSize = 10
 // WriteIntervalAfterNoReadBinding indicates the interval at which a write operation needs to be performed after a binding has not been read.
 var WriteIntervalAfterNoReadBinding = 2 * time.Hour
 
-func UpdateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings []*Binding) error {
+func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings []*Binding) error {
 	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) error {
 		cnt := 0
 		for _, binding := range bindings {
@@ -191,6 +191,7 @@ func UpdateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 				if err != nil {
 					return err
 				}
+				binding.ResetUsageInfo()
 			}
 			if cnt > updateBindingUsageInfoBatchSize {
 				break
