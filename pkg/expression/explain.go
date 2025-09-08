@@ -154,17 +154,11 @@ func (expr *Constant) ExplainInfo(ctx EvalContext) string {
 
 	valueStr := expr.format(dt)
 
-	// Add subquery reference if available (same logic as StringWithCtx)
+	if redact == errors.RedactLogMarker {
+		valueStr = "‹" + valueStr + "›"
+	}
 	if expr.SubqueryRefID > 0 {
 		return fmt.Sprintf("ScalarQueryCol#%d(%s)", expr.SubqueryRefID, valueStr)
-	}
-
-	if redact == errors.RedactLogMarker {
-		builder := new(strings.Builder)
-		builder.WriteString("‹")
-		builder.WriteString(valueStr)
-		builder.WriteString("›")
-		return builder.String()
 	}
 	return valueStr
 }

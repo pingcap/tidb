@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -213,6 +214,9 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	return builder.String(), params
 }
 
+// hasDeletedExpiredRows just test mark for delete expired rows once.
+var hasDeletedExpiredRows = atomic.Bool{}
+
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
 		tableName = "tidb_runaway_queries"
@@ -223,9 +227,22 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	if !rm.ddl.OwnerManager().IsOwner() {
 		return
 	}
+	batchSize := runawayRecordGCSelectBatchSize
+	deleteSize := runawayRecordGCBatchSize
 	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Second * 1
+		expiredDuration = time.Millisecond * 1
+		deleteSize = 2
+		batchSize = 5 * deleteSize
 	})
+
+	failpoint.Inject("deleteExpiredRows", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return()
+		}
+	})
+	if hasDeletedExpiredRows.Load() {
+		return
+	}
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
@@ -252,7 +269,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	var leftRows [][]types.Datum
 	for {
 		sql := ""
-		if sql, err = generator.NextSQL(leftRows, runawayRecordGCSelectBatchSize); err != nil {
+		if sql, err = generator.NextSQL(leftRows, batchSize); err != nil {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
@@ -260,7 +277,6 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		if len(sql) == 0 {
 			return
 		}
-
 		rows, sqlErr := ExecRCRestrictedSQL(rm.sysSessionPool, sql, nil)
 		if sqlErr != nil {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
@@ -270,16 +286,15 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
-
-		for len(leftRows) > 0 {
-			var delBatch [][]types.Datum
-			if len(leftRows) < runawayRecordGCBatchSize {
-				delBatch = leftRows
-				leftRows = nil
-			} else {
-				delBatch = leftRows[0:runawayRecordGCBatchSize]
-				leftRows = leftRows[runawayRecordGCBatchSize:]
+		failpoint.Inject("deleteExpiredRows", func() {
+			hasDeletedExpiredRows.Store(true)
+		})
+		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
+			endIndex := startIndex + deleteSize
+			if endIndex > len(leftRows) {
+				endIndex = len(leftRows)
 			}
+			delBatch := leftRows[startIndex:endIndex]
 			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
 			if err != nil {
 				logutil.BgLogger().Error(
