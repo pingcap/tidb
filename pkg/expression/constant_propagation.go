@@ -858,10 +858,9 @@ func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterCond
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.joinConds...)
+	s.joinConds = RemoveDupExprs(append(s.joinConds, joinKeys...))
 	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
-	joinConds = append(s.joinConds, joinKeys...)
-	joinConds = RemoveDupExprs(joinConds)
-	return joinConds, slices.Clone(s.filterConds)
+	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
