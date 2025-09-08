@@ -78,6 +78,10 @@ func TestCartesianJoinOrder(t *testing.T) {
     select a, b, c from x
 ) tt`)
 		tk.MustExec(`analyze table t1, t2, t3 all columns`)
+		tk.MustExec(`set @@tidb_stats_load_sync_wait=1000`)
+		tk.MustQuery(`select count(1) from t1 where a=1 and b=1`) // trigger stats loading
+		tk.MustQuery(`select count(1) from t2 where a=1 and b=1`)
+		tk.MustQuery(`select count(1) from t2 where a=1 and b=1`)
 		runJoinReorderTestData(t, tk, caller)
 
 		// after setting tidb_opt_cartesian_join_order_threshold, we could get a plan with cartesian join and lower cost.
