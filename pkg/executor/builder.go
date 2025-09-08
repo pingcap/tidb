@@ -1440,6 +1440,23 @@ func (b *executorBuilder) buildUnionScanExec(v *physicalop.PhysicalUnionScan) ex
 	return b.buildUnionScanFromReader(reader, v)
 }
 
+func collectColIdxFromByItems(byItems []*plannerutil.ByItems, cols []*model.ColumnInfo) ([]int, error) {
+	var colIdxs []int
+	for _, item := range byItems {
+		col, ok := item.Expr.(*expression.Column)
+		if !ok {
+			return nil, errors.Errorf("Not support non-column in orderBy pushed down")
+		}
+		for i, c := range cols {
+			if c.ID == col.ID {
+				colIdxs = append(colIdxs, i)
+				break
+			}
+		}
+	}
+	return colIdxs, nil
+}
+
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
@@ -1489,19 +1506,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, item := range x.byItems {
-			c, ok := item.Expr.(*expression.Column)
-			if !ok {
-				b.err = errors.Errorf("Not support non-column in orderBy pushed down")
-				return nil
-			}
-			for i, col := range x.columns {
-				if col.ID == c.ID {
-					us.usedIndex = append(us.usedIndex, i)
-					break
-				}
-			}
+		colIdxes, error := collectColIdxFromByItems(x.byItems, x.columns)
+		if error != nil {
+			b.err = error
+			return nil
 		}
+		us.usedIndex = colIdxes
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1510,20 +1520,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, item := range x.byItems {
-			c, ok := item.Expr.(*expression.Column)
-			if !ok {
-				b.err = errors.Errorf("Not support non-column in orderBy pushed down")
-				return nil
-			}
-			for i, col := range x.columns {
-				if col.ID == c.ID {
-					us.usedIndex = append(us.usedIndex, i)
-					break
-				}
-			}
+		colIdxes, error := collectColIdxFromByItems(x.byItems, x.columns)
+		if error != nil {
+			b.err = error
+			return nil
 		}
-		if len(x.byItems) == 0 {
+		us.usedIndex = colIdxes
+		if len(us.usedIndex) == 0 {
 			for _, ic := range x.index.Columns {
 				for i, col := range x.columns {
 					if col.Name.L == ic.Name.L {
@@ -1541,20 +1544,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		for _, item := range x.byItems {
-			c, ok := item.Expr.(*expression.Column)
-			if !ok {
-				b.err = errors.Errorf("Not support non-column in orderBy pushed down")
-				return nil
-			}
-			for i, col := range x.columns {
-				if col.ID == c.ID {
-					us.usedIndex = append(us.usedIndex, i)
-					break
-				}
-			}
+		colIdxes, error := collectColIdxFromByItems(x.byItems, x.columns)
+		if error != nil {
+			b.err = error
+			return nil
 		}
-		if len(x.byItems) == 0 {
+		us.usedIndex = colIdxes
+		if len(us.usedIndex) == 0 {
 			for _, ic := range x.index.Columns {
 				for i, col := range x.columns {
 					if col.Name.L == ic.Name.L {
@@ -1574,19 +1570,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		if len(x.byItems) != 0 {
 			us.keepOrder = x.keepOrder
 			us.desc = x.byItems[0].Desc
-			for _, item := range x.byItems {
-				c, ok := item.Expr.(*expression.Column)
-				if !ok {
-					b.err = errors.Errorf("Not support non-column in orderBy pushed down")
-					return nil
-				}
-				for i, col := range x.columns {
-					if col.ID == c.ID {
-						us.usedIndex = append(us.usedIndex, i)
-						break
-					}
-				}
+			colIdxes, error := collectColIdxFromByItems(x.byItems, x.columns)
+			if error != nil {
+				b.err = error
+				return nil
 			}
+			us.usedIndex = colIdxes
 		}
 		us.partitionIDMap = x.partitionIDMap
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
