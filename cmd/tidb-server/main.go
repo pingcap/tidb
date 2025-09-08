@@ -885,9 +885,9 @@ func setGlobalVars() {
 		setInstanceVar(vardef.TiDBInstancePlanCacheMaxMemSize, cfg.Instance.InstancePlanCacheMaxMemSize)
 		setInstanceVar(vardef.TiDBStatsCacheMemQuota, strconv.FormatUint(cfg.Instance.StatsCacheMemQuota, 10))
 		setInstanceVar(vardef.TiDBMemQuotaBindingCache, strconv.FormatUint(cfg.Instance.MemQuotaBindingCache, 10))
+		setInstanceVar(vardef.TiDBSchemaCacheSize, cfg.Instance.SchemaCacheSize)
 	}
 
-	variable.SetSysVar(vardef.TiDBSchemaCacheSize, cfg.Instance.SchemaCacheSize)
 	variable.SetSysVar(vardef.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(vardef.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(vardef.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
