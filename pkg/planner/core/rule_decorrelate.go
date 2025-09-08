@@ -160,7 +160,7 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 
 	// Ensure the Apply operator is of a suitable join type to match the required pattern.
 	// Only LeftOuterJoin or LeftOuterSemiJoin are considered valid here.
-	if apply.JoinType != logicalop.LeftOuterJoin && apply.JoinType != logicalop.LeftOuterSemiJoin {
+	if apply.JoinType != base.LeftOuterJoin && apply.JoinType != base.LeftOuterSemiJoin {
 		return nil, false
 	}
 	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
@@ -261,7 +261,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
-			if apply.JoinType == logicalop.LeftOuterJoin {
+			if apply.JoinType == base.LeftOuterJoin {
 				if skipDecorrelateProjectionForLeftOuterApply(apply, proj) {
 					goto NoOptimize
 				}
@@ -290,7 +290,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 
 			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
-			if apply.JoinType != logicalop.SemiJoin && apply.JoinType != logicalop.LeftOuterSemiJoin && apply.JoinType != logicalop.AntiSemiJoin && apply.JoinType != logicalop.AntiLeftOuterSemiJoin {
+			if apply.JoinType != base.SemiJoin && apply.JoinType != base.LeftOuterSemiJoin && apply.JoinType != base.AntiSemiJoin && apply.JoinType != base.AntiLeftOuterSemiJoin {
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
@@ -308,7 +308,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
 			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
 			// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
-			if apply.JoinType != logicalop.SemiJoin && apply.JoinType != logicalop.LeftOuterSemiJoin && apply.JoinType != logicalop.AntiSemiJoin && apply.JoinType != logicalop.AntiLeftOuterSemiJoin {
+			if apply.JoinType != base.SemiJoin && apply.JoinType != base.LeftOuterSemiJoin && apply.JoinType != base.AntiSemiJoin && apply.JoinType != base.AntiLeftOuterSemiJoin {
 				goto NoOptimize
 			}
 			// If subquery has some filter condition, we will not optimize limit.
@@ -325,7 +325,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 		} else if agg, ok := innerPlan.(*logicalop.LogicalAggregation); ok {
 			if apply.CanPullUpAgg() && agg.CanPullUp() {
 				innerPlan = agg.Children()[0]
-				apply.JoinType = logicalop.LeftOuterJoin
+				apply.JoinType = base.LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().PKOrUK[0])
@@ -382,7 +382,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
 			// the equal conditions contain the correlated column of this apply.
-			if sel, ok := agg.Children()[0].(*logicalop.LogicalSelection); ok && apply.JoinType == logicalop.LeftOuterJoin {
+			if sel, ok := agg.Children()[0].(*logicalop.LogicalSelection); ok && apply.JoinType == base.LeftOuterJoin {
 				var (
 					eqCondWithCorCol []*expression.ScalarFunction
 					remainedExpr     []expression.Expression
@@ -562,7 +562,7 @@ func appendPullUpAggTraceStep(p *logicalop.LogicalApply, np base.LogicalPlan, ag
 	}
 	reason := func() string {
 		return fmt.Sprintf("%v_%v's functions haven't any group by items and %v_%v's join type isn't %v or %v, and hasn't any conditions",
-			agg.TP(), agg.ID(), p.TP(), p.ID(), logicalop.InnerJoin.String(), logicalop.LeftOuterJoin.String())
+			agg.TP(), agg.ID(), p.TP(), p.ID(), base.InnerJoin.String(), base.LeftOuterJoin.String())
 	}
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }

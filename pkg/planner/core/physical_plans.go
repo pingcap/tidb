@@ -24,10 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
@@ -62,12 +60,6 @@ var (
 	_ base.PhysicalPlan = &physicalop.BatchPointGetPlan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableSample{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSequence{}
-
-	_ PhysicalJoin = &physicalop.PhysicalHashJoin{}
-	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
-	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
-	_ PhysicalJoin = &physicalop.PhysicalIndexHashJoin{}
-	_ PhysicalJoin = &physicalop.PhysicalIndexMergeJoin{}
 )
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
@@ -112,15 +104,6 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 	return columns, schema, true
 }
 
-// PhysicalJoin provides some common methods for join operators.
-// Note that PhysicalApply is deliberately excluded from this interface.
-type PhysicalJoin interface {
-	base.PhysicalPlan
-	PhysicalJoinImplement()
-	GetInnerChildIdx() int
-	GetJoinType() logicalop.JoinType
-}
-
 // PhysicalExchangeReceiver accepts connection and receives data passively.
 type PhysicalExchangeReceiver struct {
 	physicalop.BasePhysicalPlan
@@ -145,11 +128,6 @@ func (p *PhysicalExchangeReceiver) Clone(newCtx base.PlanContext) (base.Physical
 	return np, nil
 }
 
-// GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
-func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
-	return p.Children()[0].(*PhysicalExchangeSender)
-}
-
 // MemoryUsage return the memory usage of PhysicalExchangeReceiver
 func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 	if p == nil {
@@ -161,73 +139,6 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 		sum += frag.MemoryUsage()
 	}
 	return
-}
-
-// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing.
-type PhysicalExchangeSender struct {
-	physicalop.BasePhysicalPlan
-
-	TargetTasks          []*kv.MPPTask
-	TargetCTEReaderTasks [][]*kv.MPPTask
-	ExchangeType         tipb.ExchangeType
-	HashCols             []*property.MPPPartitionColumn
-	// Tasks is the mpp task for current PhysicalExchangeSender.
-	Tasks           []*kv.MPPTask
-	CompressionMode vardef.ExchangeCompressionMode
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalExchangeSender) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	np := new(PhysicalExchangeSender)
-	np.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np.BasePhysicalPlan = *base
-	np.ExchangeType = p.ExchangeType
-	np.HashCols = p.HashCols
-	np.CompressionMode = p.CompressionMode
-	return np, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalExchangeSender
-func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 +
-		int64(cap(p.TargetTasks)+cap(p.HashCols)+cap(p.Tasks))*size.SizeOfPointer
-	for _, hCol := range p.HashCols {
-		sum += hCol.MemoryUsage()
-	}
-	return
-}
-
-// GetCompressionMode returns the compression mode of this exchange sender.
-func (p *PhysicalExchangeSender) GetCompressionMode() vardef.ExchangeCompressionMode {
-	return p.CompressionMode
-}
-
-// GetSelfTasks returns mpp tasks for current PhysicalExchangeSender.
-func (p *PhysicalExchangeSender) GetSelfTasks() []*kv.MPPTask {
-	return p.Tasks
-}
-
-// SetSelfTasks sets mpp tasks for current PhysicalExchangeSender.
-func (p *PhysicalExchangeSender) SetSelfTasks(tasks []*kv.MPPTask) {
-	p.Tasks = tasks
-}
-
-// SetTargetTasks sets mpp tasks for current PhysicalExchangeSender.
-func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
-	p.TargetTasks = tasks
-}
-
-// AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
-func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
-	p.TargetTasks = append(p.TargetTasks, tasks...)
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

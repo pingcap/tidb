@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -533,8 +532,8 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	// for outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
 	outerTaskIndex := 1 - p.InnerChildIdx
-	if p.JoinType != logicalop.InnerJoin {
-		if p.JoinType == logicalop.RightOuterJoin {
+	if p.JoinType != base.InnerJoin {
+		if p.JoinType == base.RightOuterJoin {
 			outerTaskIndex = 1
 		} else {
 			outerTaskIndex = 0

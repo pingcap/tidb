@@ -51,9 +51,9 @@ func (*MaxMinEliminator) composeAggsByInnerJoin(originAgg *logicalop.LogicalAggr
 	sctx := plan.SCtx()
 	joins := make([]*logicalop.LogicalJoin, 0)
 	for i := 1; i < len(aggs); i++ {
-		join := logicalop.LogicalJoin{JoinType: logicalop.InnerJoin}.Init(sctx, plan.QueryBlockOffset())
+		join := logicalop.LogicalJoin{JoinType: base.InnerJoin}.Init(sctx, plan.QueryBlockOffset())
 		join.SetChildren(plan, aggs[i])
-		join.SetSchema(logicalop.BuildLogicalJoinSchema(logicalop.InnerJoin, join))
+		join.SetSchema(logicalop.BuildLogicalJoinSchema(base.InnerJoin, join))
 		plan = join
 		joins = append(joins, join)
 	}
