@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -77,6 +78,7 @@ type importStepExecutor struct {
 	wg           sync.WaitGroup
 
 	summary execute.SubtaskSummary
+	memPool *mydump.Pool
 }
 
 func getTableImporter(
@@ -154,7 +156,8 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 			s.tableImporter.CheckDiskQuota(s.importCtx)
 		}()
 	}
-	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
+	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(
+		s.GetResource(), s.tableImporter.Plan, true)
 	s.dataBlockSize = external.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
 	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
 	s.logger.Info("KV writer memory buf info",
@@ -222,8 +225,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
+	if s.memPool == nil {
+		s.memPool = mydump.GetPool(int(s.GetResource().Mem.Capacity()))
+	}
+
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()), s.memPool)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -365,7 +372,7 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	m.sortStore = store
-	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
+	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan, false)
 	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 	m.indexKVPartSize = max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 
