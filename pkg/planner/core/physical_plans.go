@@ -15,17 +15,12 @@
 package core
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
@@ -62,30 +57,6 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalSequence{}
 )
 
-// GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *physicalop.PhysicalIndexReader {
-	reader := physicalop.PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.SetStats(stats)
-	reader.SetSchema(schema)
-	reader.SetChildrenReqProps(props)
-	return reader
-}
-
-// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *physicalop.PhysicalTableReader {
-	reader := physicalop.PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.PlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   sg.Source.AllConds,
-		PartitionNames: sg.Source.PartitionNames,
-		Columns:        sg.Source.TblCols,
-		ColumnNames:    sg.Source.OutputNames(),
-	}
-	reader.SetStats(stats)
-	reader.SetSchema(schema)
-	reader.SetChildrenReqProps(props)
-	return reader
-}
-
 // AddExtraPhysTblIDColumn for partition table.
 // For keepOrder with partition table,
 // we need use partitionHandle to distinct two handles,
@@ -102,74 +73,4 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 		ID:       model.ExtraPhysTblID,
 	})
 	return columns, schema, true
-}
-
-// PhysicalExchangeReceiver accepts connection and receives data passively.
-type PhysicalExchangeReceiver struct {
-	physicalop.BasePhysicalPlan
-
-	Tasks []*kv.MPPTask
-	frags []*Fragment
-
-	IsCTEReader bool
-}
-
-// Clone implment op.PhysicalPlan interface.
-func (p *PhysicalExchangeReceiver) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	np := new(PhysicalExchangeReceiver)
-	np.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np.BasePhysicalPlan = *base
-
-	np.IsCTEReader = p.IsCTEReader
-	return np, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalExchangeReceiver
-func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(p.Tasks)+cap(p.frags))*size.SizeOfPointer
-	for _, frag := range p.frags {
-		sum += frag.MemoryUsage()
-	}
-	return
-}
-
-// CollectPlanStatsVersion uses to collect the statistics version of the plan.
-func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
-	for _, child := range plan.Children() {
-		statsInfos = CollectPlanStatsVersion(child, statsInfos)
-	}
-	switch copPlan := plan.(type) {
-	case *physicalop.PhysicalTableReader:
-		statsInfos = CollectPlanStatsVersion(copPlan.TablePlan, statsInfos)
-	case *physicalop.PhysicalIndexReader:
-		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
-	case *physicalop.PhysicalIndexLookUpReader:
-		// For index loop up, only the indexPlan is necessary,
-		// because they use the same stats and we do not set the stats info for tablePlan.
-		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
-	case *physicalop.PhysicalIndexScan:
-		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
-	case *physicalop.PhysicalTableScan:
-		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
-	}
-
-	return statsInfos
-}
-
-// SafeClone clones this op.PhysicalPlan and handles its panic.
-func SafeClone(sctx base.PlanContext, v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = errors.Errorf("%v", r)
-		}
-	}()
-	return v.Clone(sctx)
 }

@@ -30,6 +30,39 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// CollectPlanStatsVersion uses to collect the statistics version of the plan.
+func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
+	for _, child := range plan.Children() {
+		statsInfos = CollectPlanStatsVersion(child, statsInfos)
+	}
+	switch copPlan := plan.(type) {
+	case *PhysicalTableReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.TablePlan, statsInfos)
+	case *PhysicalIndexReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
+	case *PhysicalIndexLookUpReader:
+		// For index loop up, only the indexPlan is necessary,
+		// because they use the same stats and we do not set the stats info for tablePlan.
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
+	case *PhysicalIndexScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
+	case *PhysicalTableScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
+	}
+
+	return statsInfos
+}
+
+// SafeClone clones this op.PhysicalPlan and handles its panic.
+func SafeClone(sctx base.PlanContext, v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone(sctx)
+}
+
 // BasePhysicalPlan is the common structure that used in physical plan.
 type BasePhysicalPlan struct {
 	baseimpl.Plan
