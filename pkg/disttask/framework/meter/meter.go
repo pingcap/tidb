@@ -27,6 +27,7 @@ import (
 	mconfig "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/metering_sdk/storage"
 	meteringwriter "github.com/pingcap/metering_sdk/writer/metering"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,6 +40,42 @@ const (
 )
 
 var meteringInstance atomic.Pointer[Meter]
+
+// RecordDXFS3GetRequests records the S3 GET requests for DXF.
+func RecordDXFS3GetRequests(store kv.Storage, getReqCnt uint64) {
+	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
+		return
+	}
+	userKS := store.GetKeyspace()
+	meteringInstance.Load().Record(userKS, &MeterData{getRequests: uint64(getReqCnt)})
+}
+
+// RecordDXFS3PutRequests records the S3 PUT requests for DXF.
+func RecordDXFS3PutRequests(store kv.Storage, putReqCnt uint64) {
+	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
+		return
+	}
+	userKS := store.GetKeyspace()
+	meteringInstance.Load().Record(userKS, &MeterData{putRequests: uint64(putReqCnt)})
+}
+
+// RecordDXFScanDataTraffic records the scan data traffic for DXF.
+func RecordDXFScanDataTraffic(store kv.Storage, size int64) {
+	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
+		return
+	}
+	userKS := store.GetKeyspace()
+	meteringInstance.Load().Record(userKS, &MeterData{scanDataTraffic: uint64(size)})
+}
+
+// RecordDXFWriteDataSize records the write data size for DXF.
+func RecordDXFWriteDataSize(store kv.Storage, size int64) {
+	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
+		return
+	}
+	userKS := store.GetKeyspace()
+	meteringInstance.Load().Record(userKS, &MeterData{writeDataSize: uint64(size)})
+}
 
 // GetMetering gets the metering instance.
 func GetMetering() (*Meter, error) {
@@ -65,13 +102,17 @@ type Config struct {
 
 // MeterData
 type MeterData struct {
-	putRequests uint64
-	getRequests uint64
+	putRequests     uint64
+	getRequests     uint64
+	scanDataTraffic uint64
+	writeDataSize   uint64
 }
 
 func (m *MeterData) merge(other *MeterData) {
 	m.putRequests += other.putRequests
 	m.getRequests += other.getRequests
+	m.scanDataTraffic += other.scanDataTraffic
+	m.writeDataSize += other.writeDataSize
 }
 
 // Meter is responsible for recording and reporting metering data.
@@ -159,11 +200,13 @@ func (m *Meter) flush(ts int64, timeout time.Duration) {
 	array := make([]map[string]any, len(data))
 	for keyspace, d := range data {
 		array = append(array, map[string]any{
-			"version":         "1",
-			"cluster_id":      keyspace,
-			"source_name":     category,
-			"s3_put_requests": &common.MeteringValue{Value: uint64(d.putRequests), Unit: "count"},
-			"s3_get_requests": &common.MeteringValue{Value: uint64(d.getRequests), Unit: "count"},
+			"version":           "1",
+			"cluster_id":        keyspace,
+			"source_name":       category,
+			"s3_put_requests":   &common.MeteringValue{Value: uint64(d.putRequests), Unit: "count"},
+			"s3_get_requests":   &common.MeteringValue{Value: uint64(d.getRequests), Unit: "count"},
+			"scan_data_traffic": &common.MeteringValue{Value: uint64(d.scanDataTraffic), Unit: "bytes"},
+			"write_data_size":   &common.MeteringValue{Value: uint64(d.writeDataSize), Unit: "bytes"},
 		})
 	}
 

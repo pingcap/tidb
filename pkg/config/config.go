@@ -1437,15 +1437,19 @@ func (c *Config) Valid() error {
 			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")
 		}
 	}
-	if kerneltype.IsNextGen() && len(c.Metering.Type) > 0 {
-		if c.Metering.Bucket == "" {
-			return fmt.Errorf("bucket is required for the metering config")
-		}
-		if c.Metering.Prefix == "" {
-			return fmt.Errorf("prefix is required for the metering config")
-		}
-		if c.Metering.Region == "" {
-			return fmt.Errorf("region is required for the metering config")
+	if kerneltype.IsNextGen() {
+		if len(c.Metering.Type) > 0 {
+			if c.Metering.Bucket == "" {
+				return fmt.Errorf("bucket is required for the metering config")
+			}
+			if c.Metering.Prefix == "" {
+				return fmt.Errorf("prefix is required for the metering config")
+			}
+			if c.Metering.Region == "" {
+				return fmt.Errorf("region is required for the metering config")
+			}
+		} else {
+			logutil.BgLogger().Warn("metering configuration is empty, metering is disabled")
 		}
 	}
 

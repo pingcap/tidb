@@ -103,8 +103,8 @@ type SubtaskSummary struct {
 	Progresses []Progress `json:"progresses,omitempty"`
 }
 
-// Update stores the latest progress of the subtask.
-func (s *SubtaskSummary) Update() {
+// UpdateProgress stores the latest progress of the subtask.
+func (s *SubtaskSummary) UpdateProgress() {
 	s.Progresses = append(s.Progresses, Progress{
 		RowCnt:     s.RowCnt.Load(),
 		Bytes:      s.Bytes.Load(),
@@ -172,7 +172,7 @@ func (s *SubtaskSummary) Reset() {
 	s.PutReqCnt.Store(0)
 	s.GetReqCnt.Store(0)
 	s.Progresses = s.Progresses[:0]
-	s.Update()
+	s.UpdateProgress()
 }
 
 // Collector is the interface for collecting subtask metrics.

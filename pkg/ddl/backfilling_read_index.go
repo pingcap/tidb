@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/disttask/framework/meter"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -361,7 +362,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		r.store,
@@ -403,6 +404,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		kvMeta.MergeSummary(summary)
 		r.summary.PutReqCnt.Add(summary.PutRequestCount)
+		meter.RecordDXFS3PutRequests(r.store, summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -412,7 +414,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		r.store,
@@ -437,11 +439,17 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 type distTaskRowCntCollector struct {
 	summary *execute.SubtaskSummary
 	counter prometheus.Counter
+	store   kv.Storage
 }
 
-func newDistTaskRowCntCollector(summary *execute.SubtaskSummary, dbName, tblName, idxName string) *distTaskRowCntCollector {
+func newDistTaskRowCntCollector(
+	store kv.Storage,
+	summary *execute.SubtaskSummary,
+	dbName, tblName, idxName string,
+) *distTaskRowCntCollector {
 	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
 	return &distTaskRowCntCollector{
+		store:   store,
 		summary: summary,
 		counter: counter,
 	}
@@ -449,10 +457,12 @@ func newDistTaskRowCntCollector(summary *execute.SubtaskSummary, dbName, tblName
 
 func (d *distTaskRowCntCollector) Accepted(bytes, _ int64) {
 	d.summary.ReadBytes.Add(bytes)
+	meter.RecordDXFScanDataTraffic(d.store, bytes)
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
+	meter.RecordDXFWriteDataSize(d.store, bytes)
 }

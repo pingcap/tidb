@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/meter"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -36,6 +38,7 @@ import (
 
 type mergeSortExecutor struct {
 	taskexecutor.BaseStepExecutor
+	store         kv.Storage
 	jobID         int64
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
@@ -47,12 +50,14 @@ type mergeSortExecutor struct {
 }
 
 func newMergeSortExecutor(
+	store kv.Storage,
 	jobID int64,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
+		store:         store,
 		jobID:         jobID,
 		indexes:       indexes,
 		ptbl:          ptbl,
@@ -83,6 +88,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
+		meter.RecordDXFS3GetRequests(m.store, summary.GetRequestCount)
 	}
 
 	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)
