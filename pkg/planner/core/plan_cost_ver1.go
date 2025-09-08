@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -470,8 +469,8 @@ func getCost4PhysicalIndexJoin(pp base.PhysicalPlan, outerCnt, innerCnt, outerCo
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of probing hash table in main thread.
 	numPairs := outerCnt * innerCnt
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -559,8 +558,8 @@ func getCost4PhysicalIndexHashJoin(pp base.PhysicalPlan, outerCnt, innerCnt, out
 	cpuCost += outerCPUCost / concurrency
 	// Cost of probing hash table concurrently.
 	numPairs := outerCnt * innerCnt
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -652,8 +651,8 @@ func getCost4PhysicalIndexMergeJoin(pp base.PhysicalPlan, outerCnt, innerCnt, ou
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of merge join in inner worker.
 	numPairs := outerCnt * innerCnt
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -725,8 +724,8 @@ func getCost4PhysicalApply(pp base.PhysicalPlan, lCount, rCount, lCost, rCost fl
 		rCount *= cost.SelectionFactor
 	}
 	if len(p.EqualConditions)+len(p.OtherConditions)+len(p.NAEqualConditions) > 0 {
-		if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-			p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+		if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+			p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 			cpuCost += lCount * rCount * sessVars.GetCPUFactor() * 0.5
 		} else {
 			cpuCost += lCount * rCount * sessVars.GetCPUFactor()
@@ -770,7 +769,7 @@ func getCost4PhysicalMergeJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFla
 	innerKeys := p.RightJoinKeys
 	innerSchema := p.Children()[1].Schema()
 	innerStats := p.Children()[1].StatsInfo()
-	if p.JoinType == logicalop.RightOuterJoin {
+	if p.JoinType == base.RightOuterJoin {
 		outerCnt = rCnt
 		innerCnt = lCnt
 		innerKeys = p.LeftJoinKeys
@@ -782,8 +781,8 @@ func getCost4PhysicalMergeJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFla
 		p.LeftJoinKeys, p.RightJoinKeys,
 		p.Children()[0].Schema(), p.Children()[1].Schema(),
 		p.LeftNAJoinKeys, p.RightNAJoinKeys)
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -867,8 +866,8 @@ func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag
 	// to the end of those pairs; since we have no idea about when we can
 	// terminate the iteration, we assume that we need to iterate half of
 	// those pairs in average.
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {

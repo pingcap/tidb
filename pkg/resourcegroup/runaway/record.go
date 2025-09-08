@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -214,7 +215,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 }
 
 // hasDeletedExpiredRows just test mark for delete expired rows once.
-var hasDeletedExpiredRows = false
+var hasDeletedExpiredRows = atomic.Bool{}
 
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
@@ -239,7 +240,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 			failpoint.Return()
 		}
 	})
-	if hasDeletedExpiredRows {
+	if hasDeletedExpiredRows.Load() {
 		return
 	}
 	expiredTime := time.Now().Add(-expiredDuration)
@@ -286,7 +287,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
 		failpoint.Inject("deleteExpiredRows", func() {
-			hasDeletedExpiredRows = true
+			hasDeletedExpiredRows.Store(true)
 		})
 		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
 			endIndex := startIndex + deleteSize

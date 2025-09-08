@@ -599,15 +599,15 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	case ast.LeftJoin:
 		// left outer join need to be checked elimination
 		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
-		joinPlan.JoinType = logicalop.LeftOuterJoin
+		joinPlan.JoinType = base.LeftOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), leftPlan.Schema().Len(), joinPlan.Schema().Len())
 	case ast.RightJoin:
 		// right outer join need to be checked elimination
 		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
-		joinPlan.JoinType = logicalop.RightOuterJoin
+		joinPlan.JoinType = base.RightOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), 0, leftPlan.Schema().Len())
 	default:
-		joinPlan.JoinType = logicalop.InnerJoin
+		joinPlan.JoinType = base.InnerJoin
 	}
 
 	// Merge sub-plan's FullSchema into this join plan.
@@ -685,7 +685,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		onCondition := expression.SplitCNFItems(onExpr)
 		// Keep these expressions as a LogicalSelection upon the inner join, in order to apply
 		// possible decorrelate optimizations. The ON clause is actually treated as a WHERE clause now.
-		if joinPlan.JoinType == logicalop.InnerJoin {
+		if joinPlan.JoinType == base.InnerJoin {
 			sel := logicalop.LogicalSelection{Conditions: onCondition}.Init(b.ctx, b.getSelectOffset())
 			sel.SetChildren(joinPlan)
 			return sel, nil
@@ -1733,7 +1733,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	leftOriginPlan base.LogicalPlan,
 	rightPlan base.LogicalPlan,
-	joinType logicalop.JoinType) (leftPlan base.LogicalPlan, err error) {
+	joinType base.JoinType) (leftPlan base.LogicalPlan, err error) {
 	leftPlan, err = b.buildDistinct(leftOriginPlan, leftOriginPlan.Schema().Len())
 	if err != nil {
 		return nil, err
@@ -1806,7 +1806,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (b
 		if rightPlan.Schema().Len() != columnNums {
 			return nil, nil, plannererrors.ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 		}
-		leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, logicalop.SemiJoin)
+		leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, base.SemiJoin)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1830,7 +1830,7 @@ func (b *PlanBuilder) buildExcept(ctx context.Context, selects []base.LogicalPla
 			if err != nil {
 				return nil, err
 			}
-			leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, logicalop.AntiSemiJoin)
+			leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, base.AntiSemiJoin)
 			if err != nil {
 				return nil, err
 			}
@@ -5177,7 +5177,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tab
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
-func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp logicalop.JoinType, markNoDecorrelate bool) base.LogicalPlan {
+func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp base.JoinType, markNoDecorrelate bool) base.LogicalPlan {
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConvertOuterToInnerJoin | rule.FlagConstantPropagation
 	ap := logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
@@ -5186,7 +5186,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPl
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 	setIsInApplyForCTE(innerPlan, ap.Schema())
 	// Note that, tp can only be LeftOuterJoin or InnerJoin, so we don't consider other outer joins.
-	if tp == logicalop.LeftOuterJoin {
+	if tp == base.LeftOuterJoin {
 		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
 		util.ResetNotNullFlag(ap.Schema(), outerPlan.Schema().Len(), ap.Schema().Len())
 	}
@@ -5260,16 +5260,16 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 		joinPlan.SetOutputNames(append(joinPlan.OutputNames(), types.EmptyName))
 		joinPlan.SetSchema(newSchema)
 		if not {
-			joinPlan.JoinType = logicalop.AntiLeftOuterSemiJoin
+			joinPlan.JoinType = base.AntiLeftOuterSemiJoin
 		} else {
-			joinPlan.JoinType = logicalop.LeftOuterSemiJoin
+			joinPlan.JoinType = base.LeftOuterSemiJoin
 		}
 	} else {
 		joinPlan.SetSchema(outerPlan.Schema().Clone())
 		if not {
-			joinPlan.JoinType = logicalop.AntiSemiJoin
+			joinPlan.JoinType = base.AntiSemiJoin
 		} else {
-			joinPlan.JoinType = logicalop.SemiJoin
+			joinPlan.JoinType = base.SemiJoin
 		}
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.

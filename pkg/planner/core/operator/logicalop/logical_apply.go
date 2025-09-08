@@ -79,7 +79,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	leftCols, rightCols := la.ExtractUsedCols(parentUsedCols)
 	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
 	var err error
-	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {
+	if allowEliminateApply && rightCols == nil && la.JoinType == base.LeftOuterJoin {
 		logicaltrace.ApplyEliminateTraceStep(la.Children()[1], opt)
 		resultPlan := la.Children()[0]
 		// reEnter the new child's column pruning, returning child[0] as a new child here.
@@ -142,7 +142,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 	for id, c := range leftProfile.ColNDVs {
 		la.StatsInfo().ColNDVs[id] = c
 	}
-	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
+	if la.JoinType == base.LeftOuterSemiJoin || la.JoinType == base.AntiLeftOuterSemiJoin {
 		la.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
 		for i := childSchema[0].Len(); i < selfSchema.Len(); i++ {
@@ -157,7 +157,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
 	var outerSchema *expression.Schema
 	// Apply doesn't have RightOuterJoin.
-	if la.JoinType == LeftOuterJoin || la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
+	if la.JoinType == base.LeftOuterJoin || la.JoinType == base.LeftOuterSemiJoin || la.JoinType == base.AntiLeftOuterSemiJoin {
 		outerSchema = la.Children()[0].Schema()
 	}
 	if len(colGroups) == 0 || outerSchema == nil {
@@ -216,11 +216,11 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 		}
 	}
 	switch la.JoinType {
-	case InnerJoin:
+	case base.InnerJoin:
 		return la.ExtractFDForInnerJoin(equivs)
-	case LeftOuterJoin, RightOuterJoin:
+	case base.LeftOuterJoin, base.RightOuterJoin:
 		return la.ExtractFDForOuterJoin(equivs)
-	case SemiJoin:
+	case base.SemiJoin:
 		return la.ExtractFDForSemiJoin(equivs)
 	default:
 		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
@@ -235,7 +235,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 
 // CanPullUpAgg checks if an apply can pull an aggregation up.
 func (la *LogicalApply) CanPullUpAgg() bool {
-	if la.JoinType != InnerJoin && la.JoinType != LeftOuterJoin {
+	if la.JoinType != base.InnerJoin && la.JoinType != base.LeftOuterJoin {
 		return false
 	}
 	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
@@ -275,7 +275,7 @@ func (la *LogicalApply) DeCorColFromEqExpr(expr expression.Expression) expressio
 }
 
 func (la *LogicalApply) getGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
-	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin || la.JoinType == LeftOuterJoin {
+	if la.JoinType == base.LeftOuterSemiJoin || la.JoinType == base.AntiLeftOuterSemiJoin || la.JoinType == base.LeftOuterJoin {
 		return childStats[0].GroupNDVs
 	}
 	return nil

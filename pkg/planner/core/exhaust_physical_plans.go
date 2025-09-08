@@ -86,7 +86,7 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	}
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
+	case base.SemiJoin, base.AntiSemiJoin:
 		leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
 		leftNAJoinKeys, _ := p.GetNAJoinKeys()
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && physicalop.CanUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
@@ -107,7 +107,7 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 				forceRightToBuild = false
 			}
 		}
-	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
@@ -117,21 +117,21 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 			forceLeftToBuild = false
 			forceRightToBuild = false
 		}
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		if !forceLeftToBuild {
 			joins = append(joins, getHashJoin(ge, p, prop, 1, false))
 		}
 		if !forceRightToBuild {
 			joins = append(joins, getHashJoin(ge, p, prop, 1, true))
 		}
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		if !forceLeftToBuild {
 			joins = append(joins, getHashJoin(ge, p, prop, 0, true))
 		}
 		if !forceRightToBuild {
 			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
 		}
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		if forceLeftToBuild {
 			joins = append(joins, getHashJoin(ge, p, prop, 0, false))
 		} else if forceRightToBuild {
@@ -1773,11 +1773,11 @@ func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProp
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
 	switch p.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin, logicalop.LeftOuterJoin:
+	case base.SemiJoin, base.AntiSemiJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin, base.LeftOuterJoin:
 		supportLeftOuter = true
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		supportRightOuter = true
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		supportLeftOuter, supportRightOuter = true, true
 	}
 	// according join type to enumerate index join with inner children's indexJoinProp.
@@ -1816,11 +1816,11 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
 	switch p.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin, logicalop.LeftOuterJoin:
+	case base.SemiJoin, base.AntiSemiJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin, base.LeftOuterJoin:
 		supportLeftOuter = true
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		supportRightOuter = true
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		supportLeftOuter, supportRightOuter = true, true
 	}
 	candidates := make([]base.PhysicalPlan, 0, 2)
@@ -2373,8 +2373,8 @@ func preferMppBCJ(super base.LogicalPlan) bool {
 		return true
 	}
 
-	onlyCheckChild1 := p.JoinType == logicalop.LeftOuterJoin || p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin
-	onlyCheckChild0 := p.JoinType == logicalop.RightOuterJoin
+	onlyCheckChild1 := p.JoinType == base.LeftOuterJoin || p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin
+	onlyCheckChild0 := p.JoinType == base.RightOuterJoin
 
 	if p.SCtx().GetSessionVars().PreferBCJByExchangeDataSize {
 		mppStoreCnt, err := p.SCtx().GetMPPClient().GetMPPStoreCount()
@@ -2445,7 +2445,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		return nil
 	}
 
-	if p.JoinType != logicalop.InnerJoin && p.JoinType != logicalop.LeftOuterJoin && p.JoinType != logicalop.RightOuterJoin && p.JoinType != logicalop.SemiJoin && p.JoinType != logicalop.AntiSemiJoin && p.JoinType != logicalop.LeftOuterSemiJoin && p.JoinType != logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType != base.InnerJoin && p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.SemiJoin && p.JoinType != base.AntiSemiJoin && p.JoinType != base.LeftOuterSemiJoin && p.JoinType != base.AntiLeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is not supported now.")
 		return nil
 	}
@@ -2460,11 +2460,11 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 			return nil
 		}
 	}
-	if len(p.LeftConditions) != 0 && p.JoinType != logicalop.LeftOuterJoin {
+	if len(p.LeftConditions) != 0 && p.JoinType != base.LeftOuterJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.")
 		return nil
 	}
-	if len(p.RightConditions) != 0 && p.JoinType != logicalop.RightOuterJoin {
+	if len(p.RightConditions) != 0 && p.JoinType != base.RightOuterJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `right join` but has right conditions, which is not supported by mpp now.")
 		return nil
 	}
@@ -2501,12 +2501,12 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 	preferredBuildIndex := 0
 	fixedBuildSide := false // Used to indicate whether the build side for the MPP join is fixed or not.
 	stats0, stats1, _, _ := getJoinChildStatsAndSchema(ge, p)
-	if p.JoinType == logicalop.InnerJoin {
+	if p.JoinType == base.InnerJoin {
 		if stats0.Count() > stats1.Count() {
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType.IsSemiJoin() {
-		if !useBCJ && !p.IsNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin) {
+		if !useBCJ && !p.IsNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin) {
 			// TiFlash only supports Non-null_aware non-cross semi/anti_semi join to use both sides as build side
 			preferredBuildIndex = 1
 			// MPPOuterJoinFixedBuildSide default value is false
@@ -2519,7 +2519,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 			fixedBuildSide = true
 		}
 	}
-	if p.JoinType == logicalop.LeftOuterJoin || p.JoinType == logicalop.RightOuterJoin {
+	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
 		// TiFlash does not require that the build side must be the inner table for outer join.
 		// so we can choose the build side based on the row count, except that:
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
@@ -2530,7 +2530,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 				// The hint has higher priority than variable.
 				fixedBuildSide = true
 			}
-			if p.JoinType == logicalop.LeftOuterJoin {
+			if p.JoinType == base.LeftOuterJoin {
 				preferredBuildIndex = 1
 			}
 		} else if stats0.Count() > stats1.Count() {
@@ -2593,11 +2593,11 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		if prop.MPPPartitionTp == property.HashType {
 			var matches []int
 			switch p.JoinType {
-			case logicalop.InnerJoin:
+			case base.InnerJoin:
 				if matches = prop.IsSubsetOf(lPartitionKeys); len(matches) == 0 {
 					matches = prop.IsSubsetOf(rPartitionKeys)
 				}
-			case logicalop.RightOuterJoin:
+			case base.RightOuterJoin:
 				// for right out join, only the right partition keys can possibly matches the prop, because
 				// the left partition keys will generate NULL values randomly
 				// todo maybe we can add a null-sensitive flag in the MPPPartitionColumn to indicate whether the partition column is
