@@ -2364,6 +2364,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePipelinedWindowExec = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableNoDecorrelateInSelect, Value: BoolToOnOff(vardef.DefOptEnableNoDecorrelateInSelect), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNoDecorrelateInSelect = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil
@@ -3662,7 +3666,9 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case vardef.TiDBRowFormatVersion:
 		varVal = strconv.Itoa(vardef.DefTiDBRowFormatV2)
 	case vardef.TiDBTxnAssertionLevel:
-		if !kerneltype.IsNextGen() {
+		if kerneltype.IsNextGen() {
+			varVal = vardef.GetDefaultTxnAssertionLevel()
+		} else {
 			varVal = vardef.AssertionFastStr
 		}
 	case vardef.TiDBEnableMutationChecker:

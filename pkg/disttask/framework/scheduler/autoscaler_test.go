@@ -102,3 +102,42 @@ func TestCalcConcurrencyByDataSize(t *testing.T) {
 			fmt.Sprintf("dataSize:%d cores:%d", tt.dataSize, tt.cores))
 	}
 }
+
+func TestCalcDistSQLConcurrency(t *testing.T) {
+	tests := []struct {
+		// concurrency, nodeCount, nodeCoreCount
+		c, n, nc int
+		expected int
+	}{
+		// on 8c machine
+		{c: 1, n: 1, nc: 8, expected: 15},
+		{c: 3, n: 1, nc: 8, expected: 45},
+		{c: 7, n: 1, nc: 8, expected: 105},
+		{c: 8, n: 1, nc: 8, expected: 120},
+		{c: 8, n: 2, nc: 8, expected: 124},
+		{c: 8, n: 5, nc: 8, expected: 137},
+		{c: 8, n: 32, nc: 8, expected: 256},
+		{c: 8, n: 33, nc: 8, expected: 256},
+		{c: 8, n: 50, nc: 8, expected: 256},
+		// on 16c machine
+		{c: 1, n: 1, nc: 16, expected: 15},
+		{c: 7, n: 1, nc: 16, expected: 105},
+		{c: 16, n: 1, nc: 16, expected: 240},
+		{c: 16, n: 5, nc: 16, expected: 275},
+		{c: 16, n: 32, nc: 16, expected: 512},
+		{c: 16, n: 33, nc: 16, expected: 512},
+		{c: 16, n: 50, nc: 16, expected: 512},
+		// on 32c machine
+		{c: 1, n: 1, nc: 32, expected: 15},
+		{c: 7, n: 1, nc: 32, expected: 105},
+		{c: 32, n: 1, nc: 32, expected: 480},
+		{c: 32, n: 5, nc: 32, expected: 550},
+		{c: 32, n: 32, nc: 32, expected: 1024},
+		{c: 32, n: 33, nc: 32, expected: 1024},
+	}
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			require.Equal(t, tt.expected, CalcDistSQLConcurrency(tt.c, tt.n, tt.nc))
+		})
+	}
+}

@@ -35,9 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// For mpp err recovery, hold at most 4 * MaxChunkSize rows.
-const mppErrRecoveryHoldChkCap = 4
-
 func useMPPExecution(ctx sessionctx.Context, tr *physicalop.PhysicalTableReader) bool {
 	if !ctx.GetSessionVars().IsMPPAllowed() {
 		return false
