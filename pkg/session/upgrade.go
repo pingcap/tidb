@@ -466,7 +466,8 @@ const (
 	version251 = 251
 
 	// version 252
-	// Update FSP of mysql.bind_info timestamp columns to microsecond precision.
+	// Update FSP of mysql.bind_info timestamp columns to microsecond precision and
+	// add last_used_time to mysql.bind_info
 	version252 = 252
 )
 
@@ -2027,4 +2028,5 @@ func upgradeToVer251(s sessionapi.Session, _ int64) {
 func upgradeToVer252(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info CHANGE create_time create_time TIMESTAMP(6)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info CHANGE update_time update_time TIMESTAMP(6)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN last_used_time TIMESTAMP DEFAULT NULL AFTER `plan_digest`", infoschema.ErrColumnExists)
 }
