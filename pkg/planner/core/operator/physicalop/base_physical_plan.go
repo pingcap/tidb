@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -29,6 +31,56 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+var (
+	_ base.PhysicalPlan = &PhysicalSelection{}
+	_ base.PhysicalPlan = &PhysicalProjection{}
+	_ base.PhysicalPlan = &PhysicalTopN{}
+	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
+	_ base.PhysicalPlan = &PhysicalTableDual{}
+	_ base.PhysicalPlan = &PhysicalUnionAll{}
+	_ base.PhysicalPlan = &PhysicalSort{}
+	_ base.PhysicalPlan = &NominalSort{}
+	_ base.PhysicalPlan = &PhysicalLock{}
+	_ base.PhysicalPlan = &PhysicalLimit{}
+	_ base.PhysicalPlan = &PhysicalIndexScan{}
+	_ base.PhysicalPlan = &PhysicalTableScan{}
+	_ base.PhysicalPlan = &PhysicalTableReader{}
+	_ base.PhysicalPlan = &PhysicalIndexReader{}
+	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
+	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
+	_ base.PhysicalPlan = &PhysicalHashAgg{}
+	_ base.PhysicalPlan = &PhysicalStreamAgg{}
+	_ base.PhysicalPlan = &PhysicalApply{}
+	_ base.PhysicalPlan = &PhysicalIndexJoin{}
+	_ base.PhysicalPlan = &PhysicalHashJoin{}
+	_ base.PhysicalPlan = &PhysicalMergeJoin{}
+	_ base.PhysicalPlan = &PhysicalUnionScan{}
+	_ base.PhysicalPlan = &PhysicalWindow{}
+	_ base.PhysicalPlan = &PhysicalShuffle{}
+	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
+	_ base.PhysicalPlan = &BatchPointGetPlan{}
+	_ base.PhysicalPlan = &PhysicalTableSample{}
+	_ base.PhysicalPlan = &PhysicalSequence{}
+)
+
+// AddExtraPhysTblIDColumn for partition table.
+// For keepOrder with partition table,
+// we need use partitionHandle to distinct two handles,
+// the `_tidb_rowid` in different partitions can have the same value.
+func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+	// Not adding the ExtraPhysTblID if already exists
+	if model.FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+		return columns, schema, false
+	}
+	columns = append(columns, model.NewExtraPhysTblIDColInfo())
+	schema.Append(&expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPhysTblID,
+	})
+	return columns, schema, true
+}
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
 func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
