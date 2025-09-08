@@ -100,6 +100,7 @@ func (b *Binding) UpdateUsageInfo() {
 	b.UsageInfo.Update()
 }
 
+// ResetUsageInfo is to reset the bindinfo useage info after writing into storage.
 func (b *Binding) ResetUsageInfo() {
 	b.UsageInfo.CreateAt.Store(nil)
 	b.UsageInfo.LastUsedAt.Store(nil)
