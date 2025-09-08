@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -77,6 +79,9 @@ type Binding struct {
 
 	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`
+
+	// usageInfo records the binding usage info
+	UsageInfo bindingInfoUsageInfo
 }
 
 // IsBindingEnabled returns whether the binding is enabled.
@@ -88,6 +93,29 @@ func (b *Binding) IsBindingEnabled() bool {
 func (b *Binding) size() float64 {
 	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
+}
+
+// UpdateUsageInfo is to update binding usage info
+func (b *Binding) UpdateUsageInfo() {
+	b.UsageInfo.Update()
+}
+
+func (b *Binding) ResetUsageInfo() {
+	b.UsageInfo.CreateAt.Store(nil)
+	b.UsageInfo.LastUsedAt.Store(nil)
+}
+
+type bindingInfoUsageInfo struct {
+	LastUsedAt atomic.Pointer[time.Time]
+	CreateAt   atomic.Pointer[time.Time]
+}
+
+func (b *bindingInfoUsageInfo) Update() {
+	now := time.Now()
+	if b.CreateAt.Load() == nil {
+		b.CreateAt.Store(&now)
+	}
+	b.LastUsedAt.Store(&now)
 }
 
 var (
@@ -152,6 +180,8 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	}
 	binding, matched = globalHandle.MatchingBinding(sctx, noDBDigest, tableNames)
 	if matched {
+		// After hitting the cache, update the usage time of the bind.
+		binding.UpdateUsageInfo()
 		return binding, matched, metrics.ScopeGlobal
 	}
 
