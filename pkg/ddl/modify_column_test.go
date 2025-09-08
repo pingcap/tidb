@@ -111,6 +111,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
 	err := tk.ExecToErr(sql)
 	require.EqualError(t, err, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
+	tk.MustExec("admin check table t1")
 	// Check whether the reorg information is cleaned up when executing "modify column" failed.
 	checkReorgHandle := func(actualElements, expectedElements []*meta.Element) {
 		require.Equal(t, len(expectedElements), len(actualElements))
