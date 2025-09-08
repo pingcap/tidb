@@ -2033,7 +2033,7 @@ func applyLogicalAggregationHint(lp base.LogicalPlan, physicPlan base.PhysicalPl
 }
 
 func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
-	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp)
+	hintPrefer, meetThreshold := pushLimitOrTopNForcibly(lp, pp)
 	if hintPrefer {
 		// if there is a user hint control, try to get the copTask as the prior.
 		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
@@ -2884,14 +2884,22 @@ func exhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *proper
 	return ret, true, nil
 }
 
-func pushLimitOrTopNForcibly(p base.LogicalPlan) (meetThreshold bool, preferPushDown bool) {
+func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (meetThreshold bool, preferPushDown bool) {
 	switch lp := p.(type) {
 	case *logicalop.LogicalTopN:
 		preferPushDown = lp.PreferLimitToCop
-		meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
+		if _, isPhysicalLimit := pp.(*physicalop.PhysicalLimit); isPhysicalLimit {
+			// For query using orderby + limit, the physicalop can be PhysicalLimit
+			// when its corresponding logicalop is LogicalTopn,
+			// And for PhysicalLimit, it's always better to let it pushdown to tikv.
+			meetThreshold = true
+		} else {
+			meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
+		}
 	case *logicalop.LogicalLimit:
 		preferPushDown = lp.PreferLimitToCop
-		meetThreshold = true // always push Limit down in this case since it has no side effect
+		// always push Limit down in this case since it has no side effect
+		meetThreshold = true
 	default:
 		return preferPushDown, meetThreshold
 	}

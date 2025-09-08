@@ -4133,5 +4133,21 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestLimitPushdown",
+    "Cases": [
+      {
+        "SQL": "select * from t1 order by c1 limit 200;",
+        "Plan": [
+          "Projection root  test.t1.c1, test.t1.c2",
+          "└─IndexLookUp root  limit embedded(offset:0, count:200)",
+          "  ├─Limit(Build) cop[tikv]  offset:0, count:200",
+          "  │ └─IndexFullScan cop[tikv] table:t1, index:c1(c1) keep order:true",
+          "  └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]
