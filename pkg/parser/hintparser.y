@@ -251,7 +251,7 @@ TableOptimizerHintOpt:
 	{
 		$$ = &ast.TableOptimizerHint{
 			HintName: ast.NewCIStr($1),
-			Leading:  $3,
+			HintData: $3,
 		}
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
