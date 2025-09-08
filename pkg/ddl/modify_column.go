@@ -672,6 +672,10 @@ func (w *worker) analyzeTableAfterCreateIndex(job *model.Job, dbName, tblName st
 			if err != nil {
 				return err
 			}
+			// double-check the inner session analyze version is 2.
+			if sessCtx.GetSessionVars().AnalyzeVersion == 1 {
+				return errors.New("tidb_enable_ddl_analyze can only be enabled with tidb_analyze_version 2")
+			}
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			if err != nil {
 				logutil.DDLLogger().Warn("analyze table failed",

@@ -2798,6 +2798,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableDDLAnalyze, Value: BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
+			if s.AnalyzeVersion == 1 {
+				return errors.New("tidb_enable_ddl_analyze can only be enabled with tidb_analyze_version 2")
+			}
 			s.EnableDDLAnalyze = TiDBOptOn(val)
 			return nil
 		}},
