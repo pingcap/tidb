@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
@@ -450,7 +451,7 @@ type ImplHashJoinBuildLeft struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	switch expr.ExprNode.(*logicalop.LogicalJoin).JoinType {
-	case logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin:
+	case base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin:
 		return prop.IsSortItemEmpty()
 	default:
 		return false
@@ -461,11 +462,11 @@ func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.Physica
 func (*ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, true)}, nil
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
 	default:
 		return nil, nil
@@ -485,14 +486,14 @@ func (*ImplHashJoinBuildRight) Match(_ *memo.GroupExpr, prop *property.PhysicalP
 func (*ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin,
-		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case base.SemiJoin, base.AntiSemiJoin,
+		base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, true)}, nil
 	}
 	return nil, nil
