@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -317,11 +317,11 @@ func testSemiOrAntiSemiJoin(t *testing.T, rightAsBuildSide bool, hasOtherConditi
 		otherCondition = append(otherCondition, sf)
 	}
 
-	var joinType logicalop.JoinType
+	var joinType base.JoinType
 	if isAntiSemiJoin {
-		joinType = logicalop.AntiSemiJoin
+		joinType = base.AntiSemiJoin
 	} else {
-		joinType = logicalop.SemiJoin
+		joinType = base.SemiJoin
 	}
 
 	info := &hashJoinInfo{
@@ -403,7 +403,7 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := []logicalop.JoinType{logicalop.SemiJoin}
+	joinTypes := []base.JoinType{base.SemiJoin}
 	params := []spillTestParam{
 		// basic case
 		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1500000, 3000000, 100000, 10000}, testFuncName},

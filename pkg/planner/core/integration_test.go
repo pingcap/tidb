@@ -2419,25 +2419,25 @@ func TestIssue60737(t *testing.T) {
 		tk.MustExec("insert into t2 values (1,'1990-11-27'),(2,'1990-11-27'),(3,'1990-11-27');")
 		query := `select 1 from t where '2008-05-28' NOT IN
 		(select a1.f1 from t a1 NATURAL RIGHT JOIN t2 a2 WHERE a2.f1 >= '1990-11-27' union select f1 from t where id=5)`
-		tk.MustQuery("explain " + query).Check(testkit.Rows(
-			"Projection_19 8000.00 root  1->Column#14",
-			"└─HashJoin_22 8000.00 root  Null-aware anti semi join, left side:Projection_24, equal:[eq(Column#16, Column#13)]",
-			"  ├─HashAgg_30(Build) 2672.00 root  group by:Column#13, funcs:firstrow(Column#13)->Column#13",
-			"  │ └─Union_34 4172.50 root  ",
-			"  │   ├─HashJoin_46 4162.50 root  right outer join, left side:TableReader_49, equal:[eq(test.t.id, test.t2.id) eq(test.t.f1, test.t2.f1)]",
-			"  │   │ ├─TableReader_49(Build) 3330.00 root  data:Selection_48",
-			"  │   │ │ └─Selection_48 3330.00 cop[tikv]  ge(test.t.f1, 1990-11-27 00:00:00.000000), not(isnull(test.t.f1)), not(isnull(test.t.id))",
-			"  │   │ │   └─TableFullScan_47 10000.00 cop[tikv] table:a1 keep order:false, stats:pseudo",
-			"  │   │ └─TableReader_52(Probe) 3333.33 root  data:Selection_51",
-			"  │   │   └─Selection_51 3333.33 cop[tikv]  ge(test.t2.f1, 1990-11-27 00:00:00.000000)",
-			"  │   │     └─TableFullScan_50 10000.00 cop[tikv] table:a2 keep order:false, stats:pseudo",
-			"  │   └─TableReader_62 10.00 root  data:Projection_56",
-			"  │     └─Projection_56 10.00 cop[tikv]  test.t.f1->Column#13",
-			"  │       └─Selection_61 10.00 cop[tikv]  eq(test.t.id, 5)",
-			"  │         └─TableFullScan_60 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-			"  └─Projection_24(Probe) 10000.00 root  2008-05-28 00:00:00.000000->Column#16",
-			"    └─TableReader_27 10000.00 root  data:TableFullScan_26",
-			"      └─TableFullScan_26 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		tk.MustQuery("explain format='plan_tree' " + query).Check(testkit.Rows(
+			"Projection root  1->Column#14",
+			"└─HashJoin root  Null-aware anti semi join, left side:Projection, equal:[eq(Column#16, Column#13)]",
+			"  ├─HashAgg(Build) root  group by:Column#13, funcs:firstrow(Column#13)->Column#13",
+			"  │ └─Union root  ",
+			"  │   ├─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.t.id, test.t2.id) eq(test.t.f1, test.t2.f1)]",
+			"  │   │ ├─TableReader(Build) root  data:Selection",
+			"  │   │ │ └─Selection cop[tikv]  ge(test.t.f1, 1990-11-27 00:00:00.000000), not(isnull(test.t.f1)), not(isnull(test.t.id))",
+			"  │   │ │   └─TableFullScan cop[tikv] table:a1 keep order:false, stats:pseudo",
+			"  │   │ └─TableReader(Probe) root  data:Selection",
+			"  │   │   └─Selection cop[tikv]  ge(test.t2.f1, 1990-11-27 00:00:00.000000)",
+			"  │   │     └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo",
+			"  │   └─TableReader root  data:Projection",
+			"  │     └─Projection cop[tikv]  test.t.f1->Column#13",
+			"  │       └─Selection cop[tikv]  eq(test.t.id, 5)",
+			"  │         └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
+			"  └─Projection(Probe) root  2008-05-28 00:00:00.000000->Column#16",
+			"    └─TableReader root  data:TableFullScan",
+			"      └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
 		))
 		tk.MustQuery(query).Check(testkit.Rows())
 	})
