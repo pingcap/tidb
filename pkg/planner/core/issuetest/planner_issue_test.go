@@ -334,3 +334,20 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+func TestIssue60737(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table chqin(id int, f1 date);")
+	tk.MustExec("insert into chqin values (1,null);")
+	tk.MustExec("insert into chqin values (2,null);")
+	tk.MustExec("insert into chqin values (3,null);")
+	tk.MustExec("create table chqin2(id int, f1 date);")
+	tk.MustExec("insert into chqin2 values (1,'1990-11-27');")
+	tk.MustExec("insert into chqin2 values (2,'1990-11-27');")
+	tk.MustExec("insert into chqin2 values (3,'1990-11-27');")
+	tk.MustQuery(`explain select 1 from chqin where  '2008-05-28' NOT IN
+		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
+		Check(testkit.Rows())
+}
