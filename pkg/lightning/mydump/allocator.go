@@ -20,6 +20,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"go.uber.org/zap"
 )
 
 var (
@@ -47,6 +48,9 @@ func GetMemoryForWriter(encodeStep bool, parquetMemUsage, threadCnt, totalMem in
 		writerPercent = (100 - parserPercent) / 2
 	}
 
+	log.L().Info("get parquet memory usage",
+		zap.Int("parquet memory usage", parquetMemUsage),
+		zap.Int("writer percent", writerPercent))
 	// Use half of the remaining memory for writer
 	return int64(memPerCon * writerPercent / 100)
 }
