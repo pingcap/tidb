@@ -2744,7 +2744,7 @@ func (b *executorBuilder) buildApply(v *physicalop.PhysicalApply) exec.Executor 
 		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
 		joiners := make([]join.Joiner, 0, v.Concurrency)
 		for range v.Concurrency {
-			clonedInnerPlan, err := plannercore.SafeClone(v.SCtx(), innerPlan)
+			clonedInnerPlan, err := physicalop.SafeClone(v.SCtx(), innerPlan)
 			if err != nil {
 				b.err = nil
 				return constructSerialExec()

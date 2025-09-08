@@ -2333,7 +2333,7 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *physi
 	indexConds := path.IndexFilters
 	if matchProp.Matched() {
 		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+			tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 			is.Columns = tmpColumns
 			is.SetSchema(tmpSchema)
 		}
@@ -2390,7 +2390,7 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 	ts.FilterCondition = newFilterConds
 	if matchProp.Matched() {
 		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+			tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 			ts.Columns = tmpColumns
 			ts.SetSchema(tmpSchema)
 		}
@@ -2529,7 +2529,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 
 	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
 	if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		tmpColumns, tmpSchema, newColAdded := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+		tmpColumns, tmpSchema, newColAdded := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 		ts.Columns = tmpColumns
 		ts.SetSchema(tmpSchema)
 		columnAdded = columnAdded || newColAdded
@@ -2753,13 +2753,13 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
-					tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+					tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 					is.Columns = tmpColumns
 					is.SetSchema(tmpSchema)
 				}
 				// global index for tableScan with keepOrder also need PhysicalTblID
 				ts := cop.tablePlan.(*physicalop.PhysicalTableScan)
-				tmpColumns, tmpSchema, succ := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+				tmpColumns, tmpSchema, succ := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 				ts.Columns = tmpColumns
 				ts.SetSchema(tmpSchema)
 				cop.needExtraProj = cop.needExtraProj || succ
