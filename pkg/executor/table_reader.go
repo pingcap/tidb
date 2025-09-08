@@ -152,7 +152,7 @@ type TableReaderExecutor struct {
 	// TODO: remove this field, use the kvRangeBuilder interface.
 	ranges []*ranger.Range
 
-	// For groupedRanges and groupByColIdxs, please see comments in struct AccessPath.
+	// groupedRanges and groupByColIdxs are from AccessPath.groupedRanges, please see the comment there for more details
 
 	groupedRanges  [][]*ranger.Range
 	groupByColIdxs []int
@@ -391,8 +391,10 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
+// buildRespForGroupedRanges builds the input ranger.Range into SelectResult.
+// Note that no matter the range is from e.ranges or e.groupedRanges, they are all passed in as groupedRanges here.
 func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) (distsql.SelectResult, error) {
-	// Accessing partitioned table on TiFlash needs some special handling. It's processed here.
+	// Accessing partitioned table on TiFlash is slightly different right now, we use a different code path for it.
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
 		intest.Assert(len(groupedRanges) == 1 && len(e.groupedRanges) == 0)
 	}
@@ -433,6 +435,8 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	if err != nil {
 		return nil, err
 	}
+	// Even if it's an empty request, we still need to build a kvReq to make the following execution logic work.
+	// Otherwise, there will be panic.
 	if len(kvReqs) == 0 {
 		kvReq, err := e.buildKVReq(ctx, nil)
 		if err != nil {
@@ -458,7 +462,7 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	if len(e.byItems) > 0 {
 		return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
 	}
-	// If no sorting is needed, use serial results
+	// If no sorting is needed, use serial results. Though it should be useless, we still handle it here.
 	return distsql.NewSerialSelectResults(results), nil
 }
 

@@ -486,8 +486,6 @@ type IndexLookUpExecutor struct {
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
 
-	groupedKVRanges []*kvRangesWithPhysicalTblID // kvRanges with physical table IDs
-
 	// All fields above are immutable.
 
 	idxWorkerWg *sync.WaitGroup
@@ -502,6 +500,11 @@ type IndexLookUpExecutor struct {
 
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
+
+	// groupedKVRanges is the kv ranges grouped for merge sort to match the byItems.
+	// The extra PhysicalTableID is needed by the memIndexLookUpReader because it can't get it from PartitionHandle like
+	// the IndexLookUpExecutor here.
+	groupedKVRanges []*kvRangesWithPhysicalTblID
 
 	workerStarted bool
 

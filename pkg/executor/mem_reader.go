@@ -699,7 +699,7 @@ type memIndexLookUpReader struct {
 
 	idxReader *memIndexReader
 
-	groupedKVRanges []*kvRangesWithPhysicalTblID // kv ranges for these partition tables
+	groupedKVRanges []*kvRangesWithPhysicalTblID
 
 	cacheTable kv.MemBuffer
 

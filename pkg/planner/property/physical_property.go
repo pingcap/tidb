@@ -220,21 +220,21 @@ const (
 	AllCTECanMpp
 )
 
-// SortPropMatchResult describes the result of matching PhysicalProperty.SortItem against an access path.
-type SortPropMatchResult int
+// PhysicalPropMatchResult describes the result of matching PhysicalProperty.SortItem against an access path.
+type PhysicalPropMatchResult int
 
 const (
-	// SortPropNotSatisfied means the access path cannot satisfy the required order.
-	SortPropNotSatisfied SortPropMatchResult = iota
-	// SortPropSatisfied means the access path can satisfy the required order directly.
-	SortPropSatisfied
-	// SortPropSatisfiedNeedMergeSort means the access path can satisfy the required order, but a merge sort is needed.
-	SortPropSatisfiedNeedMergeSort
+	// PropNotMatched means the access path cannot satisfy the required order.
+	PropNotMatched PhysicalPropMatchResult = iota
+	// PropMatched means the access path can satisfy the required order directly.
+	PropMatched
+	// PropMatchedNeedMergeSort means the access path can satisfy the required order, but a merge sort is needed.
+	PropMatchedNeedMergeSort
 )
 
 // Matched returns true if the required order can be satisfied.
-func (r SortPropMatchResult) Matched() bool {
-	return r == SortPropSatisfied || r == SortPropSatisfiedNeedMergeSort
+func (r PhysicalPropMatchResult) Matched() bool {
+	return r == PropMatched || r == PropMatchedNeedMergeSort
 }
 
 // PhysicalProperty stands for the required physical property by parents.
