@@ -2214,7 +2214,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
 	require.True(t, ok)
 	// previous wrong JoinType is InnerJoin
-	require.Equal(t, logicalop.RightOuterJoin, join.JoinType)
+	require.Equal(t, base.RightOuterJoin, join.JoinType)
 }
 
 func TestResolvingCorrelatedAggregate(t *testing.T) {

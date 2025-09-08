@@ -2006,6 +2006,14 @@ func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 
 func (do *Domain) initStats(ctx context.Context) {
 	statsHandle := do.StatsHandle()
+	// If skip-init-stats is configured, skip the heavy initial stats loading as well.
+	// Still close InitStatsDone to unblock waiters that may depend on it.
+	if config.GetGlobalConfig().Performance.SkipInitStats {
+		close(statsHandle.InitStatsDone)
+		statslogutil.StatsLogger().Info("Skipping initial stats due to skip-grant-table being set")
+		return
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("panic when initiating stats", zap.Any("r", r),

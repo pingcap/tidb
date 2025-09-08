@@ -74,7 +74,7 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 		return true
 	case *LogicalJoin:
 		switch x.JoinType {
-		case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		case base.SemiJoin, base.AntiSemiJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 			return childMaxOneRow[0]
 		default:
 			return childMaxOneRow[0] && childMaxOneRow[1]

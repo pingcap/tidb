@@ -696,19 +696,3 @@ func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
 			fmt.Sprintf("testData[%d].inputHist:%s", i, test.inputHistToStr))
 	}
 }
-
-func generateData(t *testing.T) *Histogram {
-	var data []*bucket4Test
-	sumCount := int64(0)
-	for n := 100; n < 10000; n = n + 100 {
-		sumCount += 100
-		data = append(data, &bucket4Test{
-			lower:  int64(n),
-			upper:  int64(n + 100),
-			count:  sumCount,
-			repeat: 10,
-			ndv:    10,
-		})
-	}
-	return genHist4Test(t, data, 0)
-}

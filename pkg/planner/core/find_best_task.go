@@ -1682,30 +1682,26 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 		if !ok {
 			return false
 		}
-
-		// Reject NOT operators - they can make predicates non-equal
-		if sf.FuncName.L == ast.UnaryNot {
+		switch sf.FuncName.L {
+		case ast.UnaryNot:
+			// Reject NOT operators - they can make predicates non-equal
 			return false
-		}
-
-		if sf.FuncName.L == ast.LogicOr || sf.FuncName.L == ast.LogicAnd {
+		case ast.LogicOr, ast.LogicAnd:
 			for _, arg := range sf.GetArgs() {
 				if !isEqualPredicateOrOr(arg) {
 					return false
 				}
 			}
 			return true
-		}
-
-		// Check if it's an equal predicate (eq) or IN predicate (in)
-		// Also reject any other comparison operators that are not equal/IN
-		if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
+		case ast.EQ, ast.In:
+			// Check if it's an equal predicate (eq) or IN predicate (in)
+			// Also reject any other comparison operators that are not equal/IN
 			return true
+		default:
+			// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
+			// and any other functions that are not equal/IN predicates
+			return false
 		}
-
-		// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
-		// and any other functions that are not equal/IN predicates
-		return false
 	}
 
 	// Check all access conditions
@@ -2266,7 +2262,7 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *physi
 	indexConds := path.IndexFilters
 	if matchProp {
 		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+			tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 			is.Columns = tmpColumns
 			is.SetSchema(tmpSchema)
 		}
@@ -2323,7 +2319,7 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 	ts.FilterCondition = newFilterConds
 	if matchProp {
 		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+			tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 			ts.Columns = tmpColumns
 			ts.SetSchema(tmpSchema)
 		}
@@ -2462,7 +2458,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 
 	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
 	if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		tmpColumns, tmpSchema, newColAdded := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+		tmpColumns, tmpSchema, newColAdded := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 		ts.Columns = tmpColumns
 		ts.SetSchema(tmpSchema)
 		columnAdded = columnAdded || newColAdded
@@ -2674,13 +2670,13 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
-					tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+					tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 					is.Columns = tmpColumns
 					is.SetSchema(tmpSchema)
 				}
 				// global index for tableScan with keepOrder also need PhysicalTblID
 				ts := cop.tablePlan.(*physicalop.PhysicalTableScan)
-				tmpColumns, tmpSchema, succ := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+				tmpColumns, tmpSchema, succ := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 				ts.Columns = tmpColumns
 				ts.SetSchema(tmpSchema)
 				cop.needExtraProj = cop.needExtraProj || succ
