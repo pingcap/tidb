@@ -270,9 +270,6 @@ func rollbackModifyColumnJobWithData(
 	args.IndexIDs = changingIdxIDs
 	args.PartitionIDs = getPartitionIDs(tblInfo)
 	job.FillFinishedArgs(args)
-	// if args.DropIndex != nil {
-	// 	return onDropIndex(jobCtx, job)
-	// }
 	return ver, nil
 }
 
@@ -551,14 +548,14 @@ func (w *worker) doModifyColumnTypeWithData(
 
 		var done bool
 		if job.MultiSchemaInfo != nil {
-			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol)
+			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
 		} else {
-			done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol)
+			done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
 		}
 		if !done {
 			return ver, err
 		}
-		if len(changingIdxs) > 0 {
+		if job.Version == model.JobVersion2 && len(changingIdxs) > 0 {
 			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxs)
 			if !done {
 				return ver, err
@@ -625,9 +622,9 @@ func (w *worker) doModifyColumnTypeWithData(
 }
 
 func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
-	oldCol, changingCol *model.ColumnInfo) (done bool, ver int64, err error) {
+	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
-		done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol)
+		done, ver, err = doReorgWorkForModifyColumn(w, jobCtx, job, tbl, oldCol, changingCol, changingIdxs)
 		if done {
 			// We need another round to wait for all the others sub-jobs to finish.
 			job.MarkNonRevertible()
@@ -640,7 +637,7 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *m
 }
 
 func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
-	oldCol, changingCol *model.ColumnInfo) (done bool, ver int64, err error) {
+	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
@@ -654,7 +651,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfo(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta),
-		jobCtx, rh, job, dbInfo, tbl, BuildElements(changingCol, nil), false)
+		jobCtx, rh, job, dbInfo, tbl, BuildElements(changingCol, changingIdxs), false)
 	if err != nil || reorgInfo == nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -816,11 +813,7 @@ func GetModifiableColumnJob(
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column")
 		}
 		// new col's origin default value be the same as the new default value.
-		originDefVal, err := generateOriginDefaultValue(newCol.ColumnInfo, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if err = newCol.ColumnInfo.SetOriginDefaultValue(originDefVal); err != nil {
+		if err = newCol.ColumnInfo.SetOriginDefaultValue(newCol.ColumnInfo.GetDefaultValue()); err != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column set origin default value failed")
 		}
 	}

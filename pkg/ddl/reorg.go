@@ -451,6 +451,10 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// Only used for the ingest mode job.
 		return nil
 	}
+	if reorgInfo.mergingTmpIdx {
+		// Merging the temporary index uses txn mode, so we don't need to consider the checkpoint.
+		return nil
+	}
 	if job.ReorgMeta.IsDistReorg {
 		// The global checkpoint is not used in distributed tasks.
 		return nil
