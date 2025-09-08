@@ -1506,9 +1506,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		colIdxes, error := collectColIdxFromByItems(x.byItems, x.columns)
-		if error != nil {
-			b.err = error
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
 			return nil
 		}
 		us.usedIndex = colIdxes
@@ -1520,9 +1520,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		colIdxes, error := collectColIdxFromByItems(x.byItems, x.columns)
-		if error != nil {
-			b.err = error
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
 			return nil
 		}
 		us.usedIndex = colIdxes
@@ -1544,9 +1544,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
-		colIdxes, error := collectColIdxFromByItems(x.byItems, x.columns)
-		if error != nil {
-			b.err = error
+		colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+		if err != nil {
+			b.err = err
 			return nil
 		}
 		us.usedIndex = colIdxes
@@ -1570,9 +1570,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		if len(x.byItems) != 0 {
 			us.keepOrder = x.keepOrder
 			us.desc = x.byItems[0].Desc
-			colIdxes, error := collectColIdxFromByItems(x.byItems, x.columns)
-			if error != nil {
-				b.err = error
+			colIdxes, err := collectColIdxFromByItems(x.byItems, x.columns)
+			if err != nil {
+				b.err = err
 				return nil
 			}
 			us.usedIndex = colIdxes
