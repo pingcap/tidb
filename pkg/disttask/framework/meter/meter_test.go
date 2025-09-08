@@ -13,3 +13,133 @@
 // limitations under the License.
 
 package meter
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	mconfig "github.com/pingcap/metering_sdk/config"
+	meteringreader "github.com/pingcap/metering_sdk/reader/metering"
+	"github.com/pingcap/metering_sdk/storage"
+	meteringwriter "github.com/pingcap/metering_sdk/writer/metering"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNewMeterEmptyBucket(t *testing.T) {
+	cfg := &Config{}
+	m, err := NewMeter(cfg)
+	require.Nil(t, m)
+	require.Nil(t, err)
+}
+func TestNewMeterValidConfig(t *testing.T) {
+	cfg := &Config{
+		Bucket: "test-bucket",
+		Type:   "s3",
+	}
+	m, err := NewMeter(cfg)
+	require.NotNil(t, m)
+	require.NoError(t, err)
+	require.NotEmpty(t, m.uuid)
+}
+func TestRecord(t *testing.T) {
+	m := &Meter{
+		data: make(map[string]MeterData),
+	}
+	md := &MeterData{
+		putRequests: 5,
+	}
+	m.Record("keyspace1", md)
+	require.Equal(t, uint64(5), m.data["keyspace1"].putRequests)
+	m.Record("keyspace1", &MeterData{getRequests: 3})
+	require.Equal(t, uint64(5), m.data["keyspace1"].putRequests)
+	require.Equal(t, uint64(3), m.data["keyspace1"].getRequests)
+}
+
+func TestConcurrentRecord(t *testing.T) {
+	m := &Meter{data: make(map[string]MeterData)}
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			m.Record("ks1", &MeterData{putRequests: 1})
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+	require.Equal(t, uint64(100), m.data["ks1"].putRequests)
+}
+
+func TestFlush(t *testing.T) {
+	meter, reader := createLocalMeter(t, t.TempDir())
+	ts := time.Now().Unix()/writeInterval*writeInterval + writeInterval
+	data := readMeteringData(t, reader, ts-writeInterval)
+	require.Len(t, data, 0)
+	meter.Record("ks1", &MeterData{putRequests: 10, getRequests: 20, scanDataTraffic: 300, writeDataSize: 400})
+	meter.flush(ts, 10*time.Minute)
+	data = readMeteringData(t, reader, ts-writeInterval)
+	require.Len(t, data, 0)
+	data = readMeteringData(t, reader, ts)
+	require.Len(t, data, 1)
+	require.Equal(t, "1", data[0]["version"])
+	require.Equal(t, "ks1", data[0]["cluster_id"])
+	require.Equal(t, "disttask", data[0]["source_name"])
+	t.Log(data[0]["s3_put_requests"])
+	require.Equal(t, float64(10), data[0]["s3_put_requests"].(map[string]any)["value"])
+	require.Equal(t, float64(20), data[0]["s3_get_requests"].(map[string]any)["value"])
+	require.Equal(t, float64(300), data[0]["scan_data_traffic"].(map[string]any)["value"])
+	require.Equal(t, float64(400), data[0]["write_data_size"].(map[string]any)["value"])
+}
+
+func createLocalMeter(t *testing.T, dir string) (*Meter, *meteringreader.MeteringReader) {
+	m, err := NewMeter(&Config{
+		Bucket: "bucket",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, m.Close())
+	})
+
+	// Replace the S3 writer with the local writer.
+	localConfig := &storage.ProviderConfig{
+		Type: storage.ProviderTypeLocalFS,
+		LocalFS: &storage.LocalFSConfig{
+			BasePath:   dir,
+			CreateDirs: true,
+		},
+	}
+	provider, err := storage.NewObjectStorageProvider(localConfig)
+	require.NoError(t, err)
+	meteringConfig := mconfig.DefaultConfig().WithLogger(m.logger)
+	m.writer = meteringwriter.NewMeteringWriter(provider, meteringConfig)
+	reader := meteringreader.NewMeteringReader(provider, meteringConfig)
+	t.Cleanup(func() {
+		require.NoError(t, reader.Close())
+	})
+	m.ctx = context.Background()
+	return m, reader
+}
+
+func readMeteringData(t *testing.T, reader *meteringreader.MeteringReader, ts int64) []map[string]any {
+	_, err := reader.ListFilesByTimestamp(context.Background(), ts)
+	require.NoError(t, err)
+
+	categories, err := reader.GetCategories(context.Background(), ts)
+	require.NoError(t, err)
+	if len(categories) == 0 {
+		return nil
+	}
+
+	category := categories[0]
+	categoryFiles, err := reader.GetFilesByCategory(context.Background(), ts, category)
+	require.NoError(t, err)
+	if len(categoryFiles) == 0 {
+		return nil
+	}
+
+	filePath := categoryFiles[0]
+	meteringData, err := reader.ReadFile(context.Background(), filePath)
+	require.NoError(t, err)
+	return meteringData.Data
+}

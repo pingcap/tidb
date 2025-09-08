@@ -36,7 +36,7 @@ const (
 	writeInterval = 60
 	// The timeout can not be too long because the pod grace termination period is fixed.
 	writeTimeout = 10 * time.Second
-	category     = "dxf"
+	category     = "disttask"
 )
 
 var meteringInstance atomic.Pointer[Meter]
@@ -197,7 +197,7 @@ func (m *Meter) flush(ts int64, timeout time.Duration) {
 	if len(data) == 0 {
 		return
 	}
-	array := make([]map[string]any, len(data))
+	array := make([]map[string]any, 0, len(data))
 	for keyspace, d := range data {
 		array = append(array, map[string]any{
 			"version":           "1",
