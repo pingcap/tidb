@@ -535,7 +535,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		}
 
 		if local.collector != nil {
-			local.collector.Add(size, int64(count))
+			local.collector.Processed(size, int64(count))
 		}
 
 		failpoint.Inject("afterFlushKVs", func() {

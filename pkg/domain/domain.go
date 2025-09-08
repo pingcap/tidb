@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/meter"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -1130,6 +1131,37 @@ func (do *Domain) InitDistTaskLoop() error {
 	}); err != nil {
 		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}
+	if kv.IsSystemKS(do.store) {
+		err := do.initMeteringLoop()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (do *Domain) initMeteringLoop() error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	meterCtx, cancel := context.WithCancel(ctx)
+	do.cancelFns.mu.Lock()
+	do.cancelFns.fns = append(do.cancelFns.fns, cancel)
+	do.cancelFns.mu.Unlock()
+
+	cfg := config.GetGlobalConfig()
+	meterManger, err := meter.NewMeter(&meter.Config{
+		Type:    cfg.Metering.Type,
+		Bucket:  cfg.Metering.Bucket,
+		Prefix:  cfg.Metering.Prefix,
+		Region:  cfg.Metering.Region,
+		RoleARN: cfg.Metering.RoleARN,
+	})
+	if err != nil {
+		return err
+	}
+	meter.SetMetering(meterManger)
+	do.wg.Run(func() {
+		meterManger.StartFlushLoop(meterCtx)
+	}, "meteringFlushLoop")
 	return nil
 }
 

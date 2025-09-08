@@ -68,7 +68,7 @@ type OneFileWriter struct {
 	dataWriter     storage.ExternalFileWriter
 	statWriter     storage.ExternalFileWriter
 
-	onClose OnCloseFunc
+	onClose OnWriterCloseFunc
 	closed  bool
 
 	// for duplicate detection.

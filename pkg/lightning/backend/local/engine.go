@@ -1315,7 +1315,7 @@ func (f flushStatus) Flushed() bool {
 }
 
 // Close implements backend.ChunkFlushStatus.
-func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (w *Writer) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	defer w.kvBuffer.Destroy()
 	defer w.engine.localWriters.Delete(w)
 	err := w.flush(ctx)

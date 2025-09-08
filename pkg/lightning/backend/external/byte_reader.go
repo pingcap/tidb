@@ -19,6 +19,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/pingcap/errors"
@@ -70,6 +71,7 @@ type byteReader struct {
 
 	logger               *zap.Logger
 	mergeSortReadCounter prometheus.Counter
+	reloadCnt            atomic.Int64
 }
 
 func openStoreReaderAndSeek(
@@ -285,6 +287,7 @@ func (r *byteReader) reload() error {
 			r.mergeSortReadCounter.Add(float64(sz))
 		}()
 	}
+	defer r.reloadCnt.Add(1)
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible

@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/metering_sdk/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -203,6 +204,7 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
+	Metering                   Metering                `toml:"metering" json:"metering"`
 	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
@@ -758,6 +760,14 @@ type Performance struct {
 
 	// EnableAsyncBatchGet indicates whether to use async API when sending batch-get requests.
 	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
+}
+
+type Metering struct {
+	Type    storage.ProviderType `toml:"type" json:"type"`
+	Bucket  string               `toml:"bucket" json:"bucket"`
+	Prefix  string               `toml:"prefix" json:"prefix"`
+	Region  string               `toml:"region" json:"region"`
+	RoleARN string               `toml:"role-arn" json:"role-arn"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -1425,6 +1435,17 @@ func (c *Config) Valid() error {
 		}
 		if c.TiFlashComputeAutoScalerAddr == "" {
 			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")
+		}
+	}
+	if kerneltype.IsNextGen() && len(c.Metering.Type) > 0 {
+		if c.Metering.Bucket == "" {
+			return fmt.Errorf("bucket is required for the metering config")
+		}
+		if c.Metering.Prefix == "" {
+			return fmt.Errorf("prefix is required for the metering config")
+		}
+		if c.Metering.Region == "" {
+			return fmt.Errorf("region is required for the metering config")
 		}
 	}
 

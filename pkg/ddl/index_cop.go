@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -38,7 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
@@ -93,6 +96,10 @@ func fetchTableScanResult(
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+
+	logutil.LoggerFromContext(ctx).Info("fetchTableScanResult",
+		zap.Int("numRows", chk.NumRows()),
+		zap.Any("exec details", ctx.Value(util.ExecDetailsKey).(*util.ExecDetails)))
 	if chk.NumRows() == 0 {
 		return true, nil
 	}
