@@ -2890,7 +2890,7 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (meetThre
 		preferPushDown = lp.PreferLimitToCop
 		if _, isPhysicalLimit := pp.(*physicalop.PhysicalLimit); isPhysicalLimit {
 			// For query using orderby + limit, the physicalop can be PhysicalLimit
-			// when its corresponding logicalop is LogicalTopn,
+			// when its corresponding logicalop is LogicalTopn.
 			// And for PhysicalLimit, it's always better to let it pushdown to tikv.
 			meetThreshold = true
 		} else {
