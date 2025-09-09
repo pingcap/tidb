@@ -29,16 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-const (
-	// defaultTopNValue is the default value for numTopN parameter
-	defaultTopNValue = 100
-	// topNPruningThreshold represents 10% threshold for TopN pruning
-	topNPruningThreshold = 10
-	// defaultHistogramBuckets is the default number of histogram buckets
-	defaultHistogramBuckets = 256
-	// bucketNDVDivisor is used to calculate bucket count based on remaining NDV
-	bucketNDVDivisor = 2
-)
+// use exported defaults from constants.go directly
 
 // TopNWithRange wraps TopNMeta with index range information for efficient histogram building.
 type TopNWithRange struct {
@@ -93,7 +84,7 @@ func processTopNValue(boundedMinHeap *generic.BoundedMinHeap[TopNWithRange], enc
 	// it is not necessary to special handle last value but a lot of current tests hardcoded the output of the last
 	// version and making change will involve a lot of test changes.
 	if !lastValue && curCnt == 1 && allowPruning &&
-		(boundedMinHeap.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
+		(boundedMinHeap.Len() >= (numTopN/TopNPruningThreshold) || sampleFactor > 1) {
 		return
 	}
 
@@ -279,7 +270,8 @@ func buildHist(
 	var upper = new(types.Datum)
 	processedCount := int64(1) // we've processed the first sample
 
-	// Note: Start from firstSampleIdx+1 because we have already processed the first non-skipped sample.
+	// Start from firstSampleIdx + 1 since the first non-skipped sample has already been processed
+	// when the range checker is not null.
 	for i := firstSampleIdx + 1; i < sampleNum; i++ {
 		// Skip if this index is in a TopN range
 		if rangeChecker != nil && rangeChecker.IsIndexInTopNRange(i) {
@@ -425,7 +417,7 @@ func BuildHistAndTopN(
 	sampleFactor := float64(count) / float64(sampleNum)
 	// If a numTopn value other than default is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
-	if numTopN != defaultTopNValue {
+	if numTopN != DefaultTopNValue {
 		allowPruning = false
 	}
 
@@ -542,10 +534,10 @@ func BuildHistAndTopN(
 	if samplesExcludingTopN > 0 {
 		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if lenTopN < int64(numTopN) && numBuckets == defaultHistogramBuckets {
+		if lenTopN < int64(numTopN) && numBuckets == DefaultHistogramBuckets {
 			// set the number of buckets to be the number of remaining distinct values divided by bucketNDVDivisor
 			// but no less than 1 and no more than the original number of buckets
-			numBuckets = int(min(max(1, remainingNDV/bucketNDVDivisor), int64(numBuckets)))
+			numBuckets = int(min(max(1, remainingNDV/BucketNDVDivisor), int64(numBuckets)))
 		}
 
 		// create range checker for efficient TopN index skipping using final TopN items only

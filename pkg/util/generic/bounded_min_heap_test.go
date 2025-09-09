@@ -182,3 +182,29 @@ func TestBoundedMinHeap_LargeDataset(t *testing.T) {
 		require.Equal(t, expected, result[i])
 	}
 }
+
+func TestNewBoundedMinHeapSafetyChecks(t *testing.T) {
+	// test nil comparison function panic
+	require.Panics(t, func() {
+		NewBoundedMinHeap[int](10, nil)
+	}, "should panic when comparison function is nil")
+
+	// test negative maxSize panic
+	require.Panics(t, func() {
+		NewBoundedMinHeap(-1, intComparator)
+	}, "should panic when maxSize is negative")
+
+	// test valid cases should not panic
+	require.NotPanics(t, func() {
+		NewBoundedMinHeap(0, intComparator)
+	}, "should not panic when maxSize is zero")
+
+	require.NotPanics(t, func() {
+		NewBoundedMinHeap(10, intComparator)
+	}, "should not panic when maxSize is positive")
+
+	// verify that zero capacity heap works correctly
+	bmh := NewBoundedMinHeap(0, intComparator)
+	bmh.Add(5)
+	require.Equal(t, 0, bmh.Len())
+}

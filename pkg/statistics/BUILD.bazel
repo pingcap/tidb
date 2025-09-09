@@ -10,6 +10,7 @@ go_library(
         "cmsketch.go",
         "cmsketch_util.go",
         "column.go",
+        "constants.go",
         "debugtrace.go",
         "estimate.go",
         "fmsketch.go",

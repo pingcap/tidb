@@ -30,6 +30,13 @@ type BoundedMinHeap[T any] struct {
 
 // NewBoundedMinHeap creates a new bounded min-heap with the specified maximum size and comparison function.
 func NewBoundedMinHeap[T any](maxSize int, cmpFunc func(T, T) int) *BoundedMinHeap[T] {
+	if cmpFunc == nil {
+		panic("comparison function cannot be nil")
+	}
+	if maxSize < 0 {
+		panic("maxSize cannot be negative")
+	}
+
 	return &BoundedMinHeap[T]{
 		items:   make([]T, 0, maxSize),
 		maxSize: maxSize,
@@ -68,7 +75,7 @@ func (h *BoundedMinHeap[T]) Pop() any {
 // is better than the worst item, it replaces the worst item.
 func (h *BoundedMinHeap[T]) Add(item T) {
 	// handle zero capacity case
-	if h.maxSize <= 0 {
+	if h.maxSize == 0 {
 		return
 	}
 
