@@ -104,13 +104,7 @@ func getTableImporter(
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("init subtask env")
-<<<<<<< HEAD
-	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
-=======
-	var tableImporter *importer.TableImporter
-	var taskManager *dxfstorage.TaskManager
-	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store, s.logger)
->>>>>>> 37f8a14657b (importinto: fix zero update time during validation phase and refine logs (#63425))
+	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store, s.logger)
 	if err != nil {
 		return err
 	}
