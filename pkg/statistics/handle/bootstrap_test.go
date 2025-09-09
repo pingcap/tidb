@@ -6,8 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test cases for genInitStatsHistogramsSQL. Mirrors patterns used elsewhere
-// in this package for concise, require-based assertions.
 func TestGenInitStatsHistogramsSQLAllRecords(t *testing.T) {
 	// Non-paging with no specific table IDs should load all records.
 	opts := newGenHistSQLOptionsForTableIDs(nil)
