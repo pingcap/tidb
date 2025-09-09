@@ -40,6 +40,8 @@ type Sample struct {
 	KvReqTotal uint64
 	// RowAccessTotal sums the number of the rows scanned using this index.
 	RowAccessTotal uint64
+	// TableTotalRows records the total number of rows in the table when this sample is collected.
+	TableTotalRows uint64
 	// PercentageAccess is a histogram where each bucket represents the number of accesses to the index where the
 	// percentage of scanned rows to the total number of rows in the table falls within the ranges of
 	// 0, 0-1, 1-10, 10-20, 20-50, 50-100, and 100.
@@ -84,6 +86,7 @@ func NewSample(queryTotal uint64, kvReqTotal uint64, rowAccess uint64, tableTota
 		KvReqTotal:       kvReqTotal,
 		RowAccessTotal:   rowAccess,
 		PercentageAccess: percentageAccess,
+		TableTotalRows:   tableTotalRows,
 		LastUsedAt:       time.Now(),
 	}
 }
@@ -293,19 +296,44 @@ func (s *StmtIndexUsageCollector) Reset() {
 }
 
 func ScanMetrics(isTableScan bool, sample Sample) {
-	isFullScan := sample.PercentageAccess[len(sample.PercentageAccess)-1] > 0
+	scanPercentage := float64(sample.RowAccessTotal) / float64(sample.TableTotalRows)
+	isFullScan := scanPercentage >= 0.9999
+
+	var counter *prometheus.CounterVec
+	var label string
 
 	if isFullScan {
-		label := getFullScanLabel(sample.RowAccessTotal)
-		var counter *prometheus.CounterVec
+		label = getFullScanLabel(sample.RowAccessTotal)
 		if isTableScan {
 			counter = metrics.PlanTableFullScanCounter
 		} else {
 			counter = metrics.PlanIndexFullScanCounter
 		}
-		counter.WithLabelValues(label).Inc()
 	} else {
+		label = getRangeScanLabel(scanPercentage)
+		if isTableScan {
+			counter = metrics.PlanTableSelectivityCounter
+		} else {
+			counter = metrics.PlanIndexSelectivityCounter
+		}
+	}
 
+	counter.WithLabelValues(label).Inc()
+}
+
+func getRangeScanLabel(scanPercentage float64) string {
+	if scanPercentage < 0.001 {
+		return "[0, 0.1%)"
+	} else if scanPercentage < 0.01 {
+		return "[0.1%, 1%)"
+	} else if scanPercentage < 0.1 {
+		return "[1%, 10%)"
+	} else if scanPercentage < 0.2 {
+		return "[10%, 20%)"
+	} else if scanPercentage < 0.5 {
+		return "[20%, 50%)"
+	} else {
+		return "[50%, 100%)"
 	}
 }
 
