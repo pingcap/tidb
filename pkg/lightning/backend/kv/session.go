@@ -278,6 +278,7 @@ type Session struct {
 	txn     transaction
 	exprCtx *litExprContext
 	tblCtx  *litTableMutateContext
+	BufChan chan []common.KvPair
 }
 
 // NewSession creates a new Session.
@@ -321,6 +322,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) (*Session, er
 	s := &Session{
 		exprCtx: exprCtx,
 		tblCtx:  tblCtx,
+		BufChan: make(chan []common.KvPair, 8),
 	}
 	s.txn.kvPairs = &Pairs{}
 	return s, nil
@@ -348,7 +350,18 @@ func (s *Session) TakeKvPairs() *Pairs {
 	if pairs.BytesBuf != nil {
 		pairs.MemBuf = memBuf
 	}
-	memBuf.kvPairs = &Pairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
+
+	var kvPairs []common.KvPair
+	select {
+	case kvPairs = <-s.BufChan:
+		if cap(kvPairs) < len(pairs.Pairs) {
+			kvPairs = make([]common.KvPair, 0, len(pairs.Pairs))
+		}
+	default:
+		kvPairs = make([]common.KvPair, 0, len(pairs.Pairs))
+	}
+
+	memBuf.kvPairs = &Pairs{Pairs: kvPairs[:0], Sess: s}
 	memBuf.size = 0
 	return pairs
 }
