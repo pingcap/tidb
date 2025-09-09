@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -506,31 +507,37 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		childSchema[0], childSchema[1],
 		nil, nil)
 	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin {
-		// Use join pair estimate to approximate the probability that a left row has at least one match.
+		// AntiSemiJoin is notoriously difficult to estimate. We use a very simple strategy.
+		// Same if the semiJoin left is smaller than the right.
+		if p.JoinType == base.AntiSemiJoin || leftProfile.RowCount <= p.EqualCondOutCnt {
+			p.SetStats(&property.StatsInfo{
+				RowCount: leftProfile.RowCount * cost.SelectionFactor,
+				ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
+			})
+			for id, c := range leftProfile.ColNDVs {
+				p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
+			}
+			return p.StatsInfo(), true, nil
+		}
+		// For a smaller inner - Use join pair estimate to approximate the probability that
+		// a left row has at least one match.
 		// Average matches per left row: m = EqualCondOutCnt / leftRowCount. The probability of at least one
 		// match is approximated by min(1, m). Thus, semi-join output rows ~= min(leftRowCount, EqualCondOutCnt).
 		// For anti-semi join, it's the complement on the left side.
-		matchCount := math.Min(leftProfile.RowCount, p.EqualCondOutCnt)
-		var outCount float64
-		if p.JoinType == base.SemiJoin {
-			outCount = matchCount
-		} else { // base.AntiSemiJoin
-			outCount = math.Max(0, leftProfile.RowCount-matchCount)
-		}
 		colNDVs := make(map[int64]float64, len(leftProfile.ColNDVs))
 		var scale float64
 		if leftProfile.RowCount > 0 {
-			scale = outCount / leftProfile.RowCount
+			scale = p.EqualCondOutCnt / leftProfile.RowCount
 		}
 		for id, c := range leftProfile.ColNDVs {
 			val := c * scale
-			if val > outCount {
-				val = outCount
+			if val > p.EqualCondOutCnt {
+				val = p.EqualCondOutCnt
 			}
 			colNDVs[id] = val
 		}
 		p.SetStats(&property.StatsInfo{
-			RowCount: outCount,
+			RowCount: p.EqualCondOutCnt,
 			ColNDVs:  colNDVs,
 		})
 		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
