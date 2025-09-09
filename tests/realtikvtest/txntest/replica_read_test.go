@@ -76,6 +76,11 @@ func TestReplicaReadEffectScope(t *testing.T) {
 			false,
 		},
 		{
+			"insert on duplicate key update can't use replica read",
+			"INSERT INTO t SELECT id + 100, v + 100 FROM t WHERE %s ON DUPLICATE KEY UPDATE v = VALUES(v)",
+			false,
+		},
+		{
 			"replace can't use replica read",
 			"REPLACE INTO t SELECT id, v + 100 FROM t WHERE %s",
 			false,
