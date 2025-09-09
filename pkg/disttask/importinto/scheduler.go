@@ -70,6 +70,7 @@ type taskInfo struct {
 	// initialized lazily in register()
 	etcdClient   *clientv3.Client
 	taskRegister utils.TaskRegister
+	logger       *zap.Logger
 }
 
 func (t *taskInfo) register(ctx context.Context) {
@@ -80,7 +81,7 @@ func (t *taskInfo) register(ctx context.Context) {
 	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
+	logger := t.logger
 	if t.taskRegister == nil {
 		client, err := store.NewEtcdCli(t.store)
 		if err != nil {
@@ -104,7 +105,7 @@ func (t *taskInfo) register(ctx context.Context) {
 }
 
 func (t *taskInfo) close(ctx context.Context) {
-	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
+	logger := t.logger
 	if t.taskRegister != nil {
 		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
 		defer cancel()
@@ -241,7 +242,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		return
 	}
 
-	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+	logger := sch.GetLogger()
 	// TODO: use the TLS object from TiDB server
 	tidbCfg := tidb.GetGlobalConfig()
 	tls, err := util.NewTLSConfig(
@@ -260,7 +261,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID, logger: sch.GetLogger()})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
@@ -292,9 +293,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
+	logger := sch.GetLogger().With(
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 		zap.Int("node-count", nodeCnt),
@@ -374,7 +373,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		Store:                sch.store,
 		ThreadCnt:            task.Concurrency,
 	}
-	logicalPlan := &LogicalPlan{}
+	logicalPlan := &LogicalPlan{Logger: logger}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
 		return nil, err
 	}
@@ -397,11 +396,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 
 // OnDone implements scheduler.Extension interface.
 func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("step", proto.Step2Str(task.Type, task.Step)),
-	)
+	logger := sch.GetLogger().With(zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	logger.Info("task done", zap.Stringer("state", task.State), zap.Error(task.Error))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)
