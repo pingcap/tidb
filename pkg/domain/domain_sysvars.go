@@ -86,6 +86,7 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		if err != nil {
 			return err
 		}
+
 		vardef.EnablePDFollowerHandleRegion.Store(val)
 	case vardef.TiDBTSOClientRPCMode:
 		var concurrency int
