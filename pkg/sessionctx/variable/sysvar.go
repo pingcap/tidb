@@ -297,6 +297,10 @@ var defaultSysVars = []*SysVar{
 		s.OptimizerEnableNAAJ = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableSemiJoinRewrite, Value: BoolToOnOff(vardef.DefOptEnableSemiJoinRewrite), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSemiJoinRewrite = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBDDLReorgPriority, Value: "PRIORITY_LOW", Type: vardef.TypeEnum, skipInit: true, PossibleValues: []string{"PRIORITY_LOW", "PRIORITY_NORMAL", "PRIORITY_HIGH"}, SetSession: func(s *SessionVars, val string) error {
 		s.setDDLReorgPriority(val)
 		return nil
@@ -2366,6 +2370,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableNoDecorrelateInSelect, Value: BoolToOnOff(vardef.DefOptEnableNoDecorrelateInSelect), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableNoDecorrelateInSelect = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableSemiJoinRewrite, Value: BoolToOnOff(vardef.DefOptEnableSemiJoinRewrite), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSemiJoinRewrite = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
