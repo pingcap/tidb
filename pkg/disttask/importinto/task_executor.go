@@ -165,8 +165,11 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	return nil
 }
 
-// Add implements Collector.Add interface.
-func (s *importStepExecutor) Add(bytes, rowCnt int64) {
+// Accepted implements Collector.Accepted interface.
+func (*importStepExecutor) Accepted(_, _ int64) {}
+
+// Processed implements Collector.Processed interface.
+func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.Bytes.Add(bytes)
 	s.summary.RowCnt.Add(rowCnt)
 }
@@ -399,10 +402,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	var mu sync.Mutex
 	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
-	onClose := func(summary *external.WriterSummary) {
+	onWriterClose := func(summary *external.WriterSummary) {
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
+	}
+	onReaderClose := func(summary *external.ReaderSummary) {
+		m.summary.GetReqCnt.Add(summary.GetRequestCount)
 	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
@@ -418,7 +424,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		partSize,
 		prefix,
 		external.DefaultOneWriterBlockSize,
-		onClose,
+		onWriterClose,
+		onReaderClose,
 		external.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),
 		false,
@@ -475,7 +482,9 @@ type ingestCollector struct {
 	kvGroup string
 }
 
-func (c *ingestCollector) Add(bytes, rowCnt int64) {
+func (*ingestCollector) Accepted(_, _ int64) {}
+
+func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	c.summary.Bytes.Add(bytes)
 	if c.kvGroup == dataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)

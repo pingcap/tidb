@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -70,6 +71,7 @@ type byteReader struct {
 
 	logger               *zap.Logger
 	mergeSortReadCounter prometheus.Counter
+	reloadCnt            atomic.Int64
 }
 
 func openStoreReaderAndSeek(
@@ -285,6 +287,7 @@ func (r *byteReader) reload() error {
 			r.mergeSortReadCounter.Add(float64(sz))
 		}()
 	}
+	defer r.reloadCnt.Add(1)
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible

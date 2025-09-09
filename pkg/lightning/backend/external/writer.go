@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -188,15 +187,17 @@ type WriterSummary struct {
 	// TotalCnt is the total count of the KV written by this writer.
 	// depends on onDup setting, duplicates might not be included.
 	TotalCnt           uint64
+	PutRequestCount    uint64
+	GetRequestCount    uint64
 	MultipleFilesStats []MultipleFilesStat
 	ConflictInfo       engineapi.ConflictInfo
 }
 
-// OnCloseFunc is the callback function when a writer is closed.
-type OnCloseFunc func(summary *WriterSummary)
+// OnWriterCloseFunc is the callback function when a writer is closed.
+type OnWriterCloseFunc func(summary *WriterSummary)
 
-// dummyOnCloseFunc is a dummy OnCloseFunc.
-func dummyOnCloseFunc(*WriterSummary) {}
+// dummyWriterOnCloseFunc is a dummy OnCloseFunc.
+func dummyWriterOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
@@ -205,7 +206,7 @@ type WriterBuilder struct {
 	blockSize    int
 	propSizeDist uint64
 	propKeysDist uint64
-	onClose      OnCloseFunc
+	onClose      OnWriterCloseFunc
 	tikvCodec    tikv.Codec
 	onDup        engineapi.OnDuplicateKey
 }
@@ -217,7 +218,7 @@ func NewWriterBuilder() *WriterBuilder {
 		blockSize:    DefaultBlockSize,
 		propSizeDist: defaultPropSizeDist,
 		propKeysDist: defaultPropKeysDist,
-		onClose:      dummyOnCloseFunc,
+		onClose:      dummyWriterOnCloseFunc,
 	}
 }
 
@@ -243,9 +244,9 @@ func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 }
 
 // SetOnCloseFunc sets the callback function when a writer is closed.
-func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
+func (b *WriterBuilder) SetOnCloseFunc(onClose OnWriterCloseFunc) *WriterBuilder {
 	if onClose == nil {
-		onClose = dummyOnCloseFunc
+		onClose = dummyWriterOnCloseFunc
 	}
 	b.onClose = onClose
 	return b
@@ -439,7 +440,7 @@ type Writer struct {
 	kvLocations []membuf.SliceLocation
 	kvSize      int64
 
-	onClose OnCloseFunc
+	onClose OnWriterCloseFunc
 	onDup   engineapi.OnDuplicateKey
 	closed  bool
 
@@ -456,6 +457,7 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+	putReqCnt uint64
 
 	tikvCodec tikv.Codec
 	// duplicate key's statistics.
@@ -527,6 +529,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		Max:                w.maxKey,
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
+		PutRequestCount:    w.putReqCnt,
 		MultipleFilesStats: w.multiFileStats,
 		ConflictInfo:       w.conflictInfo,
 	})
@@ -708,6 +711,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 		if err != nil {
 			return "", "", "", err
 		}
+		w.putReqCnt++
 	}
 
 	kvStore.finish()
@@ -896,6 +900,6 @@ func (e *EngineWriter) IsSynced() bool {
 }
 
 // Close implements backend.EngineWriter interface.
-func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (e *EngineWriter) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	return nil, e.w.Close(ctx)
 }

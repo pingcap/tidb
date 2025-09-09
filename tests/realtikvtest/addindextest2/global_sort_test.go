@@ -625,3 +625,93 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	require.True(t, modified.Load())
 	tk.MustExec("admin check index gsort idx")
 }
+
+func TestDXFAddIndexRealtimeSummary(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
+	testutil.ReduceCheckInterval(t)
+
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	})
+
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=on;")
+	tk.MustExec("set @@global.tidb_enable_dist_task=on;")
+
+	tk.MustExec("create table t (id varchar(255), b int, c int, primary key(id) clustered);")
+	tk.MustExec("insert into t values ('a',1,1),('b',2,2),('c',3,3);")
+
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	tk.MustExec("alter table t add index idx(c);")
+	sql := `with global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history)
+		select id from global_tasks where task_key like concat('%%/', '%d');`
+	taskIDRows := tk.MustQuery(fmt.Sprintf(sql, jobID)).Rows()
+	taskID := taskIDRows[0][0].(string)
+
+	{
+		sql = `with subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history)
+		select 
+			json_extract(summary, '$.get_request_count'),
+			json_extract(summary, '$.put_request_count'),
+			json_extract(summary, '$.read_bytes'),
+			json_extract(summary, '$.bytes')
+		from subtasks where task_key = '%s' and step = %d;`
+		fmtSql := fmt.Sprintf(sql, taskID, 1)
+		rs := tk.MustQuery(fmtSql).Rows()
+		require.Len(t, rs, 1)
+		getReqCnt, err := strconv.Atoi(rs[0][0].(string))
+		require.NoError(t, err)
+		putReqCnt, err := strconv.Atoi(rs[0][1].(string))
+		require.NoError(t, err)
+		readBytes, err := strconv.Atoi(rs[0][2].(string))
+		require.NoError(t, err)
+		bytes, err := strconv.Atoi(rs[0][3].(string))
+		require.NoError(t, err)
+		require.Equal(t, getReqCnt, 0)   // 0, because step 1 doesn't read s3
+		require.Greater(t, putReqCnt, 0) // 3 times
+		require.Greater(t, readBytes, 0) // 143 bytes for reading table records
+		require.Greater(t, bytes, 0)     // 153 bytes for writing index records
+	}
+
+	{
+		sql = `with subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history)
+		select 
+			json_extract(summary, '$.get_request_count'),
+			json_extract(summary, '$.put_request_count'),
+			json_extract(summary, '$.read_bytes'),
+			json_extract(summary, '$.bytes')
+		from subtasks where task_key = '%s' and step = %d;`
+		fmtSql := fmt.Sprintf(sql, taskID, 3)
+		rs := tk.MustQuery(fmtSql).Rows()
+		require.Len(t, rs, 1)
+		getReqCnt, err := strconv.Atoi(rs[0][0].(string))
+		require.NoError(t, err)
+		putReqCnt, err := strconv.Atoi(rs[0][1].(string))
+		require.NoError(t, err)
+		readBytes, err := strconv.Atoi(rs[0][2].(string))
+		require.NoError(t, err)
+		bytes, err := strconv.Atoi(rs[0][3].(string))
+		require.NoError(t, err)
+		require.Greater(t, getReqCnt, 0) // 2, read s3
+		require.Equal(t, putReqCnt, 0)   // 0, because step 3 doesn't write s3
+		require.Equal(t, readBytes, 0)   // 0
+		require.Equal(t, bytes, 0)       // 0
+	}
+}
