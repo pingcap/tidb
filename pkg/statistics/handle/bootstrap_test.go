@@ -56,7 +56,6 @@ func TestGenInitStatsMetaSQLAllRecords(t *testing.T) {
 
 func TestGenInitStatsMetaSQLTableIDs(t *testing.T) {
 	got := genInitStatsMetaSQL(5, 2, 7)
-	// Note the spaces around parentheses are intentional per implementation.
 	expected := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta" +
 		" where table_id in (5,2,7)"
 	require.Equal(t, expected, got)
