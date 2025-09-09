@@ -287,18 +287,19 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		// available.
 		nodeCnt = task.MaxNodeCount
 	}
+	taskMeta := &TaskMeta{}
+	err = json.Unmarshal(task.Meta, taskMeta)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 		zap.Int("node-count", nodeCnt),
+		zap.Int64("table-id", taskMeta.Plan.TableInfo.ID),
 	)
-	taskMeta := &TaskMeta{}
-	err = json.Unmarshal(task.Meta, taskMeta)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	logger.Info("on next subtasks batch")
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)

@@ -241,6 +241,7 @@ outer:
 			Chunk:      chunk,
 			SharedVars: sharedVars,
 			panicked:   &panicked,
+			logger:     logger,
 		}:
 		case <-op.Done():
 			break outer
