@@ -202,6 +202,7 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
 	simplifiedPredicate = PushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
+	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	// In some scenarios, we need to perform constant propagation,
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.
@@ -211,17 +212,16 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 		} else {
 			simplifiedPredicate = expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
 		}
-	} else {
-		exprs := expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
-		if len(exprs) == 1 {
-			simplifiedPredicate = exprs
-		}
 	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
+	exprs := expression.PropagateConstant(exprCtx, vaildConstantPropagationExpressionFunc, simplifiedPredicate...)
+	if len(exprs) == 1 {
+		simplifiedPredicate = exprs
+	}
 	return simplifiedPredicate
 }
 

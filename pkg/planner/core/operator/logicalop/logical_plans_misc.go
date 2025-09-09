@@ -15,6 +15,8 @@
 package logicalop
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -85,6 +87,9 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 
 // AddSelection adds a LogicalSelection to the given LogicalPlan.
 func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return

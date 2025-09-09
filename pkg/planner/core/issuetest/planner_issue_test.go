@@ -334,3 +334,31 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+func TestIssue434612(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE te28a4dd2 (
+  col_7 json NOT NULL,
+  col_8 tinyint(1) DEFAULT '1',
+  col_9 json NOT NULL,
+  col_10 json DEFAULT NULL,
+  col_11 int unsigned NOT NULL DEFAULT '1853976560'
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;`)
+	tk.MustExec(`CREATE TABLE ta7b16466 (
+  col_14 datetime NOT NULL ON UPDATE CURRENT_TIMESTAMP,
+  col_15 json NOT NULL,
+  col_16 json NOT NULL,
+  col_17 json DEFAULT NULL,
+  col_18 json NOT NULL,
+  col_19 timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  col_20 smallint DEFAULT '-12588',
+  col_21 time NOT NULL DEFAULT '06:58:11',
+  col_22 text CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,
+  col_23 char(162) COLLATE utf8mb4_bin DEFAULT 'SQ@qLF'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`)
+	tk.MustQuery(`explain with cte_90 ( col_524,col_525,col_526,col_527,col_528 ) AS ( select  /*+ use_index_merge( ta7b16466,te28a4dd2 ) */ /*+ NO_MERGE_JOIN( ta7b16466 , te28a4dd2 */ te28a4dd2.col_11 as r0 , te28a4dd2.col_8 as r1 , ta7b16466.col_19 as r2 , te28a4dd2.col_9 as r3 , te28a4dd2.col_11 as r4 from ta7b16466 , te28a4dd2   limit 336175787 ) ( select 1,col_524,col_525,col_526,col_527,col_528 from cte_90 where IsNull( cte_90.col_526 ) and cte_90.col_526 in ( '1981-09-01' ,null ) order by 1,2,3,4,5,6 limit 754457052 )`).Check(testkit.Rows(
+		`Projection_18 0.00 root  1->Column#40, test.te28a4dd2.col_11, test.te28a4dd2.col_8, test.ta7b16466.col_19, test.te28a4dd2.col_9, test.te28a4dd2.col_11`,
+		`└─TableDual_20 0.00 root  rows:0`))
+}
