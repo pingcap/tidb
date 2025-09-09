@@ -108,8 +108,12 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
 
-		for len(leftRows) > 0 {
-			var delBatch [][]types.Datum
+		for startIndex := 0; startIndex < len(leftRows); startIndex += runawayRecordGCBatchSize {
+			endIndex := startIndex + runawayRecordGCBatchSize
+			if endIndex > len(leftRows) {
+				endIndex = len(leftRows)
+			}
+			delBatch := leftRows[startIndex:endIndex]
 			if len(leftRows) < runawayRecordGCBatchSize {
 				delBatch = leftRows
 				leftRows = nil
