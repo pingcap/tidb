@@ -154,13 +154,19 @@ func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 	return nil
 }
 
-// TryAlloc tries to allocate a byte slice with the given size from the current buffer.
-func (mb *MemBuf) TryAlloc(size int) []byte {
+// Get tries to allocate a byte slice with the given size from the current buffer.
+func (mb *MemBuf) GetBuffer(size int) []byte {
+	kvPairs := mb.kvPairs
 	if mb.buf == nil || mb.buf.cap-mb.buf.idx < size {
-		return make([]byte, 0, size)
+		if mb.buf != nil {
+			kvPairs.BytesBuf = mb.buf
+		}
+		mb.AllocateBuf(size)
 	}
 
-	return mb.buf.get(size)
+	b := mb.buf.get(size)
+	mb.size += size
+	return b
 }
 
 // SetWithFlags implements the kv.MemBuffer interface.
