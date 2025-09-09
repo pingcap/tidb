@@ -300,7 +300,7 @@ func ScanMetrics(isTableScan bool, sample Sample) {
 
 	// full scan metrics
 	if isFullScan {
-		label := getFullScanLabel(sample.RowAccessTotal)
+		label := getScanLabel(sample.RowAccessTotal)
 		if isTableScan {
 			metrics.PlanTableFullScanCounter.WithLabelValues(label).Inc()
 		} else {
@@ -308,12 +308,20 @@ func ScanMetrics(isTableScan bool, sample Sample) {
 		}
 	}
 
-	// scan selectivity metrics
-	label := getRangeScanLabel(scanPercentage)
+	// scan metrics
+	scanLabel := getScanLabel(sample.RowAccessTotal)
 	if isTableScan {
-		metrics.PlanTableRangeScanSelectivityCounter.WithLabelValues(label).Inc()
+		metrics.PlanTableScanRowsCounter.WithLabelValues(scanLabel).Inc()
 	} else {
-		metrics.PlanIndexRangeScanSelectivityCounter.WithLabelValues(label).Inc()
+		metrics.PlanIndexScanRowsCounter.WithLabelValues(scanLabel).Inc()
+	}
+
+	// scan selectivity metrics
+	label := getScanSelectivityLabel(scanPercentage)
+	if isTableScan {
+		metrics.PlanTableScanSelectivityCounter.WithLabelValues(label).Inc()
+	} else {
+		metrics.PlanIndexScanSelectivityCounter.WithLabelValues(label).Inc()
 	}
 
 	// cop-request metrics
@@ -337,7 +345,7 @@ func getKVReqLabel(kvReq uint64) string {
 	}
 }
 
-func getRangeScanLabel(scanPercentage float64) string {
+func getScanSelectivityLabel(scanPercentage float64) string {
 	if scanPercentage < 0.001 {
 		return "[0, 0.1%)"
 	} else if scanPercentage < 0.01 {
@@ -353,7 +361,7 @@ func getRangeScanLabel(scanPercentage float64) string {
 	}
 }
 
-func getFullScanLabel(scanRows uint64) string {
+func getScanLabel(scanRows uint64) string {
 	if scanRows < 1000 {
 		return "[0, 1000)"
 	} else if scanRows < 10000 {

@@ -45,11 +45,13 @@ var (
 	// Eventkill occurs when the server.Kill() function is called.
 	EventKill = "kill"
 
-	PlanTableFullScanCounter             *prometheus.CounterVec
-	PlanIndexFullScanCounter             *prometheus.CounterVec
-	PlanTableRangeScanSelectivityCounter *prometheus.CounterVec
-	PlanIndexRangeScanSelectivityCounter *prometheus.CounterVec
-	PlanKVReqCounter                     *prometheus.CounterVec
+	PlanTableFullScanCounter        *prometheus.CounterVec
+	PlanIndexFullScanCounter        *prometheus.CounterVec
+	PlanTableScanRowsCounter        *prometheus.CounterVec
+	PlanIndexScanRowsCounter        *prometheus.CounterVec
+	PlanTableScanSelectivityCounter *prometheus.CounterVec
+	PlanIndexScanSelectivityCounter *prometheus.CounterVec
+	PlanKVReqCounter                *prometheus.CounterVec
 
 	ServerEventCounter              *prometheus.CounterVec
 	TimeJumpBackCounter             prometheus.Counter

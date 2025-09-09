@@ -297,8 +297,10 @@ func RegisterMetrics() {
 
 	prometheus.MustRegister(PlanTableFullScanCounter)
 	prometheus.MustRegister(PlanIndexFullScanCounter)
-	prometheus.MustRegister(PlanTableRangeScanSelectivityCounter)
-	prometheus.MustRegister(PlanIndexRangeScanSelectivityCounter)
+	prometheus.MustRegister(PlanTableScanRowsCounter)
+	prometheus.MustRegister(PlanIndexScanRowsCounter)
+	prometheus.MustRegister(PlanTableScanSelectivityCounter)
+	prometheus.MustRegister(PlanIndexScanSelectivityCounter)
 	prometheus.MustRegister(PlanKVReqCounter)
 
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
