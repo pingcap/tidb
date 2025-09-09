@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -38,6 +40,11 @@ func init() {
 
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(ctx BuildContext, expr Expression) Expression {
+	if ctx.ConnectionID() > 0 {
+		if sf, ok := expr.(*ScalarFunction); ok && sf.FuncName.L == ast.DateAdd {
+			fmt.Println("wwz")
+		}
+	}
 	e, _ := foldConstant(ctx, expr)
 	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())

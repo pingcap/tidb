@@ -317,6 +317,46 @@ func TestQ18(t *testing.T) {
 	})
 }
 
+func TestQ20(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec(`use test`)
+		createPart(t, tk, dom)
+		createSupplier(t, tk, dom)
+		createLineItem(t, tk, dom)
+		createPartsupp(t, tk, dom)
+		createNation(t, tk, dom)
+		tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
+		//tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+		//tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+		tk.MustExec("set tidb_runtime_filter_mode=LOCAL;")
+		testkit.LoadTableStats("test.part.json", dom)
+		testkit.LoadTableStats("test.supplier.json", dom)
+		testkit.LoadTableStats("test.lineitem.json", dom)
+		testkit.LoadTableStats("test.partsupp.json", dom)
+		testkit.LoadTableStats("test.nation.json", dom)
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		integrationSuiteData := GetTPCHSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		costTraceFormat := `explain format='plan_tree' `
+		for i := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = input[i]
+			})
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(costTraceFormat + input[i]).Rows())
+			})
+			tk.MustQuery(costTraceFormat + input[i]).Check(testkit.Rows(output[i].Result...))
+		}
+	})
+}
+
 func TestQ21(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec(`use test`)

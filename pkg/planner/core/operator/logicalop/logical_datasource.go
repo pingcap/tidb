@@ -165,6 +165,9 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	ds.AllConds = predicates
 	dual := Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {
+		if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
 		AppendTableDualTraceStep(ds, dual, predicates, opt)
 		return nil, dual, nil
 	}

@@ -401,6 +401,41 @@
     ]
   },
   {
+    "Name": "TestQ20",
+    "Cases": [
+      {
+        "SQL": "SELECT s_name, s_address FROM supplier, nation WHERE s_suppkey IN (SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN (SELECT p_partkey FROM part WHERE p_name LIKE 'green%') AND ps_availqty > (SELECT 0.5 * SUM(l_quantity) FROM lineitem WHERE l_partkey = ps_partkey AND l_suppkey = ps_suppkey AND l_shipdate >= 1993-01-01 AND l_shipdate < DATE_ADD(1993-01-01, INTERVAL 1 YEAR))) AND s_nationkey = n_nationkey AND n_name = 'ALGERIA' ORDER BY s_name;",
+        "Result": [
+          "Sort root  test.supplier.s_name",
+          "└─HashJoin root  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Projection mpp[tiflash]  test.supplier.s_suppkey, test.supplier.s_name, test.supplier.s_address",
+          "  │     └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.nation.n_nationkey, test.supplier.s_nationkey)], runtime filter:0[IN] <- test.nation.n_nationkey",
+          "  │       ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "  │       │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "  │       │   └─Projection mpp[tiflash]  test.nation.n_nationkey",
+          "  │       │     └─Selection mpp[tiflash]  eq(test.nation.n_name, \"ALGERIA\")",
+          "  │       │       └─TableFullScan mpp[tiflash] table:nation keep order:false",
+          "  │       └─TableFullScan(Probe) mpp[tiflash] table:supplier keep order:false, runtime filter:0[IN] -> test.supplier.s_nationkey",
+          "  └─HashAgg(Probe) root  group by:test.partsupp.ps_suppkey, funcs:firstrow(test.partsupp.ps_suppkey)->test.partsupp.ps_suppkey",
+          "    └─Selection root  gt(cast(test.partsupp.ps_availqty, decimal(20,0) BINARY), mul(0.5, Column#43))",
+          "      └─HashAgg root  group by:test.partsupp.ps_partkey, test.partsupp.ps_suppkey, funcs:firstrow(test.partsupp.ps_suppkey)->test.partsupp.ps_suppkey, funcs:firstrow(test.partsupp.ps_availqty)->test.partsupp.ps_availqty, funcs:sum(test.lineitem.l_quantity)->Column#43",
+          "        └─HashJoin root  inner join, equal:[eq(test.partsupp.ps_partkey, test.part.p_partkey)]",
+          "          ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "          │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "          │   └─Projection mpp[tiflash]  test.part.p_partkey",
+          "          │     └─TableFullScan mpp[tiflash] table:part pushed down filter:like(test.part.p_name, \"green%\", 92), keep order:false",
+          "          └─HashJoin(Probe) root  left outer join, left side:TableReader, equal:[eq(test.partsupp.ps_partkey, test.lineitem.l_partkey) eq(test.partsupp.ps_suppkey, test.lineitem.l_suppkey)]",
+          "            ├─TableDual(Build) root  rows:0",
+          "            └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "              └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "                └─TableFullScan mpp[tiflash] table:partsupp keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestQ21",
     "Cases": [
       {
