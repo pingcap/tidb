@@ -16,7 +16,6 @@ package casetest
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -530,40 +529,23 @@ func TestIssue63290(t *testing.T) {
 		tk.MustExec("create table t1 (a int, b int, c int, key(a), key(b))")
 		tk.MustExec("create table t2 (a int, b int, c int, key(a), key(b))")
 		tk.MustExec("create table t3 (a int, b int, c int, key(a), key(b))")
-		tk.MustExec(`insert into t1 select * from (
-    with recursive x as (
-        select 1 as a, 1 as b, 1 as c, 1 as n
-        union all
-        select a+1 as a, b+1 as b, c+1 as c, n+1 from x where n < 10
-    )
-    select a, b, c from x
-) tt`)
-		tk.MustExec(`set @@cte_max_recursion_depth=10000`)
-		tk.MustExec(`insert into t2 select * from (
-    with recursive x as (
-        select 2 as a, 2 as b, 2 as c, 1 as n
-        union all
-        select a, b, c, n+1 from x where n < 10000
-    )
-    select a, b, c from x
-) tt`)
-		tk.MustExec(`insert into t3 select * from (
-    with recursive x as (
-        select 2 as a, 2 as b, 2 as c, 1 as n
-        union all
-        select a, b, c, n+1 from x where n < 5
-    )
-    select a, b, c from x
-) tt`)
+		tk.MustExec(`insert into t1 values (1, 1, 1)`)
+		tk.MustExec(`insert into t3 values (1, 1, 1)`)
 		tk.MustExec(`analyze table t1, t2, t3`)
-		tk.MustExec(`set @@tidb_stats_load_sync_wait=10000`)
 
-		costStr := tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Rows()[0][2].(string)
-		cost1, err := strconv.ParseFloat(costStr, 64)
-		require.NoError(t, err)
-		costStr = tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Rows()[0][2].(string)
-		cost2, err := strconv.ParseFloat(costStr, 64)
-		require.NoError(t, err)
-		require.Less(t, cost2, cost1)
+		// Cartesian Join t1 and t3 first, then join t2.
+		tk.MustQuery(`explain format='plan_tree' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
+			`Projection root  1->Column#13`,
+			`└─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t3.b, test.t2.b)`,
+			`  ├─HashJoin(Build) root  CARTESIAN inner join`,
+			`  │ ├─IndexReader(Build) root  index:IndexFullScan`,
+			`  │ │ └─IndexFullScan cop[tikv] table:t3, index:b(b) keep order:false`,
+			`  │ └─IndexReader(Probe) root  index:IndexFullScan`,
+			`  │   └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false`,
+			`  └─IndexLookUp(Probe) root  `,
+			`    ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))`,
+			`    │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo`,
+			`    └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))`,
+			`      └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
 	})
 }
