@@ -133,7 +133,8 @@ type AccessPath struct {
 	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
 	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
 
-	// GroupedRanges stores the result of grouping ranges by columns.
+	// GroupedRanges stores the result of grouping ranges by columns. Finally, we need a merge sort on the results of
+	// each range group.
 	GroupedRanges [][]*ranger.Range
 	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
 	// property.

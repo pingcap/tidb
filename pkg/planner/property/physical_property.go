@@ -220,15 +220,17 @@ const (
 	AllCTECanMpp
 )
 
-// PhysicalPropMatchResult describes the result of matching PhysicalProperty.SortItem against an access path.
+// PhysicalPropMatchResult describes the result of matching PhysicalProperty against an access path.
 type PhysicalPropMatchResult int
 
 const (
 	// PropNotMatched means the access path cannot satisfy the required order.
 	PropNotMatched PhysicalPropMatchResult = iota
-	// PropMatched means the access path can satisfy the required order directly.
+	// PropMatched means the access path can satisfy the required property directly.
 	PropMatched
-	// PropMatchedNeedMergeSort means the access path can satisfy the required order, but a merge sort is needed.
+	// PropMatchedNeedMergeSort means the access path can satisfy the required property, but a merge sort between range
+	// groups is needed.
+	// Corresponding information will be recorded in AccessPath.GroupedRanges and AccessPath.GroupByColIdxs.
 	PropMatchedNeedMergeSort
 )
 

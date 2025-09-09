@@ -1301,22 +1301,23 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	var matchResult property.PhysicalPropMatchResult
 	if path.IsIntHandlePath {
 		pkCol := ds.GetPKIsHandleCol()
-		if len(prop.SortItems) == 1 && pkCol != nil {
-			if prop.SortItems[0].Col.EqualColumn(pkCol) {
-				if path.StoreType == kv.TiFlash && prop.SortItems[0].Desc {
-					return property.PropNotMatched
-				}
-				return property.PropMatched
-			}
+		if len(prop.SortItems) != 1 || pkCol == nil {
+			return property.PropNotMatched
 		}
-		return property.PropNotMatched
+		item := prop.SortItems[0]
+		if !item.Col.EqualColumn(pkCol) ||
+			path.StoreType == kv.TiFlash && item.Desc {
+			return property.PropNotMatched
+		}
+		return property.PropMatched
 	}
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `false` because
 	// it needs not to keep order for index scan.
 
-	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then `matchProperty` is true. However, we need to consider
-	// the situations when some columns of `path.IdxCols` are evaluated as constant. For example:
+	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then the property is matched.
+	// However, we need to consider the situations when some columns of `path.IdxCols` are evaluated as constant.
+	// For example:
 	// ```
 	// create table t(a int, b int, c int, d int, index idx_a_b_c(a, b, c), index idx_d_c_b_a(d, c, b, a));
 	// select * from t where a = 1 order by b, c;
@@ -1324,53 +1325,61 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// select * from t where d = 1 and b = 2 order by c, a;
 	// select * from t where d = 1 and b = 2 order by c, b, a;
 	// ```
-	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order. In the last two `SELECT` statements, `idx_d_c_b_a`
-	// matches the sort order. Hence, we use `path.ConstCols` to deal with the above situations.
+	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order.
+	// In the last two `SELECT` statements, `idx_d_c_b_a` matches the sort order.
+	// Hence, we use `path.ConstCols` to deal with the above situations. This corresponds to Case 2 in the code below.
+	//
+	// Moreover, we also need to consider the situation when some columns of `path.IdxCols` are a list of constant
+	// values. For example, for query `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c`, we can use `idx_a_b_c` to
+	// access 3 ranges and use a merge sort to satisfy `ORDER BY b, c`. This corresponds to Case 3 in the code below.
 	groupByColIdxs := make([]int, 0)
 	if !prop.IsSortItemEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
 		matchResult = property.PropMatched
-		i := 0
+		colIdx := 0
 		for _, sortItem := range prop.SortItems {
 			found := false
-			for ; i < len(path.IdxCols); i++ {
-				if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[i]) {
-					// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
+			for ; colIdx < len(path.IdxCols); colIdx++ {
+				// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
+				if path.IdxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[colIdx]) {
 					found = true
-					i++
+					colIdx++
 					break
 				}
-				// this sort item is not satisfied by the index column
-				if path.ConstCols != nil && i < len(path.ConstCols) && path.ConstCols[i] {
-					// Case 2: the accessed range on this index column is a constant value, so we can skip this column
-					// and try the next index column.
+				// Below: this sort item is not satisfied by the index column
+
+				// Case 2: the accessed range on this index column is a single constant value, so we can skip this
+				// column and try to use the next index column to satisfy this sort item.
+				if path.ConstCols != nil && colIdx < len(path.ConstCols) && path.ConstCols[colIdx] {
 					continue
 				}
-				colIdx := i
-				if colIdx >= len(path.IdxCols) {
-					break
-				}
+
+				// Check if the accessed range on this index column is a single constant value **for each range**.
 				allRangesPoint := true
 				for _, ran := range path.Ranges {
 					if len(ran.LowVal) <= colIdx || len(ran.HighVal) <= colIdx {
 						allRangesPoint = false
 						break
 					}
-					cmp, err := ran.LowVal[colIdx].Compare(
+					cmpResult, err := ran.LowVal[colIdx].Compare(
 						ds.SCtx().GetSessionVars().StmtCtx.TypeCtx(),
 						&ran.HighVal[colIdx],
 						ran.Collators[colIdx],
 					)
-					if err != nil || cmp != 0 {
+					if err != nil || cmpResult != 0 {
 						allRangesPoint = false
 						break
 					}
 				}
 				// Case 3: the accessed range on this index column is a constant value in each range respectively,
-				// we can also skip this column and try the next index column.
+				// we can also skip this column and try the next index column. But we need to record this column
+				// as a "group by" column, because we need to do a merge sort on these ranges later.
+				// So `len(groupByColIdxs) > 0` means we need to do a merge sort to satisfy the required property.
 				if allRangesPoint {
 					groupByColIdxs = append(groupByColIdxs, colIdx)
 					continue
 				}
+				// Case 4: cannot satisfy this sort item, the path cannot match the required property.
+				intest.Assert(found == false)
 				break
 			}
 			if !found {
@@ -2671,18 +2680,6 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	path := candidate.path
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
-	if candidate.matchPropResult == property.PropMatchedNeedMergeSort {
-		byItems := make([]*util.ByItems, 0, len(prop.SortItems))
-		for _, si := range prop.SortItems {
-			byItems = append(byItems, &util.ByItems{
-				Expr: si.Col,
-				Desc: si.Desc,
-			})
-		}
-		is.ByItems = byItems
-		is.GroupedRanges = path.GroupedRanges
-		is.GroupByColIdxs = path.GroupByColIdxs
-	}
 	cop := &CopTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
@@ -2739,18 +2736,27 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			cop.needExtraProj = cop.needExtraProj || isNew
 		}
 
-		if ds.TableInfo.GetPartitionInfo() != nil {
-			// Add sort items for index scan for merge-sort operation between partitions, only required for local index.
-			if !is.Index.Global {
-				byItems := make([]*util.ByItems, 0, len(prop.SortItems))
-				for _, si := range prop.SortItems {
-					byItems = append(byItems, &util.ByItems{
-						Expr: si.Col,
-						Desc: si.Desc,
-					})
-				}
-				cop.indexPlan.(*physicalop.PhysicalIndexScan).ByItems = byItems
+		// Add sort items for index scan for the merge-sort operation
+		// Case 1: keep order between partitions (only required for local index)
+		// Case 2: keep order between range groups (see comments of PropMatchedNeedMergeSort and
+		// AccessPath.GroupedRanges for details)
+		// Case 3: both
+		if (ds.TableInfo.GetPartitionInfo() != nil && !is.Index.Global) ||
+			candidate.matchPropResult == property.PropMatchedNeedMergeSort {
+			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
+			for _, si := range prop.SortItems {
+				byItems = append(byItems, &util.ByItems{
+					Expr: si.Col,
+					Desc: si.Desc,
+				})
 			}
+			cop.indexPlan.(*physicalop.PhysicalIndexScan).ByItems = byItems
+		}
+		if candidate.matchPropResult == property.PropMatchedNeedMergeSort {
+			is.GroupedRanges = candidate.path.GroupedRanges
+			is.GroupByColIdxs = candidate.path.GroupByColIdxs
+		}
+		if ds.TableInfo.GetPartitionInfo() != nil {
 			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
 					tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
@@ -2900,18 +2906,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	ts, _ := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.matchPropResult.Matched())
-	if candidate.matchPropResult == property.PropMatchedNeedMergeSort {
-		byItems := make([]*util.ByItems, 0, len(prop.SortItems))
-		for _, si := range prop.SortItems {
-			byItems = append(byItems, &util.ByItems{
-				Expr: si.Col,
-				Desc: si.Desc,
-			})
-		}
-		ts.ByItems = byItems
-		ts.GroupedRanges = candidate.path.GroupedRanges
-		ts.GroupByColIdxs = candidate.path.GroupByColIdxs
-	}
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
 	isTiFlashPath := ts.StoreType == kv.TiFlash
@@ -3034,7 +3028,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	var task base.Task = copTask
 	if candidate.matchPropResult.Matched() {
 		copTask.keepOrder = true
-		if ds.TableInfo.GetPartitionInfo() != nil {
+		if ds.TableInfo.GetPartitionInfo() != nil || candidate.matchPropResult == property.PropMatchedNeedMergeSort {
 			// Add sort items for table scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 			for _, si := range prop.SortItems {
@@ -3044,6 +3038,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				})
 			}
 			ts.ByItems = byItems
+		}
+		if candidate.matchPropResult == property.PropMatchedNeedMergeSort {
+			ts.GroupedRanges = candidate.path.GroupedRanges
+			ts.GroupByColIdxs = candidate.path.GroupByColIdxs
 		}
 	}
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
