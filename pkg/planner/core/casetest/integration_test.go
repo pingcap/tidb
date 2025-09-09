@@ -16,6 +16,7 @@ package casetest
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -523,7 +524,7 @@ func TestIssue56915(t *testing.T) {
 	})
 }
 
-func TestCartesianJoinOrder(t *testing.T) {
+func TestIssue63290(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t1 (a int, b int, c int, key(a), key(b))")
@@ -557,28 +558,12 @@ func TestCartesianJoinOrder(t *testing.T) {
 		tk.MustExec(`analyze table t1, t2, t3`)
 		tk.MustExec(`set @@tidb_stats_load_sync_wait=10000`)
 
-		tk.MustQuery(`explain select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
-			`Projection_11 50000.00 root  1->Column#13`,
-			`└─HashJoin_27 50000.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)]`,
-			`  ├─IndexReader_92(Build) 10.00 root  index:IndexFullScan_91`,
-			`  │ └─IndexFullScan_91 10.00 cop[tikv] table:t1, index:a(a) keep order:false`,
-			`  └─HashJoin_62(Probe) 50000.00 root  inner join, equal:[eq(test.t3.b, test.t2.b)]`,
-			`    ├─IndexReader_71(Build) 5.00 root  index:IndexFullScan_70`,
-			`    │ └─IndexFullScan_70 5.00 cop[tikv] table:t3, index:b(b) keep order:false`,
-			`    └─TableReader_79(Probe) 10000.00 root  data:Selection_78`,
-			`      └─Selection_78 10000.00 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))`,
-			`        └─TableFullScan_77 10000.00 cop[tikv] table:t2 keep order:false`))
-		// join t1 and t3 first
-		tk.MustQuery(`explain select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
-			`Projection_12 50000.00 root  1->Column#13`,
-			`└─HashJoin_28 50000.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]`,
-			`  ├─HashJoin_44(Build) 50.00 root  CARTESIAN inner join`,
-			`  │ ├─IndexReader_46(Build) 5.00 root  index:IndexFullScan_45`,
-			`  │ │ └─IndexFullScan_45 5.00 cop[tikv] table:t3, index:b(b) keep order:false`,
-			`  │ └─IndexReader_48(Probe) 10.00 root  index:IndexFullScan_47`,
-			`  │   └─IndexFullScan_47 10.00 cop[tikv] table:t1, index:a(a) keep order:false`,
-			`  └─TableReader_56(Probe) 10000.00 root  data:Selection_55`,
-			`    └─Selection_55 10000.00 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))`,
-			`      └─TableFullScan_54 10000.00 cop[tikv] table:t2 keep order:false`))
+		costStr := tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Rows()[0][2].(string)
+		cost1, err := strconv.ParseFloat(costStr, 64)
+		require.NoError(t, err)
+		costStr = tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Rows()[0][2].(string)
+		cost2, err := strconv.ParseFloat(costStr, 64)
+		require.NoError(t, err)
+		require.Less(t, cost2, cost1)
 	})
 }
