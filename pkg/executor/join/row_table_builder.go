@@ -134,7 +134,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 	// 1. split partition
-	codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer)
+	// codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer)
 	for index, colIdx := range b.buildKeyIndex {
 		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
 		if err != nil {
@@ -311,7 +311,6 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *jo
 		} else {
 			length = 0
 		}
-		// checkMem(cap(seg.rawData), len(seg.rawData), sizeOfElementSize)
 		seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfElementSize)...)
 		appendRowLength += int64(sizeOfElementSize)
 	}
@@ -355,14 +354,12 @@ func fillRowData(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegme
 	for index, colIdx := range rowTableMeta.rowColumnsOrder {
 		if rowTableMeta.columnsSize[index] > 0 {
 			// fixed size
-			// checkMem(cap(seg.rawData), len(seg.rawData), len(row.GetRaw(colIdx)))
 			seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
 			appendRowLength += int64(rowTableMeta.columnsSize[index])
 		} else {
 			// length, raw_data
 			raw := row.GetRaw(colIdx)
 			length := uint32(len(raw))
-			// checkMem(cap(seg.rawData), len(seg.rawData), sizeOfElementSize+len(raw))
 			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), sizeOfElementSize)...)
 			seg.rawData = append(seg.rawData, raw...)
 			appendRowLength += int64(length) + int64(sizeOfElementSize)
@@ -382,13 +379,6 @@ func estimateFillRowData(rowTableMeta *joinTableMeta, row *chunk.Row) int64 {
 		}
 	}
 	return appendRowLength
-}
-
-func fillFake(seg *rowTableSegment, rowLength int64) {
-	if rowLength%8 != 0 {
-		appendedFakePlaceHolder := fakeAddrPlaceHolder[:8-rowLength%8]
-		seg.rawData = append(seg.rawData, appendedFakePlaceHolder...)
-	}
 }
 
 func estimateFillFake(rowLength int64) int64 {
@@ -438,12 +428,6 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 	}
 }
 
-// func checkMem(capLen int, curLen int, addedLen int) {
-// 	if capLen < curLen+addedLen {
-// 		panic(fmt.Sprintf("cap: %d, len: %d, addedLen: %d", capLen, curLen, addedLen))
-// 	}
-// }
-
 func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int) error {
 	if len(b.usedRows) == 0 {
 		return nil
@@ -464,7 +448,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		}
 	}()
 
-	b.preAllocForSegments(segs, chk, hashJoinCtx)
+	// b.preAllocForSegments(segs, chk, hashJoinCtx)
 
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
@@ -486,12 +470,9 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		)
 		seg = segs[partIdx]
 		if hasValidKey {
-			// checkMem(cap(seg.validJoinKeyPos), len(seg.validJoinKeyPos), 1)
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
-		// checkMem(cap(seg.hashValues), len(seg.hashValues), 1)
 		seg.hashValues = append(seg.hashValues, b.hashValue[logicalRowIndex])
-		// checkMem(cap(seg.rowStartOffset), len(seg.rowStartOffset), 1)
 		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
 		rowLength := int64(0)
 		// fill next_row_ptr field
@@ -502,8 +483,10 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		rowLength += b.fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
 		// fill row data
 		rowLength += fillRowData(rowTableMeta, &row, seg)
-		// to make sure rowLength is 8 bytes alignment
-		fillFake(seg, rowLength)
+		// to make sure rowLength is 8 bit alignment
+		if rowLength%8 != 0 {
+			seg.rawData = append(seg.rawData, fakeAddrPlaceHolder[:8-rowLength%8]...)
+		}
 		b.rowNumberInCurrentRowTableSeg[partIdx]++
 	}
 	return nil

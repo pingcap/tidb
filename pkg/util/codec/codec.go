@@ -487,10 +487,6 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if canSkip(physicalRowindex) {
 				continue
 			}
-			// TODO remove
-			if len(serializedKeysVector[logicalRowIndex])+1+len(column.GetRaw(physicalRowindex)) > cap(serializedKeysVector[logicalRowIndex]) {
-				panic(fmt.Sprintf("%d %d", len(serializedKeysVector[logicalRowIndex])+1+len(column.GetRaw(physicalRowindex)), cap(serializedKeysVector[logicalRowIndex])))
-			}
 			if serializeMode == NeedSignFlag {
 				if !mysql.HasUnsignedFlag(tp.GetFlag()) && i64s[physicalRowindex] < 0 {
 					serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], intFlag)
