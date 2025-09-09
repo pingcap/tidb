@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -2430,6 +2431,10 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead with adjusted.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+	// For test purpose, you can enable this failpoint to get the unadjusted replica read.
+	failpoint.Inject("GetReplicaReadUnadjusted", func(_ failpoint.Value) {
+		failpoint.Return(s.replicaRead)
+	})
 	// Replica read only works for read-only statements.
 	if !s.StmtCtx.IsReadOnly {
 		if s.StmtCtx.HasReplicaReadHint {
@@ -2447,12 +2452,6 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
 		return kv.ReplicaReadLeader
 	}
-	return s.replicaRead
-}
-
-// GetReplicaReadUnadjusted returns the unadjusted replica read type.
-// In most cases, you should use GetReplicaRead instead of this method.
-func (s *SessionVars) GetReplicaReadUnadjusted() kv.ReplicaReadType {
 	return s.replicaRead
 }
 
