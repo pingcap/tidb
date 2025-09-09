@@ -196,7 +196,7 @@ type TestCollector struct {
 }
 
 // Accepted implements Collector.Accepted
-func (c *TestCollector) Accepted(bytes, rows int64) {}
+func (*TestCollector) Accepted(_, _ int64) {}
 
 // Processed implements Collector.Processed
 func (c *TestCollector) Processed(bytes, rows int64) {

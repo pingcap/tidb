@@ -457,12 +457,12 @@ func newDistTaskRowCntCollector(
 
 func (d *distTaskRowCntCollector) Accepted(bytes, _ int64) {
 	d.summary.ReadBytes.Add(bytes)
-	meter.RecordDXFScanDataTraffic(d.store, bytes)
+	meter.RecordDXFScanDataTraffic(d.store, uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
-	meter.RecordDXFWriteDataSize(d.store, bytes)
+	meter.RecordDXFWriteDataSize(d.store, uint64(bytes))
 }

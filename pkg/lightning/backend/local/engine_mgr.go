@@ -314,7 +314,7 @@ func (em *engineManager) closeEngine(
 			}
 			ts = oracle.ComposeTS(physical, logical)
 		}
-		onClose := func(summary *external.ReaderSummary) {}
+		onClose := func(*external.ReaderSummary) {}
 		if externalCfg.OnReaderClose != nil {
 			onClose = externalCfg.OnReaderClose
 		}

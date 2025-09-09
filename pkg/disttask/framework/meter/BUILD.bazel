@@ -23,4 +23,12 @@ go_test(
     srcs = ["meter_test.go"],
     embed = [":meter"],
     flaky = True,
+    shard_count = 5,
+    deps = [
+        "@com_github_pingcap_metering_sdk//config",
+        "@com_github_pingcap_metering_sdk//reader/metering",
+        "@com_github_pingcap_metering_sdk//storage",
+        "@com_github_pingcap_metering_sdk//writer/metering",
+        "@com_github_stretchr_testify//require",
+    ],
 )
