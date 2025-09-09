@@ -292,6 +292,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			100,
 			2,
 			closeFn1,
+			dummyReaderOnCloseFunc,
 			1,
 			true))
 	}
