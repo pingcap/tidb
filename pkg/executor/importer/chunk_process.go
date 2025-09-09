@@ -198,12 +198,6 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 		b.bytesBuf = kvs.BytesBuf
 		b.memBuf = kvs.MemBuf
 	}
-	if kvs.Sess != nil {
-		select {
-		case kvs.Sess.BufChan <- kvs.Pairs[:0]:
-		default:
-		}
-	}
 	return nil
 }
 

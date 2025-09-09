@@ -367,7 +367,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		}
 
 		// The index key value is not found or deleted.
-		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
+		if err != nil || len(value2) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
 			lazyCheck := opt.DupKeyCheck() == table.DupKeyCheckLazy && err != nil
 			if hasTempKey {

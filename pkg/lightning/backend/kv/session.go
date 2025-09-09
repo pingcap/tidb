@@ -66,6 +66,12 @@ func (b *BytesBuf) add(v []byte) []byte {
 	return b.buf[start:b.idx:b.idx]
 }
 
+func (b *BytesBuf) get(size int) []byte {
+	start := b.idx
+	b.idx += size
+	return b.buf[start:b.idx:b.idx]
+}
+
 func newBytesBuf(size int) *BytesBuf {
 	return &BytesBuf{
 		buf: manual.New(size),
@@ -146,6 +152,15 @@ func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 	})
 	mb.size += size
 	return nil
+}
+
+// TryAlloc tries to allocate a byte slice with the given size from the current buffer.
+func (mb *MemBuf) TryAlloc(size int) []byte {
+	if mb.buf == nil || mb.buf.cap-mb.buf.idx < size {
+		return make([]byte, 0, size)
+	}
+
+	return mb.buf.get(size)
 }
 
 // SetWithFlags implements the kv.MemBuffer interface.
@@ -278,7 +293,6 @@ type Session struct {
 	txn     transaction
 	exprCtx *litExprContext
 	tblCtx  *litTableMutateContext
-	BufChan chan []common.KvPair
 }
 
 // NewSession creates a new Session.
@@ -322,7 +336,6 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) (*Session, er
 	s := &Session{
 		exprCtx: exprCtx,
 		tblCtx:  tblCtx,
-		BufChan: make(chan []common.KvPair, 8),
 	}
 	s.txn.kvPairs = &Pairs{}
 	return s, nil
@@ -350,18 +363,7 @@ func (s *Session) TakeKvPairs() *Pairs {
 	if pairs.BytesBuf != nil {
 		pairs.MemBuf = memBuf
 	}
-
-	var kvPairs []common.KvPair
-	select {
-	case kvPairs = <-s.BufChan:
-		if cap(kvPairs) < len(pairs.Pairs) {
-			kvPairs = make([]common.KvPair, 0, len(pairs.Pairs))
-		}
-	default:
-		kvPairs = make([]common.KvPair, 0, len(pairs.Pairs))
-	}
-
-	memBuf.kvPairs = &Pairs{Pairs: kvPairs[:0], Sess: s}
+	memBuf.kvPairs = &Pairs{Pairs: make([]common.KvPair, 0, len(pairs.Pairs))}
 	memBuf.size = 0
 	return pairs
 }
