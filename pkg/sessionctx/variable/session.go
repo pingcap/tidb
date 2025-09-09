@@ -1131,6 +1131,9 @@ type SessionVars struct {
 	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
 	EnableOuterJoinReorder bool
 
+	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
+	OptimizerEnableNAAJ bool
+
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
@@ -1758,13 +1761,6 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
-
-	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
-	OptimizerEnableNAAJ bool
-
-	// AutoSemiJoinRewrite triggers automatic rewrite of semi-join to inner-join with aggregation
-	// similar to SEMI_JOIN_REWRITE() hint when enabled.
-	AutoSemiJoinRewrite bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -2330,7 +2326,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
 		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
-		AutoSemiJoinRewrite:           false,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
