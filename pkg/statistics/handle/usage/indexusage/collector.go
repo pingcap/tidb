@@ -311,12 +311,30 @@ func ScanMetrics(isTableScan bool, sample Sample) {
 	// scan selectivity metrics
 	label := getRangeScanLabel(scanPercentage)
 	if isTableScan {
-		metrics.PlanTableSelectivityCounter.WithLabelValues(label).Inc()
+		metrics.PlanTableRangeScanSelectivityCounter.WithLabelValues(label).Inc()
 	} else {
-		metrics.PlanIndexSelectivityCounter.WithLabelValues(label).Inc()
+		metrics.PlanIndexRangeScanSelectivityCounter.WithLabelValues(label).Inc()
 	}
 
 	// cop-request metrics
+	kvReqLabel := getKVReqLabel(sample.KvReqTotal)
+	metrics.PlanKVReqCounter.WithLabelValues(kvReqLabel).Inc()
+}
+
+func getKVReqLabel(kvReq uint64) string {
+	if kvReq < 10 {
+		return "[0, 10)"
+	} else if kvReq < 100 {
+		return "[10, 100)"
+	} else if kvReq < 1000 {
+		return "[100, 1000)"
+	} else if kvReq < 10000 {
+		return "[1000, 10000)"
+	} else if kvReq < 100000 {
+		return "[10000, 100000)"
+	} else {
+		return "[100000, +inf)"
+	}
 }
 
 func getRangeScanLabel(scanPercentage float64) string {
