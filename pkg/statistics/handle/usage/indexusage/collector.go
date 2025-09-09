@@ -278,6 +278,7 @@ func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sa
 	}
 
 	// TODO: add metrics
+	ScanMetrics(sample)
 	s.sessionCollector.Update(tableID, indexID, sample)
 }
 
@@ -287,4 +288,15 @@ func (s *StmtIndexUsageCollector) Reset() {
 	defer s.Unlock()
 
 	clear(s.recordedIndex)
+}
+
+func ScanMetrics(sample Sample) {
+	isTableScan := false // TODO
+	isFullScan := sample.PercentageAccess[len(sample.PercentageAccess)-1] > 0
+
+	if isFullScan {
+
+	} else {
+
+	}
 }
