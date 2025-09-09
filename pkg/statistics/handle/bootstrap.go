@@ -799,6 +799,8 @@ func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err erro
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram in the lite mode", zap.Duration("duration", time.Since(start)))
+	// If tableIDs is empty, it means we load all the tables' stats meta and histograms.
+	// So we can replace the global cache with the new cache.
 	if len(tableIDs) == 0 {
 		h.Replace(cache)
 	} else {
