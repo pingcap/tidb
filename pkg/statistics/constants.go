@@ -18,10 +18,6 @@ package statistics
 const (
 	// DefaultTopNValue is the default value for number of TopN entries
 	DefaultTopNValue = 100
-	// TopNPruningThreshold represents 10% threshold for TopN pruning
-	TopNPruningThreshold = 10
 	// DefaultHistogramBuckets is the default number of histogram buckets
 	DefaultHistogramBuckets = 256
-	// BucketNDVDivisor is used to calculate bucket count based on remaining NDV
-	BucketNDVDivisor = 2
 )

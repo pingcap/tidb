@@ -29,7 +29,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// use exported defaults from constants.go directly
+// local builder-only tuning knobs
+const (
+	// topNPruningThreshold represents 10% threshold for TopN pruning
+	topNPruningThreshold = 10
+	// bucketNDVDivisor is used to calculate bucket count based on remaining NDV
+	bucketNDVDivisor = 2
+)
 
 // TopNWithRange wraps TopNMeta with index range information for efficient histogram building.
 type TopNWithRange struct {
@@ -84,7 +90,7 @@ func processTopNValue(boundedMinHeap *generic.BoundedMinHeap[TopNWithRange], enc
 	// it is not necessary to special handle last value but a lot of current tests hardcoded the output of the last
 	// version and making change will involve a lot of test changes.
 	if !lastValue && curCnt == 1 && allowPruning &&
-		(boundedMinHeap.Len() >= (numTopN/TopNPruningThreshold) || sampleFactor > 1) {
+		(boundedMinHeap.Len() >= (numTopN/topNPruningThreshold) || sampleFactor > 1) {
 		return
 	}
 
@@ -537,7 +543,7 @@ func BuildHistAndTopN(
 		if lenTopN < int64(numTopN) && numBuckets == DefaultHistogramBuckets {
 			// set the number of buckets to be the number of remaining distinct values divided by bucketNDVDivisor
 			// but no less than 1 and no more than the original number of buckets
-			numBuckets = int(min(max(1, remainingNDV/BucketNDVDivisor), int64(numBuckets)))
+			numBuckets = int(min(max(1, remainingNDV/bucketNDVDivisor), int64(numBuckets)))
 		}
 
 		// create range checker for efficient TopN index skipping using final TopN items only
