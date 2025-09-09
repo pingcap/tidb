@@ -262,7 +262,7 @@ func NewStmtIndexUsageCollector(sessionCollector *SessionIndexUsageCollector) *S
 
 // Update updates the index usage in the internal session collector. The `sample.QueryTotal` will be modified according
 // to whether this index has been recorded in this statement usage collector.
-func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sample) {
+func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, isTableScan bool, sample Sample) {
 	// The session index usage collector and the map inside cannot be updated concurrently. However, for executors with
 	// multiple workers, it's possible for them to be closed (and update stats) at the same time, so a lock is needed
 	// here.
@@ -280,7 +280,7 @@ func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sa
 	}
 
 	// TODO: add metrics
-	ScanMetrics(sample)
+	ScanMetrics(isTableScan, sample)
 	s.sessionCollector.Update(tableID, indexID, sample)
 }
 
@@ -292,8 +292,7 @@ func (s *StmtIndexUsageCollector) Reset() {
 	clear(s.recordedIndex)
 }
 
-func ScanMetrics(sample Sample) {
-	isTableScan := false // TODO
+func ScanMetrics(isTableScan bool, sample Sample) {
 	isFullScan := sample.PercentageAccess[len(sample.PercentageAccess)-1] > 0
 
 	if isFullScan {

@@ -64,12 +64,15 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 		physicalTableID = physicalTable.GetPhysicalID()
 	}
 
-	e.ReportCopIndexUsage(tableID, physicalTableID, indexID, planID)
+	pkID, ok := getClusterIndexID(tbl.Meta())
+	isTableScan := ok && pkID == indexID
+
+	e.ReportCopIndexUsage(tableID, physicalTableID, indexID, planID, isTableScan)
 }
 
 // ReportCopIndexUsage reports the index usage to the inside collector. The index usage will be recorded in the
 // `tableID+indexID`, but the percentage is calculated using the size of the table specified by `physicalTableID`.
-func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
+func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int, isTableScan bool) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
 		return
@@ -81,7 +84,7 @@ func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID 
 	}
 
 	sample := indexusage.NewSample(0, uint64(kvReq), uint64(accessRows), uint64(tableRowCount))
-	e.reporter.Update(tableID, indexID, sample)
+	e.reporter.Update(tableID, indexID, isTableScan, sample)
 }
 
 // ReportPointGetIndexUsageForHandle wraps around `ReportPointGetIndexUsage` to get the `indexID` automatically
@@ -92,11 +95,15 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.Ta
 		return
 	}
 
-	e.ReportPointGetIndexUsage(tblInfo.ID, physicalTableID, idxID, kvRequestTotal, rows)
+	e.reportPointGetIndexUsageHelper(tblInfo.ID, physicalTableID, idxID, true, kvRequestTotal, rows)
 }
 
 // ReportPointGetIndexUsage reports the index usage of a point get or batch point get
 func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, kvRequestTotal, rows int64) {
+	e.reportPointGetIndexUsageHelper(tableID, physicalTableID, indexID, false, kvRequestTotal, rows)
+}
+
+func (e *IndexUsageReporter) reportPointGetIndexUsageHelper(tableID int64, physicalTableID int64, indexID int64, isTableScan bool, kvRequestTotal, rows int64) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
 		// it's possible that the point get doesn't have the table stats. In this case, we always
@@ -106,7 +113,7 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTab
 	}
 
 	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(rows), uint64(tableRowCount))
-	e.reporter.Update(tableID, indexID, sample)
+	e.reporter.Update(tableID, indexID, isTableScan, sample)
 }
 
 // getTableRowCount returns the `RealtimeCount` of a table
