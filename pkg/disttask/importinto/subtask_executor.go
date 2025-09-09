@@ -20,7 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+=======
+	"github.com/pingcap/tidb/pkg/ddl"
+>>>>>>> 37f8a14657b (importinto: fix zero update time during validation phase and refine logs (#63425))
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -60,8 +64,7 @@ func (e *importMinimalTaskExecutor) Run(
 	dataWriter, indexWriter backend.EngineWriter,
 	collector execute.Collector,
 ) error {
-	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
-	logger.Info("execute chunk")
+	logger := e.mTtask.logger
 	failpoint.Inject("beforeSortChunk", func() {})
 	failpoint.Inject("errorWhenSortChunk", func() {
 		failpoint.Return(errors.New("occur an error when sort chunk"))

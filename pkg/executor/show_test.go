@@ -44,8 +44,11 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 		fieldTypes = append(fieldTypes, fieldType)
 	}
 	c := chunk.New(fieldTypes, 10, 10)
+	t2024 := types.NewTime(types.FromGoTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), mysql.TypeTimestamp, 0)
+	t2025 := types.NewTime(types.FromGoTime(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)), mysql.TypeTimestamp, 0)
 	jobInfo := &importer.JobInfo{
 		Parameters: importer.ImportParameters{},
+		UpdateTime: t2024,
 	}
 
 	fmap := plannercore.ImportIntoFieldMap
@@ -63,6 +66,8 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(rowCntIdx))
 	require.True(t, c.GetRow(1).IsNull(startIdx))
 	require.True(t, c.GetRow(1).IsNull(endIdx))
+	// runtime info doesn't have update time, so use job info's update time
+	require.EqualValues(t, t2024, c.GetRow(1).GetTime(14))
 
 	jobInfo.Status = importer.JobStatusFinished
 	jobInfo.Summary = &importer.Summary{ImportedRows: 123}
@@ -88,6 +93,10 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	require.Equal(t, "0", c.GetRow(3).GetString(fmap["CurStepProgressPct"]))
 	require.Equal(t, "2B/s", c.GetRow(3).GetString(fmap["CurStepSpeed"]))
 	require.Equal(t, "13:53:15", c.GetRow(3).GetString(fmap["CurStepETA"]))
+
+	// runtime info have update time, so use it
+	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0, UpdateTime: t2025})
+	require.EqualValues(t, t2025, c.GetRow(4).GetTime(14))
 }
 
 func TestShow(t *testing.T) {
