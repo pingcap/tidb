@@ -17,7 +17,6 @@ package codec
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"hash"
 	"io"
 	"time"
@@ -533,13 +532,13 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			size := uint32(len(data))
 
 			// TODO remove
-			length := 0
-			if serializeMode == KeepVarColumnLength {
-				length = int(sizeUint32)
-			}
-			if len(serializedKeysVector[logicalRowIndex])+length+len(data) > cap(serializedKeysVector[logicalRowIndex]) {
-				panic(fmt.Sprintf("%d %d", len(serializedKeysVector[logicalRowIndex])+length+len(data), cap(serializedKeysVector[logicalRowIndex])))
-			}
+			// length := 0
+			// if serializeMode == KeepVarColumnLength {
+			// 	length = int(sizeUint32)
+			// }
+			// if len(serializedKeysVector[logicalRowIndex])+length+len(data) > cap(serializedKeysVector[logicalRowIndex]) {
+			// 	panic(fmt.Sprintf("%d %d", len(serializedKeysVector[logicalRowIndex])+length+len(data), cap(serializedKeysVector[logicalRowIndex])))
+			// }
 
 			if serializeMode == KeepVarColumnLength {
 				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint32)...)

@@ -134,7 +134,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 	// 1. split partition
-	// codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer)
+	codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer)
 	for index, colIdx := range b.buildKeyIndex {
 		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
 		if err != nil {
@@ -288,6 +288,7 @@ func fillNullMap(rowTableMeta *joinTableMeta, row *chunk.Row, seg *rowTableSegme
 			}
 		}
 		seg.rawData = append(seg.rawData, bitmap...)
+		return nullMapLength
 	}
 	return 0
 }
@@ -448,7 +449,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		}
 	}()
 
-	// b.preAllocForSegments(segs, chk, hashJoinCtx)
+	b.preAllocForSegments(segs, chk, hashJoinCtx)
 
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
@@ -485,7 +486,9 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		rowLength += fillRowData(rowTableMeta, &row, seg)
 		// to make sure rowLength is 8 bit alignment
 		if rowLength%8 != 0 {
-			seg.rawData = append(seg.rawData, fakeAddrPlaceHolder[:8-rowLength%8]...)
+			fakeLen := 8 - rowLength%8
+			seg.rawData = append(seg.rawData, fakeAddrPlaceHolder[:fakeLen]...)
+			rowLength += fakeLen
 		}
 		b.rowNumberInCurrentRowTableSeg[partIdx]++
 	}
