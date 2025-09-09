@@ -1379,7 +1379,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 					continue
 				}
 				// Case 4: cannot satisfy this sort item, the path cannot match the required property.
-				intest.Assert(found == false)
+				intest.Assert(!found)
 				break
 			}
 			if !found {
