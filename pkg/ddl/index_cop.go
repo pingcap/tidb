@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -99,7 +98,7 @@ func fetchTableScanResult(
 
 	logutil.LoggerFromContext(ctx).Info("fetchTableScanResult",
 		zap.Int("numRows", chk.NumRows()),
-		zap.Any("exec details", ctx.Value(util.ExecDetailsKey).(*util.ExecDetails)))
+		zap.Any("exec details", ctx.Value(kvutil.ExecDetailsKey).(*kvutil.ExecDetails)))
 	if chk.NumRows() == 0 {
 		return true, nil
 	}

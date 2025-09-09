@@ -166,7 +166,7 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 }
 
 // Accepted implements Collector.Accepted interface.
-func (s *importStepExecutor) Accepted(_, _ int64) {}
+func (*importStepExecutor) Accepted(_, _ int64) {}
 
 // Processed implements Collector.Processed interface.
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
@@ -482,7 +482,7 @@ type ingestCollector struct {
 	kvGroup string
 }
 
-func (c *ingestCollector) Accepted(bytes, rowCnt int64) {}
+func (*ingestCollector) Accepted(_, _ int64) {}
 
 func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	c.summary.Bytes.Add(bytes)

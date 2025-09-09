@@ -45,25 +45,25 @@ func TestNewMeterValidConfig(t *testing.T) {
 }
 func TestRecord(t *testing.T) {
 	m := &Meter{
-		data: make(map[string]MeterData),
+		data: make(map[string]Data),
 	}
-	md := &MeterData{
+	md := &Data{
 		putRequests: 5,
 	}
 	m.Record("keyspace1", md)
 	require.Equal(t, uint64(5), m.data["keyspace1"].putRequests)
-	m.Record("keyspace1", &MeterData{getRequests: 3})
+	m.Record("keyspace1", &Data{getRequests: 3})
 	require.Equal(t, uint64(5), m.data["keyspace1"].putRequests)
 	require.Equal(t, uint64(3), m.data["keyspace1"].getRequests)
 }
 
 func TestConcurrentRecord(t *testing.T) {
-	m := &Meter{data: make(map[string]MeterData)}
+	m := &Meter{data: make(map[string]Data)}
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Add(1)
 		go func() {
-			m.Record("ks1", &MeterData{putRequests: 1})
+			m.Record("ks1", &Data{putRequests: 1})
 			wg.Done()
 		}()
 	}
@@ -76,7 +76,7 @@ func TestFlush(t *testing.T) {
 	ts := time.Now().Unix()/writeInterval*writeInterval + writeInterval
 	data := readMeteringData(t, reader, ts-writeInterval)
 	require.Len(t, data, 0)
-	meter.Record("ks1", &MeterData{putRequests: 10, getRequests: 20, scanDataTraffic: 300, writeDataSize: 400})
+	meter.Record("ks1", &Data{putRequests: 10, getRequests: 20, scanDataTraffic: 300, writeDataSize: 400})
 	meter.flush(ts, 10*time.Minute)
 	data = readMeteringData(t, reader, ts-writeInterval)
 	require.Len(t, data, 0)

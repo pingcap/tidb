@@ -47,7 +47,7 @@ func RecordDXFS3GetRequests(store kv.Storage, getReqCnt uint64) {
 		return
 	}
 	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &MeterData{getRequests: getReqCnt})
+	meteringInstance.Load().Record(userKS, &Data{getRequests: getReqCnt})
 }
 
 // RecordDXFS3PutRequests records the S3 PUT requests for DXF.
@@ -56,7 +56,7 @@ func RecordDXFS3PutRequests(store kv.Storage, putReqCnt uint64) {
 		return
 	}
 	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &MeterData{putRequests: putReqCnt})
+	meteringInstance.Load().Record(userKS, &Data{putRequests: putReqCnt})
 }
 
 // RecordDXFScanDataTraffic records the scan data traffic for DXF.
@@ -65,7 +65,7 @@ func RecordDXFScanDataTraffic(store kv.Storage, size uint64) {
 		return
 	}
 	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &MeterData{scanDataTraffic: size})
+	meteringInstance.Load().Record(userKS, &Data{scanDataTraffic: size})
 }
 
 // RecordDXFWriteDataSize records the write data size for DXF.
@@ -74,7 +74,7 @@ func RecordDXFWriteDataSize(store kv.Storage, size uint64) {
 		return
 	}
 	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &MeterData{writeDataSize: size})
+	meteringInstance.Load().Record(userKS, &Data{writeDataSize: size})
 }
 
 // GetMetering gets the metering instance.
@@ -100,15 +100,15 @@ type Config struct {
 	RoleARN string               `toml:"role-arn" json:"role-arn"`
 }
 
-// MeterData
-type MeterData struct {
+// Data represents the metering data.
+type Data struct {
 	putRequests     uint64
 	getRequests     uint64
 	scanDataTraffic uint64
 	writeDataSize   uint64
 }
 
-func (m *MeterData) merge(other *MeterData) {
+func (m *Data) merge(other *Data) {
 	m.putRequests += other.putRequests
 	m.getRequests += other.getRequests
 	m.scanDataTraffic += other.scanDataTraffic
@@ -119,7 +119,7 @@ func (m *MeterData) merge(other *MeterData) {
 type Meter struct {
 	sync.Mutex
 	ctx    context.Context
-	data   map[string]MeterData // keyspace -> meter data
+	data   map[string]Data // keyspace -> meter data
 	uuid   string
 	writer *meteringwriter.MeteringWriter
 	logger *zap.Logger
@@ -133,7 +133,7 @@ func NewMeter(cfg *Config) (*Meter, error) {
 	}
 	providerType := storage.ProviderTypeS3
 	if len(cfg.Type) > 0 {
-		providerType = storage.ProviderType(cfg.Type)
+		providerType = cfg.Type
 	}
 
 	s3Config := &storage.ProviderConfig{
@@ -154,14 +154,14 @@ func NewMeter(cfg *Config) (*Meter, error) {
 	writer := meteringwriter.NewMeteringWriter(provider, meteringConfig)
 	return &Meter{
 		logger: logger,
-		data:   make(map[string]MeterData),
+		data:   make(map[string]Data),
 		writer: writer,
 		uuid:   strings.ReplaceAll(uuid.New().String(), "-", "_"), // no dash in the S3 path
 	}, nil
 }
 
 // Record records a meter data.
-func (m *Meter) Record(userKeyspace string, other *MeterData) {
+func (m *Meter) Record(userKeyspace string, other *Data) {
 	m.Lock()
 	defer m.Unlock()
 	orig := m.data[userKeyspace]
@@ -188,10 +188,10 @@ func (m *Meter) StartFlushLoop(ctx context.Context) {
 }
 
 func (m *Meter) flush(ts int64, timeout time.Duration) {
-	var data map[string]MeterData
+	var data map[string]Data
 	m.Lock()
 	data = m.data
-	m.data = make(map[string]MeterData, len(data))
+	m.data = make(map[string]Data, len(data))
 	m.Unlock()
 
 	if len(data) == 0 {

@@ -135,8 +135,8 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnDup:         engineapi.OnDuplicateKeyError,
 			OnReaderClose: func(summary *external.ReaderSummary) {
-				e.summary.GetReqCnt.Add(uint64(summary.GetRequestCount))
-				meter.RecordDXFS3GetRequests(e.store, uint64(summary.GetRequestCount))
+				e.summary.GetReqCnt.Add(summary.GetRequestCount)
+				meter.RecordDXFS3GetRequests(e.store, summary.GetRequestCount)
 			},
 		},
 		TS: sm.TS,
