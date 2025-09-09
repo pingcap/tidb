@@ -102,6 +102,8 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 		r.initColIDs()
 		r.initOffsets()
 	}
+	lastColID := int64(-1)
+	isOrder := true
 	for i, colID := range encoder.tempColIDs {
 		if encoder.values[i].IsNull() {
 			if r.large() {
@@ -111,6 +113,10 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 			}
 			nullIdx++
 		} else {
+			if isOrder && colID <= lastColID {
+				isOrder = false
+			}
+			lastColID = colID
 			if r.large() {
 				r.colIDs32[notNullIdx] = uint32(colID)
 			} else {
@@ -121,15 +127,19 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 		}
 	}
 	if r.large() {
-		largeNotNullSorter := (*largeNotNullSorter)(encoder)
-		sort.Sort(largeNotNullSorter)
+		if !isOrder {
+			largeNotNullSorter := (*largeNotNullSorter)(encoder)
+			sort.Sort(largeNotNullSorter)
+		}
 		if r.numNullCols > 0 {
 			largeNullSorter := (*largeNullSorter)(encoder)
 			sort.Sort(largeNullSorter)
 		}
 	} else {
-		smallNotNullSorter := (*smallNotNullSorter)(encoder)
-		sort.Sort(smallNotNullSorter)
+		if !isOrder {
+			smallNotNullSorter := (*smallNotNullSorter)(encoder)
+			sort.Sort(smallNotNullSorter)
+		}
 		if r.numNullCols > 0 {
 			smallNullSorter := (*smallNullSorter)(encoder)
 			sort.Sort(smallNullSorter)
