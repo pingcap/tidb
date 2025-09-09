@@ -3978,31 +3978,40 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
-func (lt *LeadingExpr) Restore(ctx *format.RestoreCtx) error {
+func (lt *LeadingExpr) Restore(ctx *format.RestoreCtx, needParen bool) error {
 	if lt == nil {
 		return nil
 	}
 
-	// 叶子节点：直接还原表名（HintTable.Restore 没有返回值）
+	// leave node: directly restore table name
 	if lt.Table != nil {
 		lt.Table.Restore(ctx)
 		return nil
 	}
 
-	// 内部节点：递归还原左右子树
-	ctx.WritePlain("(")
+	// internal node
+	if needParen {
+		ctx.WritePlain("(")
+	}
+
 	if lt.Left != nil {
-		if err := lt.Left.Restore(ctx); err != nil {
+		if err := lt.Left.Restore(ctx, true); err != nil {
 			return err
 		}
 	}
+
 	ctx.WritePlain(", ")
+
 	if lt.Right != nil {
-		if err := lt.Right.Restore(ctx); err != nil {
+		if err := lt.Right.Restore(ctx, true); err != nil {
 			return err
 		}
 	}
-	ctx.WritePlain(")")
+
+	if needParen {
+		ctx.WritePlain(")")
+	}
+
 	return nil
 }
 
@@ -4038,13 +4047,11 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
 	case "leading":
-		// 用递归结构来 restore
 		if order, ok := n.HintData.(*LeadingExpr); ok && order != nil {
-			if err := order.Restore(ctx); err != nil {
+			if err := order.Restore(ctx, false); err != nil {
 				return err
 			}
 		} else if len(n.Tables) > 0 {
-			// 兼容老的平铺写法
 			for i, table := range n.Tables {
 				if i != 0 {
 					ctx.WritePlain(", ")
