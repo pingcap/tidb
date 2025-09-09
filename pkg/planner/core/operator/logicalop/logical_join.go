@@ -509,7 +509,8 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin {
 		// AntiSemiJoin is notoriously difficult to estimate. We use a very simple strategy.
 		// Same if the semiJoin left is smaller than the right.
-		if p.JoinType == base.AntiSemiJoin || leftProfile.RowCount <= p.EqualCondOutCnt {
+		if p.JoinType == base.AntiSemiJoin || leftProfile.RowCount <= p.EqualCondOutCnt ||
+			p.EqualCondOutCnt <= 0 {
 			p.SetStats(&property.StatsInfo{
 				RowCount: leftProfile.RowCount * cost.SelectionFactor,
 				ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
@@ -530,10 +531,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			scale = p.EqualCondOutCnt / leftProfile.RowCount
 		}
 		for id, c := range leftProfile.ColNDVs {
-			val := c * scale
-			if val > p.EqualCondOutCnt {
-				val = p.EqualCondOutCnt
-			}
+			val := min(c*scale, p.EqualCondOutCnt)
 			colNDVs[id] = val
 		}
 		p.SetStats(&property.StatsInfo{
