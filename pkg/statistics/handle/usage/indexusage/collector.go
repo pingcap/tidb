@@ -226,6 +226,7 @@ func (s *SessionIndexUsageCollector) Report() {
 	if len(s.indexUsage) == 0 {
 		return
 	}
+	// TODO: add metrics
 	if s.collector.SendDelta(s.indexUsage) {
 		s.indexUsage = indexUsagePool.Get().(indexUsage)
 	}
@@ -237,6 +238,7 @@ func (s *SessionIndexUsageCollector) Flush() {
 	if len(s.indexUsage) == 0 {
 		return
 	}
+	// TODO: add metrics
 	s.collector.SendDeltaSync(s.indexUsage)
 	s.indexUsage = indexUsagePool.Get().(indexUsage)
 }
@@ -275,6 +277,7 @@ func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sa
 		sample.QueryTotal = 0
 	}
 
+	// TODO: add metrics
 	s.sessionCollector.Update(tableID, indexID, sample)
 }
 
