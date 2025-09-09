@@ -1283,6 +1283,7 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 		// We can't override noDecorrelate via the variable for EXISTS subqueries with semi join rewrite
 		// as this will cause a conflict that will result in both being disabled in later code
 		// SemiJoinRewrite does not check the variable TiDBOptEnableSemiJoinRewrite.
+		// If that variable is enabled - we can still choose NOT to decorrelate here.
 		if !(semiJoinRewrite && sCtx == handlingExistsSubquery) {
 			// Only support scalar and exists subqueries
 			validSubqType := sCtx == handlingScalarSubquery || sCtx == handlingExistsSubquery

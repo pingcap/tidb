@@ -507,38 +507,13 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		childSchema[0], childSchema[1],
 		nil, nil)
 	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin {
-		// AntiSemiJoin is notoriously difficult to estimate. We use a very simple strategy.
-		// Same if the semiJoin left is smaller than the right.
-		if p.JoinType == base.AntiSemiJoin || leftProfile.RowCount <= p.EqualCondOutCnt ||
-			p.EqualCondOutCnt <= 0 {
-			p.SetStats(&property.StatsInfo{
-				RowCount: leftProfile.RowCount * cost.SelectionFactor,
-				ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
-			})
-			for id, c := range leftProfile.ColNDVs {
-				p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
-			}
-			return p.StatsInfo(), true, nil
-		}
-		// For a smaller inner - Use join pair estimate to approximate the probability that
-		// a left row has at least one match.
-		// Average matches per left row: m = EqualCondOutCnt / leftRowCount. The probability of at least one
-		// match is approximated by min(1, m). Thus, semi-join output rows ~= min(leftRowCount, EqualCondOutCnt).
-		// For anti-semi join, it's the complement on the left side.
-		colNDVs := make(map[int64]float64, len(leftProfile.ColNDVs))
-		var scale float64
-		if leftProfile.RowCount > 0 {
-			scale = p.EqualCondOutCnt / leftProfile.RowCount
-		}
-		for id, c := range leftProfile.ColNDVs {
-			val := min(c*scale, p.EqualCondOutCnt)
-			colNDVs[id] = val
-		}
 		p.SetStats(&property.StatsInfo{
-			RowCount: p.EqualCondOutCnt,
-			ColNDVs:  colNDVs,
+			RowCount: leftProfile.RowCount * cost.SelectionFactor,
+			ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
 		})
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
+		for id, c := range leftProfile.ColNDVs {
+			p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
+		}
 		return p.StatsInfo(), true, nil
 	}
 	if p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
