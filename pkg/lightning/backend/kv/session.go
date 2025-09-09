@@ -66,12 +66,6 @@ func (b *BytesBuf) add(v []byte) []byte {
 	return b.buf[start:b.idx:b.idx]
 }
 
-func (b *BytesBuf) get(size int) []byte {
-	start := b.idx
-	b.idx += size
-	return b.buf[start:b.idx:b.idx]
-}
-
 func newBytesBuf(size int) *BytesBuf {
 	return &BytesBuf{
 		buf: manual.New(size),
@@ -155,8 +149,9 @@ func (mb *MemBuf) Set(k kv.Key, v []byte) error {
 }
 
 // Get tries to allocate a byte slice with the given size from the current buffer.
-func (mb *MemBuf) GetBuffer(size int) []byte {
+func (mb *MemBuf) GetBuffer(v []byte) []byte {
 	kvPairs := mb.kvPairs
+	size := len(v)
 	if mb.buf == nil || mb.buf.cap-mb.buf.idx < size {
 		if mb.buf != nil {
 			kvPairs.BytesBuf = mb.buf
@@ -164,9 +159,8 @@ func (mb *MemBuf) GetBuffer(size int) []byte {
 		mb.AllocateBuf(size)
 	}
 
-	b := mb.buf.get(size)
 	mb.size += size
-	return b
+	return mb.buf.add(v)
 }
 
 // SetWithFlags implements the kv.MemBuffer interface.

@@ -201,11 +201,14 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 		)
 		return nil, errors.Trace(err)
 	}
+
+	var encoded [9]byte
+	buf := codec.EncodeComparableVarint(encoded[:0], rowID)
+	buf = e.SessionCtx.txn.MemBuf.GetBuffer(buf)
+
 	kvPairs := e.SessionCtx.TakeKvPairs()
-	encoded := e.SessionCtx.txn.MemBuf.GetBuffer(9)
-	encoded = codec.EncodeComparableVarint(encoded[:0], rowID)
 	for i := range kvPairs.Pairs {
-		kvPairs.Pairs[i].RowID = encoded[:]
+		kvPairs.Pairs[i].RowID = buf
 	}
 	e.recordCache = record[:0]
 	return kvPairs, nil

@@ -143,7 +143,6 @@ type Pairs struct {
 	Pairs    []common.KvPair
 	BytesBuf *BytesBuf
 	MemBuf   *MemBuf
-	Sess     *Session
 }
 
 // GroupedPairs is a map from index ID to KvPairs.
