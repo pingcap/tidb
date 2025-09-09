@@ -48,8 +48,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const unknownImportedRowCount = -1
-
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
 	exec.BaseExecutor
