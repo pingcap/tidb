@@ -50,13 +50,6 @@
     ]
   },
   {
-    "name": "TestCartesianJoinOrder",
-    "cases": [
-      "select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
-      "select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b"
-    ]
-  },
-  {
     "name": "TestJoinOrderHint4TiFlash",
     "cases": [
       "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",

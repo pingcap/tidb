@@ -786,43 +786,6 @@
     ]
   },
   {
-    "Name": "TestCartesianJoinOrder",
-    "Cases": [
-      {
-        "SQL": "select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
-        "Plan": [
-          "Projection 50000.00 root  1->Column#13",
-          "└─HashJoin 50000.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
-          "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
-          "  │ └─IndexFullScan 10.00 cop[tikv] table:t1, index:a(a) keep order:false",
-          "  └─HashJoin(Probe) 50000.00 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "    ├─IndexReader(Build) 5.00 root  index:IndexFullScan",
-          "    │ └─IndexFullScan 5.00 cop[tikv] table:t3, index:b(b) keep order:false",
-          "    └─TableReader(Probe) 10000.00 root  data:Selection",
-          "      └─Selection 10000.00 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false"
-        ],
-        "Warning": null
-      },
-      {
-        "SQL": "select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
-        "Plan": [
-          "Projection 50000.00 root  1->Column#13",
-          "└─HashJoin 50000.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
-          "  ├─HashJoin(Build) 50.00 root  CARTESIAN inner join",
-          "  │ ├─IndexReader(Build) 5.00 root  index:IndexFullScan",
-          "  │ │ └─IndexFullScan 5.00 cop[tikv] table:t3, index:b(b) keep order:false",
-          "  │ └─IndexReader(Probe) 10.00 root  index:IndexFullScan",
-          "  │   └─IndexFullScan 10.00 cop[tikv] table:t1, index:a(a) keep order:false",
-          "  └─TableReader(Probe) 10000.00 root  data:Selection",
-          "    └─Selection 10000.00 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false"
-        ],
-        "Warning": null
-      }
-    ]
-  },
-  {
     "Name": "TestJoinOrderHint4TiFlash",
     "Cases": [
       {

@@ -522,3 +522,63 @@ func TestIssue56915(t *testing.T) {
 		))
 	})
 }
+
+func TestCartesianJoinOrder(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t2 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t3 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec(`insert into t1 select * from (
+    with recursive x as (
+        select 1 as a, 1 as b, 1 as c, 1 as n
+        union all
+        select a+1 as a, b+1 as b, c+1 as c, n+1 from x where n < 10
+    )
+    select a, b, c from x
+) tt`)
+		tk.MustExec(`set @@cte_max_recursion_depth=10000`)
+		tk.MustExec(`insert into t2 select * from (
+    with recursive x as (
+        select 2 as a, 2 as b, 2 as c, 1 as n
+        union all
+        select a, b, c, n+1 from x where n < 10000
+    )
+    select a, b, c from x
+) tt`)
+		tk.MustExec(`insert into t3 select * from (
+    with recursive x as (
+        select 2 as a, 2 as b, 2 as c, 1 as n
+        union all
+        select a, b, c, n+1 from x where n < 5
+    )
+    select a, b, c from x
+) tt`)
+		tk.MustExec(`analyze table t1, t2, t3`)
+		tk.MustExec(`set @@tidb_stats_load_sync_wait=10000`)
+
+		tk.MustQuery(`explain select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
+			`Projection_11 50000.00 root  1->Column#13`,
+			`└─HashJoin_27 50000.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)]`,
+			`  ├─IndexReader_92(Build) 10.00 root  index:IndexFullScan_91`,
+			`  │ └─IndexFullScan_91 10.00 cop[tikv] table:t1, index:a(a) keep order:false`,
+			`  └─HashJoin_62(Probe) 50000.00 root  inner join, equal:[eq(test.t3.b, test.t2.b)]`,
+			`    ├─IndexReader_71(Build) 5.00 root  index:IndexFullScan_70`,
+			`    │ └─IndexFullScan_70 5.00 cop[tikv] table:t3, index:b(b) keep order:false`,
+			`    └─TableReader_79(Probe) 10000.00 root  data:Selection_78`,
+			`      └─Selection_78 10000.00 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))`,
+			`        └─TableFullScan_77 10000.00 cop[tikv] table:t2 keep order:false`))
+		// join t1 and t3 first
+		tk.MustQuery(`explain select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
+			`Projection_12 50000.00 root  1->Column#13`,
+			`└─HashJoin_28 50000.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]`,
+			`  ├─HashJoin_44(Build) 50.00 root  CARTESIAN inner join`,
+			`  │ ├─IndexReader_46(Build) 5.00 root  index:IndexFullScan_45`,
+			`  │ │ └─IndexFullScan_45 5.00 cop[tikv] table:t3, index:b(b) keep order:false`,
+			`  │ └─IndexReader_48(Probe) 10.00 root  index:IndexFullScan_47`,
+			`  │   └─IndexFullScan_47 10.00 cop[tikv] table:t1, index:a(a) keep order:false`,
+			`  └─TableReader_56(Probe) 10000.00 root  data:Selection_55`,
+			`    └─Selection_55 10000.00 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))`,
+			`      └─TableFullScan_54 10000.00 cop[tikv] table:t2 keep order:false`))
+	})
+}

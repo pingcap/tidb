@@ -15,7 +15,6 @@
 package rule
 
 import (
-	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -44,57 +43,6 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		tk.MustQuery("explain format = 'brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
-}
-
-func TestCartesianJoinOrder(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("create table t1 (a int, b int, c int, key(a), key(b))")
-		tk.MustExec("create table t2 (a int, b int, c int, key(a), key(b))")
-		tk.MustExec("create table t3 (a int, b int, c int, key(a), key(b))")
-		tk.MustExec(`insert into t1 select * from (
-    with recursive x as (
-        select 1 as a, 1 as b, 1 as c, 1 as n
-        union all
-        select a+1 as a, b+1 as b, c+1 as c, n+1 from x where n < 10
-    )
-    select a, b, c from x
-) tt`)
-		tk.MustExec(`set @@cte_max_recursion_depth=10000`)
-		tk.MustExec(`insert into t2 select * from (
-    with recursive x as (
-        select 2 as a, 2 as b, 2 as c, 1 as n
-        union all
-        select a, b, c, n+1 from x where n < 10000
-    )
-    select a, b, c from x
-) tt`)
-		tk.MustExec(`insert into t3 select * from (
-    with recursive x as (
-        select 2 as a, 2 as b, 2 as c, 1 as n
-        union all
-        select a, b, c, n+1 from x where n < 5
-    )
-    select a, b, c from x
-) tt`)
-		tk.MustExec(`analyze table t1, t2, t3 all columns`)
-		tk.MustExec(`set @@tidb_stats_load_sync_wait=10000`)
-		tk.MustQuery(`select count(1) from t1 where a=1 and b=1`) // trigger stats loading
-		tk.MustQuery(`select count(1) from t2 where a=1 and b=1`)
-		tk.MustQuery(`select count(1) from t2 where a=1 and b=1`)
-		runJoinReorderTestData(t, tk, caller)
-
-		// after setting tidb_opt_cartesian_join_order_threshold, we could get a plan with cartesian join and lower cost.
-		costWithoutCartesian, err := strconv.ParseFloat(
-			tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ 1
-								from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Rows()[0][2].(string), 64)
-		require.NoError(t, err)
-		costWithCartesian, err := strconv.ParseFloat(
-			tk.MustQuery(`explain format='verbose' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1
-								from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Rows()[0][2].(string), 64)
-		require.NoError(t, err)
-		require.Less(t, costWithCartesian, costWithoutCartesian)
-	})
 }
 
 // test the global/session variable tidb_opt_enable_hash_join being set to no
