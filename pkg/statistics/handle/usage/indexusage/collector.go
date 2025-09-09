@@ -16,7 +16,6 @@ package indexusage
 
 import (
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/prometheus/client_golang/prometheus"
 	"sync"
 	"time"
 
@@ -299,26 +298,25 @@ func ScanMetrics(isTableScan bool, sample Sample) {
 	scanPercentage := float64(sample.RowAccessTotal) / float64(sample.TableTotalRows)
 	isFullScan := scanPercentage >= 0.9999
 
-	var counter *prometheus.CounterVec
-	var label string
-
+	// full scan metrics
 	if isFullScan {
-		label = getFullScanLabel(sample.RowAccessTotal)
+		label := getFullScanLabel(sample.RowAccessTotal)
 		if isTableScan {
-			counter = metrics.PlanTableFullScanCounter
+			metrics.PlanTableFullScanCounter.WithLabelValues(label).Inc()
 		} else {
-			counter = metrics.PlanIndexFullScanCounter
-		}
-	} else {
-		label = getRangeScanLabel(scanPercentage)
-		if isTableScan {
-			counter = metrics.PlanTableSelectivityCounter
-		} else {
-			counter = metrics.PlanIndexSelectivityCounter
+			metrics.PlanIndexFullScanCounter.WithLabelValues(label).Inc()
 		}
 	}
 
-	counter.WithLabelValues(label).Inc()
+	// scan selectivity metrics
+	label := getRangeScanLabel(scanPercentage)
+	if isTableScan {
+		metrics.PlanTableSelectivityCounter.WithLabelValues(label).Inc()
+	} else {
+		metrics.PlanIndexSelectivityCounter.WithLabelValues(label).Inc()
+	}
+
+	// cop-request metrics
 }
 
 func getRangeScanLabel(scanPercentage float64) string {
