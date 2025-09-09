@@ -5797,7 +5797,6 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes
-
 	}
 	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }
