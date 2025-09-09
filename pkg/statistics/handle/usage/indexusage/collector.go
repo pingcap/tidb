@@ -15,6 +15,8 @@
 package indexusage
 
 import (
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 	"sync"
 	"time"
 
@@ -295,8 +297,29 @@ func ScanMetrics(sample Sample) {
 	isFullScan := sample.PercentageAccess[len(sample.PercentageAccess)-1] > 0
 
 	if isFullScan {
-
+		label := getFullScanLabel(sample.RowAccessTotal)
+		var counter *prometheus.CounterVec
+		if isTableScan {
+			counter = metrics.PlanTableFullScanCounter
+		} else {
+			counter = metrics.PlanIndexFullScanCounter
+		}
+		counter.WithLabelValues(label).Inc()
 	} else {
 
+	}
+}
+
+func getFullScanLabel(scanRows uint64) string {
+	if scanRows < 1000 {
+		return "[0, 1000)"
+	} else if scanRows < 10000 {
+		return "[1000, 10000)"
+	} else if scanRows < 100000 {
+		return "[10000, 100000)"
+	} else if scanRows < 1000000 {
+		return "[100000, 1000000)"
+	} else {
+		return "[1000000, +inf)"
 	}
 }
