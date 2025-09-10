@@ -214,7 +214,7 @@ func (ctx *ExprContext) GetStaticEvalCtx() *EvalContext {
 }
 
 // GetCharsetInfo implements the `ExprContext.GetCharsetInfo`.
-func (ctx *ExprContext) GetCharsetInfo() (string, string) {
+func (ctx *ExprContext) GetCharsetInfo() (charset string, collation string) {
 	return ctx.charset, ctx.collation
 }
 
