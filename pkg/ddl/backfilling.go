@@ -934,7 +934,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 		return err
 	}
 
-	//Adjust worker pool size and max write speed dynamically.
+	// Adjust worker pool size and max write speed dynamically.
 	var wg util.WaitGroupWrapper
 	adjustCtx, cancel := context.WithCancel(ctx)
 	if job != nil && bcCtx != nil {
