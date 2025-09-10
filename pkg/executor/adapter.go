@@ -1653,13 +1653,22 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 }
 
 func (a *ExecStmt) PlanStabilityMetrics(succ bool) {
-	if !succ {
+	vars := a.Ctx.GetSessionVars()
+	var userString string
+	if vars.User != nil {
+		userString = vars.User.Username
+	}
+	isInternalSQL := (vars.InRestrictedSQL || len(userString) == 0) && !vars.InExplainExplore
+	if !succ || isInternalSQL { // failed or internal SQL
 		return
 	}
-	vars := a.Ctx.GetSessionVars()
 	costTime := vars.GetTotalCostDuration()
 	// TODO: filter out non-select statements
 	metrics.PlanExecutionTimeCounter.WithLabelValues(a.getPlanExecTimeLabel(costTime)).Inc()
+
+	//if strings.Contains(a.Ctx.GetSessionVars().StmtCtx.OriginalSQL, "from t1 where a=100") {
+	//	fmt.Println(">>>>> ", vars.GetPlanRiskNames())
+	//}
 
 	for _, risk := range vars.GetPlanRiskNames() {
 		metrics.PlanRiskCounter.WithLabelValues(risk).Inc()
