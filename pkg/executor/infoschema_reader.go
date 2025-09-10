@@ -3523,6 +3523,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	targetTable := tiflashTargetTableName[e.table.Name.L]
 
 	var filters []string
+	// Add filter for keyspace_id if tidb is running in the keyspace mode.
 	if keyspace.GetKeyspaceNameBySettings() != "" {
 		keyspaceID := uint32(sctx.GetStore().GetCodec().GetKeyspaceID())
 		filters = append(filters, fmt.Sprintf("keyspace_id=%d", keyspaceID))
