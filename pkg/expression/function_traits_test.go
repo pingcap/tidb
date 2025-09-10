@@ -203,7 +203,6 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"octet_length",
 		"or",
 		"ord",
-		"password",
 		"period_add",
 		"period_diff",
 		"pi",

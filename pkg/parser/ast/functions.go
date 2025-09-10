@@ -310,7 +310,6 @@ const (
 	Decode                   = "decode"
 	Encode                   = "encode"
 	MD5                      = "md5"
-	PasswordFunc             = "password"
 	RandomBytes              = "random_bytes"
 	SHA1                     = "sha1"
 	SHA                      = "sha"
