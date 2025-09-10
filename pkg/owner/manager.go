@@ -496,7 +496,9 @@ func GetOwnerKeyInfo(
 	if err != nil {
 		return "", 0, errors.Trace(err)
 	}
-	logutil.BgLogger().Info("get owner", zap.String("key", etcdKey), zap.String("owner key", ownerKey),
+	logutil.BgLogger().Info("get owner",
+		zap.String("key", etcdKey),
+		zap.String("owner key", ownerKey),
 		zap.ByteString("ownerID", ownerID))
 	if string(ownerID) != id {
 		logutil.BgLogger().Warn("is not the owner", zap.String("key", etcdKey),
