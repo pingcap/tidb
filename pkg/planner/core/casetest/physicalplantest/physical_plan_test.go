@@ -2314,6 +2314,7 @@ func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
 			Plan    []string
 			Warning []string
 		}
+<<<<<<< HEAD
 	)
 	planSuiteData := GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
@@ -2329,4 +2330,155 @@ func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
 		})
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 	}
+=======
+	})
+}
+
+// TestExplainExpand
+func TestExplainExpand(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		var (
+			input  []string
+			output []struct {
+				SQL     string
+				Plan    []string
+				Warning []string
+			}
+		)
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec("drop table if exists s")
+		testKit.MustExec("create table t(a int, b int, c int, d int, e int)")
+		testKit.MustExec("create table s(a int, b int, c int, d int, e int)")
+		testKit.MustExec("CREATE TABLE `sales` (`year` int(11) DEFAULT NULL, `country` varchar(20) DEFAULT NULL,  `product` varchar(32) DEFAULT NULL,  `profit` int(11) DEFAULT NULL, `whatever` int)")
+
+		// error test
+		err := testKit.ExecToErr("explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+		require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
+
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(ts).Rows())
+			})
+			testKit.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+		}
+	})
+}
+
+func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
+	// PhysicalApply is expected not to implement PhysicalJoin.
+	require.NotImplements(t, (*base.PhysicalJoin)(nil), new(physicalop.PhysicalApply))
+}
+
+func TestRuleAggElimination4Join(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("CREATE TABLE t1 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, UNIQUE KEY `UK_id1_id2` (id1,id2));")
+		tk.MustExec("CREATE TABLE t2 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, UNIQUE KEY `UK_id1_id2` (id1,id2));")
+		tk.MustExec("CREATE TABLE t3 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, UNIQUE KEY `UK_id1_id2` (id1,id2));")
+		tk.MustExec("CREATE TABLE t4 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, KEY `UK_id1_id2` (id1,id2));")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+
+		cascadesData := getCascadesTemplateData()
+		cascadesData.LoadTestCases(t, &input, &output, cascades, caller)
+
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
+}
+
+func TestIssue62331(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("CREATE TABLE t1 (col_1 time DEFAULT NULL,col_2 mediumint NOT NULL,KEY idx_1 (col_2,col_1) /*T![global_index] GLOBAL */,KEY idx_2 (col_2,col_1),PRIMARY KEY (col_2) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY idx_4 (col_2)) PARTITION BY RANGE COLUMNS(col_2) (PARTITION p0 VALUES LESS THAN (7429676));")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+
+		cascadesData := getCascadesTemplateData()
+		cascadesData.LoadTestCases(t, &input, &output, cascades, caller)
+		tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
+}
+
+// Helper: load cascades_template test data
+func getCascadesTemplateData() testdata.TestData {
+	return testDataMap["cascades_template"]
+}
+
+func TestLimitPushdown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, key(c1));")
+	tk.MustExec("set @@cte_max_recursion_depth = 10000;")
+	tk.MustExec("insert into t1 with recursive cte1 as (select 1 cola, 1 colb union all select cola+1 as cola, colb+1 as colb from cte1 limit 5000) select * from cte1;")
+	tk.MustExec("analyze table t1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		tk.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+func TestAllocMPPID(t *testing.T) {
+	ctx := mock.NewContext()
+	require.Equal(t, int64(1), physicalop.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(2), physicalop.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(3), physicalop.AllocMPPTaskID(ctx))
+>>>>>>> ce32d8a3346 (planner: limit pushdown shouldn't be affected by tidb_opt_limit_push_down_threshold (#63399))
 }
