@@ -1589,6 +1589,8 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				err := do.BindingHandle().PlanStabilityMetric()
 				if err != nil {
 					logutil.BgLogger().Error("PlanStabilityMetric", zap.Error(err))
+				} else {
+					logutil.BgLogger().Info("PlanStabilityMetric succeed")
 				}
 			}
 		}
