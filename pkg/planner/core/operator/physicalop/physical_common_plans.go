@@ -338,17 +338,6 @@ func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 	return rangeBehindOrdinal - 1, true
 }
 
-func cloneExpression2DForPlanCache(exprs [][]expression.Expression) [][]expression.Expression {
-	if exprs == nil {
-		return nil
-	}
-	cloned := make([][]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		cloned = append(cloned, utilfuncp.CloneExpressionsForPlanCache(e, nil))
-	}
-	return cloned
-}
-
 // ResolveIndices implements Plan interface.
 func (p *Update) ResolveIndices() (err error) {
 	err = p.SimpleSchemaProducer.ResolveIndices()

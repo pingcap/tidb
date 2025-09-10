@@ -17,8 +17,10 @@
 package physicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 // CloneForPlanCache implements the base.Plan interface.
@@ -69,7 +71,7 @@ func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(Insert)
 	*cloned = *op
 	cloned.SimpleSchemaProducer = *op.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
-	cloned.Lists = cloneExpression2DForPlanCache(op.Lists)
+	cloned.Lists = utilfuncp.CloneExpression2DForPlanCache(op.Lists)
 	cloned.OnDuplicate = util.CloneAssignments(op.OnDuplicate)
 	cloned.GenCols = op.GenCols.cloneForPlanCache()
 	if op.SelectPlan != nil {
@@ -85,5 +87,80 @@ func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	if op.FKCascades != nil {
 		return nil, false
 	}
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalTableScan)
+	*cloned = *op
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.PhysicalSchemaProducer = *basePlan
+	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
+	cloned.FilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.FilterCondition, nil)
+	cloned.LateMaterializationFilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
+	cloned.HandleIdx = make([]int, len(op.HandleIdx))
+	copy(cloned.HandleIdx, op.HandleIdx)
+	if op.HandleCols != nil {
+		cloned.HandleCols = op.HandleCols.Clone()
+	}
+	cloned.ByItems = util.CloneByItemss(op.ByItems)
+	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
+	if op.SampleInfo != nil {
+		return nil, false
+	}
+	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
+	copy(cloned.constColsByCond, op.constColsByCond)
+	if op.runtimeFilterList != nil {
+		return nil, false
+	}
+	if op.UsedColumnarIndexes != nil {
+		return nil, false
+	}
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalIndexScan)
+	*cloned = *op
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.PhysicalSchemaProducer = *basePlan
+	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
+	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(op.IdxCols, nil)
+	cloned.IdxColLens = make([]int, len(op.IdxColLens))
+	copy(cloned.IdxColLens, op.IdxColLens)
+	if op.GenExprs != nil {
+		return nil, false
+	}
+	cloned.ByItems = util.CloneByItemss(op.ByItems)
+	if op.PkIsHandleCol != nil {
+		if op.PkIsHandleCol.SafeToShareAcrossSession() {
+			cloned.PkIsHandleCol = op.PkIsHandleCol
+		} else {
+			cloned.PkIsHandleCol = op.PkIsHandleCol.Clone().(*expression.Column)
+		}
+	}
+	cloned.ConstColsByCond = make([]bool, len(op.ConstColsByCond))
+	copy(cloned.ConstColsByCond, op.ConstColsByCond)
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalSelection)
+	*cloned = *op
+	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.BasePhysicalPlan = *basePlan
+	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(op.Conditions, nil)
 	return cloned, true
 }

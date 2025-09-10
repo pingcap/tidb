@@ -36,16 +36,17 @@ import (
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{
-		physicalop.Update{}, physicalop.Delete{}, physicalop.Insert{}}
+		physicalop.Update{}, physicalop.Delete{}, physicalop.Insert{},
+		physicalop.PhysicalTableScan{}, physicalop.PhysicalIndexScan{}, physicalop.PhysicalSelection{}}
 
 	// todo: add all back with physicalop.x
-	// var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
+	// var structures = []any{,
 	//		core.PhysicalProjection{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
 	//		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
 	//		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
 	//		physicalop.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{},
 	//      core.PhysicalIndexMergeReader{},
-	//		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
+	//		core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
@@ -118,10 +119,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]expression.Expression", "[]*expression.Column",
 			"[]*expression.Constant", "[]*expression.ScalarFunction":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
-			c.write("cloned.%v = clone%vForPlanCache(op.%v, nil)", f.Name, structureName, f.Name)
+			c.write("cloned.%v = utilfuncp.Clone%vForPlanCache(op.%v, nil)", f.Name, structureName, f.Name)
 		case "[][]*expression.Constant", "[][]expression.Expression":
 			structureName := strings.Split(f.Type.String(), ".")[1]
-			c.write("cloned.%v = clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
+			c.write("cloned.%v = utilfuncp.Clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
 		case "[]*ranger.Range", "[]*util.ByItems", "[]model.CIStr", "[]property.SortItem",
 			"[]types.Datum", "[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
@@ -247,8 +248,10 @@ const codeGenPlanCachePrefix = `// Copyright 2024 PingCAP, Inc.
 package physicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 `
 
