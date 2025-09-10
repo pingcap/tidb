@@ -856,40 +856,30 @@ func (dc *ddlCtx) modifyColumnInPipeline(
 	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
 	defer cancel()
 
-	idxCnt := len(reorgInfo.elements)
-	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
-	var indexNames strings.Builder
-
-	var (
-		err error
-	)
-
-	reorgCtx := dc.getReorgCtx(job.ID)
+	oldCol, _ := getOldAndNewColumnsForUpdateColumn(t, reorgInfo.currElement.ID)
+	rc := dc.getReorgCtx(job.ID)
 	rowCntListener := &localRowCntCollector{
-		prevPhysicalRowCnt: reorgCtx.getRowCount(),
-		reorgCtx:           reorgCtx,
-		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
+		prevPhysicalRowCnt: rc.getRowCount(),
+		reorgCtx:           rc,
+		counter:            metrics.GetBackfillTotalByLabel(metrics.LblUpdateColRate, job.SchemaName, job.TableName, oldCol.Name.String()),
 	}
-
 	sctx, err := sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer sessPool.Put(sctx)
+	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
 	importConc := job.ReorgMeta.GetConcurrency()
-	pipe, err := NewModifyColumnTxnPipeline(
+	pipe, err := NewModifyColumnPipeline(
 		opCtx,
 		dc.store,
 		sessPool,
-		nil, //bcCtx,
-		nil, //engines,
 		job.ID,
 		t,
-		indexInfos,
 		reorgInfo.StartKey,
 		reorgInfo.EndKey,
 		job.ReorgMeta,
-		0, //avgRowSize,
+		avgRowSize,
 		importConc,
 		rowCntListener,
 		reorgInfo,
@@ -944,19 +934,19 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 		return err
 	}
 
-	// Adjust worker pool size and max write speed dynamically.
-	//var wg util.WaitGroupWrapper
-	//adjustCtx, cancel := context.WithCancel(ctx)
-	//if job != nil {
-	//	wg.RunWithLog(func() {
-	//		adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
-	//	})
-	//}
+	//Adjust worker pool size and max write speed dynamically.
+	var wg util.WaitGroupWrapper
+	adjustCtx, cancel := context.WithCancel(ctx)
+	if job != nil && bcCtx != nil {
+		wg.RunWithLog(func() {
+			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
+		})
+	}
 
 	err = pipe.Close()
 	failpoint.InjectCall("afterPipeLineClose", pipe)
-	//cancel()
-	//wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
+	cancel()
+	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
 		return opErr
 	}
@@ -1034,13 +1024,13 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		return dc.addIndexWithLocalIngest(ctx, sessPool, t, reorgInfo)
 	}
 
-	if bfWorkerType == typeUpdateColumnWorker && reorgInfo.TableName == "t1" {
-		logutil.DDLLogger().Info("use modify column pipeline")
+	if bfWorkerType == typeUpdateColumnWorker {
+		logutil.DDLLogger().Info("modify column use pipeline")
 		ts := time.Now()
 		defer func() {
-			logutil.DDLLogger().Info("modify column pipeline took time",
+			logutil.DDLLogger().Info("modify column pipeline exec time",
 				zap.Time("end time", time.Now()),
-				zap.Duration("pipeline takes time", time.Since(ts)))
+				zap.Duration("takes time", time.Since(ts)))
 		}()
 		return dc.modifyColumnInPipeline(ctx, sessPool, t, reorgInfo)
 	}
