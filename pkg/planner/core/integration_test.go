@@ -1663,12 +1663,6 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 		checkRes(rs, 2, "cop[tikv]")
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 
-		// If using `set_var` to set sql mode to non-strict mode, read should push down to tiflash
-		hintedQuery := "explain " + prefix + " /*+ SET_VAR(sql_mode='') */ " + suffix
-		rs = tk.MustQuery(hintedQuery).Rows()
-		checkRes(rs, 2, "mpp[tiflash]")
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-
 		// If sql mode is strict and tidb_enforce_mpp is on, read does not push down to tiflash
 		// and should return a warning.
 		tk.MustExec("set @@tidb_enforce_mpp=1")
@@ -1676,6 +1670,12 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 		checkRes(rs, 2, "cop[tikv]")
 		rs = tk.MustQuery("show warnings").Rows()
 		checkRes(rs, 2, "MPP mode may be blocked because the query is not readonly and sql mode is strict.")
+
+		// If using `set_var` to set sql mode to non-strict mode, read should push down to tiflash
+		hintedQuery := "explain " + prefix + " /*+ SET_VAR(sql_mode='') */ " + suffix
+		rs = tk.MustQuery(hintedQuery).Rows()
+		checkRes(rs, 2, "mpp[tiflash]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
 
 		// If sql mode is not strict, read should push down to tiflash
 		tk.MustExec("set @@sql_mode = ''")
