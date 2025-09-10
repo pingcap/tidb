@@ -1656,6 +1656,7 @@ func (a *ExecStmt) PlanStabilityMetrics(succ bool) {
 		return
 	}
 	vars := a.Ctx.GetSessionVars()
+	vars.RecordRelevantOptVar()
 	costTime := vars.GetTotalCostDuration()
 	// TODO: filter out non-select statements
 	metrics.PlanExecutionTimeCounter.WithLabelValues(a.getPlanExecTimeLabel(costTime)).Inc()

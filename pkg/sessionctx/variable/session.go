@@ -1679,6 +1679,8 @@ type SessionVars struct {
 	// RelevantOptFixes is a map of relevant optimizer fixes to be recorded.
 	RelevantOptFixes map[uint64]struct{}
 
+	PlanRiskFlags uint64
+
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
 
@@ -1792,6 +1794,20 @@ func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
 		s.RelevantOptFixes = make(map[uint64]struct{})
 	}
 	s.RelevantOptFixes[fixID] = struct{}{}
+}
+
+const (
+	PlanRiskOutOfRangeEst = 1 << iota
+	PlanRiskPseudoStats
+	PlanRiskStaleStats
+)
+
+func (s *SessionVars) ResetPlanRiskFlags() {
+	s.PlanRiskFlags = 0
+}
+
+func (s *SessionVars) RecordPlanRiskFlag(flag uint64) {
+	s.PlanRiskFlags |= flag
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
