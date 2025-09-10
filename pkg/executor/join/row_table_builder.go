@@ -383,12 +383,7 @@ func estimateFillRowData(rowTableMeta *joinTableMeta, row *chunk.Row) int64 {
 }
 
 func estimateFillFake(rowLength int64) int64 {
-	fakeLength := int64(0)
-	if rowLength%8 != 0 {
-		appendedFakePlaceHolder := fakeAddrPlaceHolder[:8-rowLength%8]
-		fakeLength = int64(len(appendedFakePlaceHolder))
-	}
-	return fakeLength
+	return (8-rowLength%8)%8
 }
 
 func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) {

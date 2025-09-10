@@ -447,7 +447,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 					continue
 				}
 				strLen := int64(len(column.GetBytes(physicalRowIndex))) * 2
-				if serializeModes[idx] == KeepVarColumnLength {
+				if serializeModes[i] == KeepVarColumnLength {
 					strLen += int64(sizeUint32)
 				}
 				maxStringLen = max(maxStringLen, strLen)
