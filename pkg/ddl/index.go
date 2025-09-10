@@ -1245,7 +1245,11 @@ SwitchIndexState:
 			}
 			job.FillFinishedArgs(a)
 
-			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos)
+			analyzed := false
+			if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok && variable.TiDBOptOn(val) && tblInfo.GetPartitionInfo() == nil {
+				analyzed = true
+			}
+			addIndexEvent := notifier.NewAddIndexEvent(tblInfo, allIndexInfos, analyzed)
 			err2 := asyncNotifyEvent(jobCtx, addIndexEvent, job, noSubJob, w.sess)
 			if err2 != nil {
 				return ver, errors.Trace(err2)

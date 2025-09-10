@@ -400,12 +400,14 @@ func (s *SchemaChangeEvent) GetRemovePartitioningInfo() (
 func NewAddIndexEvent(
 	tableInfo *model.TableInfo,
 	newIndexes []*model.IndexInfo,
+	analyzed bool,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
 			Tp:        model.ActionAddIndex,
 			TableInfo: tableInfo,
 			Indexes:   newIndexes,
+			Analyzed:  analyzed,
 		},
 	}
 }
