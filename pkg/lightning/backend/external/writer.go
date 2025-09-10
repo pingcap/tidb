@@ -188,7 +188,6 @@ type WriterSummary struct {
 	// depends on onDup setting, duplicates might not be included.
 	TotalCnt           uint64
 	PutRequestCount    uint64
-	GetRequestCount    uint64
 	MultipleFilesStats []MultipleFilesStat
 	ConflictInfo       engineapi.ConflictInfo
 }
@@ -711,7 +710,6 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 		if err != nil {
 			return "", "", "", err
 		}
-		w.putReqCnt++
 	}
 
 	kvStore.finish()
@@ -810,6 +808,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
+		OnUpload:    func() { w.putReqCnt++ },
 	})
 	if err != nil {
 		return "", "", nil, nil, err
@@ -818,6 +817,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
+		OnUpload:    func() { w.putReqCnt++ },
 	})
 	if err != nil {
 		_ = dataWriter.Close(ctx)
@@ -830,8 +830,7 @@ func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalF
 	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
 	writer, err := w.store.Create(ctx, path, &storage.WriterOption{
 		Concurrency: 20,
-		PartSize:    MinUploadPartSize,
-	})
+		PartSize:    MinUploadPartSize})
 	return path, writer, err
 }
 

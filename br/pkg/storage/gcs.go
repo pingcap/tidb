@@ -353,7 +353,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		return nil, errors.Trace(err)
 	}
 	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	bw := newBufferedWriter(fw, int(partSize), NoCompression, wo.OnUpload)
 	return bw, nil
 }
 
