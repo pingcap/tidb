@@ -215,7 +215,6 @@ func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID i
 }
 
 // FMSketchFromStorage reads FMSketch from storage
-// TODO: check if we can remove this func
 func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
 	rows, _, err := util.ExecRows(sctx, "select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
