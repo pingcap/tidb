@@ -26,7 +26,7 @@ var _ RequireOptionalEvalProps = CurrentUserPropReader{}
 type CurrentUserPropProvider func() (*auth.UserIdentity, []*auth.RoleIdentity)
 
 // Desc returns the description for the property key.
-func (p CurrentUserPropProvider) Desc() *exprctx.OptionalEvalPropDesc {
+func (CurrentUserPropProvider) Desc() *exprctx.OptionalEvalPropDesc {
 	return exprctx.OptPropCurrentUser.Desc()
 }
 
@@ -34,7 +34,7 @@ func (p CurrentUserPropProvider) Desc() *exprctx.OptionalEvalPropDesc {
 type CurrentUserPropReader struct{}
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (r CurrentUserPropReader) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
+func (CurrentUserPropReader) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
 	return exprctx.OptPropCurrentUser.AsPropKeySet()
 }
 
@@ -58,6 +58,6 @@ func (r CurrentUserPropReader) ActiveRoles(ctx exprctx.EvalContext) ([]*auth.Rol
 	return roles, nil
 }
 
-func (r CurrentUserPropReader) getProvider(ctx exprctx.EvalContext) (CurrentUserPropProvider, error) {
+func (CurrentUserPropReader) getProvider(ctx exprctx.EvalContext) (CurrentUserPropProvider, error) {
 	return getPropProvider[CurrentUserPropProvider](ctx, exprctx.OptPropCurrentUser)
 }
