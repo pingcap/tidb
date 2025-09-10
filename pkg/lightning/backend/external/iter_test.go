@@ -547,7 +547,7 @@ func (i *intReader) close() error {
 	return nil
 }
 
-func (i *intReader) reloadCount() int64 {
+func (i *intReader) getRequestCount() int64 {
 	return 0
 }
 

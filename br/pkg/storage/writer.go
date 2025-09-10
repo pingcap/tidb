@@ -44,6 +44,17 @@ func (*emptyFlusher) Flush() error {
 	return nil
 }
 
+type callbackFlusher struct {
+	onFlush func()
+}
+
+func (f *callbackFlusher) Flush() error {
+	if f.onFlush != nil {
+		f.onFlush()
+	}
+	return nil
+}
+
 type interceptBuffer interface {
 	io.WriteCloser
 	flusher
