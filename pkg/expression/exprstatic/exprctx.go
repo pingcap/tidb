@@ -259,12 +259,12 @@ func (ctx *ExprContext) AllocPlanColumnID() int64 {
 }
 
 // IsInNullRejectCheck implements the `ExprContext.IsInNullRejectCheck` and should always return false.
-func (ctx *ExprContext) IsInNullRejectCheck() bool {
+func (*ExprContext) IsInNullRejectCheck() bool {
 	return false
 }
 
 // IsConstantPropagateCheck implements the `ExprContext.IsConstantPropagateCheck` and should always return false.
-func (ctx *ExprContext) IsConstantPropagateCheck() bool {
+func (*ExprContext) IsConstantPropagateCheck() bool {
 	return false
 }
 
@@ -302,7 +302,7 @@ func (ctx *ExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConverti
 
 // IsReadonlyUserVar implements the `BuildContext.IsReadonlyUserVar`.
 // This method always returns false for simplicity, ensuring the safest behavior across all scenarios.
-func (ctx *ExprContext) IsReadonlyUserVar(name string) bool {
+func (*ExprContext) IsReadonlyUserVar(name string) bool {
 	return false
 }
 
