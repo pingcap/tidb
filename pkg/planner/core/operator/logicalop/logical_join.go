@@ -1756,7 +1756,7 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression, vai
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
 	joinConds, predicates = expression.PropConstForOuterJoin(exprCtx, joinConds, predicates, outerTableSchema,
-		innerTableSchema, nullSensitive, vaildExprFunc)
+		innerTableSchema, p.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, vaildExprFunc)
 	p.AttachOnConds(joinConds)
 	return predicates
 }
