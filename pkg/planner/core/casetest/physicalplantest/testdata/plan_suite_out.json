@@ -4138,7 +4138,7 @@
     "Name": "TestLimitPushdown",
     "Cases": [
       {
-        "SQL": "select * from t1 order by c1 limit 200;",
+        "SQL": "select /*+ use_index(t1, c1) */ * from t1 order by c1 limit 200;",
         "Plan": [
           "Projection root  test.t1.c1, test.t1.c2",
           "└─IndexLookUp root  limit embedded(offset:0, count:200)",

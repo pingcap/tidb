@@ -644,7 +644,7 @@
   {
       "name": "TestLimitPushdown",
       "cases": [
-          "select * from t1 order by c1 limit 200;"
+          "select /*+ use_index(t1, c1) */ * from t1 order by c1 limit 200;"
       ]
   }
 ]
