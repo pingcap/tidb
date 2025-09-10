@@ -3516,16 +3516,18 @@ HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(planner__core__
 │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─HashAgg(Probe)	root		group by:Column#27, funcs:sum(Column#26)->Column#18, funcs:firstrow(Column#27)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#26, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#27
+└─HashAgg(Probe)	root		group by:Column#28, funcs:sum(Column#27)->Column#18, funcs:firstrow(Column#28)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#27, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#28
     └─Apply	root		CARTESIAN semi join, left side:TableReader
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
       │   └─TableFullScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
-      └─IndexLookUp(Probe)	root		
-        ├─IndexRangeScan(Build)	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)], keep order:false, stats:pseudo
-        └─Selection(Probe)	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
-          └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
+      └─Limit(Probe)	root		offset:0, count:1
+        └─IndexLookUp	root		
+          ├─IndexRangeScan(Build)	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)], keep order:false, stats:pseudo
+          └─Limit(Probe)	cop[tikv]		offset:0, count:1
+            └─Selection	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
+              └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
 SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 NAME	tb_sum_code
 show warnings;
@@ -3539,16 +3541,18 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.nam
   │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
   │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
-    └─StreamAgg	root		funcs:sum(Column#22)->Column#18
-      └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#22
+    └─StreamAgg	root		funcs:sum(Column#23)->Column#18
+      └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#23
         └─Apply	root		CARTESIAN semi join, left side:IndexLookUp
           ├─IndexLookUp(Build)	root		
           │ ├─IndexRangeScan(Build)	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo
           │ └─TableRowIDScan(Probe)	cop[tikv]	table:tb	keep order:false, stats:pseudo
-          └─IndexLookUp(Probe)	root		
-            ├─IndexRangeScan(Build)	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)], keep order:false, stats:pseudo
-            └─Selection(Probe)	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
-              └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
+          └─Limit(Probe)	root		offset:0, count:1
+            └─IndexLookUp	root		
+              ├─IndexRangeScan(Build)	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)], keep order:false, stats:pseudo
+              └─Limit(Probe)	cop[tikv]		offset:0, count:1
+                └─Selection	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
+                  └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
 SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 NAME	tb_sum_code
 show warnings;
@@ -3666,11 +3670,13 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.nam
   │ ├─Apply(Build)	root		CARTESIAN semi join, left side:TableReader
   │ │ ├─TableReader(Build)	root		data:TableFullScan
   │ │ │ └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
-  │ │ └─IndexLookUp(Probe)	root		
-  │ │   ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92)
-  │ │   │ └─IndexRangeScan	cop[tikv]	table:tb, index:idx_tb_name(name)	range:["chad9","chad:"), keep order:false, stats:pseudo
-  │ │   └─Selection(Probe)	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)
-  │ │     └─TableRowIDScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
+  │ │ └─Limit(Probe)	root		offset:0, count:1
+  │ │   └─IndexLookUp	root		
+  │ │     ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92)
+  │ │     │ └─IndexRangeScan	cop[tikv]	table:tb, index:idx_tb_name(name)	range:["chad9","chad:"), keep order:false, stats:pseudo
+  │ │     └─Limit(Probe)	cop[tikv]		offset:0, count:1
+  │ │       └─Selection	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)
+  │ │         └─TableRowIDScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
   │ └─Selection(Probe)	root		gt(Column#14, 100)
   │   └─MaxOneRow	root		
   │     └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column#14

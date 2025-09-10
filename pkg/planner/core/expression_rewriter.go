@@ -1043,10 +1043,24 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		er.err = err
 		return v, true
 	}
-	np = er.popExistsSubPlan(planCtx, np)
+	// Add LIMIT 1 when noDecorrelate is true for EXISTS subqueries to enable early exit
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
-
+	if noDecorrelate {
+		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
+		if !hasLimit(np) {
+			limitClause := &ast.Limit{
+				Count: ast.NewValueExpr(1, "", ""),
+			}
+			var err error
+			np, err = planCtx.builder.buildLimit(np, limitClause)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+		}
+	}
+	np = er.popExistsSubPlan(planCtx, np)
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
@@ -2677,4 +2691,22 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 		return false
 	}
 	return strings.ToLower(x) == ast.CurrentTimestamp
+}
+
+// hasLimit checks if the plan already contains a LIMIT operator
+func hasLimit(plan base.LogicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+	// Check if this is a LogicalLimit
+	if _, ok := plan.(*logicalop.LogicalLimit); ok {
+		return true
+	}
+	// Recursively check children
+	for _, child := range plan.Children() {
+		if hasLimit(child) {
+			return true
+		}
+	}
+	return false
 }
