@@ -201,7 +201,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	require.Len(t, reader.columnNames, 9)
+	require.Len(t, reader.colNames, 9)
 
 	require.NoError(t, reader.ReadRow())
 	rowValue := []string{
