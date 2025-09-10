@@ -1,5 +1,5 @@
 drop table if exists t;
-create table t(a int, b int, c int, d int, index iabc(a,b,c));
+create table t(a int, b int, c int, d int, primary key (a,b,c) clustered);
 insert into t values 
 (1, 1, 1, 10), (1, 1, 2, 20), (1, 1, 3, 30), (1, 1, 4, 31),
 (1, 2, 1, 32), (1, 2, 2, 33), (1, 2, 5, 34),
@@ -33,8 +33,8 @@ insert into t values
 explain format = 'brief' select * from t where b in (1, 3, 5) and d > 100 order by a, b, c;
 select * from t where b in (1, 3, 5) and d > 100 order by a, b, c;
 
-explain format = 'brief' select a,c from t where b in (1, 3, 5) and d > 100 order by a, c;
-select a,c from t where b in (1, 3, 5) and d > 100 order by a, c;
+explain format = 'brief' select a,c from t where a in (1,2,3) and b in (1, 3, 5) and d > 100 order by c;
+select a,c from t where a in (1,2,3) and b in (1, 3, 5) and d > 100 order by c;
 
 explain format = 'brief' select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
 select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
@@ -60,13 +60,13 @@ insert into t2 values
 explain format = 'brief' select c from t2 where a in (1, 3) and b in (1, 3) and d < 150 order by c;
 select c from t2 where a in (1, 3) and b in (1, 3) and d < 150 order by c;
 
-explain format = 'brief' select a,c from t where a = 3 and b in (1, 3, 5) order by a desc, c desc;
-select a,c from t where a = 3 and b in (1, 3, 5) order by a desc, c desc;
+explain format = 'brief' select /*+ order_index(t2,iabc) */ a,c from t2 where a = 3 and b in (1, 3, 5) order by a desc, c desc;
+select /*+ order_index(t2,iabc) */ a,c from t where a = 3 and b in (1, 3, 5) order by a desc, c desc;
 
-explain format = 'brief' select a,c from t where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
-select a,c from t where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
+explain format = 'brief' select /*+ order_index(t2,iabc) */ a,c from t2 where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
+select /*+ order_index(t2,iabc) */ a,c from t where a = 2 and b in (1, 3, 5) and d > 60 order by a desc, c desc;
 
-explain format = 'brief' select b,c from t where a = 1 and b in (1, 3, 5) and c > 1 order by b, c;
+explain format = 'brief' select b,c from t2 where a = 1 and b in (1, 3, 5) and c > 1 order by b, c;
 select b,c from t where a = 1 and b in (1, 3, 5) and c > 1 order by b, c;
 
 drop table if exists tp;
@@ -265,15 +265,15 @@ select *, (
 ) as max_z
 from t_outer o;
 
-explain format = 'brief' select a,b,c from t where b in (1) order by a, b, c;
-select a,b,c from t where b in (1) order by a, b, c;
+explain format = 'brief' select a,b,c from t where a in (2) and b in (1) order by a, b, c;
+select a,b,c from t where a in (2) and b in (1) order by a, b, c;
 
 explain format = 'brief' select a,b,c from t where c in (1, 2, 3) order by a, b, c;
 select a,b,c from t where c in (1, 2, 3) order by a, b, c;
 
-insert into t values (4, null, 1, 400), (4, null, 2, 410), (4, 2, null, 420), (4, 4, 1, 430), (4, 6, 3, 440);
-explain format = 'brief' select a,c from t where b in (1, 3, null) order by a, c;
-select a,c from t where b in (1, 3, null) order by a, c;
+insert into t2 values (4, null, 1, 400), (4, null, 2, 410), (4, 2, null, 420), (4, 4, 1, 430), (4, 6, 3, 440);
+explain format = 'brief' select a,c from t2 where a in (3, null, 4) and b in (1, 3, null) order by a, c;
+select a,c from t2 where a in (3, null, 4) and b in (1, 3, null) order by a, c;
 
 deallocate prepare stmt1;
 deallocate prepare stmt2;
