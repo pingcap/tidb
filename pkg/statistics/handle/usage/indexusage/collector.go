@@ -331,46 +331,46 @@ func ScanMetrics(isTableScan bool, sample Sample) {
 
 func getKVReqLabel(kvReq uint64) string {
 	if kvReq < 10 {
-		return "[0, 10)"
+		return "0-10"
 	} else if kvReq < 100 {
-		return "[10, 100)"
+		return "10-100"
 	} else if kvReq < 1000 {
-		return "[100, 1000)"
+		return "100-1000"
 	} else if kvReq < 10000 {
-		return "[1000, 10000)"
+		return "1000-10000"
 	} else if kvReq < 100000 {
-		return "[10000, 100000)"
+		return "10000-100000"
 	} else {
-		return "[100000, +inf)"
+		return "100000+"
 	}
 }
 
 func getScanSelectivityLabel(scanPercentage float64) string {
 	if scanPercentage < 0.001 {
-		return "[0, 0.1%)"
+		return "0-0.1%"
 	} else if scanPercentage < 0.01 {
-		return "[0.1%, 1%)"
+		return "0.1-1%"
 	} else if scanPercentage < 0.1 {
-		return "[1%, 10%)"
+		return "1-10%"
 	} else if scanPercentage < 0.2 {
-		return "[10%, 20%)"
+		return "10-20%"
 	} else if scanPercentage < 0.5 {
-		return "[20%, 50%)"
+		return "20-50%"
 	} else {
-		return "[50%, 100%)"
+		return "50-100%"
 	}
 }
 
 func getScanLabel(scanRows uint64) string {
 	if scanRows < 1000 {
-		return "[0, 1000)"
+		return "0-1000"
 	} else if scanRows < 10000 {
-		return "[1000, 10000)"
+		return "1000-10000"
 	} else if scanRows < 100000 {
-		return "[10000, 100000)"
+		return "10000-100000"
 	} else if scanRows < 1000000 {
-		return "[100000, 1000000)"
+		return "100000-1000000"
 	} else {
-		return "[1000000, +inf)"
+		return "1000000+"
 	}
 }
