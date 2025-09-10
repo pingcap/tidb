@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,10 +30,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -67,6 +74,9 @@ func checkTmpDDLDir(t *testing.T) {
 }
 
 func TestAddIndexDistBasic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("might ingest overlapped sst, skip")
+	}
 	// mock that we only have 1 cpu, add-index task can be scheduled as usual
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", `return(true)`))
@@ -143,6 +153,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 }
 
 func TestAddIndexDistCancelWithPartition(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	if store.Name() != "TiKV" {
 		t.Skip("TiKV store only")
@@ -163,17 +174,14 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 
 	var once sync.Once
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*local.Backend) {
 		once.Do(func() {
 			row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 			require.Equal(t, 1, len(row))
 			jobID := row[0][0].(string)
 			tk1.MustExec("admin cancel ddl jobs " + jobID)
 		})
-	}))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
-	}()
+	})
 
 	require.Error(t, tk.ExecToErr("alter table t add index idx(a);"))
 	tk.MustExec("admin check table t;")
@@ -184,6 +192,7 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 }
 
 func TestAddIndexDistCancel(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -285,7 +294,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 
 	var syncChan = make(chan struct{})
 	var counter atomic.Int32
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*local.Backend) {
 		if counter.Add(1) <= 3 {
 			row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 			require.Equal(t, 1, len(row))
@@ -293,7 +302,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 			tk1.MustExec("admin pause ddl jobs " + jobID)
 			<-syncChan
 		}
-	}))
+	})
 
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDMLExecutionOnPausedState", func() {
 		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
@@ -408,10 +417,24 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task = off;")
 	})
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("insert into t values (1, 1);")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
-	tk.MustExec("alter table t add index idx(b);")
+	retryableErrs := []string{
+		"requested lease not found",
+		"mvcc: required revision has been compacted",
+	}
+	for _, errStr := range retryableErrs {
+		t.Run(errStr, func(t *testing.T) {
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec("create table t (a int, b int);")
+			tk.MustExec("insert into t values (1, 1);")
+			var once sync.Once
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", func(errP *error) {
+				once.Do(func() {
+					*errP = errors.New(errStr)
+				})
+			})
+			tk.MustExec("alter table t add index idx(b);")
+		})
+	}
 }
 
 func TestAddIndexScheduleAway(t *testing.T) {
@@ -440,7 +463,7 @@ func TestAddIndexScheduleAway(t *testing.T) {
 		close(afterCancel)
 	})
 	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*local.Backend) {
 		once.Do(func() {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
@@ -463,4 +486,49 @@ func TestAddIndexScheduleAway(t *testing.T) {
 	)
 	tk.MustExec("alter table t add index idx(b);")
 	require.NotEqual(t, int64(0), jobID.Load())
+}
+
+func TestAddIndexDistCleanUpBlock(t *testing.T) {
+	proto.MaxConcurrentTask = 1
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`)
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/doCleanupTask", func() {
+		<-ch
+	})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec(fmt.Sprintf("create table test.t%d (a int, b int);", i))
+			tk.MustExec(fmt.Sprintf("insert into test.t%d values (1, 1);", i))
+			tk.MustExec(fmt.Sprintf("alter table test.t%d add index idx(b);", i))
+		}()
+	}
+	wg.Wait()
+	close(ch)
+}
+
+func TestUseClusterIdInGlobalSortPath(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	s, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	vardef.CloudStorageURI.Store("s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws")
+	path := handle.GetCloudStorageURI(context.Background(), store)
+	require.Equal(t, "s3://bucket/path/to/folder/"+
+		strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)+
+		"?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", path)
+	// without cluster id
+	require.Equal(t, "s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", handle.GetCloudStorageURI(context.Background(), nil))
 }

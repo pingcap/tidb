@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"go.uber.org/zap"
 )
@@ -443,13 +445,14 @@ func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (E
 		return nil, errors.Trace(err)
 	}
 	if prefetchSize > 0 {
-		reader = prefetch.NewReader(reader, prefetchSize)
+		reader = prefetch.NewReader(reader, r.RangeSize(), prefetchSize)
 	}
 	return &ks3ObjectReader{
 		ctx:          ctx,
 		storage:      rs,
 		name:         path,
 		reader:       reader,
+		pos:          r.Start,
 		rangeInfo:    r,
 		prefetchSize: prefetchSize,
 	}, nil
@@ -547,9 +550,11 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
+	n, err = injectfailpoint.RandomErrorForReadWithOnePerPercent(n, err)
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),
@@ -563,14 +568,14 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		_ = r.reader.Close()
 
-		newReader, _, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
+		newReader, rangeInfo, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
 		r.reader = newReader
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, rangeInfo.RangeSize(), r.prefetchSize)
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
@@ -642,7 +647,7 @@ func (r *ks3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = newReader
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, info.RangeSize(), r.prefetchSize)
 	}
 	r.rangeInfo = info
 	r.pos = realOffset
@@ -694,6 +699,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		}
 	} else {
 		up := s3manager.NewUploader(&s3manager.UploadOptions{
+			PartSize: option.PartSize,
 			Parallel: option.Concurrency,
 			S3:       rs.svc,
 		})

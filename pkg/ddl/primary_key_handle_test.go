@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -66,7 +67,7 @@ func TestMultiRegionGetTableEndHandle(t *testing.T) {
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
 	var builder strings.Builder
 	_, _ = fmt.Fprintf(&builder, "insert into t values ")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
 	sql := builder.String()
@@ -80,6 +81,9 @@ func TestMultiRegionGetTableEndHandle(t *testing.T) {
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(999))
 
@@ -123,7 +127,7 @@ func TestGetTableEndHandle(t *testing.T) {
 
 	var builder strings.Builder
 	_, _ = fmt.Fprintf(&builder, "insert into t1 values ")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
 	sql := builder.String()
@@ -144,7 +148,7 @@ func TestGetTableEndHandle(t *testing.T) {
 
 	builder.Reset()
 	_, _ = fmt.Fprintf(&builder, "insert into t2 values ")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = fmt.Fprintf(&builder, "(%v),", i)
 	}
 	sql = builder.String()
@@ -193,7 +197,7 @@ func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
 	var builder strings.Builder
 	_, _ = fmt.Fprintf(&builder, "insert into t values ")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = fmt.Fprintf(&builder, "('%v', %v, %v, %v),", i, i, i, i)
 	}
 	sql := builder.String()
@@ -207,6 +211,9 @@ func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "999", 999, 999))
 

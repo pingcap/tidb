@@ -16,6 +16,8 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -28,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -44,15 +46,19 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
-func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {
+func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executor {
 	var err error
 	if err = b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
 
-	if p.PrunePartitions(b.ctx) {
-		// no matching partitions
+	isTableDual, err := p.PrunePartitions(b.ctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if isTableDual {
 		return &TableDualExec{
 			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), p.Schema(), p.ID()),
 			numDualRows:    0,
@@ -67,6 +73,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		}()
 	}
 
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+
 	e := &PointGetExecutor{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		indexUsageReporter: b.buildIndexUsageReporter(p, false),
@@ -75,37 +83,14 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		partitionNames:     p.PartitionNames,
 	}
 
-	e.SetInitCap(1)
-	e.SetMaxChunkSize(1)
-	e.Init(p)
-
 	e.snapshot, err = b.getSnapshot()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
-		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), p.GetAvgRowSize()))
-	}
-	if e.RuntimeStats() != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-	}
-
-	if p.IndexInfo != nil {
-		sctx := b.ctx.GetSessionVars().StmtCtx
-		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
-	}
-
-	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
-		assertScope := val.(string)
-		if e.Ctx().GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {
-			panic("point get replica option fail")
-		}
-	})
+	e.SetInitCap(1)
+	e.SetMaxChunkSize(1)
+	e.Init(p)
 
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -193,16 +178,20 @@ func matchPartitionNames(pid int64, partitionNames []ast.CIStr, pi *model.Partit
 }
 
 // Recreated based on Init, change baseExecutor fields also
-func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan) {
-	e.Init(p)
+func (e *PointGetExecutor) Recreated(p *physicalop.PointGetPlan, ctx sessionctx.Context) {
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
-	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
-	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p, false)
+	e.BaseExecutor = exec.NewBaseExecutor(ctx, p.Schema(), p.ID())
+	e.indexUsageReporter = buildIndexUsageReporter(ctx, p, false)
+
+	e.Init(p)
+	InitSnapshotWithSessCtx(e.snapshot, ctx, nil)
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
+// Note: since this function is also used by Recreated function, thus we can't rely on member field's default value
+// for example: we need to explicitly set e.stats to nil when e.RuntimeStats() is nil
+func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	decoder := NewRowDecoder(e.Ctx(), p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
@@ -221,6 +210,32 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
+
+	sessVars := e.Ctx().GetSessionVars()
+	if sessVars.IsReplicaReadClosestAdaptive() {
+		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), p.GetAvgRowSize()))
+	}
+	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if e.Ctx().GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("point get replica option fail")
+		}
+	})
+
+	if e.RuntimeStats() != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+	} else {
+		e.stats = nil
+	}
+
+	if p.IndexInfo != nil {
+		sctx := sessVars.StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
+	}
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -290,7 +305,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
-			handleBytes, err := plannercore.EncodeUniqueIndexValuesForKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals)
+			handleBytes, err := physicalop.EncodeUniqueIndexValuesForKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
 				if kv.ErrNotExist.Equal(err) {
 					return nil
@@ -302,7 +317,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 		} else {
-			e.idxKey, err = plannercore.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+			e.idxKey, err = physicalop.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
 			if err != nil && !kv.ErrNotExist.Equal(err) {
 				return err
 			}
@@ -372,10 +387,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if !matchPartitionNames(tblID, e.partitionNames, pi) {
 					return nil
 				}
-				for _, id := range pi.IDsInDDLToIgnore() {
-					if id == pid {
-						return nil
-					}
+				if slices.Contains(pi.IDsInDDLToIgnore(), pid) {
+					return nil
 				}
 			}
 		}
@@ -765,12 +778,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 }
 
 func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
-	for _, pCol := range prefixColIDs {
-		if pCol == colID {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(prefixColIDs, colID)
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {

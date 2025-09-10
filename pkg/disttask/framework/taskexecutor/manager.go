@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
@@ -28,15 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -52,14 +49,11 @@ var (
 	MaxSubtaskCheckInterval = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
-	unfinishedSubtaskStates = []proto.SubtaskState{
-		proto.SubtaskStatePending,
-		proto.SubtaskStateRunning,
-	}
 )
 
 // Manager monitors the task table and manages the taskExecutors.
 type Manager struct {
+	store     kv.Storage
 	taskTable TaskTable
 	mu        struct {
 		sync.RWMutex
@@ -67,59 +61,30 @@ type Manager struct {
 		taskExecutors map[int64]TaskExecutor
 	}
 	// id, it's the same as server id now, i.e. host:port.
-	id          string
-	wg          tidbutil.WaitGroupWrapper
-	executorWG  tidbutil.WaitGroupWrapper
-	ctx         context.Context
-	cancel      context.CancelFunc
-	logger      *zap.Logger
-	slotManager *slotManager
-
-	totalCPU int
-	totalMem int64
+	id           string
+	wg           tidbutil.WaitGroupWrapper
+	executorWG   tidbutil.WaitGroupWrapper
+	ctx          context.Context
+	cancel       context.CancelFunc
+	logger       *zap.Logger
+	slotManager  *slotManager
+	nodeResource *proto.NodeResource
 }
 
 // NewManager creates a new task executor Manager.
-func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
+func NewManager(ctx context.Context, store kv.Storage, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}
-	totalMem, err := memory.MemTotal()
-	if err != nil {
-		// should not happen normally, as in main function of tidb-server, we assert
-		// that memory.MemTotal() will not fail.
-		return nil, err
-	}
-	totalCPU := cpu.GetCPUCount()
-	if totalCPU <= 0 || totalMem <= 0 {
-		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
-	}
-	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
-	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
-	if err == nil && version == cgroup.V2 {
-		// see cgroup.detectMemLimitInV2 for more details.
-		// below are some real memory limits tested on GCP:
-		// node-spec  real-limit  percent
-		// 16c32g        27.83Gi    87%
-		// 32c64g        57.36Gi    89.6%
-		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
-		// content of 'memory.max' might be 'max', so we use the min of them.
-		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
-		logger.Info("adjust memory limit for cgroup v2",
-			zap.String("before", units.BytesSize(float64(totalMem))),
-			zap.String("after", units.BytesSize(float64(adjustedMem))))
-		totalMem = adjustedMem
-	}
-	logger.Info("build task executor manager", zap.Int("total-cpu", totalCPU),
-		zap.String("total-mem", units.BytesSize(float64(totalMem))))
+
 	m := &Manager{
-		id:          id,
-		taskTable:   taskTable,
-		logger:      logger,
-		slotManager: newSlotManager(totalCPU),
-		totalCPU:    totalCPU,
-		totalMem:    int64(totalMem),
+		store:        store,
+		id:           id,
+		taskTable:    taskTable,
+		logger:       logger,
+		slotManager:  newSlotManager(resource.TotalCPU),
+		nodeResource: resource,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
@@ -205,7 +170,7 @@ func (m *Manager) handleTasks() {
 	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
-		m.logErr(err)
+		m.logger.Error("failed to get executable task", zap.Error(err))
 		return
 	}
 
@@ -218,11 +183,11 @@ func (m *Manager) handleTasks() {
 			}
 		case proto.TaskStatePausing:
 			if err := m.handlePausingTask(task.ID); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to handle task in pausing state", zap.Error(err))
 			}
 		case proto.TaskStateReverting:
 			if err := m.handleRevertingTask(task.ID); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to handle task in reverting state", zap.Error(err))
 			}
 		}
 	}
@@ -247,7 +212,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 
 		if !canAlloc {
 			// try to run tasks of low ranking
-			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
+			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 			continue
 		}
 		failpoint.InjectCall("beforeCallStartTaskExecutor", task.TaskBase)
@@ -304,7 +269,7 @@ func (m *Manager) recoverMetaLoop() {
 			return
 		case <-ticker.C:
 			if err := m.recoverMeta(); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to recover node meta", zap.Error(err))
 				continue
 			}
 		}
@@ -329,12 +294,14 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	// TODO: remove it when we can create task executor with task base.
 	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
 	if err != nil {
-		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
+		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID),
+			zap.String("task-key", taskBase.Key), zap.Error(err))
 		return false
 	}
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
-			zap.Int64("task-id", taskBase.ID), zap.Int("concurrency", taskBase.Concurrency),
+			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
+			zap.Int("concurrency", taskBase.Concurrency),
 			zap.Int("remaining-slots", m.slotManager.availableSlots()))
 		return false
 	}
@@ -356,6 +323,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		slotMgr:   m.slotManager,
 		nodeRc:    m.getNodeResource(),
 		execID:    m.id,
+		Store:     m.store,
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {
@@ -363,12 +331,12 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		return false
 	}
 	m.addTaskExecutor(executor)
-	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
+	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
 		zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {
-			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
+			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 				zap.Stringer("type", task.Type))
 			m.slotManager.free(task.ID)
 			m.delTaskExecutor(executor)
@@ -379,8 +347,9 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	return true
 }
 
-func (m *Manager) getNodeResource() *NodeResource {
-	return NewNodeResource(m.totalCPU, m.totalMem)
+func (m *Manager) getNodeResource() *proto.NodeResource {
+	ret := *m.nodeResource
+	return &ret
 }
 
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {
@@ -402,24 +371,20 @@ func (m *Manager) isExecutorStarted(taskID int64) bool {
 	return ok
 }
 
-func (m *Manager) logErr(err error) {
-	m.logger.Error("task manager met error", zap.Error(err), zap.Stack("stack"))
-}
-
 func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor) {
-	m.logErr(err)
+	m.logger.Error("update one subtask as failed", zap.Error(err))
 	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
 	// some code in Init that need retry, remove it after it's decoupled.
 	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
-		m.logger.Error("met retryable err", zap.Error(err), zap.Stack("stack"))
+		m.logger.Error("met retryable err", zap.Error(err))
 		return
 	}
 	err1 := m.runWithRetry(func() error {
 		return m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
 	}, "update to subtask failed")
 	if err1 == nil {
-		m.logger.Error("update error to subtask success", zap.Int64("task-id", taskID),
-			zap.Error(err1), zap.Stack("stack"))
+		m.logger.Info("update error to subtask success", zap.Int64("task-id", taskID),
+			zap.Error(err))
 	}
 }
 
@@ -434,28 +399,4 @@ func (m *Manager) runWithRetry(fn func() error, msg string) error {
 		m.logger.Warn(msg, zap.Error(err1))
 	}
 	return err1
-}
-
-// NodeResource is the resource of the node.
-// exported for test.
-type NodeResource struct {
-	totalCPU int
-	totalMem int64
-}
-
-// NewNodeResource creates a new NodeResource.
-// exported for test.
-func NewNodeResource(totalCPU int, totalMem int64) *NodeResource {
-	return &NodeResource{
-		totalCPU: totalCPU,
-		totalMem: totalMem,
-	}
-}
-
-func (nr *NodeResource) getStepResource(concurrency int) *proto.StepResource {
-	return &proto.StepResource{
-		CPU: proto.NewAllocatable(int64(concurrency)),
-		// same proportion as CPU
-		Mem: proto.NewAllocatable(int64(float64(concurrency) / float64(nr.totalCPU) * float64(nr.totalMem))),
-	}
 }

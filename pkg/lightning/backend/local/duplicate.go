@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -600,7 +602,7 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
-func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
+func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) (key, value []byte, _ error) {
 	if !common.ErrFoundDuplicateKeys.Equal(err) {
 		return nil, nil, err
 	}
@@ -786,7 +788,7 @@ func (m *dupeDetector) splitLocalDupTaskByKeys(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := splitRangeBySizeProps(common.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
+	ranges := splitRangeBySizeProps(engineapi.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
 	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
@@ -924,7 +926,7 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 	var metErr common.OnceError
 	wg := &sync.WaitGroup{}
 	atomicMadeProgress := atomic.NewBool(false)
-	for i := 0; i < len(regions); i++ {
+	for i := range regions {
 		if ctx.Err() != nil {
 			metErr.Set(ctx.Err())
 			break
@@ -1079,13 +1081,13 @@ type DupeController struct {
 // CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 // may be repeated with other keys in local data source.
 func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
-		local.errorMgr, opts, local.dupeConcurrency, log.FromContext(ctx), local.resourceGroupName, local.taskType)
+		local.errorMgr, opts, local.dupeConcurrency, log.Wrap(tidblogutil.Logger(ctx)), local.resourceGroupName, local.taskType)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1105,13 +1107,13 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 	opts *encode.SessionOptions,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) (hasDupe bool, err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
-		local.errorMgr, opts, local.dupeConcurrency, log.FromContext(ctx), local.resourceGroupName, local.taskType)
+		local.errorMgr, opts, local.dupeConcurrency, log.Wrap(tidblogutil.Logger(ctx)), local.resourceGroupName, local.taskType)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1125,7 +1127,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 // ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 // according to the required algorithm.
 func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
-	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()

@@ -40,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -399,6 +401,16 @@ func (d *Checker) UnlockTables(ctx sessionctx.Context, lockedTables []model.Tabl
 	return d.realExecutor.UnlockTables(ctx, lockedTables)
 }
 
+// AlterTableMode implements the DDL interface.
+func (d *Checker) AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+	return d.realExecutor.AlterTableMode(ctx, args)
+}
+
+// RefreshMeta implements the DDL interface.
+func (d *Checker) RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error {
+	return d.realExecutor.RefreshMeta(ctx, args)
+}
+
 // CleanupTableLock implements the DDL interface.
 func (d *Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	return d.realExecutor.CleanupTableLock(ctx, tables)
@@ -561,6 +573,13 @@ func (d *Checker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
 func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
 	de := d.realExecutor.(ddl.ExecutorForTest)
 	return de.DoDDLJobWrapper(ctx, jobW)
+}
+
+// InitFromIS initializes the schema tracker from an InfoSchema.
+func (d *Checker) InitFromIS(is infoschema.InfoSchema) {
+	if err := d.tracker.InitFromIS(is); err != nil {
+		logutil.BgLogger().Warn("failed to init schema tracker from info schema", zap.Error(err))
+	}
 }
 
 type storageAndMore interface {

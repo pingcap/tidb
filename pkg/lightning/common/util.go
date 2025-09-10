@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -185,7 +186,7 @@ func (SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose 
 func Retry(purpose string, parentLogger log.Logger, action func() error) error {
 	var err error
 outside:
-	for i := 0; i < defaultMaxRetry; i++ {
+	for i := range defaultMaxRetry {
 		logger := parentLogger.With(zap.Int("retryCnt", i))
 
 		if i > 0 {
@@ -354,7 +355,7 @@ func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 	builder.WriteByte('`')
 
 	// use a C-style loop instead of range loop to avoid UTF-8 decoding
-	for i := 0; i < len(identifier); i++ {
+	for i := range len(identifier) {
 		b := identifier[i]
 		if b == '`' {
 			builder.WriteString("``")
@@ -371,7 +372,7 @@ func InterpolateMySQLString(s string) string {
 	var builder strings.Builder
 	builder.Grow(len(s) + 2)
 	builder.WriteByte('\'')
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		b := s[i]
 		if b == '\'' {
 			builder.WriteString("''")
@@ -633,6 +634,15 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	return strconv.Atoi(val)
 }
 
+// GetPDEnableFollowerHandleRegion gets the pd_enable_follower_handle_region from database.
+func GetPDEnableFollowerHandleRegion(ctx context.Context, db *sql.DB) (bool, error) {
+	val, err := getSessionVariable(ctx, db, vardef.PDEnableFollowerHandleRegion)
+	if err != nil {
+		return false, err
+	}
+	return variable.TiDBOptOn(val), nil
+}
+
 // GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
 func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
 	return getSessionVariable(ctx, db, vardef.TiDBExplicitRequestSourceType)
@@ -707,4 +717,39 @@ func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 func IsAccessDeniedNeedConfigPrivilegeError(err error) bool {
 	e, ok := err.(*mysql.MySQLError)
 	return ok && e.Number == errno.ErrSpecificAccessDenied && strings.Contains(e.Message, "CONFIG")
+}
+
+// SkipReadRowCount determines whether the target table requires a precise row count.
+// If any unique index/clustered primary contains columns with auto_random/auto_increment,
+// we must read the actual row count to prevent generating duplicate keys. Otherwise,
+// we can skip reading it to improve performance.
+func SkipReadRowCount(tblInfo *model.TableInfo) bool {
+	// Some tests may not set the table info.
+	if tblInfo == nil {
+		return false
+	}
+
+	if TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
+		return false
+	}
+
+	for _, idx := range tblInfo.Indices {
+		if !idx.Unique || !idx.Primary {
+			continue
+		}
+		for _, col := range idx.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			if tmysql.HasAutoIncrementFlag(colInfo.GetFlag()) {
+				return false
+			}
+		}
+	}
+
+	for _, col := range tblInfo.Columns {
+		if tmysql.HasPriKeyFlag(col.GetFlag()) && tmysql.HasAutoIncrementFlag(col.GetFlag()) {
+			return false
+		}
+	}
+
+	return true
 }

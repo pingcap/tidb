@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -25,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -108,9 +111,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(ctx, preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, nodeW.GetResolveContext(), sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(ctx, stmtNode, nodeW.GetResolveContext(), sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
@@ -125,11 +128,12 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}
 	// Use cached plan if possible.
 	if preparedObj != nil && plannercore.IsSafeToReusePointGetExecutor(c.Ctx, is, preparedObj) {
 		if exec, isExec := finalPlan.(*plannercore.Execute); isExec {
-			if pointPlan, isPointPlan := exec.Plan.(*plannercore.PointGetPlan); isPointPlan {
+			if pointPlan, isPointPlan := exec.Plan.(*physicalop.PointGetPlan); isPointPlan {
 				stmt.PsStmt, stmt.Plan = preparedObj, pointPlan // notify to re-use the cached plan
 			}
 		}
@@ -176,22 +180,16 @@ func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 		return true
 	}
 
-	for _, child := range p.Children() {
-		if isPhysicalPlanNeedLowerPriority(child) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(p.Children(), isPhysicalPlanNeedLowerPriority)
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, resolveCtx *resolve.Context, inRestrictedSQL bool, resourceGroup string) {
+func CountStmtNode(ctx context.Context, stmtNode ast.StmtNode, resolveCtx *resolve.Context, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
 
-	typeLabel := ast.GetStmtLabel(stmtNode)
+	typeLabel := stmtctx.GetStmtLabel(ctx, stmtNode)
 
 	if config.GetGlobalConfig().Status.RecordQPSbyDB || config.GetGlobalConfig().Status.RecordDBLabel {
 		dbLabels := getStmtDbLabel(stmtNode, resolveCtx)
@@ -335,6 +333,11 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.SplitRegionStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.DistributeTableStmt:
 		if x.Table != nil {
 			dbLabel := x.Table.Schema.O
 			dbLabelSet[dbLabel] = struct{}{}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -68,9 +69,6 @@ func (s *MemStorage) DeleteFile(ctx context.Context, name string) error {
 	default:
 		// continue on
 	}
-	if !path.IsAbs(name) {
-		return errors.Errorf("file name is not an absolute path: %s", name)
-	}
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
 	if _, ok := s.dataStore[name]; !ok {
@@ -101,10 +99,7 @@ func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	default:
 		// continue on
 	}
-	if !path.IsAbs(name) {
-		return errors.Errorf("file name is not an absolute path: %s", name)
-	}
-	fileData := append([]byte{}, data...)
+	fileData := slices.Clone(data)
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
 	theFile, ok := s.dataStore[name]
@@ -127,15 +122,12 @@ func (s *MemStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 	default:
 		// continue on
 	}
-	if !path.IsAbs(name) {
-		return nil, errors.Errorf("file name is not an absolute path: %s", name)
-	}
 	theFile, ok := s.loadMap(name)
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", name)
 	}
 	fileData := theFile.GetData()
-	return append([]byte{}, fileData...), nil
+	return slices.Clone(fileData), nil
 }
 
 // FileExists return true if file exists.
@@ -147,9 +139,6 @@ func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) 
 	default:
 		// continue on
 	}
-	if !path.IsAbs(name) {
-		return false, errors.Errorf("file name is not an absolute path: %s", name)
-	}
 	_, ok := s.loadMap(name)
 	return ok, nil
 }
@@ -159,9 +148,6 @@ func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) 
 func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption) (ExternalFileReader, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Trace(err)
-	}
-	if !path.IsAbs(filePath) {
-		return nil, errors.Errorf("file name is not an absolute path: %s", filePath)
 	}
 	theFile, ok := s.loadMap(filePath)
 	if !ok {
@@ -247,9 +233,6 @@ func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (
 	default:
 		// continue on
 	}
-	if !path.IsAbs(name) {
-		return nil, errors.Errorf("file name is not an absolute path: %s", name)
-	}
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
 	theFile := new(memFile)
@@ -267,9 +250,6 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 		return ctx.Err()
 	default:
 		// continue on
-	}
-	if !path.IsAbs(newFileName) {
-		return errors.Errorf("new file name is not an absolute path: %s", newFileName)
 	}
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
@@ -352,7 +332,7 @@ func (w *memFileWriter) Close(ctx context.Context) error {
 	default:
 		// continue on
 	}
-	fileData := append([]byte{}, w.buf.Bytes()...)
+	fileData := slices.Clone(w.buf.Bytes())
 	w.file.Data.Store(&fileData)
 	w.isClosed.Store(true)
 	return nil

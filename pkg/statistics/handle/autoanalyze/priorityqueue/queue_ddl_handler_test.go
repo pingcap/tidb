@@ -85,7 +85,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(ctx))
 
 	// Check there are no running jobs.
 	runningJobs := pq.GetRunningJobs()
@@ -188,7 +188,8 @@ func TestTruncateTable(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -206,7 +207,6 @@ func TestTruncateTable(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
 	// Handle the truncate table event in priority queue.
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, truncateTableEvent))
@@ -253,7 +253,8 @@ func testTruncatePartitionedTable(
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -268,7 +269,6 @@ func testTruncatePartitionedTable(
 	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
 	// Handle the truncate table event in priority queue.
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, truncateTableEvent))
@@ -302,7 +302,8 @@ func TestDropTable(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -320,7 +321,6 @@ func TestDropTable(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, dropTableEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
 	// Handle the drop table event in priority queue.
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, dropTableEvent))
@@ -367,7 +367,8 @@ func testDropPartitionedTable(
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -382,7 +383,6 @@ func testDropPartitionedTable(
 	err = statstestutil.HandleDDLEventWithTxn(h, dropTableEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
 	// Handle the drop table event in priority queue.
 	require.NoError(t, pq.HandleDDLEvent(ctx, sctx, dropTableEvent))
@@ -418,7 +418,8 @@ func TestTruncateTablePartition(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -436,7 +437,6 @@ func TestTruncateTablePartition(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, truncateTablePartitionEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
 		func(sctx sessionctx.Context) error {
@@ -477,7 +477,8 @@ func TestDropTablePartition(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -495,7 +496,6 @@ func TestDropTablePartition(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, dropTablePartitionEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
 		func(sctx sessionctx.Context) error {
@@ -542,7 +542,8 @@ func TestExchangeTablePartition(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -560,7 +561,6 @@ func TestExchangeTablePartition(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, exchangeTablePartitionEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
 		func(sctx sessionctx.Context) error {
@@ -604,7 +604,8 @@ func TestReorganizeTablePartition(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -622,7 +623,6 @@ func TestReorganizeTablePartition(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, reorganizeTablePartitionEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
 		func(sctx sessionctx.Context) error {
@@ -663,7 +663,8 @@ func TestAlterTablePartitioning(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -681,7 +682,6 @@ func TestAlterTablePartitioning(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, alterTablePartitioningEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
 		func(sctx sessionctx.Context) error {
@@ -722,7 +722,8 @@ func TestRemovePartitioning(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -740,7 +741,6 @@ func TestRemovePartitioning(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, removePartitioningEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
 		func(sctx sessionctx.Context) error {
@@ -789,7 +789,8 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -811,7 +812,6 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, dropSchemaEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
 		func(sctx sessionctx.Context) error {
@@ -846,7 +846,8 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	ctx := context.Background()
+	require.NoError(t, pq.Initialize(ctx))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -865,7 +866,6 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	err = statstestutil.HandleDDLEventWithTxn(h, dropSchemaEvent)
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
 		h.SPool(),
 		func(sctx sessionctx.Context) error {
@@ -897,7 +897,7 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	h := dom.StatsHandle()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("analyze table t")
@@ -910,14 +910,14 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 	tk.MustExec("alter table t set tiflash replica 1;")
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(context.Background()))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
 
 	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
 
-	addIndexEvent := findEventWithTimeout(h.DDLEventCh(), model.ActionAddVectorIndex, 1)
+	addIndexEvent := findEventWithTimeout(h.DDLEventCh(), model.ActionAddColumnarIndex, 1)
 	// No event is found
 	require.Nil(t, addIndexEvent)
 }
@@ -951,7 +951,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(h)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(context.Background()))
 	isEmpty, err := pq.IsEmpty()
 	require.NoError(t, err)
 	require.False(t, isEmpty)
@@ -963,7 +963,83 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
 
 	// Check the stats of the indexes.
-	tableStats := h.GetTableStats(tableInfo)
+	tableStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+}
+
+func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	// Enable the static partition mode.
+	testKit.MustExec("set @@global.tidb_partition_prune_mode='static'")
+	testKit.MustExec("set @@global.tidb_analyze_version=1;")
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range columns (c1) (partition p0 values less than (5), partition p1 values less than (10))")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	p0ID := tableInfo.GetPartitionInfo().Definitions[0].ID
+	p1ID := tableInfo.GetPartitionInfo().Definitions[1].ID
+	h := do.StatsHandle()
+	// Analyze table.
+	testKit.MustExec("analyze table t")
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
+	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize(context.Background()))
+	isEmpty, err := pq.IsEmpty()
+	require.NoError(t, err)
+	require.True(t, isEmpty)
+
+	// Add two indexes.
+	testKit.MustExec("alter table t add index idx1(c1)")
+	testKit.MustExec("alter table t add index idx2(c2)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+	addIndexEvent1 := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent1)
+	require.NoError(t, statsutil.CallWithSCtx(
+		h.SPool(),
+		func(sctx sessionctx.Context) error {
+			require.NoError(t, pq.HandleDDLEvent(context.Background(), sctx, addIndexEvent1))
+			return nil
+		}, statsutil.FlagWrapTxn),
+	)
+	addIndexEvent2 := findEvent(h.DDLEventCh(), model.ActionAddIndex)
+	require.NotNil(t, addIndexEvent2)
+	require.NoError(t, statsutil.CallWithSCtx(
+		h.SPool(),
+		func(sctx sessionctx.Context) error {
+			require.NoError(t, pq.HandleDDLEvent(context.Background(), sctx, addIndexEvent2))
+			return nil
+		}, statsutil.FlagWrapTxn),
+	)
+	job, err := pq.Pop()
+	require.NoError(t, err)
+	valid, _ := job.ValidateAndPrepare(testKit.Session())
+	require.True(t, valid)
+	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+	job, err = pq.Pop()
+	require.NoError(t, err)
+	valid, _ = job.ValidateAndPrepare(testKit.Session())
+	require.True(t, valid)
+	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+
+	// Check the stats of the indexes for each partition.
+	tableStats := h.GetPhysicalTableStats(p0ID, tableInfo)
+	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
+	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
+	tableStats = h.GetPhysicalTableStats(p1ID, tableInfo)
 	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())

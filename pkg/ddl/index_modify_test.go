@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -36,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -219,7 +220,7 @@ func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp strin
 			base = i % 4 << 61
 		}
 		n := base + i*defaultBatchSize + i
-		for j := 0; j < rand.Intn(maxBatch); j++ {
+		for j := range rand.Intn(maxBatch) {
 			n += j
 			sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", n, n, n)
 			tk.MustExec(sql)
@@ -341,7 +342,7 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		tk.MustExec("insert into t values (?)", i)
 	}
 	tk.MustExec("insert into t values()")
@@ -513,7 +514,7 @@ func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
 	// Add some discrete rows.
 	goCnt := 10
 	errCh := make(chan error, goCnt)
-	for i := 0; i < goCnt; i++ {
+	for i := range goCnt {
 		base := (i % 8) << 60
 		go func(b int, eCh chan error) {
 			tk1 := testkit.NewTestKit(t, store)
@@ -521,7 +522,7 @@ func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
 			eCh <- batchInsertRows(tk1, !hasAutoRandomField, "test_add_index", base+start, base+num)
 		}(base, errCh)
 	}
-	for i := 0; i < goCnt; i++ {
+	for range goCnt {
 		err := <-errCh
 		require.NoError(t, err)
 	}
@@ -905,7 +906,7 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 
 	num := 100
 	// add some rows
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
 	}
 	idxIDs := make([]int64, 0, 3)
@@ -974,7 +975,7 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 		create table test_drop_indexes_from_partitioned_table (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2))
 		partition by range(id) (partition p0 values less than (6), partition p1 values less than maxvalue);
 	`)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		tk.MustExec("insert into test_drop_indexes_from_partitioned_table values (?, ?, ?)", i, i, i)
 	}
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i2;")
@@ -1015,7 +1016,7 @@ func testDropIndex(t *testing.T, store kv.Storage, createSQL, dropIdxSQL, idxNam
 
 	num := 100
 	// add some rows
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
 	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
@@ -1092,9 +1093,19 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a bigint primary key clustered, b int);")
+
 	// The subtask execution order is not guaranteed in distributed reorg. We need to disable it first.
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+
+	if kerneltype.IsClassic() {
+		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	}
+	if kerneltype.IsNextGen() {
+		// For next-gen, we set tidb_ddl_reorg_worker_cnt automatically by calculating the table size,
+		// which needs PD client. So for this UT, we mock the table size to set worker cnt to 1.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockTableSize", `return(1024)`)
+	}
+
 	for i := 1; i <= 12; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
@@ -1106,7 +1117,7 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	ddl.ResultCounterForTest = nil
 }
 
-func getJobsBySQL(se sessiontypes.Session, tbl, condition string) ([]*model.Job, error) {
+func getJobsBySQL(se sessionapi.Session, tbl, condition string) ([]*model.Job, error) {
 	rs, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s %s", tbl, condition))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1144,7 +1155,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		require.Equal(t, replicaCnt, tbl.Meta().TiFlashReplica.Count)
 		indexes := tbl.Meta().Indices
 		require.Equal(t, 2, len(indexes))
-		require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
+		require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
 		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 		require.Equal(t, "vector_index", tbl.Meta().Indices[0].Name.O)
 		require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
@@ -1160,7 +1171,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), replicas)
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);",
-		"Unsupported add vector index: unsupported TiFlash store count is 0")
+		"Unsupported add columnar index: unsupported TiFlash store count is 0")
 
 	// test TiFlash store count is 2
 	mockTiflashStoreCnt := uint64(2)
@@ -1177,7 +1188,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		"`set TiFlash replica` is unsupported on temporary tables.")
 	tk.MustContainErrMsg("create table pt(id bigint, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) "+
 		"partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
-		"Unsupported add vector index: unsupported partition table")
+		"Unsupported add columnar index: unsupported partition table")
 	tk.MustContainErrMsg("create table t(a int, b vector(3), c char(210) CHARACTER SET gbk COLLATE gbk_bin, vector index((VEC_COSINE_DISTANCE(b))));",
 		"Unsupported `set TiFlash replica` settings for table contains gbk charset")
 	tk.MustContainErrMsg("create table mysql.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
@@ -1187,7 +1198,61 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 
 	// a vector index with invisible
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW INVISIBLE)",
-		"Unsupported set vector index invisible")
+		"[ddl:8200]INVISIBLE can not be used in VECTOR INDEX")
+}
+
+func TestCreateTableWithColumnarIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	checkCreateTableWithColumnarIdx := func(replicaCnt uint64) {
+		tk.MustExec("create table t(a int, b int, c int, columnar index idx(b) using inverted);")
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		require.Equal(t, replicaCnt, tbl.Meta().TiFlashReplica.Count)
+		indexes := tbl.Meta().Indices
+		require.Equal(t, 1, len(indexes))
+		require.Equal(t, ast.IndexTypeInverted, indexes[0].Tp)
+		require.Equal(t, "idx", tbl.Meta().Indices[0].Name.O)
+		tk.MustExec("insert into t values (1, 2, 3);")
+		tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+		tk.MustExec("create view v as select * from t;")
+		tk.MustQuery("select * from v;").Check(testkit.Rows("1 2 3"))
+		tk.MustExec(`DROP TABLE t`)
+	}
+
+	// test TiFlash store count is 0
+	replicas, err := infoschema.GetTiFlashStoreCount(tk.Session().GetStore())
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), replicas)
+	tk.MustContainErrMsg("create table t(a int, b int, c int, columnar index idx(b) using inverted);",
+		"Unsupported add columnar index: unsupported TiFlash store count is 0")
+
+	// test TiFlash store count is 2
+	mockTiflashStoreCnt := uint64(2)
+	store, dom = testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(int(mockTiflashStoreCnt)), mockstore.WithDDLChecker())
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	checkCreateTableWithColumnarIdx(1)
+
+	// test unsupported table types
+	tk.MustContainErrMsg("create temporary table t(a int, b int, c int, columnar index idx(b) using inverted);", "`set TiFlash replica` is unsupported on temporary tables.")
+	// global and local temporary table using different way to handle, so we have two test cases.
+	tk.MustContainErrMsg("create global temporary table t(a int, b int, c int, columnar index idx(b) using inverted) on commit delete rows;",
+		"`set TiFlash replica` is unsupported on temporary tables.")
+	tk.MustContainErrMsg("create table pt(id bigint, b int, c int, columnar index idx(b) using inverted) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
+		"Unsupported add columnar index: unsupported partition table")
+	tk.MustContainErrMsg("create table t(a int, b int, c char(210) CHARACTER SET gbk COLLATE gbk_bin, columnar index idx(b) using inverted);",
+		"Unsupported `set TiFlash replica` settings for table contains gbk charset")
+	tk.MustContainErrMsg("create table mysql.t(a int, b int, c int, columnar index idx(b) using inverted);",
+		"Unsupported `set TiFlash replica` settings for system table and memory table")
+	tk.MustContainErrMsg("create table information_schema.t(a int, b int, c int, columnar index idx(b) using inverted);",
+		"Unsupported `set TiFlash replica` settings for system table and memory table")
+
+	// a columnar index with invisible
+	tk.MustContainErrMsg("create table t(a int, b int, c int, columnar index idx(b) using inverted INVISIBLE)",
+		"[ddl:8200]INVISIBLE can not be used in INVERTED INDEX")
 }
 
 func TestAddVectorIndexSimple(t *testing.T) {
@@ -1216,14 +1281,13 @@ func TestAddVectorIndexSimple(t *testing.T) {
 		PARTITION p2 VALUES LESS THAN (21)
 	 );`)
 	tk.MustContainErrMsg("alter table pt add vector index idx((vec_cosine_distance(b))) USING HNSW;",
-		"Unsupported add vector index: unsupported partition table")
+		"Unsupported add columnar index: unsupported partition table")
 	// for TiFlash replica
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustContainErrMsg("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
-		"unsupported empty TiFlash replica, the replica is nil")
+		"columnar replica must exist")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
-	tk.MustContainErrMsg("alter table t add key idx(a) USING HNSW;",
-		"Only support vector index with HNSW type, but it's non-vector index")
+	tk.MustContainErrMsg("alter table t add key idx(a) USING HNSW;", "[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX")
 	// for a wrong column
 	tk.MustContainErrMsg("alter table t add vector index ((vec_cosine_distance(n))) USING HNSW;", "[schema:1054]Unknown column 'n' in 't'")
 	// for wrong functions
@@ -1238,7 +1302,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustExec("alter table t add key idx(a);")
 	tk.MustGetErrCode("alter table t add vector index idx((vec_cosine_distance(c))) USING HNSW;", errno.ErrDupKeyName)
 	// for duplicated function
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	tk.MustContainErrMsg("alter table t add vector index vecIdx((vec_cosine_distance(b))) USING HNSW;",
 		"add vector index can only be defined on fixed-dimension vector columns")
 	tk.MustExec("alter table t add vector index vecIdx((vec_cosine_distance(c))) USING HNSW;")
@@ -1272,19 +1336,19 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
-	require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	// test row count
 	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
 	require.NoError(t, err)
 	require.Equal(t, 1, len(jobs))
-	require.Equal(t, model.ActionAddVectorIndex, jobs[0].Type)
+	require.Equal(t, model.ActionAddColumnarIndex, jobs[0].Type)
 	require.Equal(t, int64(1), jobs[0].RowCount)
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin check index t idx")
-	tk.MustContainErrMsg("admin cleanup index t idx", "vector index `idx` is not supported for cleanup index")
+	tk.MustContainErrMsg("admin cleanup index t idx", "columnar index `idx` is not supported for cleanup index")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) DEFAULT NULL,\n" +
@@ -1293,18 +1357,18 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test multi-schema change for unsupported operations
 	tk.MustContainErrMsg("alter table t drop column b;",
-		"can't drop column b with Vector Key covered now")
+		"can't drop column b with Columnar Index covered now")
 	tk.MustContainErrMsg("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'",
-		"Unsupported multi schema change for add vector index")
+		"Unsupported multi schema change for add columnar index")
 
 	// test alter index visibility
-	tk.MustContainErrMsg("alter table t alter index idx invisible", "Unsupported set vector index invisible")
+	tk.MustContainErrMsg("alter table t alter index idx invisible", "[ddl:8200]INVISIBLE can not be used in VECTOR INDEX")
 	query := "select distinct index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't' order by index_name"
 	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
 	tk.MustExec("alter table t alter index idx visible")
 
 	// test modify/change column with a vector index
-	tk.MustContainErrMsg("alter table t modify column b vector(2)", "[ddl:8200]Unsupported modify column: vector indexes on the column")
+	tk.MustContainErrMsg("alter table t modify column b vector(2)", "[ddl:8200]Unsupported modify column: columnar indexes on the column")
 	tk.MustExec("alter table t modify column b vector(3) not null")
 
 	// test rename index
@@ -1336,7 +1400,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
-	require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1362,7 +1426,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.Equal(t, 1, len(tbl.Meta().Indices))
 	idx := tbl.Meta().Indices[0]
 	require.Equal(t, "vector_index", idx.Name.O)
-	require.Equal(t, ast.IndexTypeHNSW, idx.Tp)
+	require.Equal(t, ast.IndexTypeVector, idx.Tp)
 	require.Equal(t, model.DistanceMetricL2, idx.VectorInfo.DistanceMetric)
 	tk.MustExec("alter table t add key vector_index_2(a);")
 	tk.MustExec("alter table t add vector index ((VEC_COSINE_DISTANCE(b))) USING HNSW;")
@@ -1375,7 +1439,178 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.Equal(t, false, tbl.Meta().Indices[2].VectorInfo == nil)
 }
 
-func TestAddVectorIndexRollback(t *testing.T) {
+func TestAddColumnarIndexSimple(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, pt;")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	// test for errors
+	// for partition table
+	tk.MustExec(`create table pt(
+	 a int,
+	 b vector,
+	 c int)
+	 PARTITION BY RANGE ( a ) (
+	 PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (21)
+	 );`)
+	tk.MustContainErrMsg("alter table pt add columnar index idx(c) USING INVERTED;",
+		"Unsupported add columnar index: unsupported partition table")
+	// for TiFlash replica
+	tk.MustExec("create table t (a int, b vector(4), c int, d char(4));")
+	tk.MustContainErrMsg("alter table t add columnar index idx(a) USING INVERTED COMMENT 'b comment';",
+		"columnar replica must exist")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustContainErrMsg("alter table t add key idx(d) USING INVERTED;", "[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX")
+	// for a wrong column
+	tk.MustContainErrMsg("alter table t add columnar index (n) USING INVERTED;", "[schema:1054]Unknown column 'n' in 't'")
+	// for wrong data type
+	tk.MustContainErrMsg("alter table t add columnar index (b) USING INVERTED;", "only support integer type, but this is type")
+	tk.MustContainErrMsg("alter table t add columnar index (d) USING INVERTED;", "only support integer type, but this is type")
+
+	// for duplicated index name
+	tk.MustExec("alter table t add key idx(a);")
+	tk.MustGetErrCode("alter table t add columnar index idx(c) USING INVERTED;", errno.ErrDupKeyName)
+	// for duplicated column
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+	tk.MustExec("alter table t add columnar index vecIdx(c) USING INVERTED;")
+	tk.MustGetErrCode("alter table t add columnar index vecIdx1(c) USING INVERTED;", errno.ErrDupKeyName)
+	// for "if not exists"
+	tk.MustExec("alter table t drop index vecIdx")
+	tk.MustExec("alter table t add columnar index if not exists idx(c) USING INVERTED;")
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.GreaterOrEqual(t, len(warnings), 1)
+	lastWarn := warnings[len(warnings)-1]
+	require.Truef(t, terror.ErrorEqual(dbterror.ErrDupKeyName, lastWarn.Err), "err %v", lastWarn.Err)
+	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
+	tk.MustContainErrMsg("alter table t add columnar index if not exists idx(c) USING INVERTED;", "[ddl:1061]inverted columnar index  already exist on column c")
+
+	// normal test cases
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = 't'").Check(testkit.Rows())
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes := tbl.Meta().Indices
+	require.Equal(t, 0, len(indexes))
+	tk.MustExec("alter table t add columnar index idx(a) USING INVERTED COMMENT 'a comment';")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes = tbl.Meta().Indices
+	require.Equal(t, 1, len(indexes))
+	require.Equal(t, ast.IndexTypeInverted, indexes[0].Tp)
+	// test row count
+	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(jobs))
+	require.Equal(t, model.ActionAddColumnarIndex, jobs[0].Type)
+	require.Equal(t, int64(1), jobs[0].RowCount)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx")
+	tk.MustContainErrMsg("admin cleanup index t idx", "columnar index `idx` is not supported for cleanup index")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  COLUMNAR INDEX `idx`(`a`) USING INVERTED COMMENT 'a comment'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test multi-schema change for unsupported operations
+	tk.MustContainErrMsg("alter table t drop column a;",
+		"can't drop column a with Columnar Index covered now")
+	tk.MustContainErrMsg("alter table t add index idx2(a), add columnar index idx3(b) USING INVERTED COMMENT 'b comment'",
+		"Unsupported multi schema change for add columnar index")
+
+	// test alter index visibility
+	tk.MustContainErrMsg("alter table t alter index idx invisible", "[ddl:8200]INVISIBLE can not be used in INVERTED INDEX")
+	query := "select distinct index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't' order by index_name"
+	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
+	tk.MustExec("alter table t alter index idx visible")
+
+	// test modify/change column with a columnar index
+	tk.MustContainErrMsg("alter table t modify column a smallint", "[ddl:8200]Unsupported modify column: columnar indexes on the column")
+	tk.MustExec("alter table t modify column a int not null")
+
+	// test rename index
+	tk.MustExec("alter table t rename index idx to colIdx")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes1 := tbl.Meta().Indices
+	require.Equal(t, 1, len(indexes1))
+	require.Equal(t, indexes[0].Tp, indexes1[0].Tp)
+
+	// test drop a vector index
+	tk.MustExec("alter table t drop index colIdx;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes = tbl.Meta().Indices
+	require.Equal(t, 0, len(indexes))
+	gcCnt := tk.MustQuery("select count(*) from mysql.gc_delete_range").Rows()[0][0]
+	require.Equal(t, "0", gcCnt)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test create a columnar index with same name
+	tk.MustExec("create columnar index idx on t (b) USING INVERTED COMMENT 'b comment';")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	indexes = tbl.Meta().Indices
+	require.Equal(t, 1, len(indexes))
+	require.Equal(t, ast.IndexTypeInverted, indexes[0].Tp)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  COLUMNAR INDEX `idx`(`b`) USING INVERTED COMMENT 'b comment'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test multi-schema change for dropping indexes
+	tk.MustExec("alter table t add index idx2(a)")
+	tk.MustExec("alter table t drop index idx, drop index idx2")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
+	tk.MustExec("admin check table t")
+
+	// test anonymous index
+	tk.MustExec("alter table t add columnar index (b) USING INVERTED;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tbl.Meta().Indices))
+	idx := tbl.Meta().Indices[0]
+	require.Equal(t, "b", idx.Name.O)
+	require.Equal(t, ast.IndexTypeInverted, idx.Tp)
+	tk.MustExec("alter table t add key a(a);")
+	tk.MustExec("alter table t add columnar index (a) USING INVERTED;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 3, len(tbl.Meta().Indices))
+	require.Equal(t, "a", tbl.Meta().Indices[1].Name.O)
+	require.Equal(t, true, tbl.Meta().Indices[1].InvertedInfo == nil)
+	require.Equal(t, "a_2", tbl.Meta().Indices[2].Name.O)
+	require.Equal(t, false, tbl.Meta().Indices[2].InvertedInfo == nil)
+}
+
+func testAddColumnarIndexRollback(prepareSQL []string, addIdxSQL string, t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1387,19 +1622,17 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	}()
 
 	// mock TiFlash replicas
-	tk.MustExec("create table t1 (c1 int, b vector, c vector(3), unique key(c1));")
-	tk.MustExec("alter table t1 set tiflash replica 2 location labels 'a','b';")
-
-	tk.MustExec("insert into t1 values (1, '[1,6.6]', '[1,8.88,9.99]'), (2, '[2,6.6]', '[2,8.88,9.99]'), (3, '[3,6.6]', '[3,8.88,9.99]'), (4, '[4,6.6]', '[4,8.88,9.99]')")
+	for _, sql := range prepareSQL {
+		tk.MustExec(sql)
+	}
 	ddl.SetWaitTimeWhenErrorOccurred(100 * time.Millisecond)
-	addIdxSQL := "alter table t1 add vector index v_idx((VEC_COSINE_DISTANCE(c))) USING HNSW COMMENT 'b comment';"
 
 	// Check whether the reorg information is cleaned up, and check the rollback info.
 	checkRollbackInfo := func(expectState model.JobState) {
 		jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
 		require.NoError(t, err)
 		currJob := jobs[0]
-		require.Equal(t, model.ActionAddVectorIndex, currJob.Type)
+		require.Equal(t, model.ActionAddColumnarIndex, currJob.Type)
 		require.Equal(t, expectState, currJob.State)
 		// check reorg meta
 		element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
@@ -1427,7 +1660,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	var checkErr error
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(0)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(0)`)
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -1452,18 +1685,32 @@ func TestAddVectorIndexRollback(t *testing.T) {
 
 	// Case3: test get error message from tiflash
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(-1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(-1)`)
 	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: mock a check error")
 	checkRollbackInfo(model.JobStateRollbackDone)
 
-	// Case4: add a vector index normally.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(4)`)
+	// Case4: add a columnar index normally.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(4)`)
 	tk.MustExec(addIdxSQL)
 	checkRollbackInfo(model.JobStateSynced)
-	// TODO: add mock TiFlash to make sure the vector index count is equal to row count.
+	// TODO: add mock TiFlash to make sure the tiflash index count is equal to row count.
 	// tk.MustQuery("select count(1) from t1 use index(v_idx);").Check(testkit.Rows("4"))
 
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess")
+}
+
+func TestAddVectorIndexRollback(t *testing.T) {
+	testAddColumnarIndexRollback([]string{"create table t1 (c1 int, b vector, c vector(3), unique key(c1));",
+		"alter table t1 set tiflash replica 2 location labels 'a','b';",
+		"insert into t1 values (1, '[1,6.6]', '[1,8.88,9.99]'), (2, '[2,6.6]', '[2,8.88,9.99]'), (3, '[3,6.6]', '[3,8.88,9.99]'), (4, '[4,6.6]', '[4,8.88,9.99]')",
+	}, "alter table t1 add vector index v_idx((VEC_COSINE_DISTANCE(c))) USING HNSW COMMENT 'b comment';", t)
+}
+
+func TestAddColumnarIndexRollback(t *testing.T) {
+	testAddColumnarIndexRollback([]string{"create table t1 (c1 int, b int, c vector(3), unique key(c1));",
+		"alter table t1 set tiflash replica 2 location labels 'a','b';",
+		"insert into t1 values (1, 1, '[1,8.88,9.99]'), (2, 2, '[2,8.88,9.99]'), (3, 3, '[3,8.88,9.99]'), (4, 4, '[4,8.88,9.99]')",
+	}, "alter table t1 add columnar index c_idx(b) USING INVERTED COMMENT 'b comment';", t)
 }
 
 func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
@@ -1477,7 +1724,7 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk2.MustExec("use test")
 
 	// Test issue 57414.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
 		tk2.MustExec("insert ignore into t values (1, 2), (1, 2) on duplicate key update col1 = 0, col2 = 0")
 	})
 

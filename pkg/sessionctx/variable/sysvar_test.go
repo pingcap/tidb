@@ -29,6 +29,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -172,6 +174,27 @@ func TestTiFlashQuerySpillRatio(t *testing.T) {
 	require.Equal(t, "0.85", val)
 	require.Nil(t, sv.SetSessionFromHook(vars, "0.75")) // sets
 	require.Equal(t, 0.75, vars.TiFlashQuerySpillRatio)
+}
+
+func TestTiFlashHashJoinVersion(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiFlashHashJoinVersion)
+	// set error value
+	_, err := sv.Validation(vars, "invalid", "invalid", vardef.ScopeSession)
+	require.NotNil(t, err)
+	// set valid value
+	_, err = sv.Validation(vars, "legacy", "legacy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "optimized", "optimized", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Legacy", "Legacy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Optimized", "Optimized", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "LegaCy", "LegaCy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "OptimiZed", "OptimiZed", vardef.ScopeSession)
+	require.NoError(t, err)
 }
 
 func TestCollationServer(t *testing.T) {
@@ -1573,7 +1596,12 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBTxnAssertionLevel,
 			vardef.DefTiDBTxnAssertionLevel,
-			vardef.AssertionFastStr,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.AssertionStrictStr
+				}
+				return vardef.AssertionFastStr
+			}(),
 		},
 		{
 			vardef.TiDBEnableMutationChecker,
@@ -1583,12 +1611,17 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBPessimisticTransactionFairLocking,
 			BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking),
-			vardef.On,
+			func() string {
+				if kerneltype.IsNextGen() {
+					return vardef.Off
+				}
+				return vardef.On
+			}(),
 		},
 	}
 	for _, v := range vars {
 		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
-		require.Equal(t, v.initVal, initVal)
+		require.Equal(t, v.initVal, initVal, v.name)
 	}
 }
 
@@ -1739,28 +1772,32 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTiDBCircuitBreakerPDMetadataErrorRateThresholdPct(t *testing.T) {
-	sv := GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct)
+func TestTiDBCircuitBreakerPDMetadataErrorRateThresholdRatio(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio)
 	vars := NewSessionVars(nil)
 
 	// Too low, will get raised to the min value
 	val, err := sv.Validate(vars, "-1", vardef.ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatInt(GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct).MinValue, 10), val)
+	require.Equal(t, strconv.FormatInt(GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MinValue, 10), val)
 	warn := vars.StmtCtx.GetWarnings()[0].Err
-	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_pct value: '-1'", warn.Error())
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '-1'", warn.Error())
 
 	// Too high, will get lowered to the max value
-	val, err = sv.Validate(vars, "101", vardef.ScopeGlobal)
+	val, err = sv.Validate(vars, "1.1", vardef.ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdPct).MaxValue, 10), val)
+	require.Equal(t, strconv.FormatUint(GetSysVar(vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MaxValue, 10), val)
 	warn = vars.StmtCtx.GetWarnings()[1].Err
-	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_pct value: '101'", warn.Error())
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '1.1'", warn.Error())
 
 	// valid
-	val, err = sv.Validate(vars, "10", vardef.ScopeGlobal)
+	val, err = sv.Validate(vars, "0.9", vardef.ScopeGlobal)
 	require.NoError(t, err)
-	require.Equal(t, "10", val)
+	require.Equal(t, "0.9", val)
+
+	val, err = sv.Validate(vars, "0.0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0.0", val)
 }
 
 func TestEnableWindowFunction(t *testing.T) {
@@ -1776,6 +1813,8 @@ func TestEnableWindowFunction(t *testing.T) {
 
 func TestTiDBHashJoinVersion(t *testing.T) {
 	vars := NewSessionVars(nil)
+	// test the default value
+	require.Equal(t, joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion), vars.UseHashJoinV2)
 	sv := GetSysVar(vardef.TiDBHashJoinVersion)
 	// set error value
 	_, err := sv.Validation(vars, "invalid", "invalid", vardef.ScopeSession)
@@ -1851,4 +1890,29 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTiDBOptSelectivityFactor(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.8, val)
+
+	// set valid value
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBOptSelectivityFactor, "0.7"))
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	require.NotEqual(t, 0.7, val)
+
+	// set invalid value
+	err = mock.SetGlobalSysVar(ctx, vardef.TiDBOptSelectivityFactor, "1.1")
+	require.NoError(t, err)
+	_, err = mock.GetGlobalSysVar(vardef.TiDBOptSelectivityFactor)
+	require.NoError(t, err)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_opt_selectivity_factor value: '1.1'", warn.Error())
 }

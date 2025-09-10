@@ -55,7 +55,7 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (*model.TableInfo, error) {
+func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
 
@@ -145,10 +145,57 @@ func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		// Updating auto id meta kv is done in a separate txn.
+		// It's ok as these data are bind with table ID, and we won't use these
+		// table IDs until info schema version is updated.
+		if err := handleAutoIncID(r, job, tbInfo); err != nil {
+			return tbInfo, errors.Trace(err)
+		}
+
 		return tbInfo, nil
 	default:
 		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+}
+
+type autoIDType struct {
+	End int64
+	Tp  autoid.AllocatorType
+}
+
+// handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
+// For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
+func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableInfo) error {
+	allocs := autoid.NewAllocatorsFromTblInfo(r, job.SchemaID, tbInfo)
+
+	hs := make([]autoIDType, 0, 3)
+	if tbInfo.AutoIncID > 1 {
+		// Default tableAutoIncID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		if tbInfo.SepAutoInc() {
+			hs = append(hs, autoIDType{tbInfo.AutoIncID - 1, autoid.AutoIncrementType})
+		} else {
+			hs = append(hs, autoIDType{tbInfo.AutoIncID - 1, autoid.RowIDAllocType})
+		}
+	}
+	if tbInfo.AutoIncIDExtra != 0 {
+		hs = append(hs, autoIDType{tbInfo.AutoIncIDExtra - 1, autoid.RowIDAllocType})
+	}
+	if tbInfo.AutoRandID > 1 {
+		// Default tableAutoRandID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		hs = append(hs, autoIDType{tbInfo.AutoRandID - 1, autoid.AutoRandomType})
+	}
+
+	for _, h := range hs {
+		if alloc := allocs.Get(h.Tp); alloc != nil {
+			if err := alloc.Rebase(context.Background(), h.End, false); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -172,7 +219,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
-	tbInfo, err = createTable(jobCtx, job, args)
+	tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+		store:     w.store,
+		autoidCli: w.autoidCli,
+	}, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -200,7 +250,10 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(jobCtx, job, args)
+		tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+			store:     w.store,
+			autoidCli: w.autoidCli,
+		}, args)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -265,7 +318,10 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			tbInfo, err := createTable(jobCtx, stubJob, tblArgs)
+			tbInfo, err := createTable(jobCtx, stubJob, &asAutoIDRequirement{
+				store:     w.store,
+				autoidCli: w.autoidCli,
+			}, tblArgs)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -530,15 +586,15 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 	return nil
 }
 
-func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
-	var hasVectorIndex bool
+func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
+	var hasColumnarIndex bool
 	for _, idx := range tblInfo.Indices {
-		if idx.VectorInfo != nil {
-			hasVectorIndex = true
+		if idx.IsColumnarIndex() {
+			hasColumnarIndex = true
 			break
 		}
 	}
-	if !hasVectorIndex {
+	if !hasColumnarIndex {
 		return nil
 	}
 	if store == nil {
@@ -554,7 +610,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tb
 			return errors.Trace(err)
 		}
 		if replicas == 0 {
-			return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
 		}
 
 		// Always try to set to 1 as the default replica count.
@@ -565,7 +621,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tb
 		}
 	}
 
-	return errors.Trace(checkTableTypeForVectorIndex(tblInfo))
+	return errors.Trace(checkTableTypeForColumnarIndex(tblInfo))
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -596,7 +652,7 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName ast.CI
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkVectorIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
+	if err := checkColumnarIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -873,10 +929,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if op.UintValue > 0 && tbInfo.HasClusteredIndex() {
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
-			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > vardef.MaxShardRowIDBits {
-				tbInfo.ShardRowIDBits = vardef.MaxShardRowIDBits
-			}
+			tbInfo.ShardRowIDBits = min(op.UintValue, vardef.MaxShardRowIDBits)
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			if tbInfo.TempTableType != model.TempTableNone {
@@ -1000,7 +1053,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
+				colName = getAnonymousIndexPrefix(constr.Option != nil && constr.Option.Tp == ast.IndexTypeVector)
 			}
 		}
 		if colName == "" {
@@ -1233,7 +1286,7 @@ func BuildTableInfo(
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector {
+		if constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
 			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, ast.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
@@ -1301,14 +1354,10 @@ func BuildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
-			continue
-		}
-
 		var (
-			indexName               = constr.Name
-			primary, unique, vector bool
+			indexName         = constr.Name
+			primary, unique   bool
+			columnarIndexType = model.ColumnarIndexTypeNA
 		)
 
 		// Check if the index is primary, unique or vector.
@@ -1319,11 +1368,17 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
-		case ast.ConstraintVector:
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+		case ast.ConstraintColumnar:
+			switch constr.Option.Tp {
+			case ast.IndexTypeVector:
+				columnarIndexType = model.ColumnarIndexTypeVector
+			case ast.IndexTypeInverted:
+				columnarIndexType = model.ColumnarIndexTypeInverted
+			case ast.IndexTypeFulltext:
+				columnarIndexType = model.ColumnarIndexTypeFulltext
+			default:
+				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}
-			vector = true
 		}
 
 		// check constraint
@@ -1381,7 +1436,7 @@ func BuildTableInfo(
 				return nil, errors.Trace(err)
 			}
 			// check if the expression is bool type
-			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tbInfo); err != nil {
+			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx(), constraintInfo, tbInfo); err != nil {
 				return nil, err
 			}
 			constraintInfo.ID = allocateConstraintID(tbInfo)
@@ -1396,7 +1451,7 @@ func BuildTableInfo(
 			ast.NewCIStr(indexName),
 			primary,
 			unique,
-			vector,
+			columnarIndexType,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -1561,7 +1616,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, model.ColumnarIndexTypeNA, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}

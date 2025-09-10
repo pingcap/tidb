@@ -18,8 +18,10 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -39,12 +41,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
@@ -119,7 +121,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
-	for i := 0; i < buildStatsConcurrency; i++ {
+	for range buildStatsConcurrency {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
@@ -178,7 +180,7 @@ TASKLOOP:
 		}
 	}
 
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		for {
 			stop := true
 			failpoint.Inject("mockStuckAnalyze", func() {
@@ -259,7 +261,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is 
 				if tableID.IsPartitionTable() {
 					tbl, _, def := is.FindTableByPartitionID(tableID.PartitionID)
 					if def == nil {
-						logutil.BgLogger().Warn("Unknown partition ID in analyze task", zap.Int64("pid", tableID.PartitionID))
+						statslogutil.StatsLogger().Warn("Unknown partition ID in analyze task", zap.Int64("pid", tableID.PartitionID))
 					} else {
 						schema, _ := infoschema.SchemaByTable(is, tbl.Meta())
 						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s partition (%s)", schema.Name, tbl.Meta().Name.O, def.Name.O))
@@ -267,7 +269,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is 
 				} else {
 					tbl, ok := is.TableByID(context.Background(), physicalTableID)
 					if !ok {
-						logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", physicalTableID))
+						statslogutil.StatsLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", physicalTableID))
 					} else {
 						schema, _ := infoschema.SchemaByTable(is, tbl.Meta())
 						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s", schema.Name, tbl.Meta().Name.O))
@@ -398,7 +400,7 @@ func (e *AnalyzeExec) handleResultsError(
 ) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze save stats panic", zap.Any("recover", r), zap.Stack("stack"))
+			statslogutil.StatsLogger().Error("analyze save stats panic", zap.Any("recover", r), zap.Stack("stack"))
 			if err != nil {
 				err = stderrors.Join(err, getAnalyzePanicErr(r))
 			} else {
@@ -410,13 +412,13 @@ func (e *AnalyzeExec) handleResultsError(
 	// The buildStatsConcurrency of saving partition-level stats should not exceed the total number of tasks.
 	saveStatsConcurrency = min(taskNum, saveStatsConcurrency)
 	if saveStatsConcurrency > 1 {
-		logutil.BgLogger().Info("save analyze results concurrently",
+		statslogutil.StatsLogger().Info("save analyze results concurrently",
 			zap.Int("buildStatsConcurrency", buildStatsConcurrency),
 			zap.Int("saveStatsConcurrency", saveStatsConcurrency),
 		)
 		return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, saveStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh)
 	}
-	logutil.BgLogger().Info("save analyze results in single-thread",
+	statslogutil.StatsLogger().Info("save analyze results in single-thread",
 		zap.Int("buildStatsConcurrency", buildStatsConcurrency),
 		zap.Int("saveStatsConcurrency", saveStatsConcurrency),
 	)
@@ -436,7 +438,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
 	errCh := make(chan error, saveStatsConcurrency)
 	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
-	for i := 0; i < saveStatsConcurrency; i++ {
+	for range saveStatsConcurrency {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
@@ -461,7 +463,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			} else {
-				logutil.BgLogger().Error("receive error when saving analyze results", zap.Error(err))
+				statslogutil.StatsErrVerboseLogger().Error("receive error when saving analyze results", zap.Error(err))
 			}
 			finishJobWithLog(statsHandle, results.Job, err)
 			continue
@@ -474,16 +476,18 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	wg.Wait()
 	close(errCh)
 	if len(errCh) > 0 {
-		errMsg := make([]string, 0)
-		for err1 := range errCh {
-			errMsg = append(errMsg, err1.Error())
+		errSet := make(map[string]struct{}, len(errCh))
+		for workerError := range errCh {
+			errSet[workerError.Error()] = struct{}{}
 		}
+		intest.Assert(len(errSet) > 0, "errSet should at least contain one error")
+		errMsg := slices.Collect(maps.Keys(errSet))
 		err = errors.New(strings.Join(errMsg, ","))
 	}
 	for tableID := range tableIDs {
 		// Dump stats to historical storage.
 		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+			statslogutil.StatsErrVerboseLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 	return err
@@ -494,7 +498,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			statslogutil.StatsLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			// If errExitCh is closed, it means the whole analyze task is aborted. So we do not need to send the result to resultsCh.
 			err := getAnalyzePanicErr(r)
@@ -504,7 +508,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 				Job: task.job,
 			}:
 			case <-e.errExitCh:
-				logutil.BgLogger().Error("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
+				statslogutil.StatsErrVerboseLogger().Error("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
 			}
 		}
 	}()
@@ -558,7 +562,7 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
+		statslogutil.StatsErrVerboseLogger().Error("failed to get server info", zap.Error(err))
 		instance = "unknown"
 	} else {
 		instance = net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
@@ -566,7 +570,7 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	err = statsHandle.InsertAnalyzeJob(job, instance, ctx.GetSessionVars().ConnectionID)
 	if err != nil {
-		logutil.BgLogger().Error("failed to insert analyze job", zap.Error(err))
+		statslogutil.StatsErrVerboseLogger().Error("failed to insert analyze job", zap.Error(err))
 	}
 }
 
@@ -576,7 +580,7 @@ func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, an
 		var state string
 		if analyzeErr != nil {
 			state = statistics.AnalyzeFailed
-			logutil.BgLogger().Warn(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+			statslogutil.StatsLogger().Warn(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
 				zap.String("partition", job.PartitionName),
 				zap.String("job info", job.JobInfo),
 				zap.Time("start time", job.StartTime),
@@ -586,7 +590,7 @@ func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, an
 				zap.Error(analyzeErr))
 		} else {
 			state = statistics.AnalyzeFinished
-			logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+			statslogutil.StatsLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
 				zap.String("partition", job.PartitionName),
 				zap.String("job info", job.JobInfo),
 				zap.Time("start time", job.StartTime),

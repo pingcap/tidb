@@ -19,13 +19,13 @@ SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e;
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a bigint, b bigint);
-explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);
+explain format='plan_tree' select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);
 
 # TestSimplifyOuterJoinWithCast
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int not null, b datetime default null);
-explain format = 'brief' select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01';
+explain format='plan_tree' select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01';
 
 # TestPartitionTableStats
 set @@tidb_partition_prune_mode='static';
@@ -34,9 +34,9 @@ drop table if exists t;
 create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));
 insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5);
 analyze table t all columns;
-explain format = 'brief' select * from t order by a;
+explain format='plan_tree' select * from t order by a;
 select * from t order by a;
-explain format = 'brief' select * from t order by a limit 3;
+explain format='plan_tree' select * from t order by a limit 3;
 select * from t order by a limit 3;
 set tidb_opt_limit_push_down_threshold=default;
 
@@ -46,47 +46,47 @@ drop table if exists t;
 create table t(a int primary key);
 set tidb_enable_clustered_index='ON';
 create table cluster_index_t(a int, b int, c int, primary key (a, b));
-explain format = 'brief' (select max(a) from t) union (select min(a) from t);
-explain format = 'brief' select min(a), max(a) from cluster_index_t;
-explain format = 'brief' select min(b), max(b) from cluster_index_t where a = 1;
-explain format = 'brief' select min(a), max(a) from cluster_index_t where b = 1;
-explain format = 'brief' select min(b), max(b) from cluster_index_t where b = 1;
+explain format='plan_tree' (select max(a) from t) union (select min(a) from t);
+explain format='plan_tree' select min(a), max(a) from cluster_index_t;
+explain format='plan_tree' select min(b), max(b) from cluster_index_t where a = 1;
+explain format='plan_tree' select min(a), max(a) from cluster_index_t where b = 1;
+explain format='plan_tree' select min(b), max(b) from cluster_index_t where b = 1;
 set tidb_enable_clustered_index=DEFAULT;
 
 # TestSubqueryWithTopN
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int, b int);
-desc format = 'brief' select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1);
-desc format = 'brief' select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1;
-desc format = 'brief' select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1;
+explain format='plan_tree' select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1);
+explain format='plan_tree' select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1;
+explain format='plan_tree' select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1;
 
 # TestApproxPercentile
 drop table if exists t;
 create table t(a int, b int);
 insert into t values(1, 1), (2, 1), (3, 2), (4, 2), (5, 2);
-explain select approx_percentile(a, 50) from t;
+explain format='plan_tree' select approx_percentile(a, 50) from t;
 select approx_percentile(a, 50) from t;
-explain select approx_percentile(a, 10) from t;
+explain format='plan_tree' select approx_percentile(a, 10) from t;
 select approx_percentile(a, 10) from t;
-explain select approx_percentile(a, 10+70) from t;
+explain format='plan_tree' select approx_percentile(a, 10+70) from t;
 select approx_percentile(a, 10+70) from t;
-explain select approx_percentile(a, 10*10) from t;
+explain format='plan_tree' select approx_percentile(a, 10*10) from t;
 select approx_percentile(a, 10*10) from t;
-explain select approx_percentile(a, 50) from t group by b order by b;
+explain format='plan_tree' select approx_percentile(a, 50) from t group by b order by b;
 select approx_percentile(a, 50) from t group by b order by b;
 
 # TestStreamAggProp
 drop table if exists t;
 create table t(a int);
 insert into t values(1),(1),(2);
-explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1;
+explain format='plan_tree' select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1;
 select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1;
-explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by c;
+explain format='plan_tree' select /*+ stream_agg() */ count(*) c from t group by a order by c;
 select /*+ stream_agg() */ count(*) c from t group by a order by c;
-explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1;
+explain format='plan_tree' select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1;
 select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1;
-explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by a;
+explain format='plan_tree' select /*+ stream_agg() */ count(*) c from t group by a order by a;
 select /*+ stream_agg() */ count(*) c from t group by a order by a;
 
 # TestIssue20710
@@ -96,18 +96,18 @@ create table t(a int, b int);
 create table s(a int, b int, index(a));
 insert into t values(1,1),(1,2),(2,2);
 insert into s values(1,1),(2,2),(2,1);
-explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
-explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
-explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
-explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
-explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
-explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
+explain format='plan_tree' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
+explain format='plan_tree' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
+explain format='plan_tree' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
+explain format='plan_tree' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
+explain format='plan_tree' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
+explain format='plan_tree' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
 
 # TestIssue23887
 drop table if exists t;
 create table t(a int, b int);
 insert into t values(1, 2), (3, 4);
-explain format = 'brief' select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
+explain format='plan_tree' select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
 select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
 drop table if exists t1;
 create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
@@ -119,28 +119,28 @@ drop table if exists t1,t2,t3;
 create table t1 (pk char(32) primary key nonclustered, col1 char(32), col2 varchar(40), col3 char(32), key (col1), key (col3), key (col2,col3), key (col1,col3));
 create table t2 (pk char(32) primary key nonclustered, col1 varchar(100));
 create table t3 (pk char(32) primary key nonclustered, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2));
-explain format = 'brief' SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa';
-explain format = 'brief' SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa';
+explain format='plan_tree' SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa';
+explain format='plan_tree' SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa';
 
 # TestIsMatchProp
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, d int, index idx_a_b_c(a, b, c));
 create table t2(a int, b int, c int, d int, index idx_a_b_c_d(a, b, c, d));
-explain format = 'brief' select a, b, c from t1 where a > 3 and b = 4 order by a, c;
-explain format = 'brief' select * from t2 where a = 1 and c = 2 order by b, d;
-explain format = 'brief' select a, b, c from t1 where (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c = 2) order by c;
-explain format = 'brief' select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c;
-explain format = 'brief' select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d;
+explain format='plan_tree' select a, b, c from t1 where a > 3 and b = 4 order by a, c;
+explain format='plan_tree' select * from t2 where a = 1 and c = 2 order by b, d;
+explain format='plan_tree' select a, b, c from t1 where (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c = 2) order by c;
+explain format='plan_tree' select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c;
+explain format='plan_tree' select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d;
 
 # TestDecorrelateInnerJoinInSubquery
 drop table if exists t;
 create table t(a int not null, b int not null);
-explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
-explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a);
-explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
-explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a);
-explain format = 'brief' select /*+ hash_join_build(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
-explain format = 'brief' select /*+ hash_join_probe(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
+explain format='plan_tree' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
+explain format='plan_tree' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a);
+explain format='plan_tree' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
+explain format='plan_tree' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a);
+explain format='plan_tree' select /*+ hash_join_build(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
+explain format='plan_tree' select /*+ hash_join_probe(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
 
 # TestDecorrelateLimitInSubquery
 drop table if exists test;
@@ -148,10 +148,10 @@ create table test(id int, value int);
 drop table if exists t;
 create table t(c int);
 insert t values(10), (8), (7), (9), (11);
-explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1);
-explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id);
-explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2);
-explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3);
+explain format='plan_tree' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1);
+explain format='plan_tree' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id);
+explain format='plan_tree' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2);
+explain format='plan_tree' select * from t where 9 in (select c from t s where s.c < t.c limit 3);
 
 # TestConvertRangeToPoint
 drop table if exists t0;
@@ -169,12 +169,12 @@ drop table if exists t2;
 create table t2 (a float, b float, index(a, b));
 drop table if exists t3;
 create table t3 (a char(10), b char(10), c char(10), index(a, b, c));
-explain format = 'brief' select * from t0 where a > 1 and a < 3 order by b limit 2;
-explain format = 'brief' select * from t1 where a >= 2 and a <= 2 and b = 2 and c > 2;
-explain format = 'brief' select * from t2 where a >= 2.5 and a <= 2.5 order by b limit 2;
-explain format = 'brief' select * from t3 where a >= 'a' and a <= 'a' and b = 'b' and c > 'c';
-explain format = 'brief' select * from t1 where a is null or a in (1, 2, 3);
-explain format = 'brief' select * from t1 where a is null and a = 1;
+explain format='plan_tree' select * from t0 where a > 1 and a < 3 order by b limit 2;
+explain format='plan_tree' select * from t1 where a >= 2 and a <= 2 and b = 2 and c > 2;
+explain format='plan_tree' select * from t2 where a >= 2.5 and a <= 2.5 order by b limit 2;
+explain format='plan_tree' select * from t3 where a >= 'a' and a <= 'a' and b = 'b' and c > 'c';
+explain format='plan_tree' select * from t1 where a is null or a in (1, 2, 3);
+explain format='plan_tree' select * from t1 where a is null and a = 1;
 
 # TestIssue22105
 drop table if exists t1;
@@ -194,7 +194,7 @@ CREATE TABLE t1 (
   KEY i5 (key5),
   KEY i6 (key6)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-explain format = 'brief' SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6);
+explain format='plan_tree' SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6);
 
 # TestRegardNULLAsPoint
 drop table if exists tpk;
@@ -231,88 +231,88 @@ insert into tik values (1, 1, NULL);
 insert into tuk values (1, 1, 1);
 insert into tik values (1, 1, 1);
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tuk where a<=>null and b=1;
+explain format='plan_tree' select * from tuk where a<=>null and b=1;
 select * from tuk where a<=>null and b=1;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tuk where a<=>null and b=1;
+explain format='plan_tree' select * from tuk where a<=>null and b=1;
 select * from tuk where a<=>null and b=1;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tik where a<=>null and b=1;
+explain format='plan_tree' select * from tik where a<=>null and b=1;
 select * from tik where a<=>null and b=1;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tik where a<=>null and b=1;
+explain format='plan_tree' select * from tik where a<=>null and b=1;
 select * from tik where a<=>null and b=1;
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tuk where a<=>null and b>0 and b<2;
 select * from tuk where a<=>null and b>0 and b<2;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tuk where a<=>null and b>0 and b<2;
+explain format='plan_tree' select * from tuk where a<=>null and b>0 and b<2;
 select * from tuk where a<=>null and b>0 and b<2;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tik where a<=>null and b>0 and b<2;
+explain format='plan_tree' select * from tik where a<=>null and b>0 and b<2;
 select * from tik where a<=>null and b>0 and b<2;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tik where a<=>null and b>0 and b<2;
+explain format='plan_tree' select * from tik where a<=>null and b>0 and b<2;
 select * from tik where a<=>null and b>0 and b<2;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tuk where a<=>null and b>=1 and b<2;
+explain format='plan_tree' select * from tuk where a<=>null and b>=1 and b<2;
 select * from tuk where a<=>null and b>=1 and b<2;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tuk where a<=>null and b>=1 and b<2;
+explain format='plan_tree' select * from tuk where a<=>null and b>=1 and b<2;
 select * from tuk where a<=>null and b>=1 and b<2;
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b>=1 and b<2;
 select * from tik where a<=>null and b>=1 and b<2;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tik where a<=>null and b>=1 and b<2;
+explain format='plan_tree' select * from tik where a<=>null and b>=1 and b<2;
 select * from tik where a<=>null and b>=1 and b<2;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tuk where a<=>null and b=1 and c=1;
+explain format='plan_tree' select * from tuk where a<=>null and b=1 and c=1;
 select * from tuk where a<=>null and b=1 and c=1;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tuk where a<=>null and b=1 and c=1;
+explain format='plan_tree' select * from tuk where a<=>null and b=1 and c=1;
 select * from tuk where a<=>null and b=1 and c=1;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tik where a<=>null and b=1 and c=1;
+explain format='plan_tree' select * from tik where a<=>null and b=1 and c=1;
 select * from tik where a<=>null and b=1 and c=1;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tik where a<=>null and b=1 and c=1;
+explain format='plan_tree' select * from tik where a<=>null and b=1 and c=1;
 select * from tik where a<=>null and b=1 and c=1;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tuk where a=1 and b<=>null and c=1;
+explain format='plan_tree' select * from tuk where a=1 and b<=>null and c=1;
 select * from tuk where a=1 and b<=>null and c=1;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tuk where a=1 and b<=>null and c=1;
+explain format='plan_tree' select * from tuk where a=1 and b<=>null and c=1;
 select * from tuk where a=1 and b<=>null and c=1;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tik where a=1 and b<=>null and c=1;
+explain format='plan_tree' select * from tik where a=1 and b<=>null and c=1;
 select * from tik where a=1 and b<=>null and c=1;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tik where a=1 and b<=>null and c=1;
+explain format='plan_tree' select * from tik where a=1 and b<=>null and c=1;
 select * from tik where a=1 and b<=>null and c=1;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tuk where a<=>null and b<=>null and c=1;
+explain format='plan_tree' select * from tuk where a<=>null and b<=>null and c=1;
 select * from tuk where a<=>null and b<=>null and c=1;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tuk where a<=>null and b<=>null and c=1;
+explain format='plan_tree' select * from tuk where a<=>null and b<=>null and c=1;
 select * from tuk where a<=>null and b<=>null and c=1;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tik where a<=>null and b<=>null and c=1;
+explain format='plan_tree' select * from tik where a<=>null and b<=>null and c=1;
 select * from tik where a<=>null and b<=>null and c=1;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tik where a<=>null and b<=>null and c=1;
+explain format='plan_tree' select * from tik where a<=>null and b<=>null and c=1;
 select * from tik where a<=>null and b<=>null and c=1;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tuk where a<=>null and b<=>null and c<=>null;
+explain format='plan_tree' select * from tuk where a<=>null and b<=>null and c<=>null;
 select * from tuk where a<=>null and b<=>null and c<=>null;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tuk where a<=>null and b<=>null and c<=>null;
+explain format='plan_tree' select * from tuk where a<=>null and b<=>null and c<=>null;
 select * from tuk where a<=>null and b<=>null and c<=>null;
 set @@session.tidb_regard_null_as_point=true;
-explain select * from tik where a<=>null and b<=>null and c<=>null;
+explain format='plan_tree' select * from tik where a<=>null and b<=>null and c<=>null;
 select * from tik where a<=>null and b<=>null and c<=>null;
 set @@session.tidb_regard_null_as_point=false;
-explain select * from tik where a<=>null and b<=>null and c<=>null;
+explain format='plan_tree' select * from tik where a<=>null and b<=>null and c<=>null;
 select * from tik where a<=>null and b<=>null and c<=>null;
 set @@session.tidb_regard_null_as_point=default;
 
@@ -331,17 +331,17 @@ create table tt3(c1 int, c2 int, c3 int as (c1 + c2), key(c1), key(c2), key(c3))
 insert into tt3(c1, c2) values(1, 1);
 select @@tidb_enable_index_merge;
 set tidb_enable_index_merge = on;
-explain format=brief select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
+explain format='plan_tree' select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
 select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
-explain format=brief select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;
+explain format='plan_tree' select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;
 select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;
-explain format=brief select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';
+explain format='plan_tree' select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';
 select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';
-explain format=brief select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt2.pk in (1, 53330) and to_base64(left(pk, 5));
+explain format='plan_tree' select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt2.pk in (1, 53330) and to_base64(left(pk, 5));
 select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt2.pk in (1, 53330) and to_base64(left(pk, 5));
-explain format=brief select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';
+explain format='plan_tree' select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';
 select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';
-explain format=brief select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
+explain format='plan_tree' select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
 select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
 set tidb_enable_index_merge = 1;
 set tidb_enable_index_merge = default;
@@ -350,19 +350,19 @@ set tidb_enable_index_merge = default;
 drop table if exists t1,t2;
 create table t1(a int);
 create table t2(a int, b int, c int, primary key(a,b) nonclustered);
-explain format = 'brief' select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1;
-explain format = 'brief' select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1;
+explain format='plan_tree' select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1;
+explain format='plan_tree' select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1;
 
 # TestSequenceAsDataSource
 set tidb_cost_model_version=2;
 drop sequence if exists s1, s2;
 create sequence s1;
 create sequence s2;
-explain format = 'brief' select 1 from s1;
-explain format = 'brief' select count(1) from s1;
-explain format = 'brief' select count(*) from s1;
-explain format = 'brief' select sum(1) from s1;
-explain format = 'brief' select count(1) as cnt from s1 union select count(1) as cnt from s2;
+explain format='plan_tree' select 1 from s1;
+explain format='plan_tree' select count(1) from s1;
+explain format='plan_tree' select count(*) from s1;
+explain format='plan_tree' select sum(1) from s1;
+explain format='plan_tree' select count(1) as cnt from s1 union select count(1) as cnt from s2;
 
 # TestOutputSkylinePruningInfo
 set tidb_cost_model_version=2;
@@ -404,7 +404,7 @@ drop table if exists t;
 create table t(a int primary key, b int, c int, index idx_b(b));
 insert into t values (1,2,3), (4,5,6), (7,8,9), (10, 11, 12), (13,14,15), (16, 17, 18);
 analyze table t;
-explain format = 'brief' select * from t use index (idx_b) where b = 2 limit 1;
+explain format='plan_tree' select * from t use index (idx_b) where b = 2 limit 1;
 
 # TestGroupBySetVar
 drop table if exists t1;
@@ -413,13 +413,13 @@ insert into t1 values(1), (2), (3), (4), (5), (6);
 select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;
 create table ta(a int, b int);
 set sql_mode='';
-explain format = 'brief' select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;
-explain format = 'brief' select @n:=@n+1 as e from ta group by e;
-explain format = 'brief' select @n:=@n+a as e from ta group by e;
-explain format = 'brief' select * from (select @n:=@n+1 as e from ta) tt group by e;
-explain format = 'brief' select * from (select @n:=@n+a as e from ta) tt group by e;
-explain format = 'brief' select a from ta group by @n:=@n+1;
-explain format = 'brief' select a from ta group by @n:=@n+a;
+explain format='plan_tree' select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;
+explain format='plan_tree' select @n:=@n+1 as e from ta group by e;
+explain format='plan_tree' select @n:=@n+a as e from ta group by e;
+explain format='plan_tree' select * from (select @n:=@n+1 as e from ta) tt group by e;
+explain format='plan_tree' select * from (select @n:=@n+a as e from ta) tt group by e;
+explain format='plan_tree' select a from ta group by @n:=@n+1;
+explain format='plan_tree' select a from ta group by @n:=@n+a;
 set sql_mode=default;
 
 # TestDowncastPointGetOrRangeScan
@@ -436,33 +436,33 @@ create definer=`root`@`127.0.0.1` view v3 as (select a from t5) union (select a 
 create table t7 (a varchar(100) key);
 create table t8 (a int key);
 create definer=`root`@`127.0.0.1` view v4 as (select a from t7) union (select a from t8);
-explain format='brief' select * from v1 where a = 1; -- the condition should be downcast through both side and go get point;
+explain format='plan_tree' select * from v1 where a = 1; -- the condition should be downcast through both side and go get point;
 select * from v1 where a = 1; -- the condition should be downcast through both side and go get point;
-explain format='brief' select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too;
+explain format='plan_tree' select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too;
 select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too;
-explain format='brief' select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan;
+explain format='plan_tree' select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan;
 select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan;
-explain format='brief' select * from v2 where a = 'test';
+explain format='plan_tree' select * from v2 where a = 'test';
 select * from v2 where a = 'test';
-explain format='brief' select * from v2 where a = 1;
+explain format='plan_tree' select * from v2 where a = 1;
 select * from v2 where a = 1;
-explain format='brief' select * from v2 where a > 'test';
+explain format='plan_tree' select * from v2 where a > 'test';
 select * from v2 where a > 'test';
-explain format='brief' select * from v3 where a = 'test' -- the condition shouldn't be downcast through both side and go get point;
+explain format='plan_tree' select * from v3 where a = 'test' -- the condition shouldn't be downcast through both side and go get point;
 select * from v3 where a = 'test' -- the condition shouldn't be downcast through both side and go get point;
-explain format='brief' select * from v3 where a > 'test' -- the condition shouldn't be downcast through both side and go get point too;
+explain format='plan_tree' select * from v3 where a > 'test' -- the condition shouldn't be downcast through both side and go get point too;
 select * from v3 where a > 'test' -- the condition shouldn't be downcast through both side and go get point too;
-explain format='brief' select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
+explain format='plan_tree' select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
-explain format='brief' select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
+explain format='plan_tree' select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 
 # TestIssue24095
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (id int, value decimal(10,5));
-desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
-explain format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
+explain format='plan_tree' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
+explain format='plan_tree' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
 
 # TestFixControl44262
 set tidb_partition_prune_mode='dynamic';
@@ -472,17 +472,17 @@ create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
 set @@tidb_skip_missing_partition_stats = off;
 set @@tidb_opt_fix_control = "";
 --enable_warnings
-explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=legacy) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
-explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+explain format='plan_tree' select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=legacy) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+explain format='plan_tree' select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 --disable_warnings
 set @@tidb_opt_fix_control = "44262:ON";
 --enable_warnings
-explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+explain format='plan_tree' select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 --disable_warnings
 set @@tidb_opt_fix_control = "";
 set @@tidb_skip_missing_partition_stats = on;
 --enable_warnings
-explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+explain format='plan_tree' select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 --disable_warnings
 set @@tidb_skip_missing_partition_stats = default;
 
@@ -492,13 +492,13 @@ drop table if exists t;
 create table t(a int(11) not null, b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);
 insert into t values (1, 1),(10, 10),(11, 11);
 set tidb_opt_fix_control='44262:ON';
-explain format = 'brief' select * from t where a in (1, 2,'11');
-explain format = 'brief' select * from t where a in (17, null);
-explain format = 'brief' select * from t where a in (16, 'abc');
-explain format = 'brief' select * from t where a in (15, 0.12, 3.47);
-explain format = 'brief' select * from t where a in (0.12, 3.47);
-explain format = 'brief' select * from t where a in (14, floor(3.47));
-explain format = 'brief' select * from t where b in (3, 4);
+explain format='plan_tree' select * from t where a in (1, 2,'11');
+explain format='plan_tree' select * from t where a in (17, null);
+explain format='plan_tree' select * from t where a in (16, 'abc');
+explain format='plan_tree' select * from t where a in (15, 0.12, 3.47);
+explain format='plan_tree' select * from t where a in (0.12, 3.47);
+explain format='plan_tree' select * from t where a in (14, floor(3.47));
+explain format='plan_tree' select * from t where b in (3, 4);
 set tidb_opt_fix_control=default;
 
 
@@ -511,26 +511,26 @@ partition p2 values less than (10));
 set @@tidb_enable_index_merge = 1;
 set tidb_opt_fix_control='44262:ON';
 --echo ## Table reader
-explain format='brief' select * from pt where c > 10;
-explain format='brief' select * from pt where c > 8;
-explain format='brief' select * from pt where c < 2 or c >= 9;
+explain format='plan_tree' select * from pt where c > 10;
+explain format='plan_tree' select * from pt where c > 8;
+explain format='plan_tree' select * from pt where c < 2 or c >= 9;
 --echo ##  Index reader
-explain format='brief' select c from pt;
-explain format='brief' select c from pt where c > 10;
-explain format='brief' select c from pt where c > 8;
-explain format='brief' select c from pt where c < 2 or c >= 9;
+explain format='plan_tree' select c from pt;
+explain format='plan_tree' select c from pt where c > 10;
+explain format='plan_tree' select c from pt where c > 8;
+explain format='plan_tree' select c from pt where c < 2 or c >= 9;
 --echo ## Index Lookup
-explain format='brief' select /*+ use_index(pt, i_id) */ * from pt;
-explain format='brief' select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10;
-explain format='brief' select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8;
-explain format='brief' select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9;
+explain format='plan_tree' select /*+ use_index(pt, i_id) */ * from pt;
+explain format='plan_tree' select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10;
+explain format='plan_tree' select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8;
+explain format='plan_tree' select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9;
 --echo ## Partition selection
-explain format='brief' select * from pt partition (p0) where c > 8;
-explain format='brief' select c from pt partition (p0, p2) where c > 8;
-explain format='brief' select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5;
+explain format='plan_tree' select * from pt partition (p0) where c > 8;
+explain format='plan_tree' select c from pt partition (p0, p2) where c > 8;
+explain format='plan_tree' select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5;
 --echo ## Index Merge
-explain format='brief' select * from pt where id = 4 or c < 7;
-explain format='brief' select * from pt where id > 4 or c = 7;
+explain format='plan_tree' select * from pt where id = 4 or c < 7;
+explain format='plan_tree' select * from pt where id > 4 or c = 7;
 set tidb_opt_fix_control=default;
 set @@tidb_enable_index_merge = default;
 
@@ -731,4 +731,12 @@ from
 use test;
 drop table if exists tt;
 create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,d));
-explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
+explain format='plan_tree' update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
+
+# TestIssue62564
+CREATE TABLE test_62564(c0 DECIMAL);
+INSERT INTO test_62564 VALUES (0);
+SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);
+SET @b = NULL;
+PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE ? END ) AS DATE)';
+EXECUTE prepare_query USING @b;

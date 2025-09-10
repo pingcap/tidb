@@ -65,29 +65,32 @@ type sortPartition struct {
 	// Sort is a time-consuming operation, we need to set a checkpoint to detect
 	// the outside signal periodically.
 	timesOfRowCompare uint
+
+	fileNamePrefixForTest string
 }
 
 // Creates a new SortPartition in memory.
 func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
-	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64) *sortPartition {
+	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64, fileNamePrefixForTest string) *sortPartition {
 	lock := new(sync.Mutex)
 	retVal := &sortPartition{
-		cond:        sync.NewCond(lock),
-		spillError:  nil,
-		spillStatus: notSpilled,
-		fieldTypes:  fieldTypes,
-		savedRows:   make([]chunk.Row, 0),
-		isSorted:    false,
-		inDisk:      nil, // It's initialized only when spill is triggered
-		memTracker:  memory.NewTracker(memory.LabelForSortPartition, -1),
-		diskTracker: disk.NewTracker(memory.LabelForSortPartition, -1),
-		spillAction: nil, // It's set in `actionSpill` function
-		spillLimit:  spillLimit,
-		byItemsDesc: byItemsDesc,
-		keyColumns:  keyColumns,
-		keyCmpFuncs: keyCmpFuncs,
-		cursor:      NewDataCursor(),
-		closed:      false,
+		cond:                  sync.NewCond(lock),
+		spillError:            nil,
+		spillStatus:           notSpilled,
+		fieldTypes:            fieldTypes,
+		savedRows:             make([]chunk.Row, 0),
+		isSorted:              false,
+		inDisk:                nil, // It's initialized only when spill is triggered
+		memTracker:            memory.NewTracker(memory.LabelForSortPartition, -1),
+		diskTracker:           disk.NewTracker(memory.LabelForSortPartition, -1),
+		spillAction:           nil, // It's set in `actionSpill` function
+		spillLimit:            spillLimit,
+		byItemsDesc:           byItemsDesc,
+		keyColumns:            keyColumns,
+		keyCmpFuncs:           keyCmpFuncs,
+		cursor:                NewDataCursor(),
+		closed:                false,
+		fileNamePrefixForTest: fileNamePrefixForTest,
 	}
 
 	return retVal
@@ -115,7 +118,7 @@ func (s *sortPartition) add(chk *chunk.Chunk) bool {
 	}
 
 	// Convert chunk to rows
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		s.savedRows = append(s.savedRows, chk.GetRow(i))
 	}
 
@@ -164,7 +167,7 @@ func (s *sortPartition) spillToDiskImpl() (err error) {
 		return nil
 	}
 
-	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes)
+	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes, s.fileNamePrefixForTest)
 	s.inDisk.GetDiskTracker().AttachTo(s.diskTracker)
 	tmpChk := chunk.NewChunkWithCapacity(s.fieldTypes, spillChunkSize)
 

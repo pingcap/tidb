@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -65,7 +66,8 @@ func getCommonSubtaskRunFn(testCtx *testutil.TestContext) func(_ context.Context
 }
 
 func submitTaskAndCheckSuccessForBasic(ctx context.Context, t *testing.T, taskKey string, testContext *testutil.TestContext) int64 {
-	return submitTaskAndCheckSuccess(ctx, t, taskKey, "", testContext, map[proto.Step]int{
+	scope := handle.GetTargetScope()
+	return submitTaskAndCheckSuccess(ctx, t, taskKey, scope, testContext, map[proto.Step]int{
 		proto.StepOne: 3,
 		proto.StepTwo: 1,
 	})
@@ -86,7 +88,7 @@ func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		taskKey := fmt.Sprintf("key%d", i)
 		wg.Run(func() {
 			submitTaskAndCheckSuccessForBasic(c.Ctx, t, taskKey, c.TestContext)
@@ -96,7 +98,7 @@ func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 		seed := time.Now().UnixNano()
 		t.Logf("seed in change owner loop: %d", seed)
 		random := rand.New(rand.NewSource(seed))
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			c.ChangeOwner()
 			time.Sleep(time.Duration(random.Int63n(int64(3 * time.Second))))
 		}
@@ -112,14 +114,14 @@ func TestFrameworkScaleInAndOut(t *testing.T) {
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		taskKey := fmt.Sprintf("key%d", i)
 		wg.Run(func() {
 			submitTaskAndCheckSuccessForBasic(c.Ctx, t, taskKey, c.TestContext)
 		})
 	}
 	wg.Run(func() {
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			if random.Intn(2) == 0 {
 				c.ScaleOut(1)
 			} else {
@@ -167,7 +169,8 @@ func TestFrameworkCancelTask(t *testing.T) {
 			}
 		},
 	)
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
+	scope := handle.GetTargetScope()
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
@@ -180,7 +183,8 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 		return stepExec, nil
 	})
 	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
+	scope := handle.GetTargetScope()
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
@@ -240,7 +244,7 @@ func TestGC(t *testing.T) {
 
 func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
-
+	scope := handle.GetTargetScope()
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	t.Run("meet cancel on run subtask", func(t *testing.T) {
 		var counter atomic.Int32
@@ -252,7 +256,7 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 				}
 			},
 		)
-		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
+		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 1)
 		require.Equal(t, proto.TaskStateReverted, task.State)
 	})
 
@@ -265,7 +269,7 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 				}
 			},
 		)
-		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
+		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", scope, 1)
 		require.Equal(t, proto.TaskStateReverted, task.State)
 	})
 }
@@ -319,6 +323,7 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 			require.NoError(t, c.TaskMgr.CancelTask(c.Ctx, taskID))
 		}
 	})
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
+	scope := handle.GetTargetScope()
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }

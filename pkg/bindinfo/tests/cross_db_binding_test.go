@@ -23,10 +23,10 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -243,8 +243,8 @@ func TestCrossDBBindingGC(t *testing.T) {
 	updateTime := time.Now().Add(-(15 * bindinfo.Lease))
 	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
 	tk.MustExec(fmt.Sprintf("update mysql.bind_info set update_time = '%v' where source != 'builtin'", updateTimeStr))
-	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-	require.NoError(t, bindHandle.GCGlobalBinding())
+	bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
+	require.NoError(t, bindHandle.GCBinding())
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(testkit.Rows()) // empty after GC
 }
 
@@ -297,7 +297,7 @@ func TestCrossDBBindingPlanCache(t *testing.T) {
 
 	hasPlan := func(operator, accessInfo string) {
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 		flag := false
@@ -333,7 +333,7 @@ func TestCrossDBBindingPlanCache(t *testing.T) {
 }
 
 type mockSessionPool struct {
-	se sessiontypes.Session
+	se sessionapi.Session
 }
 
 func (p *mockSessionPool) Get() (pools.Resource, error) {
@@ -341,5 +341,7 @@ func (p *mockSessionPool) Get() (pools.Resource, error) {
 }
 
 func (p *mockSessionPool) Put(pools.Resource) {}
+
+func (p *mockSessionPool) Destroy(pools.Resource) {}
 
 func (p *mockSessionPool) Close() {}

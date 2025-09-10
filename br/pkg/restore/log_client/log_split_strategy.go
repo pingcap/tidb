@@ -4,6 +4,7 @@ package logclient
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -11,7 +12,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +20,8 @@ type LogSplitStrategy struct {
 	*split.BaseSplitStrategy
 	checkpointSkipMap        *LogFilesSkipMap
 	checkpointFileProgressFn func(uint64, uint64)
+
+	lastMemUsageUpdate time.Time
 }
 
 var _ split.SplitStrategy[*LogDataFileInfo] = &LogSplitStrategy{}
@@ -26,7 +29,7 @@ var _ split.SplitStrategy[*LogDataFileInfo] = &LogSplitStrategy{}
 func NewLogSplitStrategy(
 	ctx context.Context,
 	useCheckpoint bool,
-	execCtx sqlexec.RestrictedSQLExecutor,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	rules map[int64]*restoreutils.RewriteRules,
 	updateStatsFn func(uint64, uint64),
 ) (*LogSplitStrategy, error) {
@@ -36,8 +39,8 @@ func NewLogSplitStrategy(
 	}
 	skipMap := NewLogFilesSkipMap()
 	if useCheckpoint {
-		t, err := checkpoint.LoadCheckpointDataForLogRestore(
-			ctx, execCtx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+		t, err := logCheckpointMetaManager.LoadCheckpointData(
+			ctx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) error {
 				for tableID, foffs := range off.Foffs {
 					// filter out the checkpoint data of dropped table
 					if _, exists := downstreamIdset[tableID]; exists {
@@ -46,6 +49,7 @@ func NewLogSplitStrategy(
 						}
 					}
 				}
+				return nil
 			})
 
 		if err != nil {
@@ -63,25 +67,29 @@ func NewLogSplitStrategy(
 const splitFileThreshold = 1024 * 1024 // 1 MB
 
 func (ls *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
+	// skip accumulate file less than 1MB. to prevent too much split & scatter occurs
+	// and protect the performance of BTreeMap
 	if file.Length > splitFileThreshold {
 		ls.AccumulateCount += 1
-	}
-	splitHelper, exist := ls.TableSplitter[file.TableId]
-	if !exist {
-		splitHelper = split.NewSplitHelper()
-		ls.TableSplitter[file.TableId] = splitHelper
+		splitHelper, exist := ls.TableSplitter[file.TableId]
+		if !exist {
+			splitHelper = split.NewSplitHelper()
+			ls.TableSplitter[file.TableId] = splitHelper
+		}
+
+		splitHelper.Merge(split.Valued{
+			Key: split.Span{
+				StartKey: file.StartKey,
+				EndKey:   file.EndKey,
+			},
+			Value: split.Value{
+				Size:   file.Length,
+				Number: file.NumberOfEntries,
+			},
+		})
 	}
 
-	splitHelper.Merge(split.Valued{
-		Key: split.Span{
-			StartKey: file.StartKey,
-			EndKey:   file.EndKey,
-		},
-		Value: split.Value{
-			Size:   file.Length,
-			Number: file.NumberOfEntries,
-		},
-	})
+	ls.maybeUpdateMemUsage()
 }
 
 func (ls *LogSplitStrategy) ShouldSplit() bool {
@@ -104,4 +112,21 @@ func (ls *LogSplitStrategy) ShouldSkip(file *LogDataFileInfo) bool {
 		return true
 	}
 	return false
+}
+
+func (ls *LogSplitStrategy) maybeUpdateMemUsage() {
+	if time.Since(ls.lastMemUsageUpdate) < 30*time.Second {
+		return
+	}
+
+	ls.lastMemUsageUpdate = time.Now()
+	memUsed := 0
+	for _, hlp := range ls.TableSplitter {
+		hlp.Traverse(func(v split.Valued) bool {
+			memUsed += v.MemSize()
+			return true
+		})
+	}
+
+	metrics.KVSplitHelperMemUsage.Set(float64(memUsed))
 }

@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +33,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/clients/tso"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	sd "github.com/tikv/pd/client/servicediscovery"
@@ -46,8 +46,6 @@ type pdClient struct {
 	*us.MockPD
 	pd.ResourceManagerClient
 
-	serviceSafePoints map[string]uint64
-	gcSafePointMu     sync.Mutex
 	globalConfig      map[string]string
 	externalTimestamp atomic.Uint64
 
@@ -55,37 +53,20 @@ type pdClient struct {
 	// which needs PD server HTTP address.
 	addrs []string
 
-	keyspaceNameMap map[string]keyspacepb.KeyspaceMeta
-	keyspaceIDMap   map[uint32]keyspacepb.KeyspaceMeta
+	keyspaceMeta *keyspacepb.KeyspaceMeta
 }
 
-func makeKeyspace() (map[string]keyspacepb.KeyspaceMeta, map[uint32]keyspacepb.KeyspaceMeta) {
-	keyspaceNameMap := make(map[string]keyspacepb.KeyspaceMeta)
-	keyspaceIDMap := make(map[uint32]keyspacepb.KeyspaceMeta)
-
-	// keyspace id = 2
-	keyspaceMeta2 := keyspacepb.KeyspaceMeta{Id: 2, Name: "test_ks_name2"}
-	keyspaceNameMap[keyspaceMeta2.Name] = keyspaceMeta2
-	keyspaceIDMap[keyspaceMeta2.Id] = keyspaceMeta2
-
-	// keyspace id = 3
-	keyspaceMeta3 := keyspacepb.KeyspaceMeta{Id: 3, Name: "test_ks_name3"}
-	keyspaceNameMap[keyspaceMeta3.Name] = keyspaceMeta3
-	keyspaceIDMap[keyspaceMeta3.Id] = keyspaceMeta3
-
-	return keyspaceNameMap, keyspaceIDMap
-}
-
-func newPDClient(pd *us.MockPD, addrs []string) *pdClient {
-	keyspaceNameMap, keyspaceIDMap := makeKeyspace()
+func newPDClient(pd *us.MockPD, addrs []string, keyspaceMeta *keyspacepb.KeyspaceMeta) *pdClient {
+	keyspaceID := constants.NullKeyspaceID
+	if keyspaceMeta != nil {
+		keyspaceID = keyspaceMeta.GetId()
+	}
 	return &pdClient{
 		MockPD:                pd,
-		ResourceManagerClient: infosync.NewMockResourceManagerClient(),
-		serviceSafePoints:     make(map[string]uint64),
+		ResourceManagerClient: infosync.NewMockResourceManagerClient(keyspaceID),
 		globalConfig:          make(map[string]string),
 		addrs:                 addrs,
-		keyspaceNameMap:       keyspaceNameMap,
-		keyspaceIDMap:         keyspaceIDMap,
+		keyspaceMeta:          keyspaceMeta,
 	}
 }
 
@@ -116,7 +97,7 @@ func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, rev
 				return
 			}
 		}()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			for k, v := range c.globalConfig {
 				globalConfigWatcherCh <- []pd.GlobalConfigItem{{Name: k, Value: v}}
 			}
@@ -285,40 +266,11 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 
 func (c *pdClient) GetLeaderURL() string { return "mockpd" }
 
-func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	c.gcSafePointMu.Lock()
-	defer c.gcSafePointMu.Unlock()
-
-	if ttl == 0 {
-		delete(c.serviceSafePoints, serviceID)
-	} else {
-		var minSafePoint uint64 = math.MaxUint64
-		for _, ssp := range c.serviceSafePoints {
-			if ssp < minSafePoint {
-				minSafePoint = ssp
-			}
-		}
-
-		if len(c.serviceSafePoints) == 0 || minSafePoint <= safePoint {
-			c.serviceSafePoints[serviceID] = safePoint
-		}
-	}
-
-	// The minSafePoint may have changed. Reload it.
-	var minSafePoint uint64 = math.MaxUint64
-	for _, ssp := range c.serviceSafePoints {
-		if ssp < minSafePoint {
-			minSafePoint = ssp
-		}
-	}
-	return minSafePoint, nil
-}
-
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
 
-func (c *pdClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
+func (c *pdClient) GetAllMembers(ctx context.Context) (*pdpb.GetMembersResponse, error) {
 	return nil, nil
 }
 
@@ -348,10 +300,13 @@ func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit ui
 
 // LoadKeyspace loads and returns target keyspace's metadata.
 func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
-	if keyspaceMeta, exists := c.keyspaceNameMap[name]; exists {
-		return &keyspaceMeta, nil
+	if c.keyspaceMeta == nil {
+		return nil, errors.New("keyspace is unsupported")
 	}
-	return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+	if c.keyspaceMeta.Name != name {
+		return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+	}
+	return c.keyspaceMeta, nil
 }
 
 // WatchKeyspaces watches keyspace meta changes.

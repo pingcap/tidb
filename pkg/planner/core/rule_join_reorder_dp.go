@@ -16,17 +16,18 @@ package core
 
 import (
 	"math/bits"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
-	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan
+	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType base.JoinType, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan
 }
 
 type joinGroupEqEdge struct {
@@ -100,9 +101,9 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 	}
 	visited := make([]bool, len(joinGroup))
 	nodeID2VisitID := make([]int, len(joinGroup))
-	var joins []base.LogicalPlan
+	joins := make([]base.LogicalPlan, 0, len(joinGroup))
 	// BFS the tree.
-	for i := 0; i < len(joinGroup); i++ {
+	for i := range joinGroup {
 		if visited[i] {
 			continue
 		}
@@ -123,7 +124,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 			}
 			totalNonEqEdges[i].nodeIDMask = newMask
 			subNonEqEdges = append(subNonEqEdges, totalNonEqEdges[i])
-			totalNonEqEdges = append(totalNonEqEdges[:i], totalNonEqEdges[i+1:]...)
+			totalNonEqEdges = slices.Delete(totalNonEqEdges, i, i+1)
 		}
 		// Do DP on each sub graph.
 		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges, tracer)
@@ -137,7 +138,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 		remainedOtherConds = append(remainedOtherConds, edge.expr)
 	}
 	// Build bushy tree for cartesian joins.
-	return s.makeBushyJoin(joins, remainedOtherConds), nil
+	return s.makeBushyJoin(joins, remainedOtherConds, tracer.opt), nil
 }
 
 // bfsGraph bfs a sub graph starting at startPos. And relabel its label for future use.
@@ -170,7 +171,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 	nodeCnt := uint(len(visitID2NodeID))
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
-	for i := uint(0); i < nodeCnt; i++ {
+	for i := range nodeCnt {
 		bestPlan[1<<i] = s.curJoinGroup[visitID2NodeID[i]]
 	}
 	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
@@ -194,7 +195,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 			if len(usedEdges) == 0 {
 				continue
 			}
-			join, err := s.newJoinWithEdge(bestPlan[sub].p, bestPlan[remain].p, usedEdges, otherConds)
+			join, err := s.newJoinWithEdge(bestPlan[sub].p, bestPlan[remain].p, usedEdges, otherConds, tracer.opt)
 			if err != nil {
 				return nil, err
 			}
@@ -239,7 +240,7 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 	return usedEqEdges, otherConds
 }
 
-func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression) (base.LogicalPlan, error) {
+func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	var eqConds []*expression.ScalarFunction
 	for _, edge := range edges {
 		lCol := edge.edge.GetArgs()[0].(*expression.Column)
@@ -251,13 +252,13 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 			eqConds = append(eqConds, newSf)
 		}
 	}
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin)
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, base.InnerJoin, opt)
 	_, _, err := join.RecursiveDeriveStats(nil)
 	return join, err
 }
 
 // Make cartesian join as bushy tree.
-func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPlan, otherConds []expression.Expression) base.LogicalPlan {
+func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPlan, otherConds []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	for len(cartesianJoinGroup) > 1 {
 		resultJoinGroup := make([]base.LogicalPlan, 0, len(cartesianJoinGroup))
 		for i := 0; i < len(cartesianJoinGroup); i += 2 {
@@ -273,7 +274,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPla
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, logicalop.InnerJoin))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, base.InnerJoin, opt))
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

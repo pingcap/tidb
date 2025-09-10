@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -70,8 +71,8 @@ func (p *LogicalTableDual) HashCode() []byte {
 }
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	return predicates, p
+func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+	return predicates, p, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
@@ -81,7 +82,7 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
+			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)

@@ -157,30 +157,6 @@ func (f *MockTopoFetcher) getTopo() []string {
 	return f.mu.topo
 }
 
-// assureTopo will make sure topo is greater than nodeNum.
-func (f *MockTopoFetcher) assureTopo(nodeNum int) error {
-	para := url.Values{}
-	para.Add("node_num", strconv.Itoa(nodeNum))
-	u := url.URL{
-		Scheme:   "http",
-		Host:     f.addr,
-		Path:     "/assume-and-get-topo",
-		RawQuery: para.Encode(),
-	}
-	url := u.String()
-	logutil.BgLogger().Info("assureTopo", zap.String("url", url))
-
-	newTopo, err := mockHTTPGetAndParseResp(url)
-	if err != nil {
-		return err
-	}
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.mu.topo = newTopo
-	return nil
-}
-
 // fetchTopo will fetch newest topo from mock autoscaler.
 func (f *MockTopoFetcher) fetchTopo() error {
 	u := url.URL{

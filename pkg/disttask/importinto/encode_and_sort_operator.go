@@ -20,14 +20,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -38,10 +37,6 @@ import (
 
 const (
 	maxWaitDuration = 30 * time.Second
-
-	// we use a larger block size for data KV group to support larger row.
-	// TODO: make it configurable?
-	dataKVGroupBlockSize = 32 * units.MiB
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -54,8 +49,9 @@ type encodeAndSortOperator struct {
 	wg       tidbutil.WaitGroupWrapper
 	firstErr atomic.Error
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx       context.Context
+	cancel    context.CancelFunc
+	collector execute.Collector
 
 	taskID, subtaskID int64
 	tableImporter     *importer.TableImporter
@@ -72,6 +68,7 @@ func newEncodeAndSortOperator(
 	ctx context.Context,
 	executor *importStepExecutor,
 	sharedVars *SharedVars,
+	collector execute.Collector,
 	subtaskID int64,
 	concurrency int,
 ) *encodeAndSortOperator {
@@ -79,6 +76,7 @@ func newEncodeAndSortOperator(
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
 		cancel:        cancel,
+		collector:     collector,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
 		tableImporter: executor.tableImporter,
@@ -92,7 +90,7 @@ func newEncodeAndSortOperator(
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
 			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
-				executor.perIndexKVMemSizePerCon, executor.indexBlockSize)
+				executor.perIndexKVMemSizePerCon, executor.dataBlockSize, executor.indexBlockSize)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -151,7 +149,7 @@ type chunkWorker struct {
 }
 
 func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
-	perIndexKVMemSizePerCon uint64, indexBlockSize int) *chunkWorker {
+	perIndexKVMemSizePerCon uint64, dataBlockSize, indexBlockSize int) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -160,25 +158,27 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) *external.Writer {
+		indexWriterFn := func(indexID int64) (*external.Writer, error) {
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
-				SetBlockSize(indexBlockSize)
+				SetBlockSize(indexBlockSize).
+				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
-			return writer
+			return writer, nil
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
-			SetBlockSize(getKVGroupBlockSize(dataKVGroup))
+			SetBlockSize(dataBlockSize).
+			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
@@ -197,7 +197,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter); err != nil {
+	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector); err != nil {
 		w.op.onError(err)
 	}
 }
@@ -248,46 +248,28 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 }
 
 func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
-	var count int
-	var nonClusteredPK bool
+	return len(getIndicesGenKV(tblInfo))
+}
+
+type genKVIndex struct {
+	name   string
+	unique bool
+}
+
+func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
+	res := make(map[int64]genKVIndex, len(tblInfo.Indices))
 	for _, idxInfo := range tblInfo.Indices {
 		// all public non-primary index generates index KVs
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		if idxInfo.Primary {
-			if !tblInfo.HasClusteredIndex() {
-				nonClusteredPK = true
-			}
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
 			continue
 		}
-		count++
+		res[idxInfo.ID] = genKVIndex{
+			name:   idxInfo.Name.L,
+			unique: idxInfo.Unique,
+		}
 	}
-	if nonClusteredPK {
-		count++
-	}
-	return count
-}
-
-func getKVGroupBlockSize(group string) int {
-	if group == dataKVGroup {
-		return dataKVGroupBlockSize
-	}
-	return external.DefaultBlockSize
-}
-
-func getAdjustedIndexBlockSize(perIndexKVMemSizePerCon uint64) int {
-	// the buf size is aligned to block size, and the target table might have many
-	// indexes, one index KV writer might take much more memory when the buf size
-	// is slightly larger than the N*block-size.
-	// such as when dataKVMemSizePerCon = 2M, block-size = 16M, the aligned size
-	// is 16M, it's 8 times larger.
-	// so we adjust the block size when the aligned size is larger than 1.1 times
-	// of perIndexKVMemSizePerCon, to avoid OOM
-	indexBlockSize := getKVGroupBlockSize("")
-	alignedSize := membuf.GetAlignedSize(perIndexKVMemSizePerCon, uint64(indexBlockSize))
-	if float64(alignedSize)/float64(perIndexKVMemSizePerCon) > 1.1 {
-		return int(perIndexKVMemSizePerCon)
-	}
-	return indexBlockSize
+	return res
 }

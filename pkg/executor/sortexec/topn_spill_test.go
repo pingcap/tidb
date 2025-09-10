@@ -24,10 +24,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -179,9 +180,10 @@ func checkTopNCorrectness(schema *expression.Schema, exe *sortexec.TopNExec, dat
 func buildTopNExec(sortCase *testutil.SortCase, dataSource *testutil.MockDataSource, offset uint64, count uint64) *sortexec.TopNExec {
 	dataSource.PrepareChunks()
 	sortExec := sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(sortCase.Ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(sortCase.OrderByIdx)),
-		ExecSchema:   dataSource.Schema(),
+		BaseExecutor:          exec.NewBaseExecutor(sortCase.Ctx, dataSource.Schema(), 0, dataSource),
+		ByItems:               make([]*plannerutil.ByItems, 0, len(sortCase.OrderByIdx)),
+		ExecSchema:            dataSource.Schema(),
+		FileNamePrefixForTest: sortCase.FileNamePrefixForTest,
 	}
 
 	for _, idx := range sortCase.OrderByIdx {
@@ -190,7 +192,7 @@ func buildTopNExec(sortCase *testutil.SortCase, dataSource *testutil.MockDataSou
 
 	topNexec := &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &plannercore.PhysicalLimit{Offset: offset, Count: count},
+		Limit:       &physicalop.PhysicalLimit{Offset: offset, Count: count},
 		Concurrency: 5,
 	}
 
@@ -326,10 +328,10 @@ func topNFailPointTest(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.
 
 const spilledChunkMaxSize = 32
 
-func createAndInitDataInDiskByChunks(spilledRowNum uint64) *chunk.DataInDiskByChunks {
+func createAndInitDataInDiskByChunks(spilledRowNum uint64, fileNamePrefixForTest string) *chunk.DataInDiskByChunks {
 	fieldType := types.FieldType{}
 	fieldType.SetType(mysql.TypeLonglong)
-	inDisk := chunk.NewDataInDiskByChunks([]*types.FieldType{&fieldType})
+	inDisk := chunk.NewDataInDiskByChunks([]*types.FieldType{&fieldType}, fileNamePrefixForTest)
 	var spilledChunk *chunk.Chunk
 	for i := uint64(0); i < spilledRowNum; i++ {
 		if i%spilledChunkMaxSize == 0 {
@@ -356,7 +358,8 @@ func testImpl(t *testing.T, topnExec *sortexec.TopNExec, inDisk *chunk.DataInDis
 
 func oneChunkInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 	rowNumInDisk := uint64(spilledChunkMaxSize)
-	inDisk := createAndInitDataInDiskByChunks(rowNumInDisk)
+	inDisk := createAndInitDataInDiskByChunks(rowNumInDisk, topnExec.FileNamePrefixForTest)
+	defer inDisk.Close()
 
 	testImpl(t, topnExec, inDisk, rowNumInDisk, 0)
 	testImpl(t, topnExec, inDisk, rowNumInDisk, uint64(spilledChunkMaxSize-15))
@@ -366,7 +369,8 @@ func oneChunkInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 
 func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 	rowNumInDisk := uint64(spilledChunkMaxSize*3 + 10)
-	inDisk := createAndInitDataInDiskByChunks(rowNumInDisk)
+	inDisk := createAndInitDataInDiskByChunks(rowNumInDisk, topnExec.FileNamePrefixForTest)
+	defer inDisk.Close()
 
 	testImpl(t, topnExec, inDisk, rowNumInDisk, 0)
 	testImpl(t, topnExec, inDisk, rowNumInDisk, spilledChunkMaxSize-15)
@@ -376,18 +380,24 @@ func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 }
 
 func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	//nolint:constructor
 	topnExec := &sortexec.TopNExec{}
-	topnExec.Limit = &plannercore.PhysicalLimit{}
+	topnExec.Limit = &physicalop.PhysicalLimit{}
+	topnExec.FileNamePrefixForTest = testFuncName
 
 	oneChunkInDiskCase(t, topnExec)
 	severalChunksInDiskCase(t, topnExec)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestTopNSpillDisk(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
 
@@ -404,36 +414,40 @@ func TestTopNSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	exe.FileNamePrefixForTest = testFuncName
+	for range 20 {
 		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
 		topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNSpillCase2(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase2(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
 		topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestTopNSpillDiskFailpoint(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
@@ -457,28 +471,31 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	exe.FileNamePrefixForTest = testFuncName
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 	}
+
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestIssue54206(t *testing.T) {
@@ -495,10 +512,12 @@ func TestIssue54206(t *testing.T) {
 }
 
 func TestIssue54541(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	totalRowNum := 30
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -514,12 +533,15 @@ func TestIssue54541(t *testing.T) {
 	exe := buildTopNExec(topNCase, dataSource, offset, count)
 
 	sortexec.TestKillSignalInTopN(t, exe)
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestTopNFallBackAction(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -543,4 +565,5 @@ func TestTopNFallBackAction(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
+	util.CheckNoLeakFiles(t, testFuncName)
 }

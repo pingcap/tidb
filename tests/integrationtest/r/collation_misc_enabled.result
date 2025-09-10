@@ -84,6 +84,7 @@ SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER
 default_collate_name	maxlen
 ascii_bin	1
 binary	1
+gb18030_chinese_ci	4
 gbk_chinese_ci	2
 latin1_bin	1
 utf8_bin	3
@@ -92,6 +93,8 @@ SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER 
 character_set_name	id	sortlen
 ascii	65	1
 binary	63	1
+gb18030	249	1
+gb18030	248	1
 gbk	87	1
 gbk	28	1
 latin1	47	1
@@ -110,6 +113,7 @@ show charset;
 Charset	Description	Default collation	Maxlen
 ascii	US ASCII	ascii_bin	1
 binary	binary	binary	1
+gb18030	China National Standard GB18030	gb18030_chinese_ci	4
 gbk	Chinese Internal Code Specification	gbk_chinese_ci	2
 latin1	Latin1	latin1_bin	1
 utf8	UTF-8 Unicode	utf8_bin	3
@@ -118,6 +122,8 @@ show collation;
 Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
@@ -140,13 +146,13 @@ drop table if exists t1;
 drop table if exists t2;
 create table t1(code varchar(32)) CHARSET=utf8 COLLATE=utf8_general_ci;
 create table t2(code varchar(32)) CHARSET=utf8 COLLATE=utf8_bin;
-desc format=brief select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');
-id	estRows	task	access object	operator info
-Projection	80000.00	root		cd_test_utf8mb4_0900_bin.t1.code, cd_test_utf8mb4_0900_bin.t2.code
-└─HashJoin	80000.00	root		CARTESIAN inner join
-  ├─TableReader(Build)	10.00	root		data:Selection
-  │ └─Selection	10.00	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t2.code, "1")
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	8000.00	root		data:Selection
-    └─Selection	8000.00	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1")
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');
+id	task	access object	operator info
+Projection	root		cd_test_utf8mb4_0900_bin.t1.code, cd_test_utf8mb4_0900_bin.t2.code
+└─HashJoin	root		CARTESIAN inner join
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t2.code, "1")
+  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1")
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo

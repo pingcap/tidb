@@ -31,7 +31,7 @@ func TestSessionRunInTxn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
-	se := session.NewSession(tk.Session(), tk.Session(), nil)
+	se := session.NewSession(tk.Session(), func() {})
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
@@ -61,7 +61,7 @@ func TestSessionResetTimeZone(t *testing.T) {
 	tk.MustExec("set @@global.time_zone='UTC'")
 	tk.MustExec("set @@time_zone='Asia/Shanghai'")
 
-	se := session.NewSession(tk.Session(), tk.Session(), nil)
+	se := session.NewSession(tk.Session(), func() {})
 	tk.MustQuery("select @@time_zone").Check(testkit.Rows("Asia/Shanghai"))
 	require.NoError(t, se.ResetWithGlobalTimeZone(context.TODO()))
 	tk.MustQuery("select @@time_zone").Check(testkit.Rows("UTC"))
@@ -70,7 +70,7 @@ func TestSessionResetTimeZone(t *testing.T) {
 func TestSessionKill(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	se := session.NewSession(tk.Session(), tk.Session(), nil)
+	se := session.NewSession(tk.Session(), func() {})
 	sleepStmt := "select sleep(123)"
 	wg := util.WaitGroupWrapper{}
 	wg.Run(func() {

@@ -69,7 +69,7 @@ go_test(
     ],
     embed = [":aggregation"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         "//pkg/expression",
         "//pkg/kv",

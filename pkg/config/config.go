@@ -33,8 +33,11 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/tikvutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -189,6 +192,7 @@ type Config struct {
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
+	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
@@ -227,7 +231,7 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
-	// EnableTelemetry enables the usage data report to PingCAP. Deprecated: Telemetry has been removed.
+	// EnableTelemetry enables the usage data print to log.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
@@ -273,6 +277,8 @@ type Config struct {
 	// InitializeSQLFile is a file that will be executed after first bootstrap only.
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
+	// Standby is the config for standby mode.
+	Standby Standby `toml:"standby" json:"standby"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -338,11 +344,13 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		ZoneLabel:             c.Labels["zone"],
+		EnableAsyncBatchGet:   c.Performance.EnableAsyncBatchGet,
 	}
 }
 
 func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
-	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
+	dirName := base64.URLEncoding.EncodeToString(fmt.Appendf(nil, "%v:%v/%v:%v", host, port, statusHost, statusPort))
 	osUID := ""
 	currentUser, err := user.Current()
 	if err == nil {
@@ -593,6 +601,8 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// SEMConfig represents the path to the SEM configuration file.
+	SEMConfig string `toml:"sem-config" json:"sem-config"`
 	// Allow automatic TLS certificate generation
 	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
@@ -727,6 +737,11 @@ type Performance struct {
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 
+	// SkipInitStats determines whether to skip initializing statistics when TiDB starts.
+	// It is primarily intended for internal use cases in TiDB Cloud and may cause issues if enabled on a standard cluster.
+	// See: https://github.com/pingcap/tidb/issues/63103
+	SkipInitStats bool `toml:"skip-init-stats" json:"skip-init-stats"`
+
 	// LiteInitStats indicates whether to use the lite version of stats.
 	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
 	// 2. Column/index stats are loaded. (only histogram)
@@ -739,11 +754,15 @@ type Performance struct {
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
 
-	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	// Deprecated: This setting has no effect, as stats are now always initialized concurrently.
+	// ConcurrentlyInitStats indicates whether to use concurrency for initializing stats.
 	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 
 	// Deprecated: this config will not have any effect
 	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
+
+	// EnableAsyncBatchGet indicates whether to use async API when sending batch-get requests.
+	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -832,11 +851,15 @@ func (config *TrxSummary) Valid() error {
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
+	pessimisticAutoCommit := false
+	if kerneltype.IsNextGen() {
+		pessimisticAutoCommit = true
+	}
 	return PessimisticTxn{
 		MaxRetryCount:                     256,
 		DeadlockHistoryCapacity:           10,
 		DeadlockHistoryCollectRetryable:   false,
-		PessimisticAutoCommit:             *NewAtomicBool(false),
+		PessimisticAutoCommit:             *NewAtomicBool(pessimisticAutoCommit),
 		ConstraintCheckInPlacePessimistic: true,
 	}
 }
@@ -875,6 +898,20 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+}
+
+// Standby is the config for standby mode.
+type Standby struct {
+	// StandByMode indicates whether to enable the standby mode.
+	StandByMode bool `toml:"standby-mode" json:"standby-mode"`
+	// MaxIdleSeconds specifies the maximum idle time in seconds before tidb exits.
+	MaxIdleSeconds uint `toml:"max-idle-seconds" json:"max-idle-seconds"`
+	// ActivationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
+	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
+	// EnableZeroBackend is used to control the behavior of standby idle watcher.
+	// When it is enabled, the idle watcher will not wait for session migration
+	// and will not consider client interactive connections.
+	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -997,14 +1034,17 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          true,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
+		SkipInitStats:                     false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
-		ConcurrentlyInitStats:             true,
+		// Deprecated: Stats are always initialized concurrently.
+		ConcurrentlyInitStats: true,
+		EnableAsyncBatchGet:   true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
-		Fallbackable:  false,
+		Fallbackable:  true,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,
@@ -1037,6 +1077,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		SEMConfig:                   "",
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 		AuthTokenJWKS:               "",
@@ -1295,6 +1336,9 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
+		return errors.Annotate(err, "invalid keyspace name")
+	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
 		// if two options conflict, we will use the value of EnableErrorStack
@@ -1329,6 +1373,11 @@ func (c *Config) Valid() error {
 
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
+		return err
+	}
+
+	// pd-client
+	if err := c.PDClient.Valid(); err != nil {
 		return err
 	}
 
@@ -1455,6 +1504,14 @@ func init() {
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 	conf := defaultConf
+	if intest.InTest && kerneltype.IsNextGen() {
+		// In test mode, without reading a config file, we still assume the `GetGlobalConfig()` returns
+		// a valid config file. However, the "valid" nextgen config file should always have a keyspace name.
+		// So we set the keyspace name to "SYSTEM" here for test.
+		//
+		// Didn't use `keyspace.SYSTEM` to avoid cyclic dependency.
+		conf.KeyspaceName = "SYSTEM"
+	}
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true

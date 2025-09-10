@@ -24,12 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/charmap"
-	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 var (
@@ -54,7 +54,7 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 		// perform `chardet` first.
 		fallthrough
 	case "gb18030":
-		decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data)
+		decoded, err := charset.EncodingGB18030Impl.Transform(nil, data, charset.OpDecodeReplace)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -134,7 +134,7 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage,
 
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
-		log.FromContext(ctx).Error("cannot decode input file, please convert to target encoding manually",
+		logutil.Logger(ctx).Error("cannot decode input file, please convert to target encoding manually",
 			zap.String("encoding", characterSet),
 			zap.String("Path", sqlFile.FileMeta.Path),
 		)

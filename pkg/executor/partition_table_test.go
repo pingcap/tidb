@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -65,14 +66,14 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 
 	vals := make([]string, 0, 100)
 	// insert data into range partition table and hash partition table
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		vals = append(vals, fmt.Sprintf("(%v)", i+1))
 	}
 	tk.MustExec("insert into trange1 values " + strings.Join(vals, ","))
 	tk.MustExec("insert into trange2 values " + strings.Join(vals, ","))
 
 	// test PointGet
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		// explain select a from t where a = {x}; // x >= 1 and x <= 100 Check if PointGet is used
 		// select a from t where a={x}; // the result is {x}
 		x := rand.Intn(100) + 1
@@ -153,14 +154,14 @@ func TestPartitionInfoDisable(t *testing.T) {
 
 	tbInfo := tbl.Meta()
 	// Mock for a case that the tableInfo.Partition is not nil, but tableInfo.Partition.Enable is false.
-	// That may happen when upgrading from a old version TiDB.
+	// That may happen when upgrading from an old version TiDB.
 	tbInfo.Partition.Enable = false
 	tbInfo.Partition.Num = 0
 
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustQuery("explain select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows("Batch_Point_Get_5 2.00 root table:t_info_null, index:idx_media_id(media, date, app) keep order:false, desc:false"))
-	tk.MustQuery("explain select * from t_info_null").Check(testkit.Rows("TableReader_5 10000.00 root  data:TableFullScan_4",
-		"└─TableFullScan_4 10000.00 cop[tikv] table:t_info_null keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows("Batch_Point_Get_6 2.00 root table:t_info_null, index:idx_media_id(media, date, app) keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t_info_null").Check(testkit.Rows("TableReader_6 10000.00 root  data:TableFullScan_5",
+		"└─TableFullScan_5 10000.00 cop[tikv] table:t_info_null keep order:false, stats:pseudo"))
 	// No panic.
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
 }
@@ -212,7 +213,7 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	listVals := make([]int, 0, 1000)
 
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		listVals = append(listVals, i)
 	}
 	rand.Shuffle(len(listVals), func(i, j int) {
@@ -258,13 +259,13 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	// generate some random data to be inserted
 	vals := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(550), rand.Intn(1000)))
 	}
 
 	dedupValsA := make([]string, 0, 1000)
 	dedupMapA := make(map[int]struct{}, 1000)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		valA := rand.Intn(550)
 		if _, ok := dedupMapA[valA]; ok {
 			continue
@@ -275,7 +276,7 @@ func TestOrderByAndLimit(t *testing.T) {
 
 	dedupValsAB := make([]string, 0, 1000)
 	dedupMapAB := make(map[string]struct{}, 1000)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		val := fmt.Sprintf("(%v, %v)", rand.Intn(550), rand.Intn(1000))
 		if _, ok := dedupMapAB[val]; ok {
 			continue
@@ -331,7 +332,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
 
 	// test indexLookUp
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(549)
@@ -343,7 +344,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexLookUp with order property pushed down.
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		if i%2 == 0 {
 			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
 		} else {
@@ -381,7 +382,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexLookUp with order property pushed down.
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		if i%2 == 0 {
 			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
 		} else {
@@ -419,7 +420,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	tk.MustExec("set tidb_partition_prune_mode = default")
 
 	// test tableReader
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		// explain select * from t where a > {y}  ignore index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} ignore index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(549)
@@ -431,7 +432,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test tableReader with order property pushed down.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		// explain select * from t where a > {y}  ignore index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} ignore index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(549)
@@ -547,7 +548,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexReader
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		// explain select a from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select a from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(549)
@@ -559,7 +560,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexReader with order property pushed down.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		// explain select a from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select a from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(549)
@@ -579,7 +580,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexReader use idx_ab(a, b) with a = {x} order by b limit {y}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		x := rand.Intn(549)
 		y := rand.Intn(500) + 1
 		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_ab) where a = %v order by b limit %v;", x, y)
@@ -602,7 +603,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	}
 
 	// test indexMerge
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		// explain select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a, b limit {x}; // check if IndexMerge is used
 		// select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a, b limit {x};  // can return the correct value
 		y := rand.Intn(500) + 1
@@ -641,14 +642,14 @@ func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
 
 	vals := make([]string, 0, 100)
 	// insert data into range partition table and hash partition table
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		vals = append(vals, fmt.Sprintf("(%v)", i+1))
 	}
 	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
 
 	// test PointGet
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		// explain select a from t where a = {x}; // x >= 1 and x <= 100 Check if PointGet is used
 		// select a from t where a={x}; // the result is {x}
 		x := rand.Intn(100) + 1
@@ -664,11 +665,11 @@ func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
 	tk.MustQuery(queryHash).Check(testkit.Rows())
 
 	// test BatchGet
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		// explain select a from t where a in ({x1}, {x2}, ... {x10}); // BatchGet is used
 		// select a from t where where a in ({x1}, {x2}, ... {x10});
 		points := make([]string, 0, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			x := rand.Intn(100) + 1
 			points = append(points, fmt.Sprintf("%v", x))
 		}
@@ -700,7 +701,7 @@ func TestView(t *testing.T) {
 
 	// insert the same data into thash and t1
 	vals := make([]string, 0, 3000)
-	for i := 0; i < 3000; i++ {
+	for range 3000 {
 		vals = append(vals, fmt.Sprintf(`(%v, %v)`, rand.Intn(10000), rand.Intn(10000)))
 	}
 	tk.MustExec(fmt.Sprintf(`insert into thash values %v`, strings.Join(vals, ", ")))
@@ -708,7 +709,7 @@ func TestView(t *testing.T) {
 
 	// insert the same data into trange and t2
 	vals = vals[:0]
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf(`("%v", "%v")`, rand.Intn(1000), rand.Intn(1000)))
 	}
 	tk.MustExec(fmt.Sprintf(`insert into trange values %v`, strings.Join(vals, ", ")))
@@ -719,7 +720,7 @@ func TestView(t *testing.T) {
 	tk.MustExec(`create definer='root'@'localhost' view v1 as select a*2 as a, a+b as b from t1`)
 	tk.MustExec(`create definer='root'@'localhost' view vrange as select concat(a, b) as a, a+b as b from trange`)
 	tk.MustExec(`create definer='root'@'localhost' view v2 as select concat(a, b) as a, a+b as b from t2`)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		xhash := rand.Intn(10000)
 		tk.MustQuery(fmt.Sprintf(`select * from vhash where a>=%v`, xhash)).Sort().Check(
 			tk.MustQuery(fmt.Sprintf(`select * from v1 where a>=%v`, xhash)).Sort().Rows())
@@ -740,7 +741,7 @@ func TestView(t *testing.T) {
 	// test views on both tables
 	tk.MustExec(`create definer='root'@'localhost' view vboth as select thash.a+trange.a as a, thash.b+trange.b as b from thash, trange where thash.a=trange.a`)
 	tk.MustExec(`create definer='root'@'localhost' view vt as select t1.a+t2.a as a, t1.b+t2.b as b from t1, t2 where t1.a=t2.a`)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		x := rand.Intn(10000)
 		tk.MustQuery(fmt.Sprintf(`select * from vboth where a>=%v`, x)).Sort().Check(
 			tk.MustQuery(fmt.Sprintf(`select * from vt where a>=%v`, x)).Sort().Rows())
@@ -752,8 +753,7 @@ func TestView(t *testing.T) {
 }
 
 func TestDirectReadingwithIndexJoin(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -776,7 +776,7 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 
 	// generate some random data to be inserted
 	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", rand.Intn(4000), rand.Intn(4000), rand.Intn(4000)))
 	}
 	tk.MustExec("insert ignore into trange values " + strings.Join(vals, ","))
@@ -866,8 +866,7 @@ func TestDirectReadingwithIndexJoin(t *testing.T) {
 }
 
 func TestDynamicPruningUnderIndexJoin(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -882,7 +881,7 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 	tk.MustExec(`create table touter (a int, b int, c int)`)
 
 	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", i, rand.Intn(10000), rand.Intn(10000)))
 	}
 	tk.MustExec(`insert into tnormal values ` + strings.Join(vals, ", "))
@@ -959,7 +958,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 
 	vals := make([]string, 0, 100)
 	// insert data into range partition table and hash partition table
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		vals = append(vals, fmt.Sprintf("(%v)", i+1))
 	}
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
@@ -968,11 +967,11 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	tk.MustExec("insert into tregular2 values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
 
 	// test BatchGet
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		// explain select a from t where a in ({x1}, {x2}, ... {x10}); // BatchGet is used
 		// select a from t where where a in ({x1}, {x2}, ... {x10});
 		points := make([]string, 0, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			x := rand.Intn(100) + 1
 			points = append(points, fmt.Sprintf("%v", x))
 		}
@@ -987,7 +986,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 		tk.MustQuery(queryRange).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		points = make([]string, 0, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			x := rand.Intn(12) + 1
 			points = append(points, fmt.Sprintf("%v", x))
 		}
@@ -1008,7 +1007,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	tk.MustExec("create table tregular3(a int unsigned, unique key(a));")
 	vals = make([]string, 0, 100)
 	// insert data into range partition table and hash partition table
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		vals = append(vals, fmt.Sprintf("(%v)", i+1))
 	}
 	tk.MustExec("insert into trange3 values " + strings.Join(vals, ","))
@@ -1017,7 +1016,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	// explain select a from t where a in ({x1}, {x2}, ... {x10}); // BatchGet is used
 	// select a from t where where a in ({x1}, {x2}, ... {x10});
 	points := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		x := rand.Intn(100) + 1
 		points = append(points, fmt.Sprintf("%v", x))
 	}
@@ -1028,8 +1027,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 }
 
 func TestPartitionTableWithDifferentJoin(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1051,14 +1049,14 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	tk.MustExec("create table tregular2(a int, b int, key(a))")
 
 	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1000), rand.Intn(1000)))
 	}
 	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tregular1 values " + strings.Join(vals, ","))
 
 	vals = make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1000), rand.Intn(1000)))
 	}
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
@@ -1161,14 +1159,14 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	tk.MustExec("create table tregular4(a int, b int, index idx(a))")
 
 	vals = make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1000), rand.Intn(1000)))
 	}
 	tk.MustExec("insert into thash2 values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tregular3 values " + strings.Join(vals, ","))
 
 	vals = make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1000), rand.Intn(1000)))
 	}
 	tk.MustExec("insert into trange2 values " + strings.Join(vals, ","))
@@ -1263,8 +1261,7 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 }
 
 func TestMPPQueryExplainInfo(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1313,7 +1310,7 @@ func TestDML(t *testing.T) {
 		partition p4 values less than MAXVALUE)`)
 
 	vals := make([]string, 0, 50)
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec(`insert into tinner values ` + strings.Join(vals, ", "))
@@ -1321,7 +1318,7 @@ func TestDML(t *testing.T) {
 	tk.MustExec(`insert into trange values ` + strings.Join(vals, ", "))
 
 	// delete, insert, replace, update
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		var pattern string
 		switch rand.Intn(4) {
 		case 0: // delete
@@ -1372,7 +1369,7 @@ func TestUnion(t *testing.T) {
 		partition p3 values less than (40000))`)
 
 	vals := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec(`insert into t values ` + strings.Join(vals, ", "))
@@ -1387,7 +1384,7 @@ func TestUnion(t *testing.T) {
 		return l, r
 	}
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		a1l, a1r := randRange()
 		a2l, a2r := randRange()
 		b1l, b1r := randRange()
@@ -1423,12 +1420,12 @@ func TestSubqueries(t *testing.T) {
 		partition p3 values less than(40000))`)
 
 	outerVals := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		outerVals = append(outerVals, fmt.Sprintf(`(%v, %v)`, rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec(`insert into touter values ` + strings.Join(outerVals, ", "))
 	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf(`(%v, %v, %v)`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec(`insert into tinner values ` + strings.Join(vals, ", "))
@@ -1436,7 +1433,7 @@ func TestSubqueries(t *testing.T) {
 	tk.MustExec(`insert into trange values ` + strings.Join(vals, ", "))
 
 	// in
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		for _, op := range []string{"in", "not in"} {
 			x := rand.Intn(40000)
 			var r [][]any
@@ -1452,7 +1449,7 @@ func TestSubqueries(t *testing.T) {
 	}
 
 	// exist
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		for _, op := range []string{"exists", "not exists"} {
 			x := rand.Intn(40000)
 			var r [][]any
@@ -1469,8 +1466,7 @@ func TestSubqueries(t *testing.T) {
 }
 
 func TestSplitRegion(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1487,7 +1483,7 @@ func TestSplitRegion(t *testing.T) {
 		partition p2 values less than (30000),
 		partition p3 values less than (40000))`)
 	vals := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec(`insert into tnormal values ` + strings.Join(vals, ", "))
@@ -1507,14 +1503,13 @@ func TestSplitRegion(t *testing.T) {
 }
 
 func TestParallelApply(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create database test_parallel_apply")
 	tk.MustExec("use test_parallel_apply")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -1530,13 +1525,13 @@ func TestParallelApply(t *testing.T) {
 			  partition p3 values less than(40000))`)
 
 	vouter := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		vouter = append(vouter, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec("insert into touter values " + strings.Join(vouter, ", "))
 
 	vals := make([]string, 0, 2000)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec("insert into tinner values " + strings.Join(vals, ", "))
@@ -1633,7 +1628,7 @@ func TestParallelApply(t *testing.T) {
 	ops := []string{"!=", ">", "<", ">=", "<="}
 	aggFuncs := []string{"sum", "count", "max", "min"}
 	tbls := []string{"tinner", "thash", "trange"}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		var r [][]any
 		op := ops[rand.Intn(len(ops))]
 		agg := aggFuncs[rand.Intn(len(aggFuncs))]
@@ -1667,7 +1662,7 @@ func TestDirectReadingWithUnionScan(t *testing.T) {
 	tk.MustExec(`create table tnormal(a int, b int, index idx_a(a))`)
 
 	vals := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(50), rand.Intn(50)))
 	}
 	for _, tb := range []string{`trange`, `tnormal`, `thash`} {
@@ -1684,7 +1679,7 @@ func TestDirectReadingWithUnionScan(t *testing.T) {
 	}
 
 	tk.MustExec(`begin`)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		if i == 0 || rand.Intn(2) == 0 { // insert some inflight rows
 			val := fmt.Sprintf("(%v, %v)", rand.Intn(50), rand.Intn(50))
 			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
@@ -1762,7 +1757,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, valStr))
 	}
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		scanCond := fmt.Sprintf("a %v %v", []string{">", "<"}[rand.Intn(2)], rand.Intn(400000))
 		pointCond := fmt.Sprintf("a = %v", rand.Intn(400000))
 		batchCond := fmt.Sprintf("a in (%v, %v, %v)", rand.Intn(400000), rand.Intn(400000), rand.Intn(400000))
@@ -1876,7 +1871,7 @@ func TestDirectReadingWithAgg(t *testing.T) {
 
 	// generate some random data to be inserted
 	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000)))
 	}
 
@@ -1885,7 +1880,7 @@ func TestDirectReadingWithAgg(t *testing.T) {
 	tk.MustExec("insert into tregular1 values " + strings.Join(vals, ","))
 
 	vals = make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(12)+1, rand.Intn(20)))
 	}
 
@@ -1893,7 +1888,7 @@ func TestDirectReadingWithAgg(t *testing.T) {
 	tk.MustExec("insert into tregular2 values " + strings.Join(vals, ","))
 
 	// test range partition
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
@@ -1925,7 +1920,7 @@ func TestDirectReadingWithAgg(t *testing.T) {
 	}
 
 	// test hash partition
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
@@ -1957,7 +1952,7 @@ func TestDirectReadingWithAgg(t *testing.T) {
 	}
 
 	// test list partition
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
@@ -2019,7 +2014,7 @@ func TestIdexMerge(t *testing.T) {
 
 	// generate some random data to be inserted
 	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000)))
 	}
 
@@ -2028,7 +2023,7 @@ func TestIdexMerge(t *testing.T) {
 	tk.MustExec("insert ignore into tregular1 values " + strings.Join(vals, ","))
 
 	vals = make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(12)+1, rand.Intn(20)))
 	}
 
@@ -2036,7 +2031,7 @@ func TestIdexMerge(t *testing.T) {
 	tk.MustExec("insert ignore into tregular2 values " + strings.Join(vals, ","))
 
 	// test range partition
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		x1 := rand.Intn(1099)
 		x2 := rand.Intn(1099)
 
@@ -2052,7 +2047,7 @@ func TestIdexMerge(t *testing.T) {
 	}
 
 	// test hash partition
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		x1 := rand.Intn(1099)
 		x2 := rand.Intn(1099)
 
@@ -2068,7 +2063,7 @@ func TestIdexMerge(t *testing.T) {
 	}
 
 	// test list partition
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		x1 := rand.Intn(12) + 1
 		x2 := rand.Intn(12) + 1
 		queryPartition1 := fmt.Sprintf("select /*+ use_index_merge(tlist) */ * from tlist where a > %v or b < %v;", x1, x2)

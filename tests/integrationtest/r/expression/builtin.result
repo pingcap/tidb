@@ -1616,9 +1616,21 @@ INSERT INTO t SELECT "中文", "abc";
 SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;
 LPAD(a, 11, "a")	LPAD(b, 2, "xx")
 a中文    	ab
+SELECT LPAD("abc", 5, "");
+LPAD("abc", 5, "")
+
+SELECT LPAD(a, 11, ""), LPAD(b, 5, "") FROM t;
+LPAD(a, 11, "")	LPAD(b, 5, "")
+	
 SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;
 RPAD(a, 11, "a")	RPAD(b, 2, "xx")
 中文    a	ab
+SELECT RPAD("abc", 5, "");
+RPAD("abc", 5, "")
+
+SELECT RPAD(a, 11, ""), RPAD(b, 5, "") FROM t;
+RPAD(a, 11, "")	RPAD(b, 5, "")
+	
 drop table if exists t;
 create table t(a int, b double, c datetime, d time, e char(20), f bit(10));
 insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101);
@@ -1995,6 +2007,21 @@ oct("aaaa")	oct("-1.9")	oct("-9999999999999999999999999")	oct("99999999999999999
 select oct(-1.9), oct(1.9), oct(-1), oct(1), oct(-9999999999999999999999999), oct(9999999999999999999999999);
 oct(-1.9)	oct(1.9)	oct(-1)	oct(1)	oct(-9999999999999999999999999)	oct(9999999999999999999999999)
 1777777777777777777777	1	1777777777777777777777	1	1777777777777777777777	1777777777777777777777
+select oct(""), oct(" "), oct(NULL);
+oct("")	oct(" ")	oct(NULL)
+NULL	0	NULL
+drop table if exists t_oct;
+CREATE TABLE t_oct (a VARCHAR(20));
+INSERT INTO t_oct VALUES (''), (' '), (NULL), ('123'), ('abc'), ('0'), ('255');
+SELECT oct(CONCAT(a, '')) FROM t_oct;
+oct(CONCAT(a, ''))
+NULL
+0
+NULL
+173
+0
+0
+377
 select find_in_set("", ""), find_in_set("", ","), find_in_set("中文", "字符串,中文"), find_in_set("b,", "a,b,c,d");
 find_in_set("", "")	find_in_set("", ",")	find_in_set("中文", "字符串,中文")	find_in_set("b,", "a,b,c,d")
 0	1	2	0

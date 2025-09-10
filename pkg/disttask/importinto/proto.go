@@ -19,51 +19,59 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"go.uber.org/zap"
 )
 
 // TaskMeta is the task of IMPORT INTO.
 // All the field should be serializable.
 type TaskMeta struct {
 	// IMPORT INTO job id, see mysql.tidb_import_jobs.
-	JobID  int64
-	Plan   importer.Plan
-	Stmt   string
-	Result Result
+	JobID int64
+	Plan  importer.Plan
+	Stmt  string
+
+	// Summary is the summary of the whole import task.
+	Summary importer.Summary
+
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
 	// running on the instance that initiate the IMPORT INTO.
-	EligibleInstances []*infosync.ServerInfo
+	EligibleInstances []*serverinfo.ServerInfo
 	// the file chunks to import, when import from server file, we need to pass those
 	// files to the framework scheduler which might run on another instance.
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
 	// so need to split them into engines before passing to scheduler.
-	ChunkMap map[int32][]Chunk
+	ChunkMap map[int32][]importer.Chunk
 }
 
 // ImportStepMeta is the meta of import step.
 // Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
+	external.BaseExternalMeta
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
-	Chunks   []Chunk
+	Chunks   []importer.Chunk   `external:"true"`
 	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
-	Result   Result
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
 	// the max id is same among all allocator types for now, since we're using same base, see
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
 
-	SortedDataMeta *external.SortedKVMeta
+	SortedDataMeta *external.SortedKVMeta `external:"true"`
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedKVMeta
+	SortedIndexMetas map[int64]*external.SortedKVMeta `external:"true"`
+}
+
+// Marshal marshals the import step meta to JSON.
+func (m *ImportStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 const (
@@ -74,24 +82,34 @@ const (
 
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
+	external.BaseExternalMeta
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
 	KVGroup               string   `json:"kv-group"`
-	DataFiles             []string `json:"data-files"`
-	external.SortedKVMeta `json:"sorted-kv-meta"`
+	DataFiles             []string `json:"data-files" external:"true"`
+	external.SortedKVMeta `external:"true"`
+}
+
+// Marshal marshal the merge sort step meta to JSON.
+func (m *MergeSortStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
+	external.BaseExternalMeta
 	KVGroup               string `json:"kv-group"`
-	external.SortedKVMeta `json:"sorted-kv-meta"`
-	DataFiles             []string `json:"data-files"`
-	StatFiles             []string `json:"stat-files"`
-	RangeJobKeys          [][]byte `json:"range-job-keys"`
-	RangeSplitKeys        [][]byte `json:"range-split-keys"`
+	external.SortedKVMeta `json:"sorted-kv-meta" external:"true"`
+	DataFiles             []string `json:"data-files" external:"true"`
+	StatFiles             []string `json:"stat-files" external:"true"`
+	RangeJobKeys          [][]byte `json:"range-job-keys" external:"true"`
+	RangeSplitKeys        [][]byte `json:"range-split-keys" external:"true"`
 	TS                    uint64   `json:"ts"`
+}
 
-	Result Result
+// Marshal marshals the write ingest step meta to JSON.
+func (m *WriteIngestStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // PostProcessStepMeta is the meta of post process step.
@@ -142,9 +160,10 @@ func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterS
 // TaskExecutor will split the subtask into minimal tasks(Chunks -> Chunk)
 type importStepMinimalTask struct {
 	Plan       importer.Plan
-	Chunk      Chunk
+	Chunk      importer.Chunk
 	SharedVars *SharedVars
 	panicked   *atomic.Bool
+	logger     *zap.Logger
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
@@ -158,28 +177,9 @@ func (t *importStepMinimalTask) String() string {
 	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)
 }
 
-// Chunk records the chunk information.
-type Chunk struct {
-	Path         string
-	FileSize     int64
-	Offset       int64
-	EndOffset    int64
-	PrevRowIDMax int64
-	RowIDMax     int64
-	Type         mydump.SourceType
-	Compression  mydump.Compression
-	Timestamp    int64
-}
-
 // Checksum records the checksum information.
 type Checksum struct {
 	Sum  uint64
 	KVs  uint64
 	Size uint64
-}
-
-// Result records the metrics information.
-// This portion of the code may be implemented uniformly in the framework in the future.
-type Result struct {
-	LoadedRowCnt uint64
 }

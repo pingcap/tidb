@@ -1083,6 +1083,26 @@ func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 	return getOrDecodeArgs[*LockTablesArgs](&LockTablesArgs{}, job)
 }
 
+// AlterTableModeArgs is the argument for AlterTableMode.
+type AlterTableModeArgs struct {
+	TableMode TableMode `json:"table_mode,omitempty"`
+	SchemaID  int64     `json:"schema_id,omitempty"`
+	TableID   int64     `json:"table_id,omitempty"`
+}
+
+func (a *AlterTableModeArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *AlterTableModeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetAlterTableModeArgs get the AlterTableModeArgs argument.
+func GetAlterTableModeArgs(job *Job) (*AlterTableModeArgs, error) {
+	return getOrDecodeArgs[*AlterTableModeArgs](&AlterTableModeArgs{}, job)
+}
+
 // RepairTableArgs is the argument for repair table
 type RepairTableArgs struct {
 	TableInfo *TableInfo `json:"table_info"`
@@ -1313,7 +1333,7 @@ const (
 //	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
 //	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
 //	Drop index: IndexName, IfExist, IndexID
-//	Rollback add index: IndexName, IfExist, IsVector
+//	Rollback add index: IndexName, IfExist, IsColumnar
 //	Rename index: IndexName
 type IndexArg struct {
 	// Global is never used, we only use Global in IndexOption. Can be deprecated later.
@@ -1326,7 +1346,15 @@ type IndexArg struct {
 
 	// For vector index
 	FuncExpr string `json:"func_expr,omitempty"`
-	IsVector bool   `json:"is_vector,omitempty"`
+	// IsColumnar is used to distinguish columnar index and normal index.
+	// It used to be `IsVector`, after adding columnar index, we extend it to `IsColumnar`.
+	// But we keep the json field name as `is_vector` for compatibility.
+	IsColumnar bool `json:"is_vector,omitempty"`
+
+	// ColumnarIndexType is used to distinguish different columnar index types.
+	// Note: 1. when you want to read it, always calling `GetColumnarIndexType`` rather than using it directly.
+	//       2. when you set it, make sure IsColumnar = ColumnarIndexType != ColumnarIndexTypeNA.
+	ColumnarIndexType ColumnarIndexType `json:"columnar_index_type,omitempty"`
 
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`
@@ -1339,6 +1367,21 @@ type IndexArg struct {
 
 	// Only used for job args v2.
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+}
+
+// GetColumnarIndexType gets the real columnar index type in a backward compatibility way.
+func (a *IndexArg) GetColumnarIndexType() ColumnarIndexType {
+	// For compatibility, if columnar index type is not set, and it's a columnar index, it's a vector index.
+
+	// If the columnar index type is NA and it's not a columnar index, it's a general index.
+	if a.ColumnarIndexType == ColumnarIndexTypeNA && !a.IsColumnar {
+		return ColumnarIndexTypeNA
+	}
+	// If the columnar index type is NA and it's a columnar index, it's a vector index.
+	if a.ColumnarIndexType == ColumnarIndexTypeNA && a.IsColumnar {
+		return ColumnarIndexTypeVector
+	}
+	return a.ColumnarIndexType
 }
 
 // IndexArgSplitOpt is a field of IndexArg used by index presplit.
@@ -1382,10 +1425,10 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		return []any{indexNames, ifExists}
 	}
 
-	// Add vector index
-	if job.Type == ActionAddVectorIndex {
+	// Add columnar index
+	if job.Type == ActionAddColumnarIndex {
 		arg := a.IndexArgs[0]
-		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
+		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr, arg.ColumnarIndexType}
 	}
 
 	// Add primary key
@@ -1433,8 +1476,8 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeRenameIndexV1(job)
 	case ActionAddIndex:
 		err = a.decodeAddIndexV1(job)
-	case ActionAddVectorIndex:
-		err = a.decodeAddVectorIndexV1(job)
+	case ActionAddColumnarIndex:
+		err = a.decodeAddColumnarIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
 	default:
@@ -1517,16 +1560,17 @@ func (a *ModifyIndexArgs) decodeAddPrimaryKeyV1(job *Job) error {
 	return nil
 }
 
-func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
+func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 	var (
 		indexName              ast.CIStr
 		indexPartSpecification *ast.IndexPartSpecification
 		indexOption            *ast.IndexOption
 		funcExpr               string
+		columnarIndexType      ColumnarIndexType
 	)
 
 	if err := job.decodeArgs(
-		&indexName, &indexPartSpecification, &indexOption, &funcExpr); err != nil {
+		&indexName, &indexPartSpecification, &indexOption, &funcExpr, &columnarIndexType); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1535,7 +1579,8 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
 		IndexOption:             indexOption,
 		FuncExpr:                funcExpr,
-		IsVector:                true,
+		IsColumnar:              true,
+		ColumnarIndexType:       columnarIndexType,
 	}}
 	return nil
 }
@@ -1543,7 +1588,7 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	// Add index
 	if a.OpType == OpAddIndex {
-		if job.Type == ActionAddVectorIndex {
+		if job.Type == ActionAddColumnarIndex {
 			return []any{a.IndexArgs[0].IndexID, a.IndexArgs[0].IfExist, a.PartitionIDs, a.IndexArgs[0].IsGlobal}
 		}
 
@@ -1573,7 +1618,7 @@ func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	}
 
 	idxArg := a.IndexArgs[0]
-	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsVector}
+	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsColumnar}
 }
 
 // GetRenameIndexes get name of renamed index.
@@ -1617,15 +1662,15 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
-		isVector := false
+		isColumnar := false
 		var err error
 
 		if job.IsRollingback() {
 			// Rollback add indexes
-			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isColumnar)
 		} else {
 			// Finish drop index
-			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isColumnar)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1637,9 +1682,9 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		a.IndexArgs = make([]*IndexArg, len(indexNames))
 		for i, indexName := range indexNames {
 			a.IndexArgs[i] = &IndexArg{
-				IndexName: indexName,
-				IfExist:   ifExists[i],
-				IsVector:  isVector,
+				IndexName:  indexName,
+				IfExist:    ifExists[i],
+				IsColumnar: isColumnar,
 			}
 		}
 		// For drop index, store index id in IndexArgs, no impact on other situations.
@@ -1676,6 +1721,7 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 // ModifyColumnArgs is the argument for modify column.
 type ModifyColumnArgs struct {
 	Column           *ColumnInfo         `json:"column,omitempty"`
+	OldColumnID      int64               `json:"old_column_id,omitempty"`
 	OldColumnName    ast.CIStr           `json:"old_column_name,omitempty"`
 	Position         *ast.ColumnPosition `json:"position,omitempty"`
 	ModifyColumnType byte                `json:"modify_column_type,omitempty"`
@@ -1703,14 +1749,14 @@ func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
 	}
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
-		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,
+		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs, a.OldColumnID,
 	}
 }
 
 func (a *ModifyColumnArgs) decodeV1(job *Job) error {
 	return job.decodeArgs(
 		&a.Column, &a.OldColumnName, &a.Position, &a.ModifyColumnType,
-		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs,
+		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs, &a.OldColumnID,
 	)
 }
 
@@ -1739,4 +1785,27 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
+}
+
+// RefreshMetaArgs is the argument for RefreshMeta.
+// InvolvedDB/InvolvedTable used for setting InvolvingSchemaInfo to
+// indicates the schema info involved in the DDL job.
+type RefreshMetaArgs struct {
+	SchemaID      int64  `json:"schema_id,omitempty"`
+	TableID       int64  `json:"table_id,omitempty"`
+	InvolvedDB    string `json:"involved_db,omitempty"`
+	InvolvedTable string `json:"involved_table,omitempty"`
+}
+
+func (a *RefreshMetaArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *RefreshMetaArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetRefreshMetaArgs get the refresh meta argument.
+func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
+	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
 }

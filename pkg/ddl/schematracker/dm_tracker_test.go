@@ -64,13 +64,13 @@ func TestNoNumLimit(t *testing.T) {
 	execCreate(t, tracker, sql)
 
 	sql = "create table test.t_too_many_indexes ("
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i != 0 {
 			sql += ","
 		}
 		sql += fmt.Sprintf("c%d int", i)
 	}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sql += ","
 		sql += fmt.Sprintf("key k%d(c%d)", i, i)
 	}
@@ -162,14 +162,6 @@ func TestDropColumn(t *testing.T) {
 	tblInfo = mustTableByName(t, tracker, "test", "t")
 	require.Equal(t, 1, len(tblInfo.Indices))
 	require.Equal(t, 1, len(tblInfo.Columns))
-}
-
-func TestFullTextIndex(t *testing.T) {
-	sql := "create table test.t (a text, fulltext key (a))"
-
-	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB(nil)
-	execCreate(t, tracker, sql)
 }
 
 func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected string) {

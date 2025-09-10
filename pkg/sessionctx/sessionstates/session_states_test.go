@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,7 +73,7 @@ func TestUserVars(t *testing.T) {
 		tk2 := testkit.NewTestKit(t, store)
 		namesNum := strings.Count(tt, "%s")
 		names := make([]any, 0, namesNum)
-		for i := 0; i < namesNum; i++ {
+		for i := range namesNum {
 			names = append(names, fmt.Sprintf("a%d", i))
 		}
 		var sql string
@@ -93,6 +93,11 @@ func TestUserVars(t *testing.T) {
 }
 
 func TestSystemVars(t *testing.T) {
+	testSystemVars(t, sem.V1)
+	testSystemVars(t, sem.V2)
+}
+
+func testSystemVars(t *testing.T, semVer string) {
 	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
@@ -198,10 +203,7 @@ func TestSystemVars(t *testing.T) {
 		},
 	}
 
-	if !sem.IsEnabled() {
-		sem.Enable()
-		defer sem.Disable()
-	}
+	defer sem.SwitchToSEMForTest(t, semVer)()
 	for _, tt := range tests {
 		tk1 := testkit.NewTestKit(t, store)
 		for _, stmt := range tt.stmts {
@@ -241,6 +243,11 @@ func TestSystemVars(t *testing.T) {
 }
 
 func TestInvisibleVars(t *testing.T) {
+	testInvisibleVars(t, sem.V1)
+	testInvisibleVars(t, sem.V2)
+}
+
+func testInvisibleVars(t *testing.T, semVer string) {
 	tests := []struct {
 		hasPriv       bool
 		stmt          string
@@ -297,10 +304,7 @@ func TestInvisibleVars(t *testing.T) {
 
 	sessionstates.SetupSigningCertForTest(t)
 	store := testkit.CreateMockStore(t)
-	if !sem.IsEnabled() {
-		sem.Enable()
-		defer sem.Disable()
-	}
+	defer sem.SwitchToSEMForTest(t, semVer)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER u1, u2")
 	tk.MustExec("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* to u1")
@@ -595,8 +599,8 @@ func TestSessionCtx(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_5 10000.00 root  data:TableFullScan_4`,
-					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+					`TableReader_6 10000.00 root  data:TableFullScan_5`,
+					`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -611,8 +615,8 @@ func TestSessionCtx(t *testing.T) {
 					"  `id` int(11) DEFAULT NULL,\n" +
 					"  KEY `hypo_id` (`id`) /* HYPO INDEX */\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
-					`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`IndexReader_8 10000.00 root  index:IndexFullScan_7`,
+					`└─IndexFullScan_7 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -627,8 +631,8 @@ func TestSessionCtx(t *testing.T) {
 				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 					"  `id` int(11) DEFAULT NULL\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`TableReader_5 10000.00 root  data:TableFullScan_4`,
-					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`TableReader_6 10000.00 root  data:TableFullScan_5`,
+					`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -1691,7 +1695,7 @@ func getExecuteBytes(stmtID uint32, useCursor bool, newParam bool, params ...par
 	if newParam {
 		buf[pos] = 1
 		pos++
-		for i := 0; i < len(params); i++ {
+		for range params {
 			buf[pos] = mysql.TypeLong
 			pos++
 			buf[pos] = 0

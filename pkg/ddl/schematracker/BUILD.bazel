@@ -34,8 +34,10 @@ go_library(
         "//pkg/table/tables",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
+        "//pkg/util/logutil",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -48,7 +50,7 @@ go_test(
     ],
     embed = [":schematracker"],
     flaky = True,
-    shard_count = 16,
+    shard_count = 15,
     deps = [
         "//pkg/executor",
         "//pkg/infoschema",

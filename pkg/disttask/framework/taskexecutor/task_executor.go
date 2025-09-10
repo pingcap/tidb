@@ -30,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -45,9 +47,6 @@ var (
 	// subtasks balance to/away from this node.
 	checkBalanceSubtaskInterval = 2 * time.Second
 
-	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
-	// subtask table.
-	updateSubtaskSummaryInterval = 3 * time.Second
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
@@ -66,18 +65,20 @@ var (
 type Param struct {
 	taskTable TaskTable
 	slotMgr   *slotManager
-	nodeRc    *NodeResource
+	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
+	Store  kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *NodeResource, execID string) Param {
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, store kv.Storage) Param {
 	return Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
+		Store:     store,
 	}
 }
 
@@ -112,11 +113,15 @@ type BaseTaskExecutor struct {
 // TODO: we can refactor this part to pass task base only, but currently ADD-INDEX
 // depends on it to init, so we keep it for now.
 func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *BaseTaskExecutor {
-	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
+	logger := logutil.ErrVerboseLogger().With(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.execID))
 	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
+	subCtx = logutil.WithLogger(subCtx, logger)
 	taskExecutorImpl := &BaseTaskExecutor{
 		Param:  param,
 		ctx:    subCtx,
@@ -191,12 +196,12 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 	checkCtx, runStepCtx context.Context, stepExec execute.StepExecutor) {
 	taskMgr := e.taskTable.(*storage.TaskManager)
-	ticker := time.NewTicker(updateSubtaskSummaryInterval)
+	ticker := time.NewTicker(execute.UpdateSubtaskSummaryInterval)
 	defer ticker.Stop()
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {
 		summary := stepExec.RealtimeSummary()
-		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
+		err := taskMgr.UpdateSubtaskSummary(runStepCtx, curSubtaskID, summary)
 		if err != nil {
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
@@ -290,7 +295,7 @@ func (e *BaseTaskExecutor) Run() {
 			e.logger.Info("task concurrency modification applied",
 				zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency),
 				zap.Int("availableSlots", e.slotMgr.availableSlots()))
-			newResource := e.nodeRc.getStepResource(newTask.Concurrency)
+			newResource := e.nodeRc.GetStepResource(newTask.Concurrency)
 
 			if e.stepExec != nil {
 				e.stepExec.SetResource(newResource)
@@ -359,7 +364,7 @@ func (e *BaseTaskExecutor) createStepExecutor() error {
 		e.failOneSubtask(e.ctx, task.ID, err)
 		return errors.Trace(err)
 	}
-	resource := e.nodeRc.getStepResource(e.GetTaskBase().Concurrency)
+	resource := e.nodeRc.GetStepResource(e.GetTaskBase().Concurrency)
 	execute.SetFrameworkInfo(stepExecutor, task.Step, resource)
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
@@ -436,6 +441,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
 	subtaskCtx, subtaskCancel := context.WithCancel(e.stepCtx)
+	subtaskCtx = logutil.WithLogger(subtaskCtx, logger)
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
 
@@ -462,7 +468,6 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	defer subtaskCancel()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
-
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
@@ -539,6 +544,7 @@ func (e *BaseTaskExecutor) detectAndHandleParamModify(ctx context.Context) error
 		}
 		e.metaModifyApplied(latestTask.Meta)
 	}
+	failpoint.InjectCall("afterDetectAndHandleParamModify")
 	return nil
 }
 
@@ -549,7 +555,7 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 		// we need try to release the resource first, then free slots, to avoid
 		// OOM when manager starts other task executor and start to allocate memory
 		// immediately.
-		newResource := e.nodeRc.getStepResource(latestTask.Concurrency)
+		newResource := e.nodeRc.GetStepResource(latestTask.Concurrency)
 		if err := e.stepExec.ResourceModified(ctx, newResource); err != nil {
 			logger.Warn("failed to reduce resource usage", zap.Error(err))
 			return
@@ -572,7 +578,7 @@ func (e *BaseTaskExecutor) tryModifyTaskConcurrency(ctx context.Context, oldTask
 			logger.Info("failed to exchange slots", zap.Int("availableSlots", e.slotMgr.availableSlots()))
 			return
 		}
-		newResource := e.nodeRc.getStepResource(latestTask.Concurrency)
+		newResource := e.nodeRc.GetStepResource(latestTask.Concurrency)
 		if err := e.stepExec.ResourceModified(ctx, newResource); err != nil {
 			exchanged := e.slotMgr.exchange(&oldTask.TaskBase)
 			intest.Assert(exchanged, "failed to return slots")
@@ -631,6 +637,9 @@ func (e *BaseTaskExecutor) cancelRunStepWith(cause error) {
 }
 
 func (e *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, execID string, subtaskID int64, state proto.SubtaskState, subTaskErr error) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	start := time.Now()
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
@@ -723,4 +732,9 @@ func (e *BaseTaskExecutor) failOneSubtask(ctx context.Context, taskID int64, sub
 		e.logger.Error("fail one subtask failed", zap.NamedError("subtaskErr", subtaskErr),
 			zap.Duration("takes", time.Since(start)), zap.Error(err1))
 	}
+}
+
+// GetTaskTable returns the TaskTable of the TaskExecutor.
+func (e *BaseTaskExecutor) GetTaskTable() TaskTable {
+	return e.taskTable
 }

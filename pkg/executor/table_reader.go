@@ -28,6 +28,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -37,8 +38,8 @@ import (
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -87,14 +88,14 @@ type tableReaderExecutorContext struct {
 	stmtMemTracker *memory.Tracker
 
 	infoSchema  isctx.MetaOnlyInfoSchema
-	getDDLOwner func(context.Context) (*infosync.ServerInfo, error)
+	getDDLOwner func(context.Context) (*serverinfo.ServerInfo, error)
 }
 
 func (treCtx *tableReaderExecutorContext) GetInfoSchema() isctx.MetaOnlyInfoSchema {
 	return treCtx.infoSchema
 }
 
-func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*infosync.ServerInfo, error) {
+func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*serverinfo.ServerInfo, error) {
 	if treCtx.getDDLOwner != nil {
 		return treCtx.getDDLOwner(ctx)
 	}
@@ -106,11 +107,12 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 	// Explicitly get `ownerManager` out of the closure to show that the `tableReaderExecutorContext` itself doesn't
 	// depend on `sctx` directly.
 	// The context of some tests don't have `DDL`, so make it optional
-	var getDDLOwner func(ctx context.Context) (*infosync.ServerInfo, error)
-	ddl := domain.GetDomain(sctx).DDL()
-	if ddl != nil {
+	var getDDLOwner func(ctx context.Context) (*serverinfo.ServerInfo, error)
+	dom := domain.GetDomain(sctx)
+	if dom != nil && dom.DDL() != nil {
+		ddl := dom.DDL()
 		ownerManager := ddl.OwnerManager()
-		getDDLOwner = func(ctx context.Context) (*infosync.ServerInfo, error) {
+		getDDLOwner = func(ctx context.Context) (*serverinfo.ServerInfo, error) {
 			ddlOwnerID, err := ownerManager.GetOwnerID(ctx)
 			if err != nil {
 				return nil, err
@@ -253,7 +255,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 	if e.corColInAccess {
-		ts := e.plans[0].(*plannercore.PhysicalTableScan)
+		ts := e.plans[0].(*physicalop.PhysicalTableScan)
 		e.ranges, err = ts.ResolveCorrelatedColumns()
 		if err != nil {
 			return err
@@ -547,8 +549,8 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 		}
 	}
 	slices.SortFunc(virtualColumnIndex, func(i, j int) int {
-		return cmp.Compare(plannercore.FindColumnInfoByID(columns, schema.Columns[i].ID).Offset,
-			plannercore.FindColumnInfoByID(columns, schema.Columns[j].ID).Offset)
+		return cmp.Compare(model.FindColumnInfoByID(columns, schema.Columns[i].ID).Offset,
+			model.FindColumnInfoByID(columns, schema.Columns[j].ID).Offset)
 	})
 	return virtualColumnIndex
 }

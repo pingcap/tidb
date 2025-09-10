@@ -17,6 +17,7 @@ package local
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -91,7 +92,7 @@ func TestDoChecksumParallel(t *testing.T) {
 	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WithArgs("100h0m0s").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		mock.ExpectQuery("\\QADMIN CHECKSUM TABLE `test`.`t`\\E").
 			WillDelayFor(100 * time.Millisecond).
 			WillReturnRows(
@@ -109,7 +110,7 @@ func TestDoChecksumParallel(t *testing.T) {
 	// db.Close() will close all connections from its idle pool, set it 1 to expect one close
 	db.SetMaxIdleConns(1)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Run(func() {
 			checksum, err := manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
 			require.NoError(t, err)
@@ -133,7 +134,7 @@ func TestIncreaseGCLifeTimeFail(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	}()
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
 		mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
@@ -149,7 +150,7 @@ func TestIncreaseGCLifeTimeFail(t *testing.T) {
 	manager := NewTiDBChecksumExecutor(db)
 	var wg util.WaitGroupWrapper
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Run(func() {
 			_, errChecksum := manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
 			require.Equal(t, "update GC lifetime failed: update gc error: context canceled", errChecksum.Error())
@@ -194,12 +195,13 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		kvClient.onSendReq = func(req *kv.Request) {
 			checksumTS = req.StartTs
 		}
-		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient, lightningServicePrefix), client: kvClient}
 		physicalTS, logicalTS, err := pdClient.GetTS(ctx)
 		require.NoError(t, err)
 		_, err = checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
+			checksumExec.Close()
 			continue
 		}
 		require.NoError(t, err)
@@ -213,6 +215,8 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		require.True(t, checksumExec.manager.started.Load())
 		require.Zero(t, checksumExec.manager.currentTS)
 		require.Equal(t, 0, len(checksumExec.manager.tableGCSafeTS))
+		checksumExec.Close()
+		require.False(t, checksumExec.manager.started.Load())
 	}
 
 	// test PD leader change error
@@ -223,9 +227,13 @@ func TestDoChecksumWithTikv(t *testing.T) {
 	})
 	pdClient.leaderChanging = true
 	kvClient.maxErrCount = 0
-	checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+	ttlManager := newGCTTLManager(pdClient, lightningServicePrefix)
+	checksumExec := &TiKVChecksumManager{manager: ttlManager, client: kvClient}
 	_, err := checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 	require.NoError(t, err)
+	require.True(t, pdClient.isServiceGCSafePointExist(ttlManager.serviceID))
+	checksumExec.Close()
+	require.False(t, pdClient.isServiceGCSafePointExist(ttlManager.serviceID))
 }
 
 func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
@@ -290,6 +298,7 @@ func TestSetGCLifetime(t *testing.T) {
 }
 
 type safePointTTL struct {
+	serviceID string
 	safePoint uint64
 	expiredAt int64
 }
@@ -329,13 +338,36 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 		panic("service ID must start with 'lightning'")
 	}
 	c.count.Add(1)
+	c.doUpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+	return c.currentSafePoint(), nil
+}
+
+func (c *testPDClient) doUpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) {
 	c.Lock()
+	defer c.Unlock()
+	// see https://github.com/tikv/pd/blob/29ead019cd0982a3120bc79d4a4d19199dab2279/server/grpc_service.go#L2280-L2284
+	if ttl <= 0 {
+		newS := make([]safePointTTL, 0, len(c.gcSafePoint))
+		for _, p := range c.gcSafePoint {
+			if p.serviceID == serviceID {
+				continue
+			}
+			newS = append(newS, p)
+		}
+		c.gcSafePoint = newS
+		return
+	}
+	// below code doesn't consider serviceID, but it's test, doesn't matter.
 	idx := sort.Search(len(c.gcSafePoint), func(i int) bool {
 		return c.gcSafePoint[i].safePoint >= safePoint
 	})
 	sp := c.gcSafePoint
 	ttlEnd := time.Now().Unix() + ttl
-	spTTL := safePointTTL{safePoint: safePoint, expiredAt: ttlEnd}
+	spTTL := safePointTTL{
+		serviceID: serviceID,
+		safePoint: safePoint,
+		expiredAt: ttlEnd,
+	}
 	switch {
 	case idx >= len(sp):
 		c.gcSafePoint = append(c.gcSafePoint, spTTL)
@@ -346,13 +378,19 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 	default:
 		c.gcSafePoint = append(append(sp[:idx], spTTL), sp[idx:]...)
 	}
-	c.Unlock()
-	return c.currentSafePoint(), nil
+}
+
+func (c *testPDClient) isServiceGCSafePointExist(serviceID string) bool {
+	c.Lock()
+	defer c.Unlock()
+	return slices.ContainsFunc(c.gcSafePoint, func(s safePointTTL) bool {
+		return s.serviceID == serviceID
+	})
 }
 
 func TestGcTTLManagerSingle(t *testing.T) {
 	pdClient := &testPDClient{}
-	manager := newGCTTLManager(pdClient)
+	manager := newGCTTLManager(pdClient, lightningServicePrefix)
 	require.NotEqual(t, "", manager.serviceID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -374,15 +412,14 @@ func TestGcTTLManagerSingle(t *testing.T) {
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
-	cancel()
-	time.Sleep(10 * time.Millisecond)
-	val = pdClient.count.Load()
-	time.Sleep(1*time.Second + 10*time.Millisecond)
-	require.Equal(t, val, pdClient.count.Load())
+	require.True(t, pdClient.isServiceGCSafePointExist(manager.serviceID))
+	manager.close()
+	require.False(t, pdClient.isServiceGCSafePointExist(manager.serviceID))
 }
 
 func TestGcTTLManagerMulti(t *testing.T) {
-	manager := newGCTTLManager(&testPDClient{})
+	pdClient := &testPDClient{}
+	manager := newGCTTLManager(pdClient, lightningServicePrefix)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -406,16 +443,16 @@ func TestGcTTLManagerMulti(t *testing.T) {
 
 	manager.removeOneJob("test5")
 	require.Equal(t, uint64(0), manager.currentTS)
-	cancel()
-	// GCTTLManager don't wait its goroutine to exit, so we need to wait awhile.
-	time.Sleep(time.Second)
+	require.True(t, pdClient.isServiceGCSafePointExist(manager.serviceID))
+	manager.close()
+	require.False(t, pdClient.isServiceGCSafePointExist(manager.serviceID))
 }
 
 func TestPdServiceID(t *testing.T) {
 	pdCli := &testPDClient{}
-	gcTTLManager1 := newGCTTLManager(pdCli)
+	gcTTLManager1 := newGCTTLManager(pdCli, lightningServicePrefix)
 	require.Regexp(t, "lightning-.*", gcTTLManager1.serviceID)
-	gcTTLManager2 := newGCTTLManager(pdCli)
+	gcTTLManager2 := newGCTTLManager(pdCli, lightningServicePrefix)
 	require.Regexp(t, "lightning-.*", gcTTLManager2.serviceID)
 
 	require.True(t, gcTTLManager1.serviceID != gcTTLManager2.serviceID)

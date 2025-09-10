@@ -127,16 +127,16 @@ drop table if exists t;
 drop table if exists t1;
 CREATE TABLE t1 (id int, c varchar(128), primary key (id)) PARTITION BY HASH (id) PARTITIONS 3;
 insert into t1 values (1, "a"), (11, "b"), (21, "c");
-explain format='brief' select * from t1 where id in (1, 1, 11);
-id	estRows	task	access object	operator info
-Batch_Point_Get	3.00	root	table:t1, partition:p1,p2	handle:[1 11], keep order:false, desc:false
+explain format='plan_tree' select * from t1 where id in (1, 1, 11);
+id	task	access object	operator info
+Batch_Point_Get	root	table:t1, partition:p1,p2	handle:[1 11], keep order:false, desc:false
 select * from t1 where id in (1, 1, 11);
 id	c
 1	a
 11	b
-explain format='brief' select * from t1 where id in (1, 11, 11, 21);
-id	estRows	task	access object	operator info
-Batch_Point_Get	4.00	root	table:t1, partition:p0,p1,p2	handle:[1 11 21], keep order:false, desc:false
+explain format='plan_tree' select * from t1 where id in (1, 11, 11, 21);
+id	task	access object	operator info
+Batch_Point_Get	root	table:t1, partition:p0,p1,p2	handle:[1 11 21], keep order:false, desc:false
 select * from t1 where id in (1, 11, 11, 21);
 id	c
 1	a
@@ -148,16 +148,16 @@ partition p0 values less than (10),
 partition p1 values less than (20),
 partition p2 values less than (30));
 insert into t2 values (1, "a"), (11, "b"), (21, "c");
-explain format='brief' select * from t2 where id in (1, 1, 11);
-id	estRows	task	access object	operator info
-Batch_Point_Get	3.00	root	table:t2, partition:p0,p1	handle:[1 11], keep order:false, desc:false
+explain format='plan_tree' select * from t2 where id in (1, 1, 11);
+id	task	access object	operator info
+Batch_Point_Get	root	table:t2, partition:p0,p1	handle:[1 11], keep order:false, desc:false
 select * from t2 where id in (1, 1, 11);
 id	c
 1	a
 11	b
-explain format='brief' select * from t2 where id in (1, 1, 11);
-id	estRows	task	access object	operator info
-Batch_Point_Get	3.00	root	table:t2, partition:p0,p1	handle:[1 11], keep order:false, desc:false
+explain format='plan_tree' select * from t2 where id in (1, 1, 11);
+id	task	access object	operator info
+Batch_Point_Get	root	table:t2, partition:p0,p1	handle:[1 11], keep order:false, desc:false
 select * from t2 where id in (1, 11, 11, 21);
 id	c
 1	a
@@ -168,9 +168,9 @@ create table tkey (col1 int not null, col2 varchar(32) not null, col3 int not nu
 insert into tkey values(1, 'a', 1), (2, 'b', 2);
 set session tidb_skip_missing_partition_stats=0;
 set session tidb_opt_fix_control = "";
-explain format='brief' select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
-id	estRows	task	access object	operator info
-Batch_Point_Get	2.00	root	table:tkey, partition:p3, index:col1(col1, col2)	keep order:false, desc:false
+explain format='plan_tree' select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
+id	task	access object	operator info
+Batch_Point_Get	root	table:tkey, partition:p3, index:col1(col1, col2)	keep order:false, desc:false
 select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
 col1	col2	col3
 1	a	1

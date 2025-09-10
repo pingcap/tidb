@@ -33,16 +33,13 @@ const (
 	pseudoBetweenRate = 40
 )
 
-// If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
-const selectionFactor = 0.8
-
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
 func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
 func pseudoSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
-	minFactor := selectionFactor
+	minFactor := sctx.GetSessionVars().SelectivityFactor
 	colExists := make(map[string]bool)
 	for _, expr := range exprs {
 		fun, ok := expr.(*expression.ScalarFunction)
@@ -199,7 +196,7 @@ func getPseudoRowCountByIndexRanges(tc types.Context, indexRanges []*ranger.Rang
 		count = count / tableRowCount * rowCount
 		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
 		// so as to avoid collapsing too fast.
-		for j := 0; j < i; j++ {
+		for range i {
 			count = count / float64(100)
 		}
 		totalCount += count

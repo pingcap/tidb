@@ -16,6 +16,7 @@ package logicalop
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -45,14 +46,17 @@ func (p LogicalUnionAll) Init(ctx base.PlanContext, offset int) *LogicalUnionAll
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	for i, proj := range p.Children() {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		newExprs = append(newExprs, predicates...)
-		retCond, newChild := proj.PredicatePushDown(newExprs, opt)
-		addSelection(p, newChild, retCond, i, opt)
+		retCond, newChild, err := proj.PredicatePushDown(newExprs, opt)
+		if err != nil {
+			return nil, nil, err
+		}
+		AddSelection(p, newChild, retCond, i, opt)
 	}
-	return nil, p
+	return nil, p, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
@@ -85,7 +89,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
+			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)

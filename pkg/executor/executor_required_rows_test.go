@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"slices"
 	"testing"
 	"time"
 
@@ -30,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -93,7 +94,7 @@ func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.Chunk) err
 		return nil
 	}
 	required := min(req.RequiredRows(), r.totalRows-r.count)
-	for i := 0; i < required; i++ {
+	for range required {
 		req.AppendRow(r.genOneRow())
 	}
 	r.count += required
@@ -215,7 +216,7 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	ctx.BindDomain(domain.NewMockDomain())
+	ctx.BindDomainAndSchValidator(domain.NewMockDomain(), nil)
 	return ctx
 }
 
@@ -316,7 +317,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0},
 			requiredRows:   []int{1, 1, 1, 1, 10},
 			expectedRows:   []int{1, 1, 1, 1, 7},
-			expectedRowsDS: []int{26, 100 - 26, 0},
+			expectedRowsDS: []int{100, 0},
 		},
 		{
 			totalRows:      100,
@@ -334,7 +335,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 3, 7, 10},
 			expectedRows:   []int{1, 3, 1, 0},
-			expectedRowsDS: []int{6, maxChunkSize, 14, 0},
+			expectedRowsDS: []int{maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize + maxChunkSize + 20,
@@ -343,7 +344,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 2, 3, 5, 7},
 			expectedRows:   []int{1, 2, 3, 2, 0},
-			expectedRowsDS: []int{maxChunkSize, 18, maxChunkSize, 2, 0},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize*5 + 10,
@@ -395,7 +396,7 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 	}
 	return &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Limit:       &physicalop.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
 		Concurrency: 5,
 	}
 }
@@ -698,8 +699,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 			panic("not support")
 		}
 	}
-	joinTypes := []logicalop.JoinType{logicalop.RightOuterJoin, logicalop.LeftOuterJoin,
-		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin}
+	joinTypes := []base.JoinType{base.RightOuterJoin, base.LeftOuterJoin,
+		base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin}
 	for _, joinType := range joinTypes {
 		ctx := defaultCtx()
 		required := make([]int, 100)
@@ -721,17 +722,17 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
-	if joinType == logicalop.RightOuterJoin {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType base.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
+	if joinType == base.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
 
 	innerCols := innerSrc.Schema().Columns
 	outerCols := outerSrc.Schema().Columns
-	j := plannercore.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
+	j := physicalop.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
-	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
+	cols := slices.Concat(outerCols, innerCols)
 	schema := expression.NewSchema(cols...)
 	j.SetSchema(schema)
 
@@ -740,7 +741,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, inn
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(j)
 }
 

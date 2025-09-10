@@ -17,9 +17,10 @@ package execute
 import (
 	"context"
 	"reflect"
-	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"go.uber.org/atomic"
 )
 
 // StepExecutor defines the executor for subtasks of a task step.
@@ -54,16 +55,140 @@ type StepExecutor interface {
 	// happen, framework might recreate the step executor, so don't put code
 	// that's prone to error in it.
 	TaskMetaModified(ctx context.Context, newMeta []byte) error
-	// ResourceModified is called when the resource allowed to be used is modified,
+	// ResourceModified is called when the resource allowed to be used is modified
+	// and there is a subtask running. Note: if no subtask running, framework will
+	// call SetResource directly.
 	// application must make sure the resource in use conforms to the new resource
 	// before returning. When reducing resources, the framework depends on this
 	// to make sure current instance won't OOM.
 	ResourceModified(ctx context.Context, newResource *proto.StepResource) error
 }
 
+const (
+	// UpdateSubtaskSummaryInterval is the interval for updating the subtask summary to
+	// subtask table.
+	UpdateSubtaskSummaryInterval = 3 * time.Second
+
+	// maxProgressInSummary is the number of progress stored in subtask summary
+	maxProgressInSummary = 5
+
+	// SubtaskSpeedUpdateInterval is the interval for updating the subtasks' speed.
+	SubtaskSpeedUpdateInterval = UpdateSubtaskSummaryInterval * maxProgressInSummary
+)
+
+// Progress represents the progress of a subtask at a specific time.
+type Progress struct {
+	// For now, RowCnt is not used, but as it's collected by the collector,
+	// we still keep it here for future possible usage.
+	RowCnt int64 `json:"row_count,omitempty"`
+	Bytes  int64 `json:"bytes,omitempty"`
+
+	// UpdateTime is the time when this progress is stored.
+	UpdateTime time.Time `json:"update_time,omitempty"`
+}
+
 // SubtaskSummary contains the summary of a subtask.
+// It tracks the progress in terms of rows and bytes processed.
 type SubtaskSummary struct {
-	RowCount int64
+	// RowCnt and Bytes are updated by the collector.
+	RowCnt atomic.Int64 `json:"row_count,omitempty"`
+	Bytes  atomic.Int64 `json:"bytes,omitempty"`
+
+	// Progresses are the history of data processed, which is used to get a
+	// smoother speed for each subtask.
+	// It's updated each time we store the latest summary into subtask table.
+	Progresses []Progress `json:"progresses,omitempty"`
+}
+
+// Update stores the latest progress of the subtask.
+func (s *SubtaskSummary) Update() {
+	s.Progresses = append(s.Progresses, Progress{
+		RowCnt:     s.RowCnt.Load(),
+		Bytes:      s.Bytes.Load(),
+		UpdateTime: time.Now(),
+	})
+
+	if len(s.Progresses) > maxProgressInSummary {
+		s.Progresses = s.Progresses[len(s.Progresses)-maxProgressInSummary:]
+	}
+}
+
+// GetSpeedInTimeRange returns the speed in the specified time range.
+func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Duration) int64 {
+	if len(s.Progresses) < 2 {
+		return 0
+	}
+
+	startTime := endTime.Add(-duration)
+	if endTime.Before(s.Progresses[0].UpdateTime) || startTime.After(s.Progresses[len(s.Progresses)-1].UpdateTime) {
+		return 0
+	}
+
+	// The number of point is small, so we can afford to iterate through all points.
+	var totalBytes float64
+	for i := range len(s.Progresses) - 1 {
+		rangeStart := s.Progresses[i].UpdateTime
+		rangeEnd := s.Progresses[i+1].UpdateTime
+		rangeBytes := float64(s.Progresses[i+1].Bytes - s.Progresses[i].Bytes)
+		if endTime.Before(rangeStart) || startTime.After(rangeEnd) {
+			continue
+		} else if startTime.Before(rangeStart) && endTime.After(rangeEnd) {
+			totalBytes += rangeBytes
+			continue
+		}
+
+		iStart := rangeStart
+		if startTime.After(rangeStart) {
+			iStart = startTime
+		}
+
+		iEnd := rangeEnd
+		if endTime.Before(rangeEnd) {
+			iEnd = endTime
+		}
+
+		totalBytes += rangeBytes * float64(iEnd.Sub(iStart)) / float64(rangeEnd.Sub(rangeStart))
+	}
+
+	return int64(totalBytes / duration.Seconds())
+}
+
+// UpdateTime returns the last update time of the summary.
+func (s *SubtaskSummary) UpdateTime() time.Time {
+	if len(s.Progresses) == 0 {
+		return time.Time{}
+	}
+	return s.Progresses[len(s.Progresses)-1].UpdateTime
+}
+
+// Reset resets the summary to zero values and clears history data.
+func (s *SubtaskSummary) Reset() {
+	s.RowCnt.Store(0)
+	s.Bytes.Store(0)
+	s.Progresses = s.Progresses[:0]
+	s.Update()
+}
+
+// Collector is the interface for collecting subtask metrics.
+type Collector interface {
+	// Add is used collects metrics.
+	// `bytes` is the number of bytes processed, and `rows` is the number of rows processed.
+	// The meaning of `bytes` may vary by scenario, for example:
+	//   - During encoding, it represents the number of bytes read from the source data file.
+	//   - During merge sort, it represents the number of bytes merged.
+	Add(bytes, rows int64)
+}
+
+// TestCollector is an implementation used for test.
+type TestCollector struct {
+	Bytes atomic.Int64
+	Rows  atomic.Int64
+}
+
+// Add implements Collector.Add
+func (c *TestCollector) Add(bytes, rows int64) {
+	c.Bytes.Add(bytes)
+	c.Rows.Add(rows)
 }
 
 // StepExecFrameworkInfo is an interface that should be embedded into the

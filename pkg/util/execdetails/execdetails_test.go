@@ -29,8 +29,65 @@ import (
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
 		CopTime:      time.Second + 3*time.Millisecond,
-		BackoffTime:  time.Second,
 		RequestCount: 1,
+		LockKeysDetail: &util.LockKeysDetails{
+			TotalTime:   time.Second,
+			RegionNum:   2,
+			LockKeys:    10,
+			BackoffTime: int64(time.Second * 3),
+			Mu: struct {
+				sync.Mutex
+				BackoffTypes        []string
+				SlowestReqTotalTime time.Duration
+				SlowestRegion       uint64
+				SlowestStoreAddr    string
+				SlowestExecDetails  util.TiKVExecDetails
+			}{
+				BackoffTypes: []string{
+					"backoff4",
+					"backoff5",
+					"backoff5",
+				},
+				SlowestReqTotalTime: time.Second,
+				SlowestRegion:       1000,
+				SlowestStoreAddr:    "tikv-1:20160",
+				SlowestExecDetails: util.TiKVExecDetails{
+					TimeDetail: &util.TimeDetail{
+						TotalRPCWallTime: 500 * time.Millisecond,
+					},
+					ScanDetail: &util.ScanDetail{
+						ProcessedKeys:             10,
+						TotalKeys:                 100,
+						RocksdbDeleteSkippedCount: 1,
+						RocksdbKeySkippedCount:    1,
+						RocksdbBlockCacheHitCount: 1,
+						RocksdbBlockReadCount:     1,
+						RocksdbBlockReadByte:      100,
+						RocksdbBlockReadDuration:  20 * time.Millisecond,
+					},
+					WriteDetail: &util.WriteDetail{
+						StoreBatchWaitDuration:        10 * time.Microsecond,
+						ProposeSendWaitDuration:       20 * time.Microsecond,
+						PersistLogDuration:            30 * time.Microsecond,
+						RaftDbWriteLeaderWaitDuration: 40 * time.Microsecond,
+						RaftDbSyncLogDuration:         45 * time.Microsecond,
+						RaftDbWriteMemtableDuration:   50 * time.Microsecond,
+						CommitLogDuration:             60 * time.Microsecond,
+						ApplyBatchWaitDuration:        70 * time.Microsecond,
+						ApplyLogDuration:              80 * time.Microsecond,
+						ApplyMutexLockDuration:        90 * time.Microsecond,
+						ApplyWriteLeaderWaitDuration:  100 * time.Microsecond,
+						ApplyWriteWalDuration:         101 * time.Microsecond,
+						ApplyWriteMemtableDuration:    102 * time.Microsecond,
+					},
+				}},
+			LockRPCTime:  int64(time.Second * 5),
+			LockRPCCount: 50,
+			RetryCount:   2,
+			ResolveLock: util.ResolveLockDetail{
+				ResolveLockTime: int64(time.Second * 2),
+			},
+		},
 		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime: time.Second,
 			GetLatestTsTime: time.Second,
@@ -134,22 +191,24 @@ func TestString(t *testing.T) {
 				ResolveLockTime: 1000000000, // 10^9 ns = 1s
 			},
 		},
-		ScanDetail: &util.ScanDetail{
-			ProcessedKeys:             10,
-			TotalKeys:                 100,
-			RocksdbDeleteSkippedCount: 1,
-			RocksdbKeySkippedCount:    1,
-			RocksdbBlockCacheHitCount: 1,
-			RocksdbBlockReadCount:     1,
-			RocksdbBlockReadByte:      100,
-			RocksdbBlockReadDuration:  time.Millisecond,
-		},
-		DetailsNeedP90: DetailsNeedP90{TimeDetail: util.TimeDetail{
-			ProcessTime: 2*time.Second + 5*time.Millisecond,
-			WaitTime:    time.Second,
-		}},
+		CopExecDetails: CopExecDetails{
+			BackoffTime: time.Second,
+			ScanDetail: &util.ScanDetail{
+				ProcessedKeys:             10,
+				TotalKeys:                 100,
+				RocksdbDeleteSkippedCount: 1,
+				RocksdbKeySkippedCount:    1,
+				RocksdbBlockCacheHitCount: 1,
+				RocksdbBlockReadCount:     1,
+				RocksdbBlockReadByte:      100,
+				RocksdbBlockReadDuration:  time.Millisecond,
+			},
+			TimeDetail: util.TimeDetail{
+				ProcessTime: 2*time.Second + 5*time.Millisecond,
+				WaitTime:    time.Second,
+			}},
 	}
-	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
+	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 LockKeys_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
 		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +
 		"Prewrite_Backoff_types: [backoff1 backoff2] Commit_Backoff_types: [commit1 commit2] " +
 		"Slowest_prewrite_rpc_detail: {total:1.000s, region_id: 1000, " +
@@ -158,14 +217,14 @@ func TestString(t *testing.T) {
 		"read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, " +
 		"persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
 		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, " +
-		"write_wal: 101µs, write_memtable: 102µs}}} " +
+		"write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 0s}}} " +
 		"Commit_primary_rpc_detail: {total:2.000s, region_id: 2000, " +
 		"store: tikv-2:20160, time_detail: {tikv_wall_time: 1s}, scan_detail: {total_process_keys: 20, total_keys: 200, " +
 		"rocksdb: {delete_skipped_count: 2, key_skipped_count: 2, block: {cache_hit_count: 2, read_count: 2, " +
 		"read_byte: 200 Bytes, read_time: 40ms}}}, write_detail: {store_batch_wait: 110µs, propose_send_wait: 120µs, " +
 		"persist_log: {total: 130µs, write_leader_wait: 140µs, sync_log: 145µs, write_memtable: 150µs}, " +
 		"commit_log: 160µs, apply_batch_wait: 170µs, apply: {total:180µs, mutex_lock: 190µs, write_leader_wait: 200µs, " +
-		"write_wal: 201µs, write_memtable: 202µs}}} " +
+		"write_wal: 201µs, write_memtable: 202µs}, scheduler: {process: 0s}}} " +
 		"Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: " +
 		"1 Prewrite_region: 1 Txn_retry: 1 Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: " +
 		"1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100 Rocksdb_block_read_time: 0.001"
@@ -304,7 +363,7 @@ func TestVectorSearchStats(t *testing.T) {
 	var v uint64 = 1
 
 	execSummary := mockExecutorExecutionSummaryForTiFlash(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "")
-	execSummary.DetailInfo.(*tipb.ExecutorExecutionSummary_TiflashScanContext).TiflashScanContext.TotalVectorIdxLoadFromS3 = &v
+	execSummary.DetailInfo.(*tipb.ExecutorExecutionSummary_TiflashScanContext).TiflashScanContext.VectorIdxLoadFromS3 = &v
 	stats.RecordOneCopTask(1, kv.TiFlash, execSummary)
 	s := stats.GetCopStats(1)
 	require.Equal(t, "tiflash_task:{time:0s, loops:0, threads:0}, vector_idx:{load:{total:0ms,from_s3:1,from_disk:0,from_cache:0},search:{total:0ms,visited_nodes:0,discarded_nodes:0},read:{vec_total:0ms,others_total:0ms}}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:0, remote_regions:0, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:0ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:0, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:0ms, tot_read:0ms}}", s.String())
@@ -332,7 +391,9 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 				StoreAddr:    "tikv-1:20160",
 				ExecDetails: util.TiKVExecDetails{
 					TimeDetail: &util.TimeDetail{
-						TotalRPCWallTime: 500 * time.Millisecond,
+						TotalRPCWallTime:  500 * time.Millisecond,
+						KvGrpcWaitTime:    100 * time.Millisecond,
+						KvGrpcProcessTime: 200 * time.Millisecond,
 					},
 					ScanDetail: &util.ScanDetail{
 						ProcessedKeys:             10,
@@ -345,19 +406,23 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 						RocksdbBlockReadDuration:  20 * time.Millisecond,
 					},
 					WriteDetail: &util.WriteDetail{
-						StoreBatchWaitDuration:        10 * time.Microsecond,
-						ProposeSendWaitDuration:       20 * time.Microsecond,
-						PersistLogDuration:            30 * time.Microsecond,
-						RaftDbWriteLeaderWaitDuration: 40 * time.Microsecond,
-						RaftDbSyncLogDuration:         45 * time.Microsecond,
-						RaftDbWriteMemtableDuration:   50 * time.Microsecond,
-						CommitLogDuration:             60 * time.Microsecond,
-						ApplyBatchWaitDuration:        70 * time.Microsecond,
-						ApplyLogDuration:              80 * time.Microsecond,
-						ApplyMutexLockDuration:        90 * time.Microsecond,
-						ApplyWriteLeaderWaitDuration:  100 * time.Microsecond,
-						ApplyWriteWalDuration:         101 * time.Microsecond,
-						ApplyWriteMemtableDuration:    102 * time.Microsecond,
+						StoreBatchWaitDuration:               10 * time.Microsecond,
+						ProposeSendWaitDuration:              20 * time.Microsecond,
+						PersistLogDuration:                   30 * time.Microsecond,
+						RaftDbWriteLeaderWaitDuration:        40 * time.Microsecond,
+						RaftDbSyncLogDuration:                45 * time.Microsecond,
+						RaftDbWriteMemtableDuration:          50 * time.Microsecond,
+						CommitLogDuration:                    60 * time.Microsecond,
+						ApplyBatchWaitDuration:               70 * time.Microsecond,
+						ApplyLogDuration:                     80 * time.Microsecond,
+						ApplyMutexLockDuration:               90 * time.Microsecond,
+						ApplyWriteLeaderWaitDuration:         100 * time.Microsecond,
+						ApplyWriteWalDuration:                101 * time.Microsecond,
+						ApplyWriteMemtableDuration:           102 * time.Microsecond,
+						SchedulerLatchWaitDuration:           103 * time.Microsecond,
+						SchedulerProcessDuration:             104 * time.Microsecond,
+						SchedulerThrottleDuration:            105 * time.Microsecond,
+						SchedulerPessimisticLockWaitDuration: 106 * time.Microsecond,
 					},
 				},
 			},
@@ -375,12 +440,14 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		Commit: commitDetail,
 	}
 	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, prewrite type: [backoff1 backoff2]}, " +
-		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, " +
+		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, " +
+		"time_detail: {tikv_grpc_process_time: 200ms, tikv_grpc_wait_time: 100ms, tikv_wall_time: 500ms}, " +
 		"scan_detail: {total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, " +
 		"block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, " +
 		"write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, " +
 		"sync_log: 45µs, write_memtable: 50µs}, commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, " +
-		"write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}}}, resolve_lock: 1s, region_num:5, write_keys:3" +
+		"write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 104µs, latch_wait: 103µs, " +
+		"pessimistic_lock_wait: 106µs, throttle: 105µs}}}, resolve_lock: 1s, region_num:5, write_keys:3" +
 		", write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
 
@@ -450,8 +517,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"{total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, block: " +
 		"{cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: " +
 		"{store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
-		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}}}, " +
-		"lock_rpc:5s, rpc_count:50, retry_count:2}"
+		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, " +
+		"scheduler: {process: 0s}}}, lock_rpc:5s, rpc_count:50, retry_count:2}"
 	require.Equal(t, expect, stats.String())
 }
 

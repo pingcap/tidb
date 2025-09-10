@@ -17,6 +17,7 @@ package hint
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -202,6 +203,9 @@ const (
 
 // StmtHints are hints that apply to the entire statement, like 'max_exec_time', 'memory_quota'.
 type StmtHints struct {
+	// This is true iff there were hints in the statement.
+	QueryHasHints bool
+
 	// Hint Information
 	MemQuotaQuery           int64
 	MaxExecutionTime        uint64
@@ -215,6 +219,8 @@ type StmtHints struct {
 	// -1 for disable.
 	ForceNthPlan  int64
 	ResourceGroup string
+	// Do not store plan in either plan cache.
+	IgnorePlanCache bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -244,16 +250,14 @@ func (sh *StmtHints) Clone() *StmtHints {
 		tableHints []*ast.TableOptimizerHint
 	)
 	if len(sh.SetVars) > 0 {
-		vars = make(map[string]string, len(sh.SetVars))
-		for k, v := range sh.SetVars {
-			vars[k] = v
-		}
+		vars = maps.Clone(sh.SetVars)
 	}
 	if len(sh.OriginalTableHints) > 0 {
 		tableHints = make([]*ast.TableOptimizerHint, len(sh.OriginalTableHints))
 		copy(tableHints, sh.OriginalTableHints)
 	}
 	return &StmtHints{
+		QueryHasHints:                  sh.QueryHasHints,
 		MemQuotaQuery:                  sh.MemQuotaQuery,
 		MaxExecutionTime:               sh.MaxExecutionTime,
 		ReplicaRead:                    sh.ReplicaRead,
@@ -263,6 +267,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
+		IgnorePlanCache:                sh.IgnorePlanCache,
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
@@ -293,9 +298,12 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	hypoIndexChecker func(db, tbl, col ast.CIStr) (colOffset int, err error),
 	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
+	stmtHints.QueryHasHints = len(hints) != 0
+
 	if len(hints) == 0 {
 		return
 	}
+
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
 	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
@@ -303,31 +311,31 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
 		switch hint.HintName.L {
-		case "memory_quota":
+		case HintMemoryQuota:
 			hintOffs[hint.HintName.L] = i
 			memoryQuotaHintCnt++
 		case "resource_group":
 			hintOffs[hint.HintName.L] = i
 			resourceGroupHintCnt++
-		case "use_toja":
+		case HintUseToja:
 			hintOffs[hint.HintName.L] = i
 			useToJAHintCnt++
 		case "use_cascades":
 			hintOffs[hint.HintName.L] = i
 			useCascadesHintCnt++
-		case "no_index_merge":
+		case HintNoIndexMerge:
 			hintOffs[hint.HintName.L] = i
 			noIndexMergeHintCnt++
 		case "read_consistent_replica":
 			hintOffs[hint.HintName.L] = i
 			readReplicaHintCnt++
-		case "max_execution_time":
+		case HintMaxExecutionTime:
 			hintOffs[hint.HintName.L] = i
 			maxExecutionTimeCnt++
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
-		case "straight_join":
+		case HintStraightJoin:
 			hintOffs[hint.HintName.L] = i
 			straightJoinHintCnt++
 		case "hypo_index":
@@ -390,6 +398,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			}
 			setVars[setVarHint.VarName] = setVarHint.Value
 			setVarsOffs = append(setVarsOffs, i)
+		case HintIgnorePlanCache:
+			stmtHints.IgnorePlanCache = true
 		}
 	}
 	stmtHints.OriginalTableHints = hints
@@ -397,14 +407,14 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 
 	// Handle MEMORY_QUOTA
 	if memoryQuotaHintCnt != 0 {
-		memoryQuotaHint := hints[hintOffs["memory_quota"]]
+		memoryQuotaHint := hints[hintOffs[HintMemoryQuota]]
 		if memoryQuotaHintCnt > 1 {
 			warn := errors.NewNoStackErrorf("MEMORY_QUOTA() is defined more than once, only the last definition takes effect: MEMORY_QUOTA(%v)", memoryQuotaHint.HintData.(int64))
 			warns = append(warns, warn)
 		}
 		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
 		if memoryQuota := memoryQuotaHint.HintData.(int64); memoryQuota < 0 {
-			delete(hintOffs, "memory_quota")
+			delete(hintOffs, HintMemoryQuota)
 			warn := errors.NewNoStackError("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
 			warns = append(warns, warn)
 		} else {
@@ -418,7 +428,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 	// Handle USE_TOJA
 	if useToJAHintCnt != 0 {
-		useToJAHint := hints[hintOffs["use_toja"]]
+		useToJAHint := hints[hintOffs[HintUseToja]]
 		if useToJAHintCnt > 1 {
 			warn := errors.NewNoStackErrorf("USE_TOJA() is defined more than once, only the last definition takes effect: USE_TOJA(%v)", useToJAHint.HintData.(bool))
 			warns = append(warns, warn)
@@ -463,7 +473,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {
-		maxExecutionTime := hints[hintOffs["max_execution_time"]]
+		maxExecutionTime := hints[hintOffs[HintMaxExecutionTime]]
 		if maxExecutionTimeCnt > 1 {
 			warn := errors.NewNoStackErrorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
 			warns = append(warns, warn)
@@ -508,7 +518,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 // isStmtHint checks whether this hint is a statement-level hint.
 func isStmtHint(h *ast.TableOptimizerHint) bool {
 	switch h.HintName.L {
-	case "max_execution_time", "memory_quota", "resource_group":
+	case HintMaxExecutionTime, HintMemoryQuota, "resource_group":
 		return true
 	default:
 		return false
@@ -582,11 +592,11 @@ func (hint *HintedIndex) Match(dbName, tblName ast.CIStr) bool {
 func (hint *HintedIndex) HintTypeString() string {
 	switch hint.IndexHint.HintType {
 	case ast.HintUse:
-		return "use_index"
+		return HintUseIndex
 	case ast.HintIgnore:
-		return "ignore_index"
+		return HintIgnoreIndex
 	case ast.HintForce:
-		return "force_index"
+		return HintForceIndex
 	}
 	return ""
 }
@@ -1085,7 +1095,7 @@ func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerg
 		if !hint.Matched {
 			var hintTypeString string
 			if usedForIndexMerge {
-				hintTypeString = "use_index_merge"
+				hintTypeString = HintIndexMerge
 			} else {
 				hintTypeString = hint.HintTypeString()
 			}

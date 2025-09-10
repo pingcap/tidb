@@ -119,21 +119,21 @@ func TestInstancePlanCacheDMLTPCC(t *testing.T) {
 
 	tk1.MustExec(tpccWarehouse)
 	tk2.MustExec(tpccWarehouse)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sql := `insert into warehouse values (%d, 'name', 'street1', 'street2', 'city', 'st', 'zip', 0.1, 0.1)`
 		tk1.MustExec(fmt.Sprintf(sql, i))
 		tk2.MustExec(fmt.Sprintf(sql, i))
 	}
 	tk1.MustExec(tpccDistrict)
 	tk2.MustExec(tpccDistrict)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sql := `insert into district values (%d, %d, 'name', 'street1', 'street2', 'city', 'st', 'zip', 0.1, 0.1, 0)`
 		tk1.MustExec(fmt.Sprintf(sql, i, i))
 		tk2.MustExec(fmt.Sprintf(sql, i, i))
 	}
 	tk1.MustExec(tpccCustomer)
 	tk2.MustExec(tpccCustomer)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sql := `insert into customer values (%d, %d, %d, 'first', 'm', 'last', 'street1', 'street2',
                              'city', 'st', 'zip', 'phone', '2021-01-01', 'CR',
                              0.1, 0.1, 0.1, 0.1, 1, 1, 'data')`
@@ -216,7 +216,7 @@ func TestInstancePlanCacheDMLTPCC(t *testing.T) {
 		return
 	}
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		var prep, set, exec, update string
 		switch rand.Intn(5) {
 		case 0:
@@ -283,7 +283,7 @@ func TestInstancePlanCacheDMLBasic(t *testing.T) {
 			tk.MustQuery("select * from t2").Sort().Rows())
 	}
 
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		prep, set, exec, insert := randInsert()
 		tk.MustExec(prep)
 		tk.MustExec(set)
@@ -292,7 +292,7 @@ func TestInstancePlanCacheDMLBasic(t *testing.T) {
 		checkResult()
 	}
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		var prep, set, exec, dml string
 		switch rand.Intn(3) {
 		case 0:
@@ -325,12 +325,12 @@ func TestInstancePlanCacheUpdateSpecifiedPartition(t *testing.T) {
     		partition p1 values less than (20),
     		partition p2 values less than (30),
     		partition p3 values less than (40))`)
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
 		tk.MustExec(fmt.Sprintf("insert into t2 values (%d, %d)", i, i))
 	}
 	tk.MustExec(`set @v=1`)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		pIdx := rand.Intn(5)
 		if pIdx < 4 { // update a specified partition
 			tk.MustExec(fmt.Sprintf(`prepare st from 'update t1 partition(p%v) set b = b + ?'`, pIdx))

@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -74,15 +76,15 @@ const (
 	emptyFkCascadeSize = int64(unsafe.Sizeof(FKCascade{}))
 )
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (f *FKCheck) AccessObject() base.AccessObject {
 	if f.Idx == nil {
-		return OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
+		return access.OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
 	}
-	return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.Tbl.Meta().Name, f.Idx.Meta().Name))
+	return access.OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.Tbl.Meta().Name, f.Idx.Meta().Name))
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (f *FKCheck) OperatorInfo(bool) string {
 	if f.FK != nil {
 		return fmt.Sprintf("foreign_key:%s, check_exist", f.FK.Name)
@@ -111,12 +113,12 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 	return
 }
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (f *FKCascade) AccessObject() base.AccessObject {
 	if f.FKIdx == nil {
-		return OtherAccessObject(fmt.Sprintf("table:%s", f.ChildTable.Meta().Name))
+		return access.OtherAccessObject(fmt.Sprintf("table:%s", f.ChildTable.Meta().Name))
 	}
-	return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.ChildTable.Meta().Name, f.FKIdx.Name))
+	return access.OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.ChildTable.Meta().Name, f.FKIdx.Name))
 }
 
 // OperatorInfo implements dataAccesser interface.
@@ -383,6 +385,9 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
 	if fk == nil || fk.Version < 1 {
 		return nil, nil, nil
+	}
+	if err := dbutil.CheckTableModeIsNormal(childTable.Meta().Name, childTable.Meta().Mode); err != nil {
+		return nil, nil, err
 	}
 	var fkReferOption ast.ReferOptionType
 	if fk.State != model.StatePublic {

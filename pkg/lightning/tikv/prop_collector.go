@@ -199,7 +199,7 @@ func (c *rangePropertiesCollector) keysInLastRange() uint64 {
 
 func (c *rangePropertiesCollector) insertNewPoint(key []byte) {
 	c.lastOffsets = c.currentOffsets
-	c.props = append(c.props, rangeProperty{key: append([]byte{}, key...), rangeOffsets: c.currentOffsets})
+	c.props = append(c.props, rangeProperty{key: slices.Clone(key), rangeOffsets: c.currentOffsets})
 }
 
 // Add implements the TablePropertyCollector interface. It mimics

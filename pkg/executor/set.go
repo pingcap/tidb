@@ -40,7 +40,9 @@ import (
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	"go.uber.org/zap"
 )
 
@@ -135,6 +137,14 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 	}
 
+	// Check read-only system variables in SEM mode.
+	if semv2.IsEnabled() && semv2.IsReadOnlyVariable(v.Name) {
+		pm := privilege.GetPrivilegeManager(e.Ctx())
+		if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
+		}
+	}
+
 	if sysVar.IsNoop && !vardef.EnableNoopVariables.Load() {
 		// The variable is a noop. For compatibility we allow it to still
 		// be changed, but we append a warning since users might be expecting
@@ -182,7 +192,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			if err != nil {
 				return err
 			}
-			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
+			return taskMgr.WithNewSession(func(se sessionctx.Context) error {
+				return taskMgr.InitMetaSession(ctx, se, serverID, valStr)
+			})
 		}
 		return err
 	}
@@ -224,7 +236,13 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
 		isStaleRead := name == vardef.TiDBTxnReadTS
-		err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx().GetStore(), newSnapshotTS, isStaleRead)
+		var ctxForReadTsValidator context.Context
+		if !isStaleRead {
+			ctxForReadTsValidator = context.WithValue(ctx, oracles.ValidateReadTSForTidbSnapshot{}, struct{}{})
+		} else {
+			ctxForReadTsValidator = ctx
+		}
+		err = sessionctx.ValidateSnapshotReadTS(ctxForReadTsValidator, e.Ctx().GetStore(), newSnapshotTS, isStaleRead)
 		if name != vardef.TiDBTxnReadTS {
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts

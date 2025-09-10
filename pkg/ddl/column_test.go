@@ -163,7 +163,7 @@ func TestColumnBasic(t *testing.T) {
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
 
 	num := 10
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d)", i, 10*i, 100*i))
 	}
 
@@ -559,9 +559,9 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 	require.NoError(t, err)
 
 	i := 0
-	var updatedRow []types.Datum
+	updatedRow := make([]types.Datum, 0, len(oldRow)+columnCnt)
 	updatedRow = append(updatedRow, oldRow...)
-	for j := 0; j < columnCnt; j++ {
+	for range columnCnt {
 		updatedRow = append(updatedRow, types.NewDatum(columnValue))
 	}
 	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -920,4 +920,31 @@ func TestWriteDataWriteOnlyMode(t *testing.T) {
 		tk2.MustExec("insert ignore into t values (2)")
 	})
 	tk.MustExec("alter table t drop column `col1`")
+}
+
+func TestModifyColumnWithIndex(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int,
+		index idx1 (a), index idx2 (a), index idx3 (a),
+		index idx4 (b), index idx5 (b), index idx6 (b),
+		index idx7 (a, b), index idx8 (a, b), index idx9 (a, b));`)
+	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1")
+
+	cnt := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/addIndexTxnWorkerBackfillData", func(idxRecordNum int) {
+		cnt += idxRecordNum
+	})
+	tk.MustExec("alter table t modify column a bigint")
+	require.Equal(t, 0, cnt)
+	tk.MustExec("alter table t modify column a int")
+	require.Equal(t, 6, cnt)
+
+	cnt = 0
+	tk.MustExec("alter table t modify column a bigint, modify column b bigint")
+	require.Equal(t, 0, cnt)
+	tk.MustExec("alter table t modify column a int, modify column b int")
+	require.Equal(t, 12, cnt)
 }

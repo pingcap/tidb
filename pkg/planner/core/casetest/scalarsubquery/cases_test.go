@@ -16,6 +16,7 @@ package scalarsubquery
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -24,69 +25,69 @@ import (
 )
 
 func TestExplainNonEvaledSubquery(t *testing.T) {
-	var (
-		input []struct {
-			SQL              string
-			IsExplainAnalyze bool
-			HasErr           bool
-		}
-		output []struct {
-			SQL   string
-			Plan  []string
-			Error string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		var (
+			input []struct {
+				SQL              string
+				IsExplainAnalyze bool
+				HasErr           bool
+			}
+			output []struct {
+				SQL   string
+				Plan  []string
+				Error string
+			}
+		)
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(a int, b int, c int)")
-	tk.MustExec("create table t2(a int, b int, c int)")
-	tk.MustExec("create table t3(a varchar(5), b varchar(5), c varchar(5))")
-	tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
+		testKit.MustExec("use test")
+		testKit.MustExec("create table t1(a int, b int, c int)")
+		testKit.MustExec("create table t2(a int, b int, c int)")
+		testKit.MustExec("create table t3(a varchar(5), b varchar(5), c varchar(5))")
+		testKit.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
 
-	cutExecutionInfoFromExplainAnalyzeOutput := func(rows [][]any) [][]any {
-		// The columns are id, estRows, actRows, task type, access object, execution info, operator info, memory, disk
-		// We need to cut the unstable output of execution info, memory and disk.
-		for i := range rows {
-			rows[i] = rows[i][:6] // cut the final memory and disk.
-			rows[i] = append(rows[i][:5], rows[i][6:]...)
+		cutExecutionInfoFromExplainAnalyzeOutput := func(rows [][]any) [][]any {
+			// The columns are id, estRows, actRows, task type, access object, execution info, operator info, memory, disk
+			// We need to cut the unstable output of execution info, memory and disk.
+			for i := range rows {
+				rows[i] = rows[i][:6] // cut the final memory and disk.
+				rows[i] = slices.Delete(rows[i], 5, 6)
+			}
+			return rows
 		}
-		return rows
-	}
 
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts.SQL
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts.SQL
+				if ts.HasErr {
+					err := testKit.ExecToErr(ts.SQL)
+					require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
+					output[i].Error = err.Error()
+					output[i].Plan = nil
+				} else {
+					rows := testKit.MustQuery(ts.SQL).Rows()
+					if ts.IsExplainAnalyze {
+						rows = cutExecutionInfoFromExplainAnalyzeOutput(rows)
+					}
+					output[i].Plan = testdata.ConvertRowsToStrings(rows)
+					output[i].Error = ""
+				}
+			})
 			if ts.HasErr {
-				err := tk.ExecToErr(ts.SQL)
+				err := testKit.ExecToErr(ts.SQL)
 				require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
-				output[i].Error = err.Error()
-				output[i].Plan = nil
 			} else {
-				rows := tk.MustQuery(ts.SQL).Rows()
+				rows := testKit.MustQuery(ts.SQL).Rows()
 				if ts.IsExplainAnalyze {
 					rows = cutExecutionInfoFromExplainAnalyzeOutput(rows)
 				}
-				output[i].Plan = testdata.ConvertRowsToStrings(rows)
-				output[i].Error = ""
+				require.Equal(t,
+					testdata.ConvertRowsToStrings(testkit.Rows(output[i].Plan...)),
+					testdata.ConvertRowsToStrings(rows),
+					fmt.Sprintf("Failed at case #%d, SQL: %v", i, ts.SQL),
+				)
 			}
-		})
-		if ts.HasErr {
-			err := tk.ExecToErr(ts.SQL)
-			require.NotNil(t, err, fmt.Sprintf("Failed at case #%d", i))
-		} else {
-			rows := tk.MustQuery(ts.SQL).Rows()
-			if ts.IsExplainAnalyze {
-				rows = cutExecutionInfoFromExplainAnalyzeOutput(rows)
-			}
-			require.Equal(t,
-				testdata.ConvertRowsToStrings(testkit.Rows(output[i].Plan...)),
-				testdata.ConvertRowsToStrings(rows),
-				fmt.Sprintf("Failed at case #%d, SQL: %v", i, ts.SQL),
-			)
 		}
-	}
+	})
 }

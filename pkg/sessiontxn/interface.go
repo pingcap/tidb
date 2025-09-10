@@ -159,7 +159,7 @@ type TxnManager interface {
 	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	// If the session is not in any transaction, for example: between two autocommit statements,
-	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
+	// this method will return the latest information schema in session that is same with `sessionctx.GetLatestInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetReadReplicaScope returns the read replica scope
 	GetReadReplicaScope() string

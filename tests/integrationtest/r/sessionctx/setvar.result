@@ -582,21 +582,21 @@ select /*+ set_var(tidb_opt_limit_push_down_threshold=0) */ @@tidb_opt_limit_pus
 0
 select @@tidb_opt_limit_push_down_threshold;
 @@tidb_opt_limit_push_down_threshold
-100
+5000
 set @@tidb_opt_limit_push_down_threshold=default;
 select @@tidb_opt_limit_push_down_threshold;
 @@tidb_opt_limit_push_down_threshold
-100
+5000
 select /*+ set_var(tidb_opt_limit_push_down_threshold=1) */ @@tidb_opt_limit_push_down_threshold;
 @@tidb_opt_limit_push_down_threshold
 1
 select @@tidb_opt_limit_push_down_threshold;
 @@tidb_opt_limit_push_down_threshold
-100
+5000
 set @@tidb_opt_limit_push_down_threshold=default;
 select @@tidb_opt_limit_push_down_threshold;
 @@tidb_opt_limit_push_down_threshold
-100
+5000
 select /*+ set_var(tidb_opt_correlation_threshold=0) */ @@tidb_opt_correlation_threshold;
 @@tidb_opt_correlation_threshold
 0
@@ -1602,21 +1602,21 @@ select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=-1) */ @@tidb_opt_o
 -1
 select @@tidb_opt_ordering_index_selectivity_ratio;
 @@tidb_opt_ordering_index_selectivity_ratio
--1
+0.01
 set @@tidb_opt_ordering_index_selectivity_ratio=default;
 select @@tidb_opt_ordering_index_selectivity_ratio;
 @@tidb_opt_ordering_index_selectivity_ratio
--1
+0.01
 select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=1) */ @@tidb_opt_ordering_index_selectivity_ratio;
 @@tidb_opt_ordering_index_selectivity_ratio
 1
 select @@tidb_opt_ordering_index_selectivity_ratio;
 @@tidb_opt_ordering_index_selectivity_ratio
--1
+0.01
 set @@tidb_opt_ordering_index_selectivity_ratio=default;
 select @@tidb_opt_ordering_index_selectivity_ratio;
 @@tidb_opt_ordering_index_selectivity_ratio
--1
+0.01
 select /*+ set_var(tidb_opt_enable_mpp_shared_cte_execution=0) */ @@tidb_opt_enable_mpp_shared_cte_execution;
 @@tidb_opt_enable_mpp_shared_cte_execution
 0

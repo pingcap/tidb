@@ -14,16 +14,19 @@
 package ast
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 var (
 	_ DMLNode = &DeleteStmt{}
+	_ DMLNode = &DistributeTableStmt{}
 	_ DMLNode = &InsertStmt{}
 	_ DMLNode = &SetOprStmt{}
 	_ DMLNode = &UpdateStmt{}
@@ -629,6 +632,45 @@ type SelectLockInfo struct {
 	LockType SelectLockType
 	WaitSec  uint64
 	Tables   []*TableName
+}
+
+// Hash64 implements the cascades/base.Hasher.<0th> interface.
+func (n *SelectLockInfo) Hash64(h util.IHasher) {
+	h.HashInt(int(n.LockType))
+	h.HashUint64(n.WaitSec)
+	h.HashInt(len(n.Tables))
+	for _, one := range n.Tables {
+		// to make it simple, we just use lockInfo's addr.
+		h.HashUint64(uint64(reflect.ValueOf(one).Pointer()))
+	}
+}
+
+// Equals implements the cascades/base.Hasher.<1th> interface.
+func (n *SelectLockInfo) Equals(other any) bool {
+	n2, ok := other.(*SelectLockInfo)
+	if !ok {
+		return false
+	}
+	if n == nil {
+		return n2 == nil
+	}
+	if other == nil {
+		return false
+	}
+	ok = n.LockType == n2.LockType &&
+		n.WaitSec == n2.WaitSec
+	if !ok {
+		return false
+	}
+	if len(n.Tables) != len(n2.Tables) {
+		return false
+	}
+	for i, one := range n.Tables {
+		if one != n2.Tables[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // String implements fmt.Stringer.
@@ -2241,6 +2283,19 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 func (n *ImportIntoStmt) SecureText() string {
 	redactedStmt := *n
 	redactedStmt.Path = RedactURL(n.Path)
+	redactedStmt.Options = make([]*LoadDataOpt, 0, len(n.Options))
+	for _, opt := range n.Options {
+		outOpt := opt
+		ln := strings.ToLower(opt.Name)
+		if ln == CloudStorageURI {
+			redactedStr := RedactURL(opt.Value.(ValueExpr).GetString())
+			outOpt = &LoadDataOpt{
+				Name:  opt.Name,
+				Value: NewValueExpr(redactedStr, "", ""),
+			}
+		}
+		redactedStmt.Options = append(redactedStmt.Options, outOpt)
+	}
 	var sb strings.Builder
 	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	return sb.String()
@@ -2342,7 +2397,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 	if len(n.PartitionNames) != 0 {
 		ctx.WriteKeyWord(" PARTITION")
 		ctx.WritePlain("(")
-		for i := 0; i < len(n.PartitionNames); i++ {
+		for i := range n.PartitionNames {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
@@ -3047,9 +3102,14 @@ const (
 	ShowSessionStates
 	ShowCreateResourceGroup
 	ShowImportJobs
+	ShowImportGroups
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
+	ShowDistributions
+	ShowDistributionJobs
+	// showTpCount is the count of all kinds of `SHOW` statements.
+	showTpCount
 )
 
 const (
@@ -3098,7 +3158,11 @@ type ShowStmt struct {
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
+	ShowGroupKey string // Used for `SHOW IMPORT GROUP <GROUP_KEY>` syntax
+
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+
+	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3317,6 +3381,22 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
+	case ShowImportGroups:
+		if n.ShowGroupKey != "" {
+			ctx.WriteKeyWord("IMPORT GROUP ")
+			ctx.WriteString(n.ShowGroupKey)
+		} else {
+			ctx.WriteKeyWord("IMPORT GROUPS")
+			restoreShowLikeOrWhereOpt()
+		}
+	case ShowDistributionJobs:
+		if n.DistributionJobID != nil {
+			ctx.WriteKeyWord("DISTRIBUTION JOB ")
+			ctx.WritePlainf("%d", *n.DistributionJobID)
+		} else {
+			ctx.WriteKeyWord("DISTRIBUTION JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {
@@ -3394,6 +3474,16 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BINDING_CACHE STATUS")
 		case ShowAnalyzeStatus:
 			ctx.WriteKeyWord("ANALYZE STATUS")
+		case ShowDistributions:
+			ctx.WriteKeyWord("TABLE ")
+			if err := n.Table.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+			}
+			ctx.WriteKeyWord(" DISTRIBUTIONS")
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
+			return nil
 		case ShowRegions:
 			ctx.WriteKeyWord("TABLE ")
 			if err := n.Table.Restore(ctx); err != nil {
@@ -3823,6 +3913,68 @@ func (n *FrameBound) Accept(v Visitor) (Node, bool) {
 		}
 		n.Expr = node.(ExprNode)
 	}
+	return v.Leave(n)
+}
+
+type DistributeTableStmt struct {
+	dmlNode
+	Table          *TableName
+	PartitionNames []CIStr
+	Rule           string
+	Engine         string
+	Timeout        string
+}
+
+// Restore implements Node interface.
+func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DISTRIBUTE ")
+	ctx.WriteKeyWord("TABLE ")
+
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
+	}
+	if len(n.PartitionNames) > 0 {
+		ctx.WriteKeyWord(" PARTITION")
+		ctx.WritePlain("(")
+		for i, v := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(v.String())
+		}
+		ctx.WritePlain(")")
+	}
+
+	if len(n.Rule) > 0 {
+		ctx.WriteKeyWord(" RULE = ")
+		ctx.WriteString(n.Rule)
+	}
+
+	if len(n.Engine) > 0 {
+		ctx.WriteKeyWord(" ENGINE = ")
+		ctx.WriteString(n.Engine)
+	}
+
+	if len(n.Timeout) > 0 {
+		ctx.WriteKeyWord(" TIMEOUT = ")
+		ctx.WriteString(n.Timeout)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DistributeTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*DistributeTableStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 

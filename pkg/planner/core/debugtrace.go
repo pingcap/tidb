@@ -227,13 +227,15 @@ func stabilizeGetStatsTblInfo(info *getStatsTblInfo) {
 */
 
 type accessPathForDebugTrace struct {
-	IndexName        string `json:",omitempty"`
-	AccessConditions []string
-	IndexFilters     []string
-	TableFilters     []string
-	PartialPaths     []accessPathForDebugTrace `json:",omitempty"`
-	CountAfterAccess float64
-	CountAfterIndex  float64
+	IndexName           string `json:",omitempty"`
+	AccessConditions    []string
+	IndexFilters        []string
+	TableFilters        []string
+	PartialPaths        []accessPathForDebugTrace `json:",omitempty"`
+	CountAfterAccess    float64
+	MinCountAfterAccess float64
+	MaxCountAfterAccess float64
+	CountAfterIndex     float64
 }
 
 func convertAccessPathForDebugTrace(ctx expression.EvalContext, path *util.AccessPath, out *accessPathForDebugTrace) {
@@ -244,6 +246,8 @@ func convertAccessPathForDebugTrace(ctx expression.EvalContext, path *util.Acces
 	out.IndexFilters = expression.ExprsToStringsForDisplay(ctx, path.IndexFilters)
 	out.TableFilters = expression.ExprsToStringsForDisplay(ctx, path.TableFilters)
 	out.CountAfterAccess = path.CountAfterAccess
+	out.MaxCountAfterAccess = path.MaxCountAfterAccess
+	out.MinCountAfterAccess = path.MinCountAfterAccess
 	out.CountAfterIndex = path.CountAfterIndex
 	out.PartialPaths = make([]accessPathForDebugTrace, len(path.PartialIndexPaths))
 	for i, partialPath := range path.PartialIndexPaths {

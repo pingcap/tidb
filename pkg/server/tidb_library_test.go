@@ -41,7 +41,7 @@ func TestMemoryLeak(t *testing.T) {
 	runtime.ReadMemStats(&memStat)
 	oldHeapInUse := memStat.HeapInuse
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		initAndCloseTiDB()
 	}
 

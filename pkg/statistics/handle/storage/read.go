@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -139,7 +140,7 @@ func HistogramFromStorageWithPriority(
 	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
 	hg.Correlation = corr
 	totalCount := int64(0)
-	for i := 0; i < bucketSize; i++ {
+	for i := range bucketSize {
 		count := rows[i].GetInt64(0)
 		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum
@@ -158,12 +159,12 @@ func HistogramFromStorageWithPriority(
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-			lowerBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
+			lowerBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
+			upperBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -504,6 +505,10 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
 	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	defer tracker.Detach()
+
+	// Delay copying until we know what needs to be modified
+	needsCopy := true
+
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
@@ -512,24 +517,35 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			HistColl:              histColl,
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 		}
-	} else {
-		// We copy it before writing to avoid race.
-		table = table.Copy()
+		needsCopy = false
 	}
-	table.Pseudo = false
 
-	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
+	realtimeCount, modifyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 	if err != nil || isNull {
 		return nil, err
 	}
-	table.ModifyCount = modidyCount
-	table.RealtimeCount = realtimeCount
 
 	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %?", tableID)
 	if err != nil {
 		return nil, err
 	}
-	// Check table has no index/column stats.
+
+	if needsCopy {
+		if len(rows) == 0 {
+			// Only metadata update needed
+			table = table.CopyAs(statistics.MetaOnly)
+		} else {
+			// Indexes and Columns maps potentially get updated
+			table = table.CopyAs(statistics.BothMapsWritable)
+		}
+	}
+
+	// Update metadata
+	table.Pseudo = false
+	table.ModifyCount = modifyCount
+	table.RealtimeCount = realtimeCount
+
+	// Early return if no histogram data to process
 	if len(rows) == 0 {
 		return table, nil
 	}
@@ -568,7 +584,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 	}
 	table.ColAndIdxExistenceMap.SetChecked()
-	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
+	return ExtendedStatsFromStorage(sctx, table.CopyAs(statistics.ExtendedStatsWritable), tableID, loadAll)
 }
 
 // LoadHistogram will load histogram from storage.
@@ -609,7 +625,16 @@ func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, sta
 			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
-			return err
+			statslogutil.StatsSampleLogger().Error("load needed histogram failed",
+				zap.Error(err),
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("histID", item.ID),
+				zap.Bool("isIndex", item.IsIndex),
+				zap.Bool("IsSyncLoadFailed", item.IsSyncLoadFailed),
+				zap.Bool("fullLoad", item.FullLoad),
+			)
+			intest.Assert(false, "load needed histogram failed")
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -643,21 +668,42 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 }
 
 func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
+	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
+	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	statsTbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
+		statslogutil.StatsSampleLogger().Info(
+			"Table statistics item not found, possibly due to table being dropped",
+			zap.Int64("tableID", col.TableID),
+			zap.Int64("columnID", col.ID),
+		)
 		return nil
 	}
-	// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
-	// so we have to get the column info from the domain.
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	// When lite-init-stats is disabled, we cannot store the column info in the ColAndIdxExistenceMap.
+	// Because we don't want to access all table information when init stats.
+	// Therefore, we need to get the column info from the domain on demand.
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := statsHandle.TableInfoByID(is, col.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
+		statslogutil.StatsSampleLogger().Info(
+			"Table information not found, possibly due to table being dropped",
+			zap.Int64("tableID", col.TableID),
+			zap.Int64("columnID", col.ID),
+		)
 		return nil
 	}
 	tblInfo := tbl.Meta()
 	colInfo := tblInfo.GetColumnByID(col.ID)
 	if colInfo == nil {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		// This could happen when the column is dropped after the async load is triggered.
+		statslogutil.StatsSampleLogger().Info(
+			"Column information not found, possibly due to column being dropped",
+			zap.Int64("tableID", col.TableID),
+			zap.Int64("columnID", col.ID),
+		)
 		return nil
 	}
 
@@ -668,19 +714,24 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
 			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
-			statsTbl = statsTbl.Copy()
+			statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 			statsTbl.SetCol(col.ID, fakeCol)
 			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 				Updated: []*statistics.Table{statsTbl},
 			})
 		}
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 
 	hg, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		if hg == nil {
+			statslogutil.StatsSampleLogger().Warn(
+				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
+				zap.Int64("tableID", col.TableID),
+				zap.Int64("columnID", col.ID),
+			)
+		}
 		return err
 	}
 	var (
@@ -719,9 +770,15 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	statsTbl, ok = statsHandle.Get(col.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
+		statslogutil.StatsSampleLogger().Info(
+			"Table statistics item not found, possibly due to table being dropped",
+			zap.Int64("tableID", col.TableID),
+			zap.Int64("columnID", col.ID),
+		)
 		return nil
 	}
-	statsTbl = statsTbl.Copy()
+	statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 	if colHist.StatsAvailable() {
 		if fullLoad {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
@@ -737,39 +794,66 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTbl},
 	})
-	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-			zap.Int64("table_id", colHist.PhysicalID),
-			zap.Int64("column_id", colHist.Info.ID),
-			zap.String("column_name", colHist.Info.Name.O))
+		statslogutil.StatsLogger().Warn("Column histogram loaded asynchronously after sync load failure",
+			zap.Int64("tableID", colHist.PhysicalID),
+			zap.Int64("columnID", colHist.Info.ID),
+			zap.String("columnName", colHist.Info.Name.O))
 	}
 	return nil
 }
 
+// loadNeededIndexHistograms loads the necessary index histograms.
+// It is similar to loadNeededColumnHistograms, but for index.
 func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
+	// The principle is to load the histogram for each index at most once in async load, as we already have a retry mechanism in the sync load.
+	defer asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+
 	tbl, ok := statsHandle.Get(idx.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
+		statslogutil.StatsSampleLogger().Info(
+			"Table statistics item not found, possibly due to table being dropped",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idx.ID),
+		)
 		return nil
 	}
 	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
 	if !loadNeeded {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+		if hgMeta == nil {
+			statslogutil.StatsLogger().Warn(
+				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
+				zap.Int64("tableID", idx.TableID),
+				zap.Int64("indexID", idx.ID),
+			)
+		}
 		return err
 	}
 	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
+		statslogutil.StatsSampleLogger().Info(
+			"Table information not found, possibly due to table being dropped",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idx.ID),
+		)
 		return nil
 	}
 	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
 	if idxInfo == nil {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
-		return errors.NotFoundf("index %d in table %d", idx.ID, idx.TableID)
+		// This could happen when the index is dropped after the async load is triggered.
+		statslogutil.StatsSampleLogger().Info(
+			"Index information not found, possibly due to index being dropped",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idx.ID),
+		)
+		return nil
 	}
 	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
 	if err != nil {
@@ -786,16 +870,28 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			return errors.Trace(err)
 		}
 	}
-	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
-		Info: idxInfo, StatsVer: statsVer,
+	idxHist := &statistics.Index{
+		Histogram:         *hg,
+		CMSketch:          cms,
+		TopN:              topN,
+		FMSketch:          fms,
+		Info:              idxInfo,
+		StatsVer:          statsVer,
 		PhysicalID:        idx.TableID,
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+	}
 
 	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {
+		// This could happen when the table is dropped after the async load is triggered.
+		statslogutil.StatsSampleLogger().Info(
+			"Table statistics item not found, possibly due to table being dropped",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idx.ID),
+		)
 		return nil
 	}
-	tbl = tbl.Copy()
+	tbl = tbl.CopyAs(statistics.IndexMapWritable)
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
@@ -805,12 +901,11 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		Updated: []*statistics.Table{tbl},
 	})
 	if idx.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
-			zap.Int64("table_id", idx.TableID),
-			zap.Int64("index_id", idxHist.Info.ID),
-			zap.String("index_name", idxHist.Info.Name.O))
+		statslogutil.StatsLogger().Warn("Index histogram loaded asynchronously after sync load failure",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idxHist.Info.ID),
+			zap.String("indexName", idxHist.Info.Name.O))
 	}
-	asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 	return nil
 }
 
@@ -832,4 +927,38 @@ func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snaps
 	modifyCount = rows[0].GetInt64(1)
 	count = rows[0].GetInt64(2)
 	return
+}
+
+// convertBoundFromBlob reads the bound from blob. The `blob` is read from the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundFromBlob(ctx types.Context, blob types.Datum, tp *types.FieldType) (types.Datum, error) {
+	// For `BIT` type, when converting to `BLOB`, it's formated as an integer (when it's possible). Therefore, we should try to
+	// parse it as an integer first.
+	if tp.GetType() == mysql.TypeBit {
+		var ret types.Datum
+
+		// The implementation of converting BIT to BLOB will try to format it as an integer first. Theoretically, it should
+		// always be able to format the integer because the `BIT` length is limited to 64. Therefore, this err should never
+		// happen.
+		uintValue, err := strconv.ParseUint(string(blob.GetBytes()), 10, 64)
+		intest.AssertNoError(err)
+		if err != nil {
+			// Fail to parse, return the original blob as BIT directly.
+			ret.SetBinaryLiteral(types.BinaryLiteral(blob.GetBytes()))
+			return ret, nil
+		}
+
+		// part of the code is copied from `(*Datum).convertToMysqlBit`.
+		if tp.GetFlen() < 64 && uintValue >= 1<<(uint64(tp.GetFlen())) {
+			logutil.BgLogger().Warn("bound in stats exceeds the bit length", zap.Uint64("bound", uintValue), zap.Int("flen", tp.GetFlen()))
+			err = types.ErrDataTooLong.GenWithStack("Data Too Long, field len %d", tp.GetFlen())
+			intest.Assert(false, "bound in stats exceeds the bit length")
+			uintValue = (1 << (uint64(tp.GetFlen()))) - 1
+		}
+		byteSize := (tp.GetFlen() + 7) >> 3
+		ret.SetMysqlBit(types.NewBinaryLiteralFromUint(uintValue, byteSize))
+		return ret, errors.Trace(err)
+	}
+	return blob.ConvertTo(ctx, tp)
 }

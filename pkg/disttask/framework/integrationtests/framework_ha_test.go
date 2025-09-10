@@ -20,6 +20,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
@@ -29,7 +30,8 @@ import (
 )
 
 func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey string, testContext *testutil.TestContext) {
-	submitTaskAndCheckSuccess(ctx, t, taskKey, "", testContext, map[proto.Step]int{
+	scope := handle.GetTargetScope()
+	submitTaskAndCheckSuccess(ctx, t, taskKey, scope, testContext, map[proto.Step]int{
 		proto.StepOne: 10,
 		proto.StepTwo: 5,
 	})
@@ -87,14 +89,14 @@ func TestHAMultipleOwner(t *testing.T) {
 	c := testutil.NewDXFContextWithRandomNodes(t, 4, 8)
 	prevCount := c.NodeCount()
 	additionalOwnerCnt := c.Rand.Intn(2) + 1
-	for i := 0; i < additionalOwnerCnt; i++ {
+	for i := range additionalOwnerCnt {
 		c.ScaleOutBy(fmt.Sprintf("tidb-%d", i), true)
 	}
 	require.Equal(t, prevCount+additionalOwnerCnt, c.NodeCount())
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		taskKey := fmt.Sprintf("key%d", i)
 		wg.Run(func() {
 			submitTaskAndCheckSuccessForHA(c.Ctx, t, taskKey, c.TestContext)

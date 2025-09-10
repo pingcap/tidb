@@ -44,12 +44,12 @@ func TestStatsCacheProcess(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.Pseudo)
 	require.Zero(t, statsTbl.Version)
 	currentVersion := do.StatsHandle().MaxTableStatsVersion()
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.NotZero(t, statsTbl.Version)
 	require.Equal(t, currentVersion, do.StatsHandle().MaxTableStatsVersion())
@@ -76,21 +76,21 @@ func TestStatsCache(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.Pseudo)
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	testKit.MustExec("create index idx_t on t(c1)")
 	do.InfoSchema()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// If index is build, but stats is not updated. statsTbl can also work.
 	require.False(t, statsTbl.Pseudo)
 	// But the added index will not work.
 	require.Nil(t, statsTbl.GetIdx(int64(1)))
 
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
@@ -98,7 +98,7 @@ func TestStatsCache(t *testing.T) {
 	do.StatsHandle().Clear()
 	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	// If the new schema add a column, the table stats can still work.
@@ -108,7 +108,7 @@ func TestStatsCache(t *testing.T) {
 	do.StatsHandle().Clear()
 	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 }
 
@@ -124,17 +124,17 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.MemoryUsage().TotalMemUsage == 0)
 	require.True(t, statsTbl.Pseudo)
 
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	require.False(t, statsTbl.Pseudo)
 	testKit.MustExec("create index idx_t on t(c1)")
 	do.InfoSchema()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	// If index is build, but stats is not updated. statsTbl can also work.
 	require.False(t, statsTbl.Pseudo)
@@ -142,7 +142,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.Nil(t, statsTbl.GetIdx(int64(1)))
 
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	require.False(t, statsTbl.Pseudo)
 
@@ -153,7 +153,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.False(t, statsTbl.Pseudo)
 
@@ -164,7 +164,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	do.StatsHandle().Clear()
 	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 }
 
@@ -174,7 +174,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	recordCount := 1000
-	for i := 0; i < recordCount; i++ {
+	for i := range recordCount {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")
@@ -186,12 +186,12 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	tableInfo := tbl.Meta()
 
 	testKit.MustExec("analyze table t")
-	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl1 := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	do.StatsHandle().Clear()
 	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
-	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl2 := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, int64(recordCount), statsTbl2.RealtimeCount)
 	internal.AssertTableEqual(t, statsTbl1, statsTbl2)
@@ -219,7 +219,7 @@ func testInitStatsMemTrace(t *testing.T) {
 	for i := 1; i < 10; i++ {
 		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
-		tStats := h.GetTableStats(tbl.Meta())
+		tStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
 	}
 	tables := h.StatsCache.Values()
@@ -235,36 +235,24 @@ func testInitStatsMemTrace(t *testing.T) {
 func TestInitStatsMemTraceWithLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ConcurrentlyInitStats = false
-	})
 	testInitStatsMemTraceFunc(t, true)
 }
 
 func TestInitStatsMemTraceWithoutLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ConcurrentlyInitStats = false
-	})
 	testInitStatsMemTraceFunc(t, false)
 }
 
-func TestInitStatsMemTraceWithConcurrrencyLite(t *testing.T) {
+func TestInitStatsMemTraceWithConcurrentLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ConcurrentlyInitStats = true
-	})
 	testInitStatsMemTraceFunc(t, true)
 }
 
-func TestInitStatsMemTraceWithoutConcurrrencyLite(t *testing.T) {
+func TestInitStatsMemTraceWithoutConcurrentLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ConcurrentlyInitStats = true
-	})
 	testInitStatsMemTraceFunc(t, false)
 }
 
@@ -300,7 +288,7 @@ func TestInitStats(t *testing.T) {
 
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
-	table0 := h.GetTableStats(tbl.Meta())
+	table0 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
@@ -346,7 +334,7 @@ func TestInitStats51358(t *testing.T) {
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	stats := h.GetTableStats(tbl.Meta())
+	stats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	stats.ForEachColumnImmutable(func(_ int64, column *statistics.Column) bool {
 		if mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
@@ -359,25 +347,19 @@ func TestInitStats51358(t *testing.T) {
 
 func TestInitStatsVer2(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
-	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
 	initStatsVer2(t)
 }
 
 func TestInitStatsVer2Concurrency(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
-	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
 	initStatsVer2(t)
 }
 
@@ -405,7 +387,7 @@ func initStatsVer2(t *testing.T) {
 
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
-	table0 := h.GetTableStats(tbl.Meta())
+	table0 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, 5, table0.ColNum())
 	require.True(t, table0.GetCol(1).IsAllEvicted())
 	require.True(t, table0.GetCol(2).IsAllEvicted())
@@ -415,7 +397,7 @@ func initStatsVer2(t *testing.T) {
 	require.Equal(t, 2, table0.IdxNum())
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
-	table1 := h.GetTableStats(tbl.Meta())
+	table1 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }

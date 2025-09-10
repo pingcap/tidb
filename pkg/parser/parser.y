@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 )
-
 %}
 
 %union {
@@ -310,389 +309,396 @@ import (
 	zerofill          "ZEROFILL"
 
 	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
-	account               "ACCOUNT"
-	action                "ACTION"
-	advise                "ADVISE"
-	after                 "AFTER"
-	against               "AGAINST"
-	ago                   "AGO"
-	algorithm             "ALGORITHM"
-	always                "ALWAYS"
-	any                   "ANY"
-	apply                 "APPLY"
-	ascii                 "ASCII"
-	attribute             "ATTRIBUTE"
-	attributes            "ATTRIBUTES"
-	autoIdCache           "AUTO_ID_CACHE"
-	autoIncrement         "AUTO_INCREMENT"
-	autoRandom            "AUTO_RANDOM"
-	autoRandomBase        "AUTO_RANDOM_BASE"
-	avg                   "AVG"
-	avgRowLength          "AVG_ROW_LENGTH"
-	backend               "BACKEND"
-	backup                "BACKUP"
-	backups               "BACKUPS"
-	bdr                   "BDR"
-	begin                 "BEGIN"
-	bernoulli             "BERNOULLI"
-	binding               "BINDING"
-	bindings              "BINDINGS"
-	bindingCache          "BINDING_CACHE"
-	binlog                "BINLOG"
-	bitType               "BIT"
-	block                 "BLOCK"
-	boolType              "BOOL"
-	booleanType           "BOOLEAN"
-	btree                 "BTREE"
-	byteType              "BYTE"
-	cache                 "CACHE"
-	calibrate             "CALIBRATE"
-	capture               "CAPTURE"
-	cascaded              "CASCADED"
-	causal                "CAUSAL"
-	chain                 "CHAIN"
-	charsetKwd            "CHARSET"
-	checkpoint            "CHECKPOINT"
-	checksum              "CHECKSUM"
-	checksumConcurrency   "CHECKSUM_CONCURRENCY"
-	cipher                "CIPHER"
-	cleanup               "CLEANUP"
-	client                "CLIENT"
-	clientErrorsSummary   "CLIENT_ERRORS_SUMMARY"
-	close                 "CLOSE"
-	cluster               "CLUSTER"
-	clustered             "CLUSTERED"
-	coalesce              "COALESCE"
-	collation             "COLLATION"
-	columns               "COLUMNS"
-	columnFormat          "COLUMN_FORMAT"
-	comment               "COMMENT"
-	commit                "COMMIT"
-	committed             "COMMITTED"
-	compact               "COMPACT"
-	compressed            "COMPRESSED"
-	compression           "COMPRESSION"
-	compressionLevel      "COMPRESSION_LEVEL"
-	compressionType       "COMPRESSION_TYPE"
-	concurrency           "CONCURRENCY"
-	config                "CONFIG"
-	connection            "CONNECTION"
-	consistency           "CONSISTENCY"
-	consistent            "CONSISTENT"
-	context               "CONTEXT"
-	cpu                   "CPU"
-	csvBackslashEscape    "CSV_BACKSLASH_ESCAPE"
-	csvDelimiter          "CSV_DELIMITER"
-	csvHeader             "CSV_HEADER"
-	csvNotNull            "CSV_NOT_NULL"
-	csvNull               "CSV_NULL"
-	csvSeparator          "CSV_SEPARATOR"
-	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
-	current               "CURRENT"
-	cycle                 "CYCLE"
-	data                  "DATA"
-	dateType              "DATE"
-	datetimeType          "DATETIME"
-	day                   "DAY"
-	deallocate            "DEALLOCATE"
-	declare               "DECLARE"
-	definer               "DEFINER"
-	delayKeyWrite         "DELAY_KEY_WRITE"
-	digest                "DIGEST"
-	directory             "DIRECTORY"
-	disable               "DISABLE"
-	disabled              "DISABLED"
-	discard               "DISCARD"
-	disk                  "DISK"
-	do                    "DO"
-	duplicate             "DUPLICATE"
-	dynamic               "DYNAMIC"
-	enable                "ENABLE"
-	enabled               "ENABLED"
-	encryption            "ENCRYPTION"
-	encryptionKeyFile     "ENCRYPTION_KEYFILE"
-	encryptionMethod      "ENCRYPTION_METHOD"
-	end                   "END"
-	enforced              "ENFORCED"
-	engine                "ENGINE"
-	engines               "ENGINES"
-	engine_attribute      "ENGINE_ATTRIBUTE"
-	enum                  "ENUM"
-	errorKwd              "ERROR"
-	identSQLErrors        "ERRORS"
-	escape                "ESCAPE"
-	event                 "EVENT"
-	events                "EVENTS"
-	evolve                "EVOLVE"
-	exchange              "EXCHANGE"
-	exclusive             "EXCLUSIVE"
-	execute               "EXECUTE"
-	expansion             "EXPANSION"
-	expire                "EXPIRE"
-	extended              "EXTENDED"
-	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
-	faultsSym             "FAULTS"
-	fields                "FIELDS"
-	file                  "FILE"
-	first                 "FIRST"
-	fixed                 "FIXED"
-	flush                 "FLUSH"
-	following             "FOLLOWING"
-	format                "FORMAT"
-	found                 "FOUND"
-	full                  "FULL"
-	function              "FUNCTION"
-	general               "GENERAL"
-	global                "GLOBAL"
-	grants                "GRANTS"
-	handler               "HANDLER"
-	hash                  "HASH"
-	help                  "HELP"
-	histogram             "HISTOGRAM"
-	history               "HISTORY"
-	hosts                 "HOSTS"
-	hour                  "HOUR"
-	hypo                  "HYPO"
-	identified            "IDENTIFIED"
-	ignoreStats           "IGNORE_STATS"
-	importKwd             "IMPORT"
-	imports               "IMPORTS"
-	increment             "INCREMENT"
-	incremental           "INCREMENTAL"
-	indexes               "INDEXES"
-	insertMethod          "INSERT_METHOD"
-	instance              "INSTANCE"
-	invisible             "INVISIBLE"
-	invoker               "INVOKER"
-	io                    "IO"
-	ipc                   "IPC"
-	isolation             "ISOLATION"
-	issuer                "ISSUER"
-	jsonType              "JSON"
-	keyBlockSize          "KEY_BLOCK_SIZE"
-	labels                "LABELS"
-	language              "LANGUAGE"
-	last                  "LAST"
-	lastval               "LASTVAL"
-	lastBackup            "LAST_BACKUP"
-	less                  "LESS"
-	level                 "LEVEL"
-	list                  "LIST"
-	loadStats             "LOAD_STATS"
-	local                 "LOCAL"
-	location              "LOCATION"
-	locked                "LOCKED"
-	logs                  "LOGS"
-	master                "MASTER"
-	maxConnectionsPerHour "MAX_CONNECTIONS_PER_HOUR"
-	max_idxnum            "MAX_IDXNUM"
-	max_minutes           "MAX_MINUTES"
-	maxQueriesPerHour     "MAX_QUERIES_PER_HOUR"
-	maxRows               "MAX_ROWS"
-	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
-	maxUserConnections    "MAX_USER_CONNECTIONS"
-	mb                    "MB"
-	member                "MEMBER"
-	memory                "MEMORY"
-	merge                 "MERGE"
-	microsecond           "MICROSECOND"
-	minute                "MINUTE"
-	minValue              "MINVALUE"
-	minRows               "MIN_ROWS"
-	mode                  "MODE"
-	modify                "MODIFY"
-	month                 "MONTH"
-	names                 "NAMES"
-	national              "NATIONAL"
-	ncharType             "NCHAR"
-	never                 "NEVER"
-	next                  "NEXT"
-	nextval               "NEXTVAL"
-	no                    "NO"
-	nocache               "NOCACHE"
-	nocycle               "NOCYCLE"
-	nodegroup             "NODEGROUP"
-	nomaxvalue            "NOMAXVALUE"
-	nominvalue            "NOMINVALUE"
-	nonclustered          "NONCLUSTERED"
-	none                  "NONE"
-	nowait                "NOWAIT"
-	nulls                 "NULLS"
-	nvarcharType          "NVARCHAR"
-	off                   "OFF"
-	offset                "OFFSET"
-	oltpReadOnly          "OLTP_READ_ONLY"
-	oltpReadWrite         "OLTP_READ_WRITE"
-	oltpWriteOnly         "OLTP_WRITE_ONLY"
-	online                "ONLINE"
-	only                  "ONLY"
-	onDuplicate           "ON_DUPLICATE"
-	open                  "OPEN"
-	optional              "OPTIONAL"
-	packKeys              "PACK_KEYS"
-	pageSym               "PAGE"
-	parser                "PARSER"
-	partial               "PARTIAL"
-	partitioning          "PARTITIONING"
-	partitions            "PARTITIONS"
-	password              "PASSWORD"
-	passwordLockTime      "PASSWORD_LOCK_TIME"
-	pause                 "PAUSE"
-	percent               "PERCENT"
-	per_db                "PER_DB"
-	per_table             "PER_TABLE"
+	account                    "ACCOUNT"
+	action                     "ACTION"
+	addColumnarReplicaOnDemand "ADD_COLUMNAR_REPLICA_ON_DEMAND"
+	advise                     "ADVISE"
+	after                      "AFTER"
+	against                    "AGAINST"
+	ago                        "AGO"
+	algorithm                  "ALGORITHM"
+	always                     "ALWAYS"
+	any                        "ANY"
+	apply                      "APPLY"
+	ascii                      "ASCII"
+	attribute                  "ATTRIBUTE"
+	attributes                 "ATTRIBUTES"
+	autoIdCache                "AUTO_ID_CACHE"
+	autoIncrement              "AUTO_INCREMENT"
+	autoRandom                 "AUTO_RANDOM"
+	autoRandomBase             "AUTO_RANDOM_BASE"
+	avg                        "AVG"
+	avgRowLength               "AVG_ROW_LENGTH"
+	backend                    "BACKEND"
+	backup                     "BACKUP"
+	backups                    "BACKUPS"
+	bdr                        "BDR"
+	begin                      "BEGIN"
+	bernoulli                  "BERNOULLI"
+	binding                    "BINDING"
+	bindings                   "BINDINGS"
+	bindingCache               "BINDING_CACHE"
+	binlog                     "BINLOG"
+	bitType                    "BIT"
+	block                      "BLOCK"
+	boolType                   "BOOL"
+	booleanType                "BOOLEAN"
+	btree                      "BTREE"
+	byteType                   "BYTE"
+	cache                      "CACHE"
+	calibrate                  "CALIBRATE"
+	capture                    "CAPTURE"
+	cascaded                   "CASCADED"
+	causal                     "CAUSAL"
+	chain                      "CHAIN"
+	charsetKwd                 "CHARSET"
+	checkpoint                 "CHECKPOINT"
+	checksum                   "CHECKSUM"
+	checksumConcurrency        "CHECKSUM_CONCURRENCY"
+	cipher                     "CIPHER"
+	cleanup                    "CLEANUP"
+	client                     "CLIENT"
+	clientErrorsSummary        "CLIENT_ERRORS_SUMMARY"
+	close                      "CLOSE"
+	cluster                    "CLUSTER"
+	clustered                  "CLUSTERED"
+	coalesce                   "COALESCE"
+	collation                  "COLLATION"
+	columnar                   "COLUMNAR"
+	columns                    "COLUMNS"
+	columnFormat               "COLUMN_FORMAT"
+	comment                    "COMMENT"
+	commit                     "COMMIT"
+	committed                  "COMMITTED"
+	compact                    "COMPACT"
+	compressed                 "COMPRESSED"
+	compression                "COMPRESSION"
+	compressionLevel           "COMPRESSION_LEVEL"
+	compressionType            "COMPRESSION_TYPE"
+	concurrency                "CONCURRENCY"
+	config                     "CONFIG"
+	connection                 "CONNECTION"
+	consistency                "CONSISTENCY"
+	consistent                 "CONSISTENT"
+	context                    "CONTEXT"
+	cpu                        "CPU"
+	csvBackslashEscape         "CSV_BACKSLASH_ESCAPE"
+	csvDelimiter               "CSV_DELIMITER"
+	csvHeader                  "CSV_HEADER"
+	csvNotNull                 "CSV_NOT_NULL"
+	csvNull                    "CSV_NULL"
+	csvSeparator               "CSV_SEPARATOR"
+	csvTrimLastSeparators      "CSV_TRIM_LAST_SEPARATORS"
+	current                    "CURRENT"
+	cycle                      "CYCLE"
+	data                       "DATA"
+	dateType                   "DATE"
+	datetimeType               "DATETIME"
+	day                        "DAY"
+	deallocate                 "DEALLOCATE"
+	declare                    "DECLARE"
+	definer                    "DEFINER"
+	delayKeyWrite              "DELAY_KEY_WRITE"
+	digest                     "DIGEST"
+	directory                  "DIRECTORY"
+	disable                    "DISABLE"
+	disabled                   "DISABLED"
+	discard                    "DISCARD"
+	disk                       "DISK"
+	do                         "DO"
+	duplicate                  "DUPLICATE"
+	dynamic                    "DYNAMIC"
+	enable                     "ENABLE"
+	enabled                    "ENABLED"
+	encryption                 "ENCRYPTION"
+	encryptionKeyFile          "ENCRYPTION_KEYFILE"
+	encryptionMethod           "ENCRYPTION_METHOD"
+	end                        "END"
+	enforced                   "ENFORCED"
+	engine                     "ENGINE"
+	engines                    "ENGINES"
+	engine_attribute           "ENGINE_ATTRIBUTE"
+	enum                       "ENUM"
+	errorKwd                   "ERROR"
+	identSQLErrors             "ERRORS"
+	escape                     "ESCAPE"
+	event                      "EVENT"
+	events                     "EVENTS"
+	evolve                     "EVOLVE"
+	exchange                   "EXCHANGE"
+	exclusive                  "EXCLUSIVE"
+	execute                    "EXECUTE"
+	expansion                  "EXPANSION"
+	expire                     "EXPIRE"
+	explore                    "EXPLORE"
+	extended                   "EXTENDED"
+	failedLoginAttempts        "FAILED_LOGIN_ATTEMPTS"
+	faultsSym                  "FAULTS"
+	fields                     "FIELDS"
+	file                       "FILE"
+	first                      "FIRST"
+	fixed                      "FIXED"
+	flush                      "FLUSH"
+	following                  "FOLLOWING"
+	format                     "FORMAT"
+	found                      "FOUND"
+	full                       "FULL"
+	function                   "FUNCTION"
+	general                    "GENERAL"
+	global                     "GLOBAL"
+	grants                     "GRANTS"
+	handler                    "HANDLER"
+	hash                       "HASH"
+	help                       "HELP"
+	histogram                  "HISTOGRAM"
+	history                    "HISTORY"
+	hosts                      "HOSTS"
+	hour                       "HOUR"
+	hypo                       "HYPO"
+	identified                 "IDENTIFIED"
+	ignoreStats                "IGNORE_STATS"
+	importKwd                  "IMPORT"
+	imports                    "IMPORTS"
+	increment                  "INCREMENT"
+	incremental                "INCREMENTAL"
+	indexes                    "INDEXES"
+	insertMethod               "INSERT_METHOD"
+	instance                   "INSTANCE"
+	invisible                  "INVISIBLE"
+	invoker                    "INVOKER"
+	io                         "IO"
+	ipc                        "IPC"
+	isolation                  "ISOLATION"
+	issuer                     "ISSUER"
+	jsonType                   "JSON"
+	keyBlockSize               "KEY_BLOCK_SIZE"
+	labels                     "LABELS"
+	language                   "LANGUAGE"
+	last                       "LAST"
+	lastval                    "LASTVAL"
+	lastBackup                 "LAST_BACKUP"
+	less                       "LESS"
+	level                      "LEVEL"
+	list                       "LIST"
+	loadStats                  "LOAD_STATS"
+	local                      "LOCAL"
+	location                   "LOCATION"
+	locked                     "LOCKED"
+	logs                       "LOGS"
+	master                     "MASTER"
+	maxConnectionsPerHour      "MAX_CONNECTIONS_PER_HOUR"
+	max_idxnum                 "MAX_IDXNUM"
+	max_minutes                "MAX_MINUTES"
+	maxQueriesPerHour          "MAX_QUERIES_PER_HOUR"
+	maxRows                    "MAX_ROWS"
+	maxUpdatesPerHour          "MAX_UPDATES_PER_HOUR"
+	maxUserConnections         "MAX_USER_CONNECTIONS"
+	mb                         "MB"
+	member                     "MEMBER"
+	memory                     "MEMORY"
+	merge                      "MERGE"
+	microsecond                "MICROSECOND"
+	minute                     "MINUTE"
+	minValue                   "MINVALUE"
+	minRows                    "MIN_ROWS"
+	mode                       "MODE"
+	modify                     "MODIFY"
+	month                      "MONTH"
+	names                      "NAMES"
+	national                   "NATIONAL"
+	ncharType                  "NCHAR"
+	never                      "NEVER"
+	next                       "NEXT"
+	nextval                    "NEXTVAL"
+	no                         "NO"
+	nocache                    "NOCACHE"
+	nocycle                    "NOCYCLE"
+	nodegroup                  "NODEGROUP"
+	nomaxvalue                 "NOMAXVALUE"
+	nominvalue                 "NOMINVALUE"
+	nonclustered               "NONCLUSTERED"
+	none                       "NONE"
+	nowait                     "NOWAIT"
+	nulls                      "NULLS"
+	nvarcharType               "NVARCHAR"
+	off                        "OFF"
+	offset                     "OFFSET"
+	oltpReadOnly               "OLTP_READ_ONLY"
+	oltpReadWrite              "OLTP_READ_WRITE"
+	oltpWriteOnly              "OLTP_WRITE_ONLY"
+	online                     "ONLINE"
+	only                       "ONLY"
+	onDuplicate                "ON_DUPLICATE"
+	open                       "OPEN"
+	optional                   "OPTIONAL"
+	packKeys                   "PACK_KEYS"
+	pageSym                    "PAGE"
+	parser                     "PARSER"
+	partial                    "PARTIAL"
+	partitioning               "PARTITIONING"
+	partitions                 "PARTITIONS"
+	password                   "PASSWORD"
+	passwordLockTime           "PASSWORD_LOCK_TIME"
+	pause                      "PAUSE"
+	percent                    "PERCENT"
+	per_db                     "PER_DB"
+	per_table                  "PER_TABLE"
 	pipesAsOr
-	plugins               "PLUGINS"
-	point                 "POINT"
-	policy                "POLICY"
-	preceding             "PRECEDING"
-	prepare               "PREPARE"
-	preserve              "PRESERVE"
-	preSplitRegions       "PRE_SPLIT_REGIONS"
-	privileges            "PRIVILEGES"
-	process               "PROCESS"
-	processlist           "PROCESSLIST"
-	profile               "PROFILE"
-	profiles              "PROFILES"
-	proxy                 "PROXY"
-	purge                 "PURGE"
-	quarter               "QUARTER"
-	queries               "QUERIES"
-	query                 "QUERY"
-	quick                 "QUICK"
-	rateLimit             "RATE_LIMIT"
-	rebuild               "REBUILD"
-	recommend             "RECOMMEND"
-	recover               "RECOVER"
-	redundant             "REDUNDANT"
-	reload                "RELOAD"
-	remove                "REMOVE"
-	reorganize            "REORGANIZE"
-	repair                "REPAIR"
-	repeatable            "REPEATABLE"
-	replica               "REPLICA"
-	replicas              "REPLICAS"
-	replication           "REPLICATION"
-	required              "REQUIRED"
-	resource              "RESOURCE"
-	respect               "RESPECT"
-	restart               "RESTART"
-	restore               "RESTORE"
-	restores              "RESTORES"
-	resume                "RESUME"
-	reuse                 "REUSE"
-	reverse               "REVERSE"
-	role                  "ROLE"
-	rollback              "ROLLBACK"
-	rollup                "ROLLUP"
-	routine               "ROUTINE"
-	rowCount              "ROW_COUNT"
-	rowFormat             "ROW_FORMAT"
-	rtree                 "RTREE"
-	san                   "SAN"
-	savepoint             "SAVEPOINT"
-	second                "SECOND"
-	secondary             "SECONDARY"
-	secondaryEngine       "SECONDARY_ENGINE"
-	secondaryLoad         "SECONDARY_LOAD"
-	secondaryUnload       "SECONDARY_UNLOAD"
-	security              "SECURITY"
-	sendCredentialsToTiKV "SEND_CREDENTIALS_TO_TIKV"
-	separator             "SEPARATOR"
-	sequence              "SEQUENCE"
-	serial                "SERIAL"
-	serializable          "SERIALIZABLE"
-	session               "SESSION"
-	setval                "SETVAL"
-	shardRowIDBits        "SHARD_ROW_ID_BITS"
-	share                 "SHARE"
-	shared                "SHARED"
-	shutdown              "SHUTDOWN"
-	signed                "SIGNED"
-	simple                "SIMPLE"
-	skip                  "SKIP"
-	skipSchemaFiles       "SKIP_SCHEMA_FILES"
-	slave                 "SLAVE"
-	slow                  "SLOW"
-	snapshot              "SNAPSHOT"
-	some                  "SOME"
-	source                "SOURCE"
-	sqlBufferResult       "SQL_BUFFER_RESULT"
-	sqlCache              "SQL_CACHE"
-	sqlNoCache            "SQL_NO_CACHE"
-	sqlTsiDay             "SQL_TSI_DAY"
-	sqlTsiHour            "SQL_TSI_HOUR"
-	sqlTsiMinute          "SQL_TSI_MINUTE"
-	sqlTsiMonth           "SQL_TSI_MONTH"
-	sqlTsiQuarter         "SQL_TSI_QUARTER"
-	sqlTsiSecond          "SQL_TSI_SECOND"
-	sqlTsiWeek            "SQL_TSI_WEEK"
-	sqlTsiYear            "SQL_TSI_YEAR"
-	start                 "START"
-	statsAutoRecalc       "STATS_AUTO_RECALC"
-	statsColChoice        "STATS_COL_CHOICE"
-	statsColList          "STATS_COL_LIST"
-	statsOptions          "STATS_OPTIONS"
-	statsPersistent       "STATS_PERSISTENT"
-	statsSamplePages      "STATS_SAMPLE_PAGES"
-	statsSampleRate       "STATS_SAMPLE_RATE"
-	status                "STATUS"
-	storage               "STORAGE"
-	strictFormat          "STRICT_FORMAT"
-	subject               "SUBJECT"
-	subpartition          "SUBPARTITION"
-	subpartitions         "SUBPARTITIONS"
-	super                 "SUPER"
-	swaps                 "SWAPS"
-	switchesSym           "SWITCHES"
-	system                "SYSTEM"
-	systemTime            "SYSTEM_TIME"
-	tables                "TABLES"
-	tablespace            "TABLESPACE"
-	tableChecksum         "TABLE_CHECKSUM"
-	temporary             "TEMPORARY"
-	temptable             "TEMPTABLE"
-	textType              "TEXT"
-	than                  "THAN"
-	tikvImporter          "TIKV_IMPORTER"
-	timeType              "TIME"
-	timestampType         "TIMESTAMP"
-	tokenIssuer           "TOKEN_ISSUER"
-	tpcc                  "TPCC"
-	tpch10                "TPCH_10"
-	trace                 "TRACE"
-	traditional           "TRADITIONAL"
-	transaction           "TRANSACTION"
-	triggers              "TRIGGERS"
-	truncate              "TRUNCATE"
-	tsoType               "TSO"
-	ttl                   "TTL"
-	ttlEnable             "TTL_ENABLE"
-	ttlJobInterval        "TTL_JOB_INTERVAL"
-	tp                    "TYPE"
-	unbounded             "UNBOUNDED"
-	uncommitted           "UNCOMMITTED"
-	undefined             "UNDEFINED"
-	unicodeSym            "UNICODE"
-	unknown               "UNKNOWN"
-	unset                 "UNSET"
-	user                  "USER"
-	validation            "VALIDATION"
-	value                 "VALUE"
-	variables             "VARIABLES"
-	vectorType            "VECTOR"
-	view                  "VIEW"
-	visible               "VISIBLE"
-	wait                  "WAIT"
-	waitTiflashReady      "WAIT_TIFLASH_READY"
-	warnings              "WARNINGS"
-	week                  "WEEK"
-	weightString          "WEIGHT_STRING"
-	without               "WITHOUT"
-	withSysTable          "WITH_SYS_TABLE"
-	workload              "WORKLOAD"
-	x509                  "X509"
-	yearType              "YEAR"
+	plugins                    "PLUGINS"
+	point                      "POINT"
+	policy                     "POLICY"
+	preceding                  "PRECEDING"
+	prepare                    "PREPARE"
+	preserve                   "PRESERVE"
+	preSplitRegions            "PRE_SPLIT_REGIONS"
+	privileges                 "PRIVILEGES"
+	process                    "PROCESS"
+	processlist                "PROCESSLIST"
+	profile                    "PROFILE"
+	profiles                   "PROFILES"
+	proxy                      "PROXY"
+	purge                      "PURGE"
+	quarter                    "QUARTER"
+	queries                    "QUERIES"
+	query                      "QUERY"
+	quick                      "QUICK"
+	rateLimit                  "RATE_LIMIT"
+	rebuild                    "REBUILD"
+	recommend                  "RECOMMEND"
+	recover                    "RECOVER"
+	redundant                  "REDUNDANT"
+	refresh                    "REFRESH"
+	reload                     "RELOAD"
+	remove                     "REMOVE"
+	reorganize                 "REORGANIZE"
+	repair                     "REPAIR"
+	repeatable                 "REPEATABLE"
+	replica                    "REPLICA"
+	replicas                   "REPLICAS"
+	replication                "REPLICATION"
+	required                   "REQUIRED"
+	resource                   "RESOURCE"
+	respect                    "RESPECT"
+	restart                    "RESTART"
+	restore                    "RESTORE"
+	restores                   "RESTORES"
+	resume                     "RESUME"
+	reuse                      "REUSE"
+	reverse                    "REVERSE"
+	role                       "ROLE"
+	rollback                   "ROLLBACK"
+	rollup                     "ROLLUP"
+	routine                    "ROUTINE"
+	rowCount                   "ROW_COUNT"
+	rowFormat                  "ROW_FORMAT"
+	rtree                      "RTREE"
+	rule                       "RULE"
+	san                        "SAN"
+	savepoint                  "SAVEPOINT"
+	second                     "SECOND"
+	secondary                  "SECONDARY"
+	secondaryEngine            "SECONDARY_ENGINE"
+	secondaryEngineAttribute   "SECONDARY_ENGINE_ATTRIBUTE"
+	secondaryLoad              "SECONDARY_LOAD"
+	secondaryUnload            "SECONDARY_UNLOAD"
+	security                   "SECURITY"
+	sendCredentialsToTiKV      "SEND_CREDENTIALS_TO_TIKV"
+	separator                  "SEPARATOR"
+	sequence                   "SEQUENCE"
+	serial                     "SERIAL"
+	serializable               "SERIALIZABLE"
+	session                    "SESSION"
+	setval                     "SETVAL"
+	shardRowIDBits             "SHARD_ROW_ID_BITS"
+	share                      "SHARE"
+	shared                     "SHARED"
+	shutdown                   "SHUTDOWN"
+	signed                     "SIGNED"
+	simple                     "SIMPLE"
+	skip                       "SKIP"
+	skipSchemaFiles            "SKIP_SCHEMA_FILES"
+	slave                      "SLAVE"
+	slow                       "SLOW"
+	snapshot                   "SNAPSHOT"
+	some                       "SOME"
+	source                     "SOURCE"
+	sqlBufferResult            "SQL_BUFFER_RESULT"
+	sqlCache                   "SQL_CACHE"
+	sqlNoCache                 "SQL_NO_CACHE"
+	sqlTsiDay                  "SQL_TSI_DAY"
+	sqlTsiHour                 "SQL_TSI_HOUR"
+	sqlTsiMinute               "SQL_TSI_MINUTE"
+	sqlTsiMonth                "SQL_TSI_MONTH"
+	sqlTsiQuarter              "SQL_TSI_QUARTER"
+	sqlTsiSecond               "SQL_TSI_SECOND"
+	sqlTsiWeek                 "SQL_TSI_WEEK"
+	sqlTsiYear                 "SQL_TSI_YEAR"
+	start                      "START"
+	statsAutoRecalc            "STATS_AUTO_RECALC"
+	statsColChoice             "STATS_COL_CHOICE"
+	statsColList               "STATS_COL_LIST"
+	statsOptions               "STATS_OPTIONS"
+	statsPersistent            "STATS_PERSISTENT"
+	statsSamplePages           "STATS_SAMPLE_PAGES"
+	statsSampleRate            "STATS_SAMPLE_RATE"
+	status                     "STATUS"
+	storage                    "STORAGE"
+	strictFormat               "STRICT_FORMAT"
+	subject                    "SUBJECT"
+	subpartition               "SUBPARTITION"
+	subpartitions              "SUBPARTITIONS"
+	super                      "SUPER"
+	swaps                      "SWAPS"
+	switchesSym                "SWITCHES"
+	system                     "SYSTEM"
+	systemTime                 "SYSTEM_TIME"
+	tables                     "TABLES"
+	tablespace                 "TABLESPACE"
+	tableChecksum              "TABLE_CHECKSUM"
+	temporary                  "TEMPORARY"
+	temptable                  "TEMPTABLE"
+	textType                   "TEXT"
+	than                       "THAN"
+	tikvImporter               "TIKV_IMPORTER"
+	timeType                   "TIME"
+	timeout                    "TIMEOUT"
+	timestampType              "TIMESTAMP"
+	tokenIssuer                "TOKEN_ISSUER"
+	tpcc                       "TPCC"
+	tpch10                     "TPCH_10"
+	trace                      "TRACE"
+	traditional                "TRADITIONAL"
+	transaction                "TRANSACTION"
+	triggers                   "TRIGGERS"
+	truncate                   "TRUNCATE"
+	tsoType                    "TSO"
+	ttl                        "TTL"
+	ttlEnable                  "TTL_ENABLE"
+	ttlJobInterval             "TTL_JOB_INTERVAL"
+	tp                         "TYPE"
+	unbounded                  "UNBOUNDED"
+	uncommitted                "UNCOMMITTED"
+	undefined                  "UNDEFINED"
+	unicodeSym                 "UNICODE"
+	unknown                    "UNKNOWN"
+	unset                      "UNSET"
+	user                       "USER"
+	validation                 "VALIDATION"
+	value                      "VALUE"
+	variables                  "VARIABLES"
+	vectorType                 "VECTOR"
+	view                       "VIEW"
+	visible                    "VISIBLE"
+	wait                       "WAIT"
+	waitTiflashReady           "WAIT_TIFLASH_READY"
+	warnings                   "WARNINGS"
+	week                       "WEEK"
+	weightString               "WEIGHT_STRING"
+	without                    "WITHOUT"
+	withSysTable               "WITH_SYS_TABLE"
+	workload                   "WORKLOAD"
+	x509                       "X509"
+	yearType                   "YEAR"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -736,10 +742,12 @@ import (
 	inplace               "INPLACE"
 	instant               "INSTANT"
 	internal              "INTERNAL"
+	inverted              "INVERTED"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	jsonArrayagg          "JSON_ARRAYAGG"
 	jsonObjectAgg         "JSON_OBJECTAGG"
+	jsonSumCrc32          "JSON_SUM_CRC32"
 	leader                "LEADER"
 	leaderConstraints     "LEADER_CONSTRAINTS"
 	learner               "LEARNER"
@@ -812,6 +820,7 @@ import (
 	trim                  "TRIM"
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
+	moderated             "MODERATED"
 	untilTS               "UNTIL_TS"
 	utilizationLimit      "UTILIZATION_LIMIT"
 	variance              "VARIANCE"
@@ -863,6 +872,9 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	distribute                 "DISTRIBUTE"
+	distribution               "DISTRIBUTION"
+	distributions              "DISTRIBUTIONS"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -974,6 +986,7 @@ import (
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
 	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
+	CancelDistributionJobStmt  "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
@@ -1007,6 +1020,7 @@ import (
 	DeleteFromStmt             "DELETE FROM statement"
 	DeleteWithoutUsingStmt     "Normal DELETE statement"
 	DeleteWithUsingStmt        "DELETE USING statement"
+	DistributeTableStmt        "Distribute table statement"
 	EmptyStmt                  "empty statement"
 	ExecuteStmt                "Execute statement"
 	ExplainStmt                "EXPLAIN statement"
@@ -1044,6 +1058,7 @@ import (
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
 	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
+	RefreshStatsStmt           "REFRESH STATS statement"
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
@@ -1147,7 +1162,8 @@ import (
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
 	ConstraintVectorIndex                  "vector index"
-	ConstraintWithVectorIndex              "table constraint with vector index"
+	ConstraintColumnarIndex                "columnar index"
+	ConstraintWithColumnarIndex            "table constraint with columnar index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1282,6 +1298,8 @@ import (
 	Priority                               "Statement priority"
 	PriorityOpt                            "Statement priority option"
 	PrivElem                               "Privilege element"
+	RefreshObject                          "Refresh object"
+	RefreshObjectList                      "Refresh object list"
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
@@ -1655,6 +1673,7 @@ import (
 %precedence function
 %precedence constraint
 %precedence vectorType
+%precedence columnar
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -1927,7 +1946,7 @@ DirectResourceGroupOption:
 	}
 |	"RU_PER_SEC" EqOpt "UNLIMITED"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, BoolValue: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, Burstable: ast.BurstableUnlimited}
 	}
 |	"PRIORITY" EqOpt ResourceGroupPriorityOption
 	{
@@ -1935,11 +1954,19 @@ DirectResourceGroupOption:
 	}
 |	"BURSTABLE"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableModerated}
 	}
-|	"BURSTABLE" EqOpt Boolean
+|	"BURSTABLE" EqOpt "MODERATED"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: $3.(bool)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableModerated}
+	}
+|	"BURSTABLE" EqOpt "UNLIMITED"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableUnlimited}
+	}
+|	"BURSTABLE" EqOpt "OFF"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableDisable}
 	}
 |	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
 	{
@@ -2268,15 +2295,7 @@ AlterTableSpec:
 			NewConstraints: constraints,
 		}
 	}
-|	"ADD" Constraint
-	{
-		constraint := $2.(*ast.Constraint)
-		$$ = &ast.AlterTableSpec{
-			Tp:         ast.AlterTableAddConstraint,
-			Constraint: constraint,
-		}
-	}
-|	"ADD" ConstraintVectorIndex
+|	"ADD" ConstraintWithColumnarIndex
 	{
 		constraint := $2.(*ast.Constraint)
 		$$ = &ast.AlterTableSpec{
@@ -3170,6 +3189,43 @@ FlashbackDatabaseStmt:
 
 /*******************************************************************
  *
+ *  Distribute Table Statement
+ *
+ *  Example:
+ *      DISTRIBUTE TABLE table_name Partitions(p0,p1)  Rule= `leader-scatter` Engine = `tikv` timeout = `30m`;
+ *
+ *******************************************************************/
+DistributeTableStmt:
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]ast.CIStr),
+			Rule:           $7,
+			Engine:         $10,
+		}
+	}
+|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit "TIMEOUT" EqOpt stringLit
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]ast.CIStr),
+			Rule:           $7,
+			Engine:         $10,
+			Timeout:        $13,
+		}
+	}
+
+CancelDistributionJobStmt:
+	"CANCEL" "DISTRIBUTION" "JOB" Int64Num
+	{
+		$$ = &ast.CancelDistributionJobStmt{
+			JobID: $4.(int64),
+		}
+	}
+
+/*******************************************************************
+ *
  *  Split index region statement
  *
  *  Example:
@@ -3451,7 +3507,7 @@ BinlogStmt:
 ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
-		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
+		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.(ast.ColumnOptionList).Options}
 		if err := colDef.Validate(); err != nil {
 			yylex.AppendError(err)
 			return 1
@@ -3463,7 +3519,7 @@ ColumnDef:
 		// TODO: check flen 0
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
-		options = append(options, $3.([]*ast.ColumnOption)...)
+		options = append(options, $3.(ast.ColumnOptionList).Options...)
 		tp.AddFlag(mysql.UnsignedFlag)
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: tp, Options: options}
 		if err := colDef.Validate(); err != nil {
@@ -3665,7 +3721,9 @@ ColumnOption:
 	}
 |	"SERIAL" "DEFAULT" "VALUE"
 	{
-		$$ = []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
+		$$ = ast.ColumnOptionList{
+			Options: []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}},
+		}
 	}
 |	"ON" "UPDATE" NowSymOptionFraction
 	{
@@ -3692,7 +3750,9 @@ ColumnOption:
 		}
 		switch $6.(int) {
 		case 0:
-			$$ = []*ast.ColumnOption{optionCheck, {Tp: ast.ColumnOptionNotNull}}
+			$$ = ast.ColumnOptionList{
+				Options: []*ast.ColumnOption{optionCheck, {Tp: ast.ColumnOptionNotNull}},
+			}
 		case 1:
 			optionCheck.Enforced = true
 			$$ = optionCheck
@@ -3739,6 +3799,13 @@ ColumnOption:
 |	"AUTO_RANDOM" AutoRandomOpt
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
+	}
+|	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
+	{
+		$$ = &ast.ColumnOption{
+			Tp:       ast.ColumnOptionSecondaryEngineAttribute,
+			StrValue: $3,
+		}
 	}
 
 AutoRandomOpt:
@@ -3794,23 +3861,40 @@ ColumnOptionList:
 	ColumnOption
 	{
 		if columnOption, ok := $1.(*ast.ColumnOption); ok {
-			$$ = []*ast.ColumnOption{columnOption}
+			hasCollateOption := false
+			if columnOption.Tp == ast.ColumnOptionCollate {
+				hasCollateOption = true
+			}
+			$$ = ast.ColumnOptionList{
+				HasCollateOption: hasCollateOption,
+				Options:          []*ast.ColumnOption{columnOption},
+			}
 		} else {
 			$$ = $1
 		}
 	}
 |	ColumnOptionList ColumnOption
 	{
+		columnOptionList := $1.(ast.ColumnOptionList)
 		if columnOption, ok := $2.(*ast.ColumnOption); ok {
-			$$ = append($1.([]*ast.ColumnOption), columnOption)
+			if columnOption.Tp == ast.ColumnOptionCollate && columnOptionList.HasCollateOption {
+				yylex.AppendError(ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", yylex.Errorf("").Error()))
+				return 1
+			}
+			columnOptionList.Options = append(columnOptionList.Options, columnOption)
 		} else {
-			$$ = append($1.([]*ast.ColumnOption), $2.([]*ast.ColumnOption)...)
+			if columnOptionList.HasCollateOption && $2.(ast.ColumnOptionList).HasCollateOption {
+				yylex.AppendError(ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", yylex.Errorf("").Error()))
+				return 1
+			}
+			columnOptionList.Options = append(columnOptionList.Options, $2.(ast.ColumnOptionList).Options...)
 		}
+		$$ = columnOptionList
 	}
 
 ColumnOptionListOpt:
 	{
-		$$ = []*ast.ColumnOption{}
+		$$ = ast.ColumnOptionList{}
 	}
 |	ColumnOptionList
 
@@ -3844,6 +3928,8 @@ ConstraintElem:
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
 		}
 		$$ = c
 	}
@@ -4019,6 +4105,16 @@ DefaultValueExpr:
 |	SignedLiteral
 |	NextValueForSequenceParentheses
 |	BuiltinFunction
+|	'(' Identifier ')'
+	{
+		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
+			Name: ast.NewCIStr($2),
+		}}
+	}
+|	'(' SignedLiteral ')'
+	{
+		$$ = $2
+	}
 
 BuiltinFunction:
 	'(' BuiltinFunction ')'
@@ -4238,29 +4334,11 @@ CreateIndexStmt:
 				indexLockAndAlgorithm = nil
 			}
 		}
-
-		keyType := $2.(ast.IndexKeyType)
-		isVectorIndex := keyType == ast.IndexKeyTypeVector
-		if isVectorIndex && indexOption.Tp == ast.IndexTypeInvalid {
-			indexOption.Tp = ast.IndexTypeHNSW
-		}
-		if (isVectorIndex && indexOption.Tp != ast.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == ast.IndexTypeHNSW) {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
-		partSpecs := $10.([]*ast.IndexPartSpecification)
-		if keyType == ast.IndexKeyTypeVector {
-			if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
-				yylex.AppendError(ErrSyntax)
-				return 1
-			}
-		}
-
 		$$ = &ast.CreateIndexStmt{
 			IfNotExists:             $4.(bool),
 			IndexName:               $5,
 			Table:                   $8.(*ast.TableName),
-			IndexPartSpecifications: partSpecs,
+			IndexPartSpecifications: $10.([]*ast.IndexPartSpecification),
 			IndexOption:             indexOption,
 			KeyType:                 $2.(ast.IndexKeyType),
 			LockAlg:                 indexLockAndAlgorithm,
@@ -4343,11 +4421,15 @@ IndexKeyTypeOpt:
 	}
 |	"FULLTEXT"
 	{
-		$$ = ast.IndexKeyTypeFullText
+		$$ = ast.IndexKeyTypeFulltext
 	}
 |	"VECTOR"
 	{
 		$$ = ast.IndexKeyTypeVector
+	}
+|	"COLUMNAR"
+	{
+		$$ = ast.IndexKeyTypeColumnar
 	}
 
 /**************************************AlterDatabaseStmt***************************************
@@ -4895,6 +4977,13 @@ PartDefOption:
 |	"ENGINE_ATTRIBUTE" EqOpt StringName
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionEngineAttribute, StrValue: $3}
+	}
+|	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
+	{
+		$$ = &ast.TableOption{
+			Tp:       ast.TableOptionSecondaryEngineAttribute,
+			StrValue: $3,
+		}
 	}
 |	"INSERT_METHOD" EqOpt StringName
 	{
@@ -5473,7 +5562,43 @@ ExplainSym:
 |	"DESC"
 
 ExplainStmt:
-	ExplainSym TableName
+	ExplainSym "EXPLORE" SelectStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		stmt := $3
+		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		$$ = &ast.ExplainStmt{
+			Stmt:    stmt,
+			Explore: true,
+		}
+	}
+|	ExplainSym "EXPLORE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			SQLDigest: $3,
+			Explore:   true,
+		}
+	}
+|	ExplainSym "EXPLORE" "ANALYZE" SelectStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		stmt := $4
+		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		$$ = &ast.ExplainStmt{
+			Stmt:    stmt,
+			Explore: true,
+			Analyze: true,
+		}
+	}
+|	ExplainSym "EXPLORE" "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			SQLDigest: $4,
+			Explore:   true,
+			Analyze:   true,
+		}
+	}
+|	ExplainSym TableName
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt: &ast.ShowStmt{
@@ -5497,6 +5622,13 @@ ExplainStmt:
 		$$ = &ast.ExplainStmt{
 			Stmt:   $2,
 			Format: "row",
+		}
+	}
+|	ExplainSym stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $2,
+			Format:     "row",
 		}
 	}
 |	ExplainSym "FOR" "CONNECTION" NUM
@@ -5534,6 +5666,20 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|	ExplainSym "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
+|	ExplainSym "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
 |	ExplainSym "ANALYZE" ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
@@ -5542,12 +5688,36 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $3,
+			Format:     "row",
+			Analyze:    true,
+		}
+	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt:    $6,
 			Format:  $5,
 			Analyze: true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
 		}
 	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
@@ -6599,10 +6769,14 @@ IndexOptionList:
 				opt1.Visibility = opt2.Visibility
 			} else if opt2.PrimaryKeyTp != ast.PrimaryKeyTypeDefault {
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
+			} else if opt2.AddColumnarReplicaOnDemand > 0 {
+				opt1.AddColumnarReplicaOnDemand = opt2.AddColumnarReplicaOnDemand
 			} else if opt2.Global {
 				opt1.Global = true
 			} else if opt2.SplitOpt != nil {
 				opt1.SplitOpt = opt2.SplitOpt
+			} else if len(opt2.SecondaryEngineAttr) > 0 {
+				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
 			}
 			$$ = opt1
 		}
@@ -6613,6 +6787,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			KeyBlockSize: $3.(uint64),
+		}
+	}
+|	"ADD_COLUMNAR_REPLICA_ON_DEMAND"
+	{
+		$$ = &ast.IndexOption{
+			AddColumnarReplicaOnDemand: 1,
 		}
 	}
 |	IndexType
@@ -6626,8 +6806,6 @@ IndexOption:
 		$$ = &ast.IndexOption{
 			ParserName: ast.NewCIStr($3),
 		}
-		yylex.AppendError(yylex.Errorf("The WITH PARASER clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	"COMMENT" stringLit
 	{
@@ -6672,6 +6850,10 @@ IndexOption:
 				Num: $3.(int64),
 			},
 		}
+	}
+|	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
+	{
+		$$ = &ast.IndexOption{SecondaryEngineAttr: $3}
 	}
 
 /*
@@ -6744,6 +6926,10 @@ IndexTypeName:
 	{
 		$$ = ast.IndexTypeHNSW
 	}
+|	"INVERTED"
+	{
+		$$ = ast.IndexTypeInverted
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -6764,6 +6950,7 @@ Identifier:
 
 UnReservedKeyword:
 	"ACTION"
+|	"ADD_COLUMNAR_REPLICA_ON_DEMAND"
 |	"ADVISE"
 |	"ASCII"
 |	"APPLY"
@@ -6815,12 +7002,14 @@ UnReservedKeyword:
 |	"ENGINE"
 |	"ENGINES"
 |	"ENGINE_ATTRIBUTE"
+|	"SECONDARY_ENGINE_ATTRIBUTE"
 |	"ENUM"
 |	"ERROR"
 |	"ERRORS"
 |	"ESCAPE"
 |	"EVOLVE"
 |	"EXECUTE"
+|	"EXPLORE"
 |	"EXTENDED"
 |	"FIELDS"
 |	"FILE"
@@ -6853,11 +7042,13 @@ UnReservedKeyword:
 |	"RECOMMEND"
 |	"REDUNDANT"
 |	"REORGANIZE"
+|	"REFRESH"
 |	"RESOURCE"
 |	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
 |	"ROLLUP"
+|	"RULE"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -6874,6 +7065,7 @@ UnReservedKeyword:
 |	"TEXT"
 |	"THAN"
 |	"TIME" %prec lowerThanStringLitToken
+|	"TIMEOUT"
 |	"TIMESTAMP" %prec lowerThanStringLitToken
 |	"TRACE"
 |	"TRANSACTION"
@@ -7135,6 +7327,7 @@ UnReservedKeyword:
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
 |	"VECTOR"
+|	"COLUMNAR"
 |	"TPCH_10"
 |	"WITH_SYS_TABLE"
 |	"WAIT_TIFLASH_READY"
@@ -7159,6 +7352,9 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTE"
+|	"DISTRIBUTION"
+|	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
@@ -7216,6 +7412,7 @@ NotKeywordToken:
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
+|	"INVERTED"
 |	"LOG"
 |	"MIN"
 |	"MAX"
@@ -7270,6 +7467,7 @@ NotKeywordToken:
 |	"FLASHBACK"
 |	"JSON_OBJECTAGG"
 |	"JSON_ARRAYAGG"
+|	"JSON_SUM_CRC32"
 |	"TLS"
 |	"FOLLOWER"
 |	"FOLLOWERS"
@@ -7316,6 +7514,7 @@ NotKeywordToken:
 |	"BACKGROUND"
 |	"TASK_TYPES"
 |	"UNLIMITED"
+|	"MODERATED"
 |	"UTILIZATION_LIMIT"
 
 /************************************************************************************
@@ -7983,6 +8182,30 @@ SimpleExpr:
 			Expr:            $3,
 			Tp:              tp,
 			FunctionType:    ast.CastFunction,
+			ExplicitCharSet: explicitCharset,
+		}
+	}
+|	jsonSumCrc32 '(' Expression "AS" CastType "ARRAY" ')'
+	{
+		/* Copied from CAST function, except that ARRAY is enforced to be true */
+		tp := $5.(*types.FieldType)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
+		if tp.GetFlen() == types.UnspecifiedLength {
+			tp.SetFlen(defaultFlen)
+		}
+		if tp.GetDecimal() == types.UnspecifiedLength {
+			tp.SetDecimal(defaultDecimal)
+		}
+		tp.SetArray(true)
+		explicitCharset := parser.explicitCharset
+		if !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
+		parser.explicitCharset = false
+		$$ = &ast.JSONSumCrc32Expr{
+			Expr:            $3,
+			Tp:              tp,
 			ExplicitCharSet: explicitCharset,
 		}
 	}
@@ -11698,12 +11921,29 @@ ShowStmt:
 			ImportJobID: &v,
 		}
 	}
+|	"SHOW" "DISTRIBUTION" "JOB" Int64Num
+	{
+		v := $4.(int64)
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs, DistributionJobID: &v}
+	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
 	{
 		$$ = &ast.ShowStmt{
 			Tp:        ast.ShowCreateProcedure,
 			Procedure: $4.(*ast.TableName),
 		}
+	}
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowDistributions,
+			Table: $3.(*ast.TableName),
+		}
+		stmt.Table.PartitionNames = $4.([]ast.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 
 ShowPlacementTarget:
@@ -12032,9 +12272,21 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
+| 	"IMPORT" "GROUPS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups}
+	}
+| 	"IMPORT" "GROUP" stringLit 
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
+	}
 |	"IMPORT" "JOBS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
+	}
+|	"DISTRIBUTION" "JOBS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs}
 	}
 
 ShowLikeOrWhereOpt:
@@ -12255,6 +12507,7 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
+|	CancelDistributionJobStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
@@ -12268,6 +12521,7 @@ Statement:
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
+|	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
@@ -12308,6 +12562,7 @@ Statement:
 |	ReleaseSavepointStmt
 |	RevokeStmt
 |	RevokeRoleStmt
+|	RefreshStatsStmt
 |	SavepointStmt
 |	SetOprStmt
 |	SelectStmt
@@ -12433,7 +12688,7 @@ Constraint:
 		$$ = cst
 	}
 
-// ConstraintVectorIndex does not put in Constraint to resolve syntax conflicts.
+// ConstraintVectorIndex is only a compatible and shortcut syntax for CREATE COLUMNAR INDEX USING VECTOR.
 ConstraintVectorIndex:
 	"VECTOR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
@@ -12444,44 +12699,43 @@ ConstraintVectorIndex:
 			Name:         $4.([]interface{})[0].(*ast.NullString).String,
 			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
-
 		if $8 != nil {
 			c.Option = $8.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
 		}
 		if indexType := $4.([]interface{})[1]; indexType != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
 			c.Option.Tp = indexType.(ast.IndexType)
-		}
-		if c.Option == nil {
-			c.Option = &ast.IndexOption{Tp: ast.IndexTypeHNSW}
-		} else if c.Option.Tp == ast.IndexTypeInvalid {
-			c.Option.Tp = ast.IndexTypeHNSW
-		}
-		if c.Option.Tp != ast.IndexTypeHNSW {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
-
-		if len(c.Keys) != 1 || c.Keys[0].Expr == nil {
-			yylex.AppendError(ErrSyntax)
-			return 1
 		}
 		$$ = c
 	}
 
-ConstraintWithVectorIndex:
-	ConstraintKeywordOpt ConstraintElem
+// ConstraintColumnarIndex does not put in Constraint to resolve syntax conflicts.
+ConstraintColumnarIndex:
+	"COLUMNAR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
-		cst := $2.(*ast.Constraint)
-		if $1 != nil {
-			cst.Name = $1.(string)
-			cst.IsEmptyIndex = len(cst.Name) == 0
+		c := &ast.Constraint{
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintColumnar,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
-		$$ = cst
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
+		}
+		if indexType := $4.([]interface{})[1]; indexType != nil {
+			c.Option.Tp = indexType.(ast.IndexType)
+		}
+		$$ = c
 	}
+
+ConstraintWithColumnarIndex:
+	Constraint
 |	ConstraintVectorIndex
+|	ConstraintColumnarIndex
 	{
 		$$ = $1.(*ast.Constraint)
 	}
@@ -12492,7 +12746,7 @@ CheckConstraintKeyword:
 
 TableElement:
 	ColumnDef
-|	ConstraintWithVectorIndex
+|	ConstraintWithColumnarIndex
 
 TableElementList:
 	TableElement
@@ -12689,7 +12943,6 @@ TableOption:
 |	"SECONDARY_ENGINE" EqOpt "NULL"
 	{
 		// Parse it but will ignore it
-		// See https://github.com/mysql/mysql-server/blob/8.0/sql/sql_yacc.yy#L5977-L5984
 		$$ = &ast.TableOption{Tp: ast.TableOptionSecondaryEngineNull}
 		yylex.AppendError(yylex.Errorf("The SECONDARY_ENGINE clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
@@ -12697,7 +12950,6 @@ TableOption:
 |	"SECONDARY_ENGINE" EqOpt StringName
 	{
 		// Parse it but will ignore it
-		// See https://github.com/mysql/mysql-server/blob/8.0/sql/sql_yacc.yy#L5977-L5984
 		$$ = &ast.TableOption{Tp: ast.TableOptionSecondaryEngine, StrValue: $3}
 		yylex.AppendError(yylex.Errorf("The SECONDARY_ENGINE clause is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
@@ -13776,8 +14028,19 @@ ConnectionOptions:
 |	"WITH" ConnectionOptionList
 	{
 		$$ = $2
-		yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions now, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
+		needWarning := false
+		for _, option := range $2.([]*ast.ResourceOption) {
+			switch option.Type {
+			case ast.MaxUserConnections:
+			// do nothing.
+			default:
+				needWarning = true
+			}
+		}
+		if needWarning {
+			yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions but MAX_USER_CONNECTIONS now, they would be parsed but ignored."))
+			parser.lastErrorAsWarn()
+		}
 	}
 
 ConnectionOptionList:
@@ -15349,6 +15612,54 @@ UnlockStatsStmt:
 		}
 	}
 
+RefreshStatsStmt:
+	"REFRESH" "STATS" RefreshObjectList
+	{
+		$$ = &ast.RefreshStatsStmt{
+			RefreshObjects: $3.([]*ast.RefreshObject),
+		}
+	}
+
+RefreshObjectList:
+	RefreshObject
+	{
+		$$ = []*ast.RefreshObject{$1.(*ast.RefreshObject)}
+	}
+|	RefreshObjectList ',' RefreshObject
+	{
+		$$ = append($1.([]*ast.RefreshObject), $3.(*ast.RefreshObject))
+	}
+
+RefreshObject:
+	'*' '.' '*'
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeGlobal,
+		}
+	}
+|	Identifier '.' '*'
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeDatabase,
+			DBName:             ast.NewCIStr($1),
+		}
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeTable,
+			DBName:             ast.NewCIStr($1),
+			TableName:          ast.NewCIStr($3),
+		}
+	}
+|	Identifier
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeTable,
+			TableName:          ast.NewCIStr($1),
+		}
+	}
+
 DropPolicyStmt:
 	"DROP" "PLACEMENT" "POLICY" IfExists PolicyName
 	{
@@ -16699,6 +17010,18 @@ DropQueryWatchStmt:
 	{
 		$$ = &ast.DropQueryWatchStmt{
 			IntValue: $4.(int64),
+		}
+	}
+|	"QUERY" "WATCH" "REMOVE" "RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.DropQueryWatchStmt{
+			GroupNameStr: ast.NewCIStr($6),
+		}
+	}
+|	"QUERY" "WATCH" "REMOVE" "RESOURCE" "GROUP" UserVariable
+	{
+		$$ = &ast.DropQueryWatchStmt{
+			GroupNameExpr: $6.(ast.ExprNode),
 		}
 	}
 %%

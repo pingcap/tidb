@@ -51,10 +51,10 @@ type Plan interface {
 	ID() int
 
 	// TP get the plan type.
-	TP() string
+	TP(...bool) string
 
 	// Get the ID in explain statement
-	ExplainID() fmt.Stringer
+	ExplainID(isChildOfINL ...bool) fmt.Stringer
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -95,7 +95,7 @@ type PhysicalPlan interface {
 	GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
 
 	// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
-	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
+	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 	// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -173,10 +173,7 @@ func (c *PlanCounterTp) Dec(x int64) {
 	if *c <= 0 {
 		return
 	}
-	*c = PlanCounterTp(int64(*c) - x)
-	if *c < 0 {
-		*c = 0
-	}
+	*c = max(PlanCounterTp(int64(*c)-x), 0)
 }
 
 // Empty indicates whether the PlanCounterTp is clear now.
@@ -202,7 +199,7 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
 	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, error)
@@ -283,6 +280,7 @@ type LogicalPlan interface {
 	RollBackTaskMap(TS uint64)
 
 	// CanPushToCop check if we might push this plan to a specific store.
+	// Deprecated: don't depend subtree based push check, see CanSelfBeingPushedToCopImpl based op-self push check.
 	CanPushToCop(store kv.StoreType) bool
 
 	// ExtractFD derive the FDSet from the tree bottom up.
@@ -303,4 +301,70 @@ type LogicalPlan interface {
 	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
 	// For logicalPlan implementation, it just returns itself as well.
 	GetWrappedLogicalPlan() LogicalPlan
+}
+
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
+type JoinType int
+
+const (
+	// InnerJoin means inner join.
+	InnerJoin JoinType = iota
+	// LeftOuterJoin means left join.
+	LeftOuterJoin
+	// RightOuterJoin means right join.
+	RightOuterJoin
+	// SemiJoin means if row a in table A matches some rows in B, just output a.
+	SemiJoin
+	// AntiSemiJoin means if row a in table A does not match any row in B, then output a.
+	AntiSemiJoin
+	// LeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
+	LeftOuterSemiJoin
+	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
+	AntiLeftOuterSemiJoin
+)
+
+// IsOuterJoin returns if this joiner is an outer joiner
+func (tp JoinType) IsOuterJoin() bool {
+	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsSemiJoin returns if this joiner is a semi/anti-semi joiner
+func (tp JoinType) IsSemiJoin() bool {
+	return tp == SemiJoin || tp == AntiSemiJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsInnerJoin returns if this joiner is a inner joiner
+func (tp JoinType) IsInnerJoin() bool {
+	return tp == InnerJoin
+}
+
+func (tp JoinType) String() string {
+	switch tp {
+	case InnerJoin:
+		return "inner join"
+	case LeftOuterJoin:
+		return "left outer join"
+	case RightOuterJoin:
+		return "right outer join"
+	case SemiJoin:
+		return "semi join"
+	case AntiSemiJoin:
+		return "anti semi join"
+	case LeftOuterSemiJoin:
+		return "left outer semi join"
+	case AntiLeftOuterSemiJoin:
+		return "anti left outer semi join"
+	}
+	return "unsupported join type"
+}
+
+// PhysicalJoin provides some common methods for join operators.
+// Note that PhysicalApply is deliberately excluded from this interface.
+type PhysicalJoin interface {
+	PhysicalPlan
+	PhysicalJoinImplement()
+	GetInnerChildIdx() int
+	GetJoinType() JoinType
 }

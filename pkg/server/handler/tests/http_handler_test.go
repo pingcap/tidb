@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,9 +43,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -51,7 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
@@ -62,8 +66,9 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -389,7 +394,7 @@ func TestGetRegionByIDWithError(t *testing.T) {
 
 func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	var err error
-	ts.store, err = mockstore.NewMockStore()
+	ts.store, err = teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
@@ -540,6 +545,11 @@ func TestGetTableMVCC(t *testing.T) {
 	}
 
 	hexKey := p2.Key
+	if kerneltype.IsNextGen() {
+		// EncodeKey(nil) returns the codec's key prefix. We use this to strip the prefix from the hex key.
+		keyPrefix := strings.ToUpper(hex.EncodeToString(ts.store.GetCodec().EncodeKey(nil)))
+		hexKey = strings.TrimPrefix(hexKey, keyPrefix)
+	}
 	resp, err = ts.FetchStatus("/mvcc/hex/" + hexKey)
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
@@ -972,6 +982,9 @@ func TestGetSchema(t *testing.T) {
 }
 
 func TestAllHistory(t *testing.T) {
+	// TestGetSchema will set schema lease to -1, while this test needs a valid
+	// schema lease.
+	vardef.SetStatsLease(time.Second)
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -1054,7 +1067,7 @@ func TestPprof(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 	retryTime := 100
-	for retry := 0; retry < retryTime; retry++ {
+	for range retryTime {
 		resp, err := ts.FetchStatus("/debug/pprof/heap")
 		if err == nil {
 			_, err = io.ReadAll(resp.Body)
@@ -1149,7 +1162,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1163,7 +1176,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
 
 	// Two tables in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1225,12 +1238,13 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
+	time.Sleep(time.Second)
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
-	ts.domain.InfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
 
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
@@ -1307,7 +1321,7 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 			}
 		}
 	}()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		testUpdateLabels()
 	}
 	close(done)
@@ -1319,6 +1333,10 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 }
 
 func TestUpgrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -1429,35 +1447,41 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	require.NoError(t, err)
 	ddlID := do.DDL().GetID()
 	// check the result for upgrade show
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s0": {
-			ID:           ddlID,
-			IP:           "127.0.0.1",
-			Port:         4000,
-			JSONServerID: 0,
-			ServerVersionInfo: infosync.ServerVersionInfo{
-				Version: "ver",
-				GitHash: "hash",
+			StaticInfo: serverinfo.StaticInfo{
+				ID:           ddlID,
+				IP:           "127.0.0.1",
+				Port:         4000,
+				JSONServerID: 0,
+				VersionInfo: serverinfo.VersionInfo{
+					Version: "ver",
+					GitHash: "hash",
+				},
 			},
 		},
 		"s2": {
-			ID:           "ID2",
-			IP:           "127.0.0.1",
-			Port:         4002,
-			JSONServerID: 2,
-			ServerVersionInfo: infosync.ServerVersionInfo{
-				Version: "ver2",
-				GitHash: "hash2",
+			StaticInfo: serverinfo.StaticInfo{
+				ID:           "ID2",
+				IP:           "127.0.0.1",
+				Port:         4002,
+				JSONServerID: 2,
+				VersionInfo: serverinfo.VersionInfo{
+					Version: "ver2",
+					GitHash: "hash2",
+				},
 			},
 		},
 		"s1": {
-			ID:           "ID1",
-			IP:           "127.0.0.1",
-			Port:         4001,
-			JSONServerID: 1,
-			ServerVersionInfo: infosync.ServerVersionInfo{
-				Version: "ver",
-				GitHash: "hash",
+			StaticInfo: serverinfo.StaticInfo{
+				ID:           "ID1",
+				IP:           "127.0.0.1",
+				Port:         4001,
+				JSONServerID: 1,
+				VersionInfo: serverinfo.VersionInfo{
+					Version: "ver",
+					GitHash: "hash",
+				},
 			},
 		},
 	}
@@ -1504,14 +1528,14 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	// test upgrade show for 1 server
 	checkUpgradeShow(1, 100, 0)
 	// test upgrade show for 3 servers
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo")
 	// test upgrade show again with 3 different version servers
 	checkUpgradeShow(3, 33, 3)
 	// test upgrade show again with 3 servers of the same version
 	mockedAllServerInfos["s2"].Version = mockedAllServerInfos["s0"].Version
 	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	checkUpgradeShow(3, 100, 0)
 }
 
@@ -1523,4 +1547,67 @@ func TestIssue52608(t *testing.T) {
 	on, addr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
 	require.Equal(t, on, true)
 	require.Equal(t, addr[:10], "127.0.0.1:")
+}
+
+func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	time.Sleep(time.Second)
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.RandClient()
+	infosync.SetEtcdClient(client)
+
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().RestartTopology(ctx)
+
+	testUpdateLabels := func() {
+		labels := map[string]string{}
+		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, labels)
+	}
+	testStoreTopology := func() {
+		require.NoError(t, ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()))
+	}
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				testStoreTopology()
+			}
+		}
+	}()
+	for range 100 {
+		testUpdateLabels()
+	}
+	close(done)
+	wg.Wait()
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
 }

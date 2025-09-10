@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -311,6 +312,9 @@ const (
 	// TiDBOptPreferRangeScan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
 	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
+	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
+	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
+
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
@@ -322,6 +326,32 @@ const (
 
 	// TiDBOptCorrelationExpFactor is an exponential factor to control heuristic approach when tidb_opt_correlation_threshold is not satisfied.
 	TiDBOptCorrelationExpFactor = "tidb_opt_correlation_exp_factor"
+
+	// TiDBOptRiskEqSkewRatio controls the amount of skew is applied to equal predicate estimation when a value is not found in TopN/buckets.
+	TiDBOptRiskEqSkewRatio = "tidb_opt_risk_eq_skew_ratio"
+
+	// TiDBOptRiskRangeSkewRatio controls the amount of skew that is applied to range predicate estimation when a range falls within a bucket or outside the histogram bucket range.
+	TiDBOptRiskRangeSkewRatio = "tidb_opt_risk_range_skew_ratio"
+
+	// TiDBOptRiskScaleNDVSkewRatio controls the NDV estimation risk strategy for scaling NDV estimation.
+	TiDBOptRiskScaleNDVSkewRatio = "tidb_opt_scale_ndv_skew_ratio"
+
+	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for multi-column operations
+	// including GROUP BY, JOIN, and DISTINCT operations.
+	// When 0: uses conservative estimate (max of individual column NDVs, production default)
+	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
+	TiDBOptRiskGroupNDVSkewRatio = "tidb_opt_group_ndv_skew_ratio"
+
+	// TiDBOptAlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	TiDBOptAlwaysKeepJoinKey = "tidb_opt_always_keep_join_key"
+
+	// TiDBOptCartesianJoinOrderThreshold controls whether to allow do Cartesian Join first in Join Reorder.
+	// This variable is used as a penalty to trade off the risk and join order quality.
+	// When 0: never do Cartesian Join first.
+	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
+	TiDBOptCartesianJoinOrderThreshold = "tidb_opt_cartesian_join_order_threshold"
 
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
@@ -343,6 +373,33 @@ const (
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
+
+	// The following optimizer cost factors represent a multiplier for each optimizer physical operator.
+	// These factors are used to adjust the cost of each operator to influence the optimizer's plan selection.
+	TiDBOptIndexScanCostFactor        = "tidb_opt_index_scan_cost_factor"
+	TiDBOptIndexReaderCostFactor      = "tidb_opt_index_reader_cost_factor"
+	TiDBOptTableReaderCostFactor      = "tidb_opt_table_reader_cost_factor"
+	TiDBOptTableFullScanCostFactor    = "tidb_opt_table_full_scan_cost_factor"
+	TiDBOptTableRangeScanCostFactor   = "tidb_opt_table_range_scan_cost_factor"
+	TiDBOptTableRowIDScanCostFactor   = "tidb_opt_table_rowid_scan_cost_factor"
+	TiDBOptTableTiFlashScanCostFactor = "tidb_opt_table_tiflash_scan_cost_factor"
+	TiDBOptIndexLookupCostFactor      = "tidb_opt_index_lookup_cost_factor"
+	TiDBOptIndexMergeCostFactor       = "tidb_opt_index_merge_cost_factor"
+	TiDBOptSortCostFactor             = "tidb_opt_sort_cost_factor"
+	TiDBOptTopNCostFactor             = "tidb_opt_topn_cost_factor"
+	TiDBOptLimitCostFactor            = "tidb_opt_limit_cost_factor"
+	TiDBOptStreamAggCostFactor        = "tidb_opt_stream_agg_cost_factor"
+	TiDBOptHashAggCostFactor          = "tidb_opt_hash_agg_cost_factor"
+	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
+	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
+	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
+
+	// The following selectivity factors represent a multiplier for the selectivity of each predicate.
+	// These factors are used to determine the selectivity of predicates in the optimizer's cost model.
+	// TiDBOptSelectivityFactor: If one condition can't be calculated,
+	// we will assume that the selectivity of this condition is 0.8 by default.
+	TiDBOptSelectivityFactor = "tidb_opt_selectivity_factor"
+
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
 
@@ -433,6 +490,9 @@ const (
 
 	// TiFlashQuerySpillRatio is the threshold that TiFlash will trigger auto spill when the memory usage is above this percentage
 	TiFlashQuerySpillRatio = "tiflash_query_spill_ratio"
+
+	// TiFlashHashJoinVersion indicates whether to use hash join implementation v2 in TiFlash.
+	TiFlashHashJoinVersion = "tiflash_hash_join_version"
 
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
@@ -527,6 +587,9 @@ const (
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
+
+	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
+	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
 	// TiDBPlacementMode is used to control the mode for placement
 	TiDBPlacementMode = "tidb_placement_mode"
@@ -738,7 +801,11 @@ const (
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
 	// PDEnableFollowerHandleRegion indicates whether to enable the PD Follower handle region API.
+	// TODO: deprecated this variable to use a format like `tidb_enable_pd_follower_handle_region`.
 	PDEnableFollowerHandleRegion = "pd_enable_follower_handle_region"
+
+	// TiDBEnableBatchQueryRegion indicates whether to enable the batch query region feature.
+	TiDBEnableBatchQueryRegion = "tidb_enable_batch_query_region"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
@@ -960,6 +1027,9 @@ const (
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
+	// TiDBOptIndexJoinBuild indicates which way to build index join.
+	TiDBOptIndexJoinBuild = "tidb_opt_index_join_build_v2"
+
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
@@ -1028,6 +1098,9 @@ const (
 	TiDBRCWriteCheckTs = "tidb_rc_write_check_ts"
 	// TiDBCommitterConcurrency controls the number of running concurrent requests in the commit phase.
 	TiDBCommitterConcurrency = "tidb_committer_concurrency"
+	// TiDBPipelinedDmlResourcePolicy controls the number of running concurrent requests in the
+	// pipelined flush action.
+	TiDBPipelinedDmlResourcePolicy = "tidb_pipelined_dml_resource_policy"
 	// TiDBEnableBatchDML enables batch dml.
 	TiDBEnableBatchDML = "tidb_enable_batch_dml"
 	// TiDBStatsCacheMemQuota records stats cache quota
@@ -1038,6 +1111,7 @@ const (
 	// In test, we disable it by default. See GlobalSystemVariableInitialValue for details.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
 	// TiDBEnableAutoAnalyzePriorityQueue determines whether TiDB executes automatic analysis with priority queue.
+	// DEPRECATED: This variable is deprecated, please do not use this variable.
 	TiDBEnableAutoAnalyzePriorityQueue = "tidb_enable_auto_analyze_priority_queue"
 	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
@@ -1215,9 +1289,16 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
-	// TiDBCircuitBreakerPDMetadataErrorRateThresholdPct variable is used to set percent of errors to trip the circuit breaker for get region calls to PD
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
 	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
-	TiDBCircuitBreakerPDMetadataErrorRateThresholdPct = "tidb_cb_pd_metadata_error_rate_threshold_pct"
+	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
+
+	// TiDBEnableTSValidation controls whether to enable the timestamp validation in client-go.
+	TiDBEnableTSValidation = "tidb_enable_ts_validation"
+
+	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
+	// The log backup task will be paused if the checkpoint lag is larger than it.
+	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1231,6 +1312,24 @@ const (
 
 	// MaxPreSplitRegions is the maximum number of regions that can be pre-split.
 	MaxPreSplitRegions = 15
+)
+
+// Pipelined-DML related constants
+const (
+	// MinPipelinedDMLConcurrency is the minimum acceptable concurrency
+	MinPipelinedDMLConcurrency = 1
+	// MaxPipelinedDMLConcurrency is the maximum acceptable concurrency
+	MaxPipelinedDMLConcurrency = 8192
+
+	// DefaultFlushConcurrency is the default flush concurrency
+	DefaultFlushConcurrency = 128
+	// DefaultResolveConcurrency is the default resolve_lock concurrency
+	DefaultResolveConcurrency = 8
+
+	// ConservativeFlushConcurrency is the flush concurrency in conservative mode
+	ConservativeFlushConcurrency = 2
+	// ConservativeResolveConcurrency is the resolve_lock concurrency in conservative mode
+	ConservativeResolveConcurrency = 2
 )
 
 // Default TiDB system variable values.
@@ -1259,9 +1358,15 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
-	DefOptLimitPushDownThreshold            = 100
+	DefOptLimitPushDownThreshold            = 5000
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
+	DefOptRiskEqSkewRatio                   = 0.0
+	DefOptRiskRangeSkewRatio                = 0.0
+	DefOptRiskScaleNDVSkewRatio             = 1.0
+	DefOptRiskGroupNDVSkewRatio             = 0.0
+	DefOptAlwaysKeepJoinKey                 = false
+	DefOptCartesianJoinOrderThreshold       = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0
@@ -1272,9 +1377,28 @@ const (
 	DefOptMemoryFactor                      = 0.001
 	DefOptDiskFactor                        = 1.5
 	DefOptConcurrencyFactor                 = 3.0
+	DefOptIndexScanCostFactor               = 1.0
+	DefOptIndexReaderCostFactor             = 1.0
+	DefOptTableReaderCostFactor             = 1.0
+	DefOptTableFullScanCostFactor           = 1.0
+	DefOptTableRangeScanCostFactor          = 1.0
+	DefOptTableRowIDScanCostFactor          = 1.0
+	DefOptTableTiFlashScanCostFactor        = 1.0
+	DefOptIndexLookupCostFactor             = 1.0
+	DefOptIndexMergeCostFactor              = 1.0
+	DefOptSortCostFactor                    = 1.0
+	DefOptTopNCostFactor                    = 1.0
+	DefOptLimitCostFactor                   = 1.0
+	DefOptStreamAggCostFactor               = 1.0
+	DefOptHashAggCostFactor                 = 1.0
+	DefOptMergeJoinCostFactor               = 1.0
+	DefOptHashJoinCostFactor                = 1.0
+	DefOptIndexJoinCostFactor               = 1.0
+	DefOptSelectivityFactor                 = 0.8
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
+	DefOptEnableNoDecorrelateInSelect       = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false
@@ -1316,8 +1440,9 @@ const (
 	DefTiFlashMaxBytesBeforeExternalSort    = -1
 	DefTiFlashMemQuotaQueryPerNode          = 0
 	DefTiFlashQuerySpillRatio               = 0.7
+	DefTiFlashHashJoinVersion               = joinversion.TiFlashHashJoinVersionDefVal
 	DefTiDBEnableTiFlashPipelineMode        = true
-	DefTiDBMPPStoreFailTTL                  = "60s"
+	DefTiDBMPPStoreFailTTL                  = "0s"
 	DefTiDBTxnMode                          = PessimisticTxnMode
 	DefTiDBRowFormatV1                      = 1
 	DefTiDBRowFormatV2                      = 2
@@ -1369,7 +1494,8 @@ const (
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
-	DefTiDBEnableTelemetry                  = false
+	DefTiDBPointGetCache                    = false
+	DefTiDBEnableTelemetry                  = true
 	DefTiDBEnableParallelApply              = false
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false
@@ -1386,6 +1512,7 @@ const (
 	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0      // 0ms
 	DefTiDBEnableTSOFollowerProxy                     = false
 	DefPDEnableFollowerHandleRegion                   = true
+	DefTiDBEnableBatchQueryRegion                     = false
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
 	DefTiDBRegardNULLAsPoint                          = true
@@ -1428,6 +1555,7 @@ const (
 	DefTiDBQueryLogMaxLen                             = 4096
 	DefRequireSecureTransport                         = false
 	DefTiDBCommitterConcurrency                       = 128
+	DefTiDBPipelinedDmlResourcePolicy                 = StrategyStandard
 	DefTiDBBatchDMLIgnoreError                        = false
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
@@ -1465,7 +1593,7 @@ const (
 	DefTiDBDDLDiskQuota                               = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                            = 5
 	DefTiDBEnableNonPreparedPlanCache                 = false
-	DefTiDBEnableNonPreparedPlanCacheForDML           = false
+	DefTiDBEnableNonPreparedPlanCacheForDML           = true
 	DefTiDBNonPreparedPlanCacheSize                   = 100
 	DefTiDBPlanCacheMaxPlanSize                       = 2 * size.MB
 	DefTiDBInstancePlanCacheMaxMemSize                = 100 * size.MB
@@ -1511,6 +1639,7 @@ const (
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0
 	DefPasswordReuseTime                              = 0
+	DefMaxUserConnections                             = 0
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture            = false
@@ -1529,7 +1658,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
 	DefTiDBOptEnableLateMaterialization               = true
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0
-	DefTiDBOptOrderingIdxSelRatio                     = -1
+	DefTiDBOptOrderingIdxSelRatio                     = 0.01
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
 	DefTiDBEnableRowLevelChecksum                     = false
@@ -1554,6 +1683,7 @@ const (
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
+	DefTiDBOptIndexJoinBuild                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
@@ -1569,8 +1699,11 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
-	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
+	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
+	DefTiDBEnableTSValidation                         = true
+	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 )
 
 // Process global variables.
@@ -1610,6 +1743,7 @@ var (
 	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)
+	EnableBatchQueryRegion               = atomic.NewBool(DefTiDBEnableBatchQueryRegion)
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
@@ -1629,7 +1763,7 @@ var (
 	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable               = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	EnableNoopVariables                 = atomic.NewBool(DefTiDBEnableNoopVariables)
-	EnableMDL                           = atomic.NewBool(false)
+	enableMDL                           = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// TODO: set value by session variable
@@ -1675,6 +1809,7 @@ var (
 	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
@@ -1695,6 +1830,10 @@ var (
 	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
 	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
+
+	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
+
+	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 )
 
 func serverMemoryLimitDefaultValue() string {
@@ -1703,15 +1842,6 @@ func serverMemoryLimitDefaultValue() string {
 		return "80%"
 	}
 	return "0"
-}
-
-func mustParseDuration(str string) time.Duration {
-	duration, err := time.ParseDuration(str)
-	if err != nil {
-		panic(fmt.Sprintf("%s is not a duration", str))
-	}
-
-	return duration
 }
 
 func mustParseTime(layout string, str string) time.Time {
@@ -1882,6 +2012,15 @@ const (
 	// keep approximately 4 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
 	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
 	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
+
+	// StrategyStandard is a choice of variable TiDBPipelinedDmlResourcePolicy,
+	// the best performance policy
+	StrategyStandard = "standard"
+	// StrategyConservative is a choice of variable TiDBPipelinedDmlResourcePolicy,
+	// a rather conservative policy
+	StrategyConservative = "conservative"
+	// StrategyCustom is a choice of variable TiDBPipelinedDmlResourcePolicy,
+	StrategyCustom = "custom"
 )
 
 // Global config name list.
@@ -2015,4 +2154,33 @@ func SetMaxDeltaSchemaCount(cnt int64) {
 // GetMaxDeltaSchemaCount gets MaxDeltaSchemaCount size.
 func GetMaxDeltaSchemaCount() int64 {
 	return goatomic.LoadInt64(&MaxDeltaSchemaCount)
+}
+
+// IsMDLEnabled returns if MDL is enabled.
+func IsMDLEnabled() bool {
+	if kerneltype.IsNextGen() {
+		// MDL is very useful to avoid the 'Information schema is changed' error,
+		// in next-gen TiDB, MDL is always enabled, as we don't have the compatibility
+		// debts.
+		// some tests might call SetEnableMDL(false) to disable MDL, but it is not
+		// expected in nextgen, we use this branch to ensure MDL is always enabled,
+		// even in test.
+		return true
+	}
+	return enableMDL.Load()
+}
+
+// SetEnableMDL sets the MDL enable status.
+func SetEnableMDL(enabled bool) {
+	enableMDL.Store(enabled)
+}
+
+// GetDefaultTxnAssertionLevel returns the default assertion level based on kernel type.
+// For next-gen, we use strict assertion level to prevent correctness risks.
+// For classic, we use off to maintain compatibility.
+func GetDefaultTxnAssertionLevel() string {
+	if kerneltype.IsNextGen() {
+		return AssertionStrictStr
+	}
+	return AssertionOffStr
 }

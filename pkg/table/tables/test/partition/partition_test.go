@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -196,7 +197,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	tb, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbInfo = tb.Meta()
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		txn, err = tk.Session().Txn(true)
 		require.NoError(t, err)
@@ -307,7 +308,7 @@ func TestLocatePartition(t *testing.T) {
 			exec(tk)
 		})
 	}
-	for i := 0; i < len(tks); i++ {
+	for i := range tks {
 		run(i)
 	}
 	wg.Wait()
@@ -379,7 +380,6 @@ func TestExchangePartitionStates(t *testing.T) {
 	dbName := "partSchemaVer"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
-	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + dbName)
 	tk3 := testkit.NewTestKit(t, store)
@@ -673,7 +673,6 @@ func TestAddKeyPartitionStates(t *testing.T) {
 	dbName := "partSchemaVer"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
-	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + dbName)
 	tk3 := testkit.NewTestKit(t, store)
@@ -2639,7 +2638,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	pkMap := make(map[string]struct{}, rows)
 	pkArray := make([]string, 0, len(pkMap))
 	// Generate a start set:
-	for i := 0; i < rows; i++ {
+	for range rows {
 		pk := getNewPK(pkMap, "-o", reorgRand)
 		pkArray = append(pkArray, pk)
 		values := getValues(pk, false, reorgRand)
@@ -2985,8 +2984,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
 				idx := len(pkArray) - len(insPK) + insIdx
-				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
-				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				insPK = slices.Delete(insPK, insIdx, insIdx+1)
+				pkArray = slices.Delete(pkArray, idx, idx+1)
 				logutil.BgLogger().Debug("delete0", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
@@ -3017,8 +3016,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
 				idx := len(pkArray) - len(insPK) + insIdx
-				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
-				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				insPK = slices.Delete(insPK, insIdx, insIdx+1)
+				pkArray = slices.Delete(pkArray, idx, idx+1)
 				logutil.BgLogger().Debug("delete1", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
@@ -3049,7 +3048,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				oldPK := pkArray[idx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				pkArray = slices.Delete(pkArray, idx, idx+1)
 				logutil.BgLogger().Debug("delete2", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
@@ -3079,7 +3078,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				oldPK := pkArray[idx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				pkArray = slices.Delete(pkArray, idx, idx+1)
 				logutil.BgLogger().Debug("delete3", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
@@ -3146,7 +3145,7 @@ var runes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 func randStr(n int, r *rand.Rand) string {
 	var sb strings.Builder
 	sb.Grow(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		_, _ = sb.WriteRune(runes[r.Intn(len(runes))])
 	}
 	return sb.String()

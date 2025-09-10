@@ -72,12 +72,11 @@ type TableCommon struct {
 	fullHiddenColsAndVisibleColumns []*table.Column
 	writableConstraints             []*table.Constraint
 
-	indices                 []table.Index
-	meta                    *model.TableInfo
-	allocs                  autoid.Allocators
-	sequence                *sequenceCommon
-	dependencyColumnOffsets []int
-	Constraints             []*table.Constraint
+	indices     []table.Index
+	meta        *model.TableInfo
+	allocs      autoid.Allocators
+	sequence    *sequenceCommon
+	Constraints []*table.Constraint
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -253,11 +252,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
 	}
-	for _, col := range cols {
-		if col.ChangeStateInfo != nil {
-			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
-		}
-	}
 	t.ResetColumnsCache()
 }
 
@@ -306,7 +300,7 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 		if !IsIndexWritable(idx) {
 			continue
 		}
-		if idx.Meta().IsTiFlashLocalIndex() {
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		if idxName == idx.Meta().Name.L {
@@ -484,9 +478,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		checkRowBuffer.AddColVal(value)
 	}
 	// check data constraint
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err := table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err := table.CheckRowConstraint(sctx.GetExprCtx(), constraints, checkRowBuffer.GetRowToCheck(), t.Meta()); err != nil {
 			return err
 		}
 	}
@@ -497,6 +490,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	}
 
 	key := t.RecordKey(h)
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
@@ -550,7 +544,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
-		if idx.Meta().IsTiFlashLocalIndex() {
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		for _, ic := range idx.Meta().Columns {
@@ -572,7 +566,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if !IsIndexWritable(idx) {
 			continue
 		}
-		if idx.Meta().IsTiFlashLocalIndex() {
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
@@ -706,10 +700,12 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 
 	var hasRecordID bool
 	cols := t.Cols()
-	// opt.IsUpdate is a flag for update.
+	// opt.GenerateRecordID is used for normal update.
 	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
-	// Currently, only insert can set _tidb_rowid, update can not update _tidb_rowid.
-	if len(r) > len(cols) && !opt.IsUpdate() {
+	// Currently, insert can set _tidb_rowid.
+	// Update can only update _tidb_rowid during reorganize partition, to keep the generated _tidb_rowid
+	// the same between the old/new sets of partitions, where possible.
+	if len(r) > len(cols) && !opt.GenerateRecordID() {
 		// The last value is _tidb_rowid.
 		recordID = kv.IntHandle(r[len(r)-1].GetInt64())
 		hasRecordID = true
@@ -820,8 +816,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 	}
-	// check data constraint
-	if err = table.CheckRowConstraintWithDatum(evalCtx, t.WritableConstraint(), r); err != nil {
+	if err = table.CheckRowConstraintWithDatum(sctx.GetExprCtx(), t.WritableConstraint(), r, t.meta); err != nil {
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
@@ -935,7 +930,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if !IsIndexWritable(v) {
 			continue
 		}
-		if v.Meta().IsTiFlashLocalIndex() {
+		if v.Meta().IsColumnarIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
@@ -1149,6 +1144,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
+	failpoint.InjectCall("duringTableCommonRemoveRecord", t.meta)
 
 	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
 	if ctx.EnableMutationChecker() {
@@ -1197,7 +1193,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
-		if v.Meta().IsTiFlashLocalIndex() {
+		if v.Meta().IsColumnarIndex() {
 			continue
 		}
 		var vals []types.Datum
@@ -1461,11 +1457,6 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 		return true
 	}
 	return false
-}
-
-// canSkipUpdateBinlog checks whether the column can be skipped or not.
-func (t *TableCommon) canSkipUpdateBinlog(col *table.Column) bool {
-	return col.IsVirtualGenerated()
 }
 
 // FindIndexByColName returns a public table index containing only one column named `name`.

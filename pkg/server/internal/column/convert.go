@@ -42,34 +42,42 @@ func ConvertColumnInfo(fld *resolve.ResultField) (ci *Info) {
 	}
 	if fld.Column.GetFlen() != types.UnspecifiedLength {
 		ci.ColumnLength = uint32(fld.Column.GetFlen())
-	}
-	if fld.Column.GetType() == mysql.TypeNewDecimal {
-		// Consider the negative sign.
-		ci.ColumnLength++
-		if fld.Column.GetDecimal() > types.DefaultFsp {
-			// Consider the decimal point.
+		if fld.Column.GetType() == mysql.TypeNewDecimal {
+			// Consider the negative sign.
 			ci.ColumnLength++
+			if fld.Column.GetDecimal() > types.DefaultFsp {
+				// Consider the decimal point.
+				ci.ColumnLength++
+			}
+		} else if types.IsString(fld.Column.GetType()) ||
+			fld.Column.GetType() == mysql.TypeEnum || fld.Column.GetType() == mysql.TypeSet { // issue #18870
+			// Fix issue #4540.
+			// The flen is a hint, not a precise value, so most client will not use the value.
+			// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
+			// the `show create table` result. To fix this case, we must use a large enough flen to prevent
+			// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
+			// For examples:
+			// * latin, the multiple is 1
+			// * gb2312, the multiple is 2
+			// * Utf-8, the multiple is 3
+			// * utf8mb4, the multiple is 4
+			// We used to check non-string types to avoid the truncation problem in some MySQL
+			// client such as Navicat. Now we only allow string type enter this branch.
+			charsetDesc, err := charset.GetCharsetInfo(fld.Column.GetCharset())
+			if err != nil {
+				ci.ColumnLength *= 4
+			} else {
+				ci.ColumnLength *= uint32(charsetDesc.Maxlen)
+			}
 		}
-	} else if types.IsString(fld.Column.GetType()) ||
-		fld.Column.GetType() == mysql.TypeEnum || fld.Column.GetType() == mysql.TypeSet { // issue #18870
-		// Fix issue #4540.
-		// The flen is a hint, not a precise value, so most client will not use the value.
-		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
-		// the `show create table` result. To fix this case, we must use a large enough flen to prevent
-		// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
-		// For examples:
-		// * latin, the multiple is 1
-		// * gb2312, the multiple is 2
-		// * Utf-8, the multiple is 3
-		// * utf8mb4, the multiple is 4
-		// We used to check non-string types to avoid the truncation problem in some MySQL
-		// client such as Navicat. Now we only allow string type enter this branch.
-		charsetDesc, err := charset.GetCharsetInfo(fld.Column.GetCharset())
-		if err != nil {
-			ci.ColumnLength *= 4
-		} else {
-			ci.ColumnLength *= uint32(charsetDesc.Maxlen)
-		}
+	} else {
+		// FIX https://github.com/pingcap/tidb/issues/60503
+		// MySQL will always output a usable length
+		// while we cannot output the same length, we can give a default flen
+		// it is not placed before two branches above, because default flen here
+		// is already large enough, multiply or anything else may overflow them
+		clen, _ := mysql.GetDefaultFieldLengthAndDecimal(fld.Column.GetType())
+		ci.ColumnLength = uint32(clen)
 	}
 
 	if fld.Column.GetDecimal() == types.UnspecifiedLength {

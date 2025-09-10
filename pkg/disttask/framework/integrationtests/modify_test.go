@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -34,6 +36,7 @@ import (
 type collectedRuntimeInfo struct {
 	currTaskMeta        atomic.Pointer[[]byte]
 	currTaskConcurrency atomic.Int64
+	activeSubtaskCount  atomic.Int64
 	subtaskInfos        []subtaskRuntimeInfo
 }
 
@@ -42,8 +45,8 @@ type subtaskRuntimeInfo struct {
 	Concurrency int
 }
 
-func TestModifyTaskConcurrency(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 1, 16, true)
+func prepareModifyTaskTest(t *testing.T, nodeCount int) (*testutil.TestDXFContext, *collectedRuntimeInfo, chan struct{}, chan struct{}, *atomic.Bool) {
+	c := testutil.NewTestDXFContext(t, nodeCount, 16, true)
 	stepInfos := []testutil.StepInfo{
 		{Step: proto.StepOne, SubtaskCnt: 2},
 		{Step: proto.StepTwo, SubtaskCnt: 3},
@@ -53,23 +56,28 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		StepInfos:         stepInfos,
 	})
 	subtaskCh := make(chan struct{})
-	runtimeInfo := collectedRuntimeInfo{}
+	runtimeInfo := &collectedRuntimeInfo{}
 	var (
 		testModifyWhenSubtaskRun atomic.Bool
 		modifyWaitCh             = make(chan struct{})
 	)
 
+	var mu sync.Mutex
 	runSubtaskFn := func(ctx context.Context, subtask *proto.Subtask) error {
+		runtimeInfo.activeSubtaskCount.Add(1)
+		defer runtimeInfo.activeSubtaskCount.Add(-1)
 		if testModifyWhenSubtaskRun.Load() {
 			<-modifyWaitCh
 			<-modifyWaitCh
 		}
 		select {
 		case <-subtaskCh:
+			mu.Lock()
 			runtimeInfo.subtaskInfos = append(runtimeInfo.subtaskInfos, subtaskRuntimeInfo{
 				Step:        subtask.Step,
 				Concurrency: subtask.Concurrency,
 			})
+			mu.Unlock()
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -97,11 +105,15 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		return executor, nil
 	})
 	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+	return c, runtimeInfo, subtaskCh, modifyWaitCh, &testModifyWhenSubtaskRun
+}
 
+func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
+	c, runtimeInfo, subtaskCh, modifyWaitCh, testModifyWhenSubtaskRun := prepareModifyTaskTest(t, 1)
 	resetRuntimeInfoFn := func() {
-		runtimeInfo = collectedRuntimeInfo{}
+		*runtimeInfo = collectedRuntimeInfo{}
 	}
-
+	scope := handle.GetTargetScope()
 	t.Run("modify pending task concurrency", func(t *testing.T) {
 		defer resetRuntimeInfoFn()
 		var once sync.Once
@@ -109,7 +121,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k1", proto.TaskTypeExample, 3, "", 0, []byte("init"))
+				task, err := handle.SubmitTask(c.Ctx, "k1", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
 				require.NoError(t, err)
 				require.Equal(t, 3, task.Concurrency)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
@@ -128,7 +140,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		})
 		modifySyncCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
@@ -160,7 +172,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 				<-modifySyncCh
 			})
 		})
-		task, err := handle.SubmitTask(c.Ctx, "k2", proto.TaskTypeExample, 3, "", 0, nil)
+		task, err := handle.SubmitTask(c.Ctx, "k2", proto.TaskTypeExample, "", 3, scope, 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.Concurrency)
 		// finish StepOne
@@ -209,10 +221,10 @@ func TestModifyTaskConcurrency(t *testing.T) {
 				}
 			},
 		)
-		task, err := handle.SubmitTask(c.Ctx, "k2-2", proto.TaskTypeExample, 3, "", 0, nil)
+		task, err := handle.SubmitTask(c.Ctx, "k2-2", proto.TaskTypeExample, "", 3, scope, 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.Concurrency)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
@@ -233,7 +245,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k3", proto.TaskTypeExample, 3, "", 0, nil)
+				task, err := handle.SubmitTask(c.Ctx, "k3", proto.TaskTypeExample, "", 3, scope, 0, nil)
 				require.NoError(t, err)
 				require.Equal(t, 3, task.Concurrency)
 				found, err := c.TaskMgr.PauseTask(c.Ctx, task.Key)
@@ -258,7 +270,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
@@ -279,7 +291,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k4", proto.TaskTypeExample, 3, "", 0, nil)
+				task, err := handle.SubmitTask(c.Ctx, "k4", proto.TaskTypeExample, "", 3, scope, 0, nil)
 				require.NoError(t, err)
 				require.Equal(t, 3, task.Concurrency)
 				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
@@ -312,7 +324,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		)
 		modifySyncCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
@@ -333,7 +345,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		var theTask *proto.Task
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeGetSchedulableTasks", func() {
 			once.Do(func() {
-				task, err := handle.SubmitTask(c.Ctx, "k5", proto.TaskTypeExample, 3, "", 0, []byte("init"))
+				task, err := handle.SubmitTask(c.Ctx, "k5", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
 				require.NoError(t, err)
 				require.Equal(t, 3, task.Concurrency)
 				require.EqualValues(t, []byte("init"), task.Meta)
@@ -353,7 +365,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		})
 		modifySyncCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
@@ -365,7 +377,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		defer resetRuntimeInfoFn()
 		defer testModifyWhenSubtaskRun.Store(false)
 		testModifyWhenSubtaskRun.Store(true)
-		task, err := handle.SubmitTask(c.Ctx, "k6", proto.TaskTypeExample, 3, "", 0, []byte("init"))
+		task, err := handle.SubmitTask(c.Ctx, "k6", proto.TaskTypeExample, "", 3, scope, 0, []byte("init"))
 		require.NoError(t, err)
 		require.Equal(t, 3, task.Concurrency)
 		require.EqualValues(t, []byte("init"), task.Meta)
@@ -384,7 +396,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		testModifyWhenSubtaskRun.Store(false)
 		modifyWaitCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
@@ -397,7 +409,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		defer resetRuntimeInfoFn()
 		defer testModifyWhenSubtaskRun.Store(false)
 		testModifyWhenSubtaskRun.Store(true)
-		task, err := handle.SubmitTask(c.Ctx, "k7", proto.TaskTypeExample, 9, "", 0, []byte("init"))
+		task, err := handle.SubmitTask(c.Ctx, "k7", proto.TaskTypeExample, "", 9, scope, 0, []byte("init"))
 		require.NoError(t, err)
 		require.Equal(t, 9, task.Concurrency)
 		require.EqualValues(t, []byte("init"), task.Meta)
@@ -416,12 +428,125 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		testModifyWhenSubtaskRun.Store(false)
 		modifyWaitCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
 		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
 		require.Equal(t, "modify_max_write_speed=456", string(*runtimeInfo.currTaskMeta.Load()))
 		require.Equal(t, int64(5), runtimeInfo.currTaskConcurrency.Load())
+	})
+
+	t.Run("modify running task max node count", func(t *testing.T) {
+		defer resetRuntimeInfoFn()
+		var once sync.Once
+		modifySyncCh := make(chan struct{})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask", func(task *proto.Task) {
+			if task.State != proto.TaskStateRunning && task.Step != proto.StepOne {
+				return
+			}
+			once.Do(func() {
+				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
+					PrevState: proto.TaskStateRunning,
+					Modifications: []proto.Modification{
+						{Type: proto.ModifyMaxNodeCount, To: 200},
+					},
+				}))
+				<-modifySyncCh
+			})
+		})
+		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, "", 3, scope, 1, nil)
+		require.NoError(t, err)
+		require.Equal(t, 3, task.Concurrency)
+		require.EqualValues(t, 1, task.MaxNodeCount)
+		// finish StepOne
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		// wait task move to 'modifying' state
+		modifySyncCh <- struct{}{}
+		// wait task move back to 'running' state, and modified
+		require.Eventually(t, func() bool {
+			gotTask, err2 := c.TaskMgr.GetTaskByID(c.Ctx, task.ID)
+			require.NoError(t, err2)
+			return gotTask.State == proto.TaskStateRunning && gotTask.MaxNodeCount == 200
+		}, 10*time.Second, 100*time.Millisecond)
+		// finish StepTwo
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
+		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
+	})
+}
+
+func TestModifyTaskMaxNodeCountForSubtaskBalance(t *testing.T) {
+	c, runtimeInfo, subtaskCh, _, _ := prepareModifyTaskTest(t, 3)
+	resetRuntimeInfoFn := func() {
+		*runtimeInfo = collectedRuntimeInfo{}
+	}
+	scope := handle.GetTargetScope()
+	t.Run("modify running task max node count, task can use more node after balance", func(t *testing.T) {
+		defer resetRuntimeInfoFn()
+		var once sync.Once
+		modifySyncCh := make(chan struct{})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask", func(task *proto.Task) {
+			if task.State != proto.TaskStateRunning && task.Step != proto.StepOne {
+				return
+			}
+			once.Do(func() {
+				<-modifySyncCh
+				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
+					PrevState: proto.TaskStateRunning,
+					Modifications: []proto.Modification{
+						{Type: proto.ModifyMaxNodeCount, To: 2},
+					},
+				}))
+				<-modifySyncCh
+			})
+		})
+		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, "", 3, scope, 1, nil)
+		require.NoError(t, err)
+		require.Equal(t, 3, task.Concurrency)
+		require.EqualValues(t, 1, task.MaxNodeCount)
+		// only 1 subtask can be running at the same time
+		require.Eventually(t, func() bool {
+			return runtimeInfo.activeSubtaskCount.Load() == 1
+		}, 10*time.Second, 100*time.Millisecond)
+		require.NoError(t, c.TaskMgr.WithNewSession(func(se sessionctx.Context) error {
+			rows, err2 := sqlexec.ExecSQL(c.Ctx, se.GetSQLExecutor(), "select count(distinct exec_id) from mysql.tidb_background_subtask where task_key = %?", task.ID)
+			require.NoError(t, err2)
+			require.Equal(t, 1, len(rows))
+			require.EqualValues(t, 1, rows[0].GetInt64(0))
+			return nil
+		}))
+		// task move to 'modifying' state
+		modifySyncCh <- struct{}{}
+		modifySyncCh <- struct{}{}
+		// wait task move back to 'running' state, and modified
+		require.Eventually(t, func() bool {
+			gotTask, err2 := c.TaskMgr.GetTaskByID(c.Ctx, task.ID)
+			require.NoError(t, err2)
+			return gotTask.State == proto.TaskStateRunning && gotTask.MaxNodeCount == 2
+		}, 10*time.Second, 100*time.Millisecond)
+		// now 2 subtask can be running at the same time
+		require.Eventually(t, func() bool {
+			return runtimeInfo.activeSubtaskCount.Load() == 2
+		}, 10*time.Second, 100*time.Millisecond)
+		require.NoError(t, c.TaskMgr.WithNewSession(func(se sessionctx.Context) error {
+			rows, err2 := sqlexec.ExecSQL(c.Ctx, se.GetSQLExecutor(), "select count(distinct exec_id) from mysql.tidb_background_subtask where task_key = %?", task.ID)
+			require.NoError(t, err2)
+			require.Equal(t, 1, len(rows))
+			require.EqualValues(t, 2, rows[0].GetInt64(0))
+			return nil
+		}))
+		// finish StepOne
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		// finish StepTwo
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
+		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
 	})
 }

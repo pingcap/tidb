@@ -16,12 +16,15 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -83,6 +86,20 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		TryCopLiteWorker:           &dctx.TryCopLiteWorker,
 	}
 
+	// Force the CopLiteWorker to be used or not used for testing purposes
+	failpoint.Inject("TryCopLiteWorker", func(val failpoint.Value) {
+		n, ok := val.(int)
+		if !ok {
+			panic(fmt.Sprintf("TryCopLiteWorker: expected int, got %T (%v)", val, val))
+		}
+
+		option.TryCopLiteWorker.Store(uint32(n))
+
+		logutil.Logger(ctx).Info("setting TryCopLiteWorker for test",
+			zap.String("value", option.TryCopLiteWorker.String()),
+		)
+	})
+
 	if kvReq.StoreType == kv.TiFlash {
 		ctx = SetTiFlashConfVarsInContext(ctx, dctx)
 		option.TiFlashReplicaRead = dctx.TiFlashReplicaRead
@@ -136,6 +153,7 @@ func SetTiFlashConfVarsInContext(ctx context.Context, dctx *distsqlctx.DistSQLCo
 		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(dctx.TiFlashMaxQueryMemoryPerNode, 10))
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashQuerySpillRatio, strconv.FormatFloat(dctx.TiFlashQuerySpillRatio, 'f', -1, 64))
+	ctx = metadata.AppendToOutgoingContext(ctx, "tiflash_use_hash_join_v2", strconv.FormatBool(joinversion.IsOptimizedVersion(dctx.TiFlashHashJoinVersion)))
 	return ctx
 }
 

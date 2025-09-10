@@ -16,10 +16,12 @@ package taskexecutor
 
 import (
 	"context"
+	goerrors "errors"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // TaskTable defines the interface to access the task table.
@@ -57,6 +59,7 @@ type TaskTable interface {
 	// node from running to pending.
 	// see subtask state machine for more detail.
 	RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.SubtaskBase) error
+	WithNewSession(fn func(se sessionctx.Context) error) error
 }
 
 // TaskExecutor is the executor for a task.
@@ -144,10 +147,10 @@ func (*BaseStepExecutor) Cleanup(context.Context) error {
 
 // TaskMetaModified implements the StepExecutor interface.
 func (*BaseStepExecutor) TaskMetaModified(context.Context, []byte) error {
-	panic("not implemented")
+	return goerrors.New("not implemented")
 }
 
 // ResourceModified implements the StepExecutor interface.
 func (*BaseStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
-	panic("not implemented")
+	return goerrors.New("not implemented")
 }

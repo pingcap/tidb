@@ -26,13 +26,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -50,10 +52,6 @@ const (
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 	loadGlobalVarsSQL            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
-	// KeyOpDefaultTimeout is the default timeout for each key operation.
-	KeyOpDefaultTimeout = 2 * time.Second
-	// KeyOpRetryInterval is the interval between two key operations.
-	KeyOpRetryInterval = 30 * time.Millisecond
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
@@ -76,7 +74,7 @@ type DelRangeTask struct {
 }
 
 // Range returns the range [start, end) to delete.
-func (t DelRangeTask) Range() (kv.Key, kv.Key) {
+func (t DelRangeTask) Range() (start kv.Key, end kv.Key) {
 	return t.StartKey, t.EndKey
 }
 
@@ -183,21 +181,9 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	return errors.Trace(err)
 }
 
-// LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
-func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
-	// close issue #21391
-	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return loadGlobalVars(ctx, sctx, []string{vardef.TiDBDDLReorgWorkerCount, vardef.TiDBDDLReorgBatchSize, vardef.TiDBRowFormatVersion})
-}
-
-// LoadDDLVars loads ddl variable from mysql.global_variables.
-func LoadDDLVars(ctx sessionctx.Context) error {
-	return loadGlobalVars(context.Background(), ctx, []string{vardef.TiDBDDLErrorCountLimit})
-}
-
-// loadGlobalVars loads global variable from mysql.global_variables.
-func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+// LoadGlobalVars loads global variable from mysql.global_variables.
+func LoadGlobalVars(sctx sessionctx.Context, varNames ...string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	e := sctx.GetRestrictedSQLExecutor()
 	var buf strings.Builder
 	buf.WriteString(loadGlobalVarsSQL)
@@ -217,6 +203,7 @@ func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varValue := row.GetString(1)
+		//nolint:forbidigo
 		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
 			return err
 		}
@@ -272,33 +259,18 @@ func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
 	return bytes.Equal(tag, internalResourceGroupTag)
 }
 
-// DeleteKeyFromEtcd deletes key value from etcd.
-func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
-	var err error
-	ctx := context.Background()
-	for i := 0; i < retryCnt; i++ {
-		childCtx, cancel := context.WithTimeout(ctx, timeout)
-		_, err = etcdCli.Delete(childCtx, key)
-		cancel()
-		if err == nil {
-			return nil
-		}
-		logutil.DDLLogger().Warn("etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
-	}
-	return errors.Trace(err)
-}
-
 // DeleteKeysWithPrefixFromEtcd deletes keys with prefix from etcd.
 func DeleteKeysWithPrefixFromEtcd(prefix string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
 	var err error
 	ctx := context.Background()
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		childCtx, cancel := context.WithTimeout(ctx, timeout)
 		_, err = etcdCli.Delete(childCtx, prefix, clientv3.WithPrefix())
 		cancel()
 		if err == nil {
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn(
 			"etcd-cli delete prefix failed",
 			zap.String("prefix", prefix),
@@ -316,18 +288,18 @@ func DeleteKeysWithPrefixFromEtcd(prefix string, etcdCli *clientv3.Client, retry
 func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		if err = ctx.Err(); err != nil {
 			return errors.Trace(err)
 		}
 
-		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 		var resp *clientv3.GetResponse
 		resp, err = etcdCli.Get(childCtx, key)
 		if err != nil {
 			cancel()
 			logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
-			time.Sleep(KeyOpRetryInterval)
+			time.Sleep(etcd.KeyOpRetryInterval)
 			continue
 		}
 		prevRevision := int64(0)
@@ -351,8 +323,9 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
 		}
 
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
-		time.Sleep(KeyOpRetryInterval)
+		time.Sleep(etcd.KeyOpRetryInterval)
 	}
 	return errors.Trace(err)
 }
@@ -364,19 +337,27 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		if err = ctx.Err(); err != nil {
 			return errors.Trace(err)
 		}
 
-		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		// Mock error for test
+		failpoint.Inject("PutKVToEtcdError", func(val failpoint.Value) {
+			if val.(bool) && strings.Contains(key, "all_schema_versions") {
+				failpoint.Continue()
+			}
+		})
+
+		childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 		_, err = etcdCli.Put(childCtx, key, val, opts...)
 		cancel()
 		if err == nil {
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
-		time.Sleep(KeyOpRetryInterval)
+		time.Sleep(etcd.KeyOpRetryInterval)
 	}
 	return errors.Trace(err)
 }
@@ -412,6 +393,7 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	defer terror.Call(rs.Close)
+	//nolint:forbidigo
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -433,6 +415,13 @@ func FolderNotEmpty(path string) bool {
 
 // GenKeyExistsErr builds a ErrKeyExists error.
 func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	if len(key) > 4 && key[0] == 'x' {
+		// Start with 'x' means it contains the keyspace prefix. For details, see
+		// https://github.com/tikv/client-go/blob/1a0daf3ee77f560debe0a386e760f2ae7164b6a5/internal/apicodec/codec_v2.go#L27
+		if len(keyspace.GetKeyspaceNameBySettings()) > 0 {
+			key = key[4:] // remove the keyspace prefix.
+		}
+	}
 	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
 	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
 	if err != nil {

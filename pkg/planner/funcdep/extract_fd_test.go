@@ -208,6 +208,11 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			// 2: c and d are equivalent.
 			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)-->(1,4), (2,4)-->(1,3), (3,4)==(3,4)} >>> {(1)-->(2-4), (2,3)-->(1,4), (2,4)-->(1,3), (3,4)==(3,4)}",
 		},
+		{
+			sql:  "select (select t1.a from t2) from t1",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Projection->MaxOneRow}->Projection",
+			fd:   "{(1)-->(2,3,10), (2,3)~~>(1), (10)~~>(1)} >>> {}",
+		},
 	}
 
 	ctx := context.TODO()
@@ -215,7 +220,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
@@ -326,7 +331,7 @@ func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 	is := testGetIS(t, tk.Session())
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO(), nil))
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")

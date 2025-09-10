@@ -59,7 +59,7 @@ func TestPartitionRangeSplitter(t *testing.T) {
 	obtained, err := splitter.split(ctx, input, obtained)
 	require.NoError(t, err)
 	require.Len(t, obtained, len(expected))
-	for i := 0; i < len(obtained); i++ {
+	for i := range obtained {
 		require.Equal(t, expected[i], obtained[i])
 	}
 }

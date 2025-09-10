@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto/mock"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -81,14 +82,14 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	}
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3, 1)
+	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, nil, 3, 1)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
 
 	// cancel on error
 	mockErr := errors.New("mock err")
-	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
+	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
 		return op.hasError()
@@ -101,7 +102,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 2)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, nil, 2, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -115,14 +116,14 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// wait until 2 executor start running, else workerpool will be cancelled.
-	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter, execute.Collector) error {
 			wg.Done()
 			wg.Wait()
 			return mockErr2
 		})
-	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter, execute.Collector) error {
 			wg.Done()
 			wg.Wait()
 			// wait error in executor1 has been processed
@@ -148,52 +149,61 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 	cases := []struct {
 		createSQL               string
 		numOfIndexGenKV         int
+		numOfUKGenKV            int
 		dataKVMemSizePerCon     uint64
 		perIndexKVMemSizePerCon uint64
 	}{
 		{
 			createSQL:           "create table t (a int)",
 			numOfIndexGenKV:     0,
+			numOfUKGenKV:        0,
 			dataKVMemSizePerCon: units.GiB,
 		},
 		{
 			createSQL:           "create table t (a int primary key clustered)",
 			numOfIndexGenKV:     0,
+			numOfUKGenKV:        0,
 			dataKVMemSizePerCon: units.GiB,
 		},
 		{
 			createSQL:               "create table t (a int primary key nonclustered)",
 			numOfIndexGenKV:         1,
+			numOfUKGenKV:            1,
 			dataKVMemSizePerCon:     768 * units.MiB,
 			perIndexKVMemSizePerCon: 256 * units.MiB,
 		},
 		{
 			createSQL:               "create table t (a int primary key clustered, b int, key(b))",
 			numOfIndexGenKV:         1,
+			numOfUKGenKV:            0,
 			dataKVMemSizePerCon:     768 * units.MiB,
 			perIndexKVMemSizePerCon: 256 * units.MiB,
 		},
 		{
 			createSQL:               "create table t (a int primary key clustered, b int, key(b), key(a,b))",
 			numOfIndexGenKV:         2,
+			numOfUKGenKV:            0,
 			dataKVMemSizePerCon:     644245094,
 			perIndexKVMemSizePerCon: 214748364,
 		},
 		{
 			createSQL:               "create table t (a int primary key clustered, b int, c int, key(b,c), unique(b), unique(c), key(a,b))",
 			numOfIndexGenKV:         4,
+			numOfUKGenKV:            2,
 			dataKVMemSizePerCon:     460175067,
 			perIndexKVMemSizePerCon: 153391689,
 		},
 		{
 			createSQL:               "create table t (a int, b int, c int, primary key(a,b,c) clustered, key(b,c), unique(b), unique(c), key(a,b))",
 			numOfIndexGenKV:         4,
+			numOfUKGenKV:            2,
 			dataKVMemSizePerCon:     460175067,
 			perIndexKVMemSizePerCon: 153391689,
 		},
 		{
 			createSQL:               "create table t (a int, b int, c int, primary key(a,b,c) nonclustered, key(b,c), unique(b), unique(c), key(a,b))",
 			numOfIndexGenKV:         5,
+			numOfUKGenKV:            3,
 			dataKVMemSizePerCon:     402653184,
 			perIndexKVMemSizePerCon: 134217728,
 		},
@@ -210,6 +220,14 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			info.State = model.StatePublic
 
 			require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
+			indicesGenKV := getIndicesGenKV(info)
+			var ukCountGenKV int
+			for _, g := range indicesGenKV {
+				if g.unique {
+					ukCountGenKV++
+				}
+			}
+			require.Equal(t, c.numOfUKGenKV, ukCountGenKV, c.createSQL)
 			dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(&proto.StepResource{
 				Mem: proto.NewAllocatable(2 * units.GiB),
 			}, &importer.Plan{
@@ -223,18 +241,4 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			require.LessOrEqual(t, c.dataKVMemSizePerCon+c.perIndexKVMemSizePerCon*uint64(c.numOfIndexGenKV), uint64(units.GiB))
 		})
 	}
-}
-
-func TestGetKVGroupBlockSize(t *testing.T) {
-	require.Equal(t, 32*units.MiB, getKVGroupBlockSize(dataKVGroup))
-	require.Equal(t, 16*units.MiB, getKVGroupBlockSize(""))
-	require.Equal(t, 16*units.MiB, getKVGroupBlockSize("1"))
-}
-
-func TestGetAdjustedIndexBlockSize(t *testing.T) {
-	require.EqualValues(t, 1*units.MiB, getAdjustedIndexBlockSize(1*units.MiB))
-	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(15*units.MiB))
-	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(16*units.MiB))
-	require.EqualValues(t, 17*units.MiB, getAdjustedIndexBlockSize(17*units.MiB))
-	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(166*units.MiB))
 }

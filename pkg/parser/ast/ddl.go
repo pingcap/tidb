@@ -14,9 +14,6 @@
 package ast
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -525,6 +522,7 @@ const (
 	ColumnOptionColumnFormat
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
+	ColumnOptionSecondaryEngineAttribute
 )
 
 var (
@@ -534,6 +532,12 @@ var (
 		ColumnOptionDefaultValue:  "DEFAULT",
 	}
 )
+
+// ColumnOptionList stores column options.
+type ColumnOptionList struct {
+	HasCollateOption bool
+	Options          []*ColumnOption
+}
 
 // ColumnOption is used for parsing column constraint info from SQL.
 type ColumnOption struct {
@@ -553,8 +557,9 @@ type ColumnOption struct {
 	// Enforced is only for Check, default is true.
 	Enforced bool
 	// Name is only used for Check Constraint name.
-	ConstraintName string
-	PrimaryKeyTp   PrimaryKeyType
+	ConstraintName      string
+	PrimaryKeyTp        PrimaryKeyType
+	SecondaryEngineAttr string
 }
 
 // Restore implements Node interface.
@@ -567,10 +572,7 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		pkTp := n.PrimaryKeyTp.String()
 		if len(pkTp) != 0 {
 			ctx.WritePlain(" ")
-			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
-				ctx.WriteKeyWord(pkTp)
-				return nil
-			})
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDClusteredIndex, pkTp)
 		}
 		if n.StrValue == "Global" {
 			ctx.WriteKeyWord(" GLOBAL")
@@ -586,6 +588,9 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 			if name := funcCallExpr.FnName.L; name != CurrentTimestamp {
 				printOuterParentheses = true
 			}
+		}
+		if _, ok := n.Expr.(*ColumnNameExpr); ok {
+			printOuterParentheses = true
 		}
 		if printOuterParentheses {
 			ctx.WritePlain("(")
@@ -673,6 +678,10 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
+	case ColumnOptionSecondaryEngineAttribute:
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.StrValue)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
@@ -727,14 +736,16 @@ const (
 type IndexOption struct {
 	node
 
-	KeyBlockSize uint64
-	Tp           IndexType
-	Comment      string
-	ParserName   CIStr
-	Visibility   IndexVisibility
-	PrimaryKeyTp PrimaryKeyType
-	Global       bool
-	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	KeyBlockSize               uint64
+	Tp                         IndexType
+	Comment                    string
+	ParserName                 CIStr
+	Visibility                 IndexVisibility
+	PrimaryKeyTp               PrimaryKeyType
+	Global                     bool
+	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	SecondaryEngineAttr        string
+	AddColumnarReplicaOnDemand int
 }
 
 // IsEmpty is true if only default options are given
@@ -747,7 +758,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
-		n.SplitOpt != nil {
+		n.SplitOpt != nil ||
+		len(n.SecondaryEngineAttr) > 0 {
 		return false
 	}
 	return true
@@ -756,11 +768,17 @@ func (n *IndexOption) IsEmpty() bool {
 // Restore implements Node interface.
 func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 	hasPrevOption := false
+
+	if n.AddColumnarReplicaOnDemand > 0 {
+		ctx.WriteKeyWord("ADD_COLUMNAR_REPLICA_ON_DEMAND")
+		hasPrevOption = true
+	}
+
 	if n.PrimaryKeyTp != PrimaryKeyTypeDefault {
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
-			ctx.WriteKeyWord(n.PrimaryKeyTp.String())
-			return nil
-		})
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDClusteredIndex, n.PrimaryKeyTp.String())
 		hasPrevOption = true
 	}
 	if n.KeyBlockSize > 0 {
@@ -844,7 +862,20 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if err != nil {
 			return err
 		}
+		hasPrevOption = true
 	}
+
+	if n.SecondaryEngineAttr != "" {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.SecondaryEngineAttr)
+		// If a new option is added after, please also uncomment:
+		//hasPrevOption = true
+	}
+
 	return nil
 }
 
@@ -878,9 +909,14 @@ const (
 	ConstraintUniqKey
 	ConstraintUniqIndex
 	ConstraintForeignKey
+	// ConstraintFulltext is only used in AST.
+	// It will be rewritten into ConstraintIndex after preprocessor phase.
 	ConstraintFulltext
 	ConstraintCheck
+	// ConstraintVector is only used in AST.
+	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
+	ConstraintColumnar
 )
 
 // Constraint is constraint for table definition.
@@ -920,12 +956,12 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 	case ConstraintKey:
 		ctx.WriteKeyWord("KEY")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 	case ConstraintIndex:
 		ctx.WriteKeyWord("INDEX")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 	case ConstraintUniq:
 		ctx.WriteKeyWord("UNIQUE")
@@ -956,7 +992,12 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 	case ConstraintVector:
 		ctx.WriteKeyWord("VECTOR INDEX")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
+		}
+	case ConstraintColumnar:
+		ctx.WriteKeyWord("COLUMNAR INDEX")
+		if n.IfNotExists {
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 	}
 
@@ -968,7 +1009,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("FOREIGN KEY ")
 		if n.IfNotExists {
-			ctx.WriteKeyWord("IF NOT EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
 		}
 	} else if n.Name != "" || n.IsEmptyIndex {
 		ctx.WritePlain(" ")
@@ -1844,8 +1885,13 @@ const (
 	IndexKeyTypeNone IndexKeyType = iota
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
-	IndexKeyTypeFullText
+	// IndexKeyTypeFulltext is only used in AST.
+	// It will be rewritten into IndexKeyTypeFulltext after preprocessor phase.
+	IndexKeyTypeFulltext
+	// IndexKeyTypeVector is only used in AST.
+	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
 	IndexKeyTypeVector
+	IndexKeyTypeColumnar
 )
 
 // CreateIndexStmt is a statement to create an index.
@@ -1873,14 +1919,16 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE ")
 	case IndexKeyTypeSpatial:
 		ctx.WriteKeyWord("SPATIAL ")
-	case IndexKeyTypeFullText:
+	case IndexKeyTypeFulltext:
 		ctx.WriteKeyWord("FULLTEXT ")
 	case IndexKeyTypeVector:
 		ctx.WriteKeyWord("VECTOR ")
+	case IndexKeyTypeColumnar:
+		ctx.WriteKeyWord("COLUMNAR ")
 	}
 	ctx.WriteKeyWord("INDEX ")
 	if n.IfNotExists {
-		ctx.WriteKeyWord("IF NOT EXISTS ")
+		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")
@@ -1968,10 +2016,7 @@ type DropIndexStmt struct {
 func (n *DropIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP INDEX ")
 	if n.IfExists {
-		_ = ctx.WriteWithSpecialComments("", func() error {
-			ctx.WriteKeyWord("IF EXISTS ")
-			return nil
-		})
+		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")
@@ -2251,7 +2296,7 @@ type ResourceGroupOption struct {
 	Tp                ResourceUnitType
 	StrValue          string
 	UintValue         uint64
-	BoolValue         bool
+	Burstable         BurstableType
 	RunawayOptionList []*ResourceGroupRunawayOption
 	BackgroundOptions []*ResourceGroupBackgroundOption
 }
@@ -2262,6 +2307,7 @@ const (
 	// RU mode
 	ResourceRURate ResourceUnitType = iota
 	ResourcePriority
+	ResourceBurstable
 	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
@@ -2269,8 +2315,17 @@ const (
 
 	// Options
 	ResourceBurstableOpiton
+	ResourceUnlimitedOption
 	ResourceGroupRunaway
 	ResourceGroupBackground
+)
+
+type BurstableType int
+
+const (
+	BurstableDisable BurstableType = iota
+	BurstableModerated
+	BurstableUnlimited
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2278,7 +2333,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	case ResourceRURate:
 		ctx.WriteKeyWord("RU_PER_SEC ")
 		ctx.WritePlain("= ")
-		if n.BoolValue {
+		if n.Burstable == BurstableUnlimited {
 			ctx.WriteKeyWord("UNLIMITED")
 		} else {
 			ctx.WritePlainf("%d", n.UintValue)
@@ -2299,10 +2354,17 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
-	case ResourceBurstableOpiton:
+	case ResourceBurstable:
 		ctx.WriteKeyWord("BURSTABLE ")
 		ctx.WritePlain("= ")
-		ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
+		switch n.Burstable {
+		case BurstableDisable:
+			ctx.WritePlain("OFF")
+		case BurstableModerated:
+			ctx.WritePlain("MODERATED")
+		case BurstableUnlimited:
+			ctx.WritePlain("UNLIMITED")
+		}
 	case ResourceGroupRunaway:
 		ctx.WritePlain("QUERY_LIMIT ")
 		ctx.WritePlain("= ")
@@ -2542,6 +2604,7 @@ const (
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
 	TableOptionEngineAttribute
+	TableOptionSecondaryEngineAttribute
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2631,11 +2694,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.StrValue)
 	case TableOptionAutoIncrement:
 		if n.BoolValue {
-			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() error {
-				ctx.WriteKeyWord("FORCE")
-				return nil
-			})
-			ctx.WritePlain(" ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDForceAutoInc, "FORCE ")
 		}
 		ctx.WriteKeyWord("AUTO_INCREMENT ")
 		ctx.WritePlain("= ")
@@ -2649,11 +2708,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		})
 	case TableOptionAutoRandomBase:
 		if n.BoolValue {
-			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() error {
-				ctx.WriteKeyWord("FORCE")
-				return nil
-			})
-			ctx.WritePlain(" ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDForceAutoInc, "FORCE ")
 		}
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAutoRandomBase, func() error {
 			ctx.WriteKeyWord("AUTO_RANDOM_BASE ")
@@ -2804,6 +2859,10 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE ")
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord("NULL")
+	case TableOptionSecondaryEngineAttribute:
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
 	case TableOptionInsertMethod:
 		ctx.WriteKeyWord("INSERT_METHOD ")
 		ctx.WritePlain("= ")
@@ -3346,7 +3405,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableAddColumns:
 		ctx.WriteKeyWord("ADD COLUMN ")
 		if n.IfNotExists {
-			ctx.WriteKeyWord("IF NOT EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
 		}
 		if n.Position != nil && len(n.NewColumns) == 1 {
 			if err := n.NewColumns[0].Restore(ctx); err != nil {
@@ -3387,7 +3446,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropColumn:
 		ctx.WriteKeyWord("DROP COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		if err := n.OldColumnName.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.OldColumnName")
@@ -3398,19 +3457,19 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropIndex:
 		ctx.WriteKeyWord("DROP INDEX ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		ctx.WriteName(n.Name)
 	case AlterTableDropForeignKey:
 		ctx.WriteKeyWord("DROP FOREIGN KEY ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		ctx.WriteName(n.Name)
 	case AlterTableModifyColumn:
 		ctx.WriteKeyWord("MODIFY COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		if err := n.NewColumns[0].Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.NewColumns[0]")
@@ -3424,7 +3483,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableChangeColumn:
 		ctx.WriteKeyWord("CHANGE COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		if err := n.OldColumnName.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.OldColumnName")
@@ -3512,7 +3571,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableAddPartitions:
 		ctx.WriteKeyWord("ADD PARTITION")
 		if n.IfNotExists {
-			ctx.WriteKeyWord(" IF NOT EXISTS")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
 		}
 		if n.NoWriteToBinlog {
 			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
@@ -3601,7 +3660,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropPartition:
 		ctx.WriteKeyWord("DROP PARTITION ")
 		if n.IfExists {
-			ctx.WriteKeyWord("IF EXISTS ")
+			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
 		}
 		for i, name := range n.PartitionNames {
 			if i != 0 {
@@ -3809,10 +3868,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.StatsOptionsSpec")
 		}
 	case AlterTableRemoveTTL:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
-			ctx.WriteKeyWord("REMOVE TTL")
-			return nil
-		})
+		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTTL, "REMOVE TTL")
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)

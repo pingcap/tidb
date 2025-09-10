@@ -1087,6 +1087,7 @@ const (
 	ErrMemoryExceedForInstance             = 8176
 	ErrDeleteNotFoundColumn                = 8177
 	ErrKeyTooLarge                         = 8178
+	ErrTimeStampInDSTTransition            = 8179
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1137,6 +1138,8 @@ const (
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
 	ErrIngestCheckEnvFailed               = 8256
+	ErrProtectedTableMode                 = 8258
+	ErrInvalidTableModeSet                = 8259
 
 	ErrCannotPauseDDLJob  = 8260
 	ErrCannotResumeDDLJob = 8261
@@ -1168,7 +1171,7 @@ const (
 	ErrTiKVServerBusy            = 9003
 	ErrResolveLockTimeout        = 9004
 	ErrRegionUnavailable         = 9005
-	ErrGCTooEarly                = 9006
+	ErrTxnAbortedByGC            = 9006
 	ErrWriteConflict             = 9007
 	ErrTiKVStoreLimit            = 9008
 	ErrPrometheusAddrIsNotSet    = 9009

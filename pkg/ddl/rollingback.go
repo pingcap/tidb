@@ -136,7 +136,7 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		return ver, errors.Trace(err)
 	}
 
-	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args.OldColumnName)
+	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -248,11 +248,11 @@ func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	}
 }
 
-func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func rollingbackAddColumanrIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.SchemaState == model.StateWriteReorganization {
-		// Add vector index workers are started. need to ask them to exit.
+		// Add columnar index workers are started. need to ask them to exit.
 		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
-		ver, err = w.onCreateVectorIndex(jobCtx, job)
+		ver, err = w.onCreateColumnarIndex(jobCtx, job)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
 		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
@@ -600,8 +600,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddPrimaryKey:
 		ver, err = rollingbackAddIndex(jobCtx, job)
-	case model.ActionAddVectorIndex:
-		ver, err = rollingbackAddVectorIndex(w, jobCtx, job)
+	case model.ActionAddColumnarIndex:
+		ver, err = rollingbackAddColumanrIndex(w, jobCtx, job)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
@@ -668,7 +668,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 			// Once `convertJob2RollbackJob` meets an error, the job state can't be set as `JobStateRollingback` since
 			// job state and args may not be correctly overwritten. The job will be fetched to run with the cancelling
 			// state again. So we should check the error count here.
-			if err1 := loadDDLVars(w); err1 != nil {
+			if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 				logger.Error("load DDL global variable failed", zap.Error(err1))
 			}
 			errorCount := vardef.GetDDLErrorCountLimit()

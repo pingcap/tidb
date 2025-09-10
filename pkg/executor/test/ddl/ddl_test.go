@@ -24,11 +24,13 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -118,31 +120,20 @@ func TestCreateTable(t *testing.T) {
 
 	// test multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
-	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_multiple_column_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
+	tk.MustContainErrMsg("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
-	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_multiple_column_collate"))
-	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
-	require.Equal(t, "utf8mb4", tt.Meta().Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
-
-	// test Err case for multiple collate specified in column when create.
-	tk.MustExec("drop table if exists test_err_multiple_collate;")
-	tk.MustGetErrMsg("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
-		dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error())
+	tk.MustContainErrMsg("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
-	tk.MustGetErrMsg("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin",
-		dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error())
+	tk.MustContainErrMsg("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
+
+	tk.MustExec("drop table if exists test_err_multiple_collate;")
+	tk.MustContainErrMsg("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin",
+		"Multiple COLLATE clauses")
 
 	// table option is auto-increment
 	tk.MustExec("drop table if exists create_auto_increment_test;")
@@ -356,7 +347,7 @@ func TestAlterTableModifyColumn(t *testing.T) {
 
 	// test multiple collate modification in column.
 	tk.MustExec("drop table if exists modify_column_multiple_collate")
-	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table modify_column_multiple_collate modify column a char(1) collate utf8mb4_bin;")
 	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
@@ -366,7 +357,7 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
 	tk.MustExec("drop table if exists modify_column_multiple_collate;")
-	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
@@ -377,12 +368,12 @@ func TestAlterTableModifyColumn(t *testing.T) {
 
 	// test Err case for multiple collate modification in column.
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
-	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tk.MustGetErrMsg("alter table err_modify_multiple_collate modify column a char(1) charset utf8mb4 collate utf8_bin;", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error())
 
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
-	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	tk.MustGetErrMsg("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error())
+	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	tk.MustContainErrMsg("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;", "Multiple COLLATE clauses")
 }
 
 func TestColumnCharsetAndCollate(t *testing.T) {
@@ -476,7 +467,7 @@ func TestShardRowIDBits(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?)", i)
 	}
 
@@ -559,7 +550,7 @@ func TestShardRowIDBits(t *testing.T) {
 
 	// Test shard_row_id_bits with auto_increment column
 	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into auto(a) values (?)", i)
 	}
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("auto"))
@@ -609,7 +600,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec("create table t (a bigint primary key clustered auto_random(15), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
 	allHandles := extractAllHandles()
@@ -672,7 +663,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 
 	// Test signed/unsigned types.
 	tk.MustExec("create table t (a bigint primary key auto_random(10), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t (b) values(?)", i)
 	}
 	for _, h := range extractAllHandles() {
@@ -682,7 +673,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a bigint unsigned primary key auto_random(10), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t (b) values(?)", i)
 	}
 	signBitUnused := true
@@ -696,15 +687,15 @@ func TestAutoRandomBitsData(t *testing.T) {
 	// Test rename table does not affect incremental part of auto_random ID.
 	tk.MustExec("create database test_auto_random_bits_rename;")
 	tk.MustExec("create table t (a bigint auto_random primary key);")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into t values ();")
 	}
 	tk.MustExec("alter table t rename to test_auto_random_bits_rename.t1;")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into test_auto_random_bits_rename.t1 values ();")
 	}
 	tk.MustExec("alter table test_auto_random_bits_rename.t1 rename to t;")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into t values ();")
 	}
 	uniqueHandles := make(map[int64]struct{})
@@ -778,119 +769,37 @@ func TestAutoRandomTableOption(t *testing.T) {
 	require.Contains(t, err.Error(), autoid.AutoRandomRebaseNotApplicable)
 }
 
-func TestSetDDLReorgWorkerCnt(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(vardef.DefTiDBDDLReorgWorkerCount), vardef.GetDDLReorgWorkerCounter())
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(1), vardef.GetDDLReorgWorkerCounter())
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), vardef.GetDDLReorgWorkerCounter())
-	tk.MustGetDBError("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val", variable.ErrWrongTypeForVar)
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), vardef.GetDDLReorgWorkerCounter())
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '-1'"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	res := tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows("100"))
-
-	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows("100"))
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows("100"))
-
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 257")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '257'"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
-
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 10;")
-	tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("10"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("256"))
-	require.Equal(t, int32(256), vardef.GetDDLReorgWorkerCounter())
-}
-
-func TestSetDDLReorgBatchSize(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(vardef.DefTiDBDDLReorgBatchSize), vardef.GetDDLReorgBatchSize())
-
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, vardef.MinDDLReorgBatchSize, vardef.GetDDLReorgBatchSize())
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", vardef.MaxDDLReorgBatchSize+1))
-	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", vardef.MaxDDLReorgBatchSize+1)))
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, vardef.MaxDDLReorgBatchSize, vardef.GetDDLReorgBatchSize())
-	tk.MustGetDBError("set @@global.tidb_ddl_reorg_batch_size = invalid_val", variable.ErrWrongTypeForVar)
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), vardef.GetDDLReorgBatchSize())
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
-
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	res := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	res.Check(testkit.Rows("100"))
-
-	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	res.Check(testkit.Rows(fmt.Sprintf("%v", 100)))
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
-	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	res.Check(testkit.Rows("1000"))
-
-	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 256;")
-	tk.MustQuery("select @@tidb_ddl_reorg_batch_size").Check(testkit.Rows("256"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size").Check(testkit.Rows("1000"))
-}
-
 func TestSetDDLErrorCountLimit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(vardef.DefTiDBDDLErrorCountLimit), vardef.GetDDLErrorCountLimit())
 
+	reloadFunc := func() {
+		require.NoError(t, ddlutil.LoadGlobalVars(tk.Session(), vardef.TiDBDDLErrorCountLimit))
+	}
+
+	reloadFunc()
+	require.Equal(t, int64(vardef.DefTiDBDDLErrorCountLimit), vardef.GetDDLErrorCountLimit())
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
+	reloadFunc()
 	require.Equal(t, int64(0), vardef.GetDDLErrorCountLimit())
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
+	reloadFunc()
 	require.Equal(t, int64(math.MaxInt64), vardef.GetDDLErrorCountLimit())
 	tk.MustGetDBError("set @@global.tidb_ddl_error_count_limit = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
+	reloadFunc()
 	require.Equal(t, int64(100), vardef.GetDDLErrorCountLimit())
 	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
 	res.Check(testkit.Rows("100"))
 }
 
 func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Setting tidb_ddl_reorg_max_write_speed is not supported in the next generation of TiDB")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.Equal(t, int64(vardef.DefTiDBDDLReorgMaxWriteSpeed), vardef.DDLReorgMaxWriteSpeed.Load())
@@ -930,8 +839,8 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 }
 
 func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
-	prev := domain.LoadSchemaDiffVersionGapThreshold
-	domain.LoadSchemaDiffVersionGapThreshold = 0
+	prev := issyncer.LoadSchemaDiffVersionGapThreshold
+	issyncer.LoadSchemaDiffVersionGapThreshold = 0
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -939,7 +848,7 @@ func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
 	tk.MustExec("drop table test.forcereload")
 	dom.Reload()
 
-	domain.LoadSchemaDiffVersionGapThreshold = prev
+	issyncer.LoadSchemaDiffVersionGapThreshold = prev
 }
 
 func TestRenameWithSmallAutoIDStep(t *testing.T) {

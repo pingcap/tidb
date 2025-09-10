@@ -66,7 +66,34 @@ var (
 	durationPattern = regexp.MustCompile(`^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$`)
 
 	// timestampPattern checks whether a string matches the format of timestamp.
-	timestampPattern = regexp.MustCompile(`^\s*0*\d{1,4}([^\d]0*\d{1,2}){2}\s+(0*\d{0,2}([^\d]0*\d{1,2}){2})?(\.\d*)?\s*$`)
+	timestampPattern = regexp.MustCompile(`^` +
+		// Skip any spaces or zeros
+		`\s*0*` +
+		// Year 1-4 digits
+		`\d{1,4}` +
+		// TODO: Add warning if non '-' separator in ParseTime
+		// 1 or 2 digit Month and Day
+		// Any non-digit as separator
+		// Any leading 0's for Month/Day
+		`([^\d]0*\d{1,2}){2}` +
+		// At least one space between Date and Time parts
+		`\s+` +
+		// Hour is mandatory
+		// Any number of leading zeroes
+		// 1-2 Hour digits
+		`0*\d{1,2}` +
+		// Minutes or Minutes:Seconds are optional
+		// Any non-digit separator before Minute and Second parts
+		// Any number of leading zeroes in Min/Sec!
+		// 1-2 digit minutes/seconds
+		`([^\d]0*\d{1,2}){0,2}` +
+		// Optionally decimal comma (.) and 0 or more fractional seconds
+		// (regardless if min/sec exists or not...)
+		`(\.\d*)?` +
+		// Optionally time zone offset, must be +/-HH:MM format
+		`([+-]\d{2}[:]\d{2})?` +
+		// Optionally ending with spaces.
+		`\s*$`)
 
 	// datePattern determine whether to match the format of date.
 	datePattern = regexp.MustCompile(`^\s*((0*\d{1,4}([^\d]0*\d{1,2}){2})|(\d{2,4}(\d{2}){2}))\s*$`)
@@ -3239,7 +3266,7 @@ func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, ctx EvalCo
 	i64s := buf.Int64s()
 	tc := typeCtx(ctx)
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3281,7 +3308,7 @@ func (du *baseDateArithmetical) vecGetDateFromReal(b *baseBuiltinFunc, ctx EvalC
 	f64s := buf.Float64s()
 	tc := typeCtx(ctx)
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3322,7 +3349,7 @@ func (du *baseDateArithmetical) vecGetDateFromDecimal(b *baseBuiltinFunc, ctx Ev
 	dates := result.Times()
 	tc := typeCtx(ctx)
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3364,7 +3391,7 @@ func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, ctx Eva
 	dates := result.Times()
 	tc := typeCtx(ctx)
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3404,7 +3431,7 @@ func (du *baseDateArithmetical) vecGetDateFromDatetime(b *baseBuiltinFunc, ctx E
 
 	dates := result.Times()
 	isClockUnit := types.IsClockUnit(unit)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -3433,7 +3460,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, ctx
 
 	ec := errCtx(ctx)
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -3528,7 +3555,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, ct
 
 	result.ReserveString(n)
 	decs := buf.Decimals()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -3571,7 +3598,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, ctx Ev
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	unsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else if unsigned {
@@ -3597,7 +3624,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromReal(b *baseBuiltinFunc, ctx E
 	result.ReserveString(n)
 	f64s := buf.Float64s()
 	prec := b.args[1].GetType(ctx).GetDecimal()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
@@ -4679,7 +4706,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx BuildContext, args []Exp
 		return nil, err
 	}
 	if !timestampPattern.MatchString(str) {
-		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
+		return nil, types.ErrWrongValue2.GenWithStackByArgs(types.DateTimeStr, str)
 	}
 	tm, err := types.ParseTime(ctx.GetEvalCtx().TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str))
 	if err != nil {
@@ -5840,7 +5867,11 @@ func (c *secToTimeFunctionClass) getFunction(ctx BuildContext, args []Expression
 	var retFsp int
 	argType := args[0].GetType(ctx.GetEvalCtx())
 	argEvalTp := argType.EvalType()
-	if argEvalTp == types.ETString {
+
+	// to match MySQL behavior more check issue #59428
+	if IsBinaryLiteral(args[0]) {
+		retFsp = types.MinFsp
+	} else if argEvalTp == types.ETString {
 		retFsp = types.UnspecifiedLength
 	} else {
 		retFsp = argType.GetDecimal()

@@ -15,6 +15,8 @@
 package context
 
 import (
+	"maps"
+
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -30,7 +32,6 @@ type RangerContext struct {
 	*contextutil.PlanCacheTracker
 	OptimizerFixControl      map[uint64]string
 	UseCache                 bool
-	InPreparedPlanBuilding   bool
 	RegardNULLAsPoint        bool
 	OptPrefixIndexSingleScan bool
 }
@@ -43,9 +44,6 @@ type RangerContext struct {
 func (r *RangerContext) Detach(staticExprCtx exprctx.BuildContext) *RangerContext {
 	newCtx := *r
 	newCtx.ExprCtx = staticExprCtx
-	newCtx.OptimizerFixControl = make(map[uint64]string, len(r.OptimizerFixControl))
-	for k, v := range r.OptimizerFixControl {
-		newCtx.OptimizerFixControl[k] = v
-	}
+	newCtx.OptimizerFixControl = maps.Clone(r.OptimizerFixControl)
 	return &newCtx
 }

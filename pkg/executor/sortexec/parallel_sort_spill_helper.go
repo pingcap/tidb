@@ -41,17 +41,20 @@ type parallelSortSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	fileNamePrefixForTest string
 }
 
-func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError) *parallelSortSpillHelper {
+func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError, fileNamePrefixForTest string) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
-		cond:          sync.NewCond(new(sync.Mutex)),
-		spillStatus:   notSpilled,
-		sortExec:      sortExec,
-		lessRowFunc:   lessRowFunc,
-		errOutputChan: errOutputChan,
-		finishCh:      finishCh,
-		fieldTypes:    fieldTypes,
+		cond:                  sync.NewCond(new(sync.Mutex)),
+		spillStatus:           notSpilled,
+		sortExec:              sortExec,
+		lessRowFunc:           lessRowFunc,
+		errOutputChan:         errOutputChan,
+		finishCh:              finishCh,
+		fieldTypes:            fieldTypes,
+		fileNamePrefixForTest: fileNamePrefixForTest,
 	}
 }
 
@@ -124,18 +127,25 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 	workerWaiter := &sync.WaitGroup{}
 	workerWaiter.Add(workerNum)
 	sortedRowsIters := make([]*chunk.Iterator4Slice, workerNum)
-	for i := 0; i < workerNum; i++ {
+	errChannel := make(chan error, workerNum)
+	for i := range workerNum {
 		go func(idx int) {
 			defer func() {
 				if r := recover(); r != nil {
-					processPanicAndLog(p.errOutputChan, r)
+					errChannel <- util.GetRecoverError(r)
 				}
 				workerWaiter.Done()
 			}()
 
+			err := injectErrorForIssue59655(10)
+			if err != nil {
+				errChannel <- err
+				return
+			}
+
 			sortedRows, err := p.sortExec.Parallel.workers[idx].sortLocalRows()
 			if err != nil {
-				p.errOutputChan <- rowWithError{err: err}
+				errChannel <- err
 				return
 			}
 			sortedRowsIters[idx] = chunk.NewIterator4Slice(sortedRows)
@@ -144,6 +154,10 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 	}
 
 	workerWaiter.Wait()
+	close(errChannel)
+	for err := range errChannel {
+		return err
+	}
 
 	totalRows := 0
 	for i := range sortedRowsIters {
@@ -184,52 +198,70 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", p.bytesConsumed.Load()), zap.Int64("quota", p.bytesLimit.Load()))
 	p.initForSpill()
 	p.tmpSpillChunk.Reset()
-	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
+	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes, p.fileNamePrefixForTest)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
+	isInDiskAppended := false
 
 	spilledRowChannel := make(chan chunk.Row, 10000)
+	errChannel := make(chan error, 1)
 
 	// We must wait the finish of the following goroutine,
 	// or we will exit `spillImpl` function in advance and
 	// this will cause data race.
-	defer channel.Clear(spilledRowChannel)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				processPanicAndLog(p.errOutputChan, r)
-			}
-			close(spilledRowChannel)
-		}()
-
-		injectParallelSortRandomFail(200)
-
-		for {
-			row, err := merger.next()
-			if err != nil {
-				p.errOutputChan <- rowWithError{err: err}
-				break
-			}
-			if row.IsEmpty() {
-				break
-			}
-			spilledRowChannel <- row
+	defer func() {
+		if !isInDiskAppended && inDisk.NumRows() > 0 {
+			inDisk.Close()
 		}
+		channel.Clear(spilledRowChannel)
 	}()
+
+	wg := &util.WaitGroupWrapper{}
+	wg.RunWithRecover(
+		func() {
+			defer close(spilledRowChannel)
+			injectParallelSortRandomFail(200)
+
+			err := injectErrorForIssue59655(500)
+			if err != nil {
+				errChannel <- err
+				return
+			}
+
+			for {
+				row, err := merger.next()
+				if err != nil {
+					errChannel <- err
+					break
+				}
+				if row.IsEmpty() {
+					break
+				}
+				spilledRowChannel <- row
+			}
+		},
+		func(r any) {
+			if r != nil {
+				errChannel <- util.GetRecoverError(r)
+			}
+		})
 
 	var (
 		row chunk.Row
 		ok  bool
+		err error
 	)
+
+OuterLoop:
 	for {
 		select {
 		case <-p.finishCh:
-			return nil
+			break OuterLoop
 		case row, ok = <-spilledRowChannel:
 			if !ok {
 				if p.tmpSpillChunk.NumRows() > 0 {
-					err := p.spillTmpSpillChunk(inDisk)
+					err = p.spillTmpSpillChunk(inDisk)
 					if err != nil {
-						return err
+						break OuterLoop
 					}
 				}
 
@@ -237,18 +269,28 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 
 				if inDisk.NumRows() > 0 {
 					p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
+					isInDiskAppended = true
 					p.releaseMemory()
 				}
-				return nil
+				break OuterLoop
 			}
 		}
 
 		p.tmpSpillChunk.AppendRow(row)
 		if p.tmpSpillChunk.IsFull() {
-			err := p.spillTmpSpillChunk(inDisk)
+			err = p.spillTmpSpillChunk(inDisk)
 			if err != nil {
-				return err
+				break
 			}
+
+			injectPanicForIssue63216()
 		}
 	}
+
+	wg.Wait()
+	close(errChannel)
+	if err != nil {
+		return err
+	}
+	return <-errChannel
 }

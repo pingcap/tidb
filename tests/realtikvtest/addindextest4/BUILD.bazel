@@ -5,17 +5,21 @@ go_test(
     timeout = "long",
     srcs = [
         "failure_test.go",
+        "integration_test.go",
         "main_test.go",
     ],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
 )
