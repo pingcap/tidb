@@ -29,6 +29,7 @@ import (
 type Index struct {
 	CMSketch *CMSketch
 	TopN     *TopN
+	// TODO: check if we can remove this
 	FMSketch *FMSketch
 	Info     *model.IndexInfo
 	Histogram

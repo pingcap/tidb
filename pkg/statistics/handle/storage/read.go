@@ -215,6 +215,7 @@ func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID i
 }
 
 // FMSketchFromStorage reads FMSketch from storage
+// TODO: check if we can remove this func
 func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
 	rows, _, err := util.ExecRows(sctx, "select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
@@ -615,14 +616,14 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle) (err error) {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(sctx, statsHandle, item.TableItemID, loadFMSketch, item.FullLoad)
+			err = loadNeededColumnHistograms(sctx, statsHandle, item.TableItemID, item.FullLoad)
 		} else {
 			// Index is always full load.
-			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID, loadFMSketch)
+			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID)
 		}
 		if err != nil {
 			statslogutil.StatsSampleLogger().Error("load needed histogram failed",
@@ -667,7 +668,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, fullLoad bool) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
@@ -737,7 +738,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	var (
 		cms  *statistics.CMSketch
 		topN *statistics.TopN
-		fms  *statistics.FMSketch
 	)
 	if fullLoad {
 		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
@@ -748,12 +748,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if loadFMSketch {
-			fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
 	}
 
 	colHist := &statistics.Column{
@@ -762,7 +756,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		Info:       colInfo,
 		CMSketch:   cms,
 		TopN:       topN,
-		FMSketch:   fms,
 		IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 		StatsVer:   statsVer,
 	}
@@ -805,7 +798,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 
 // loadNeededIndexHistograms loads the necessary index histograms.
 // It is similar to loadNeededColumnHistograms, but for index.
-func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each index at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
@@ -863,18 +856,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = FMSketchFromStorage(sctx, idx.TableID, 1, idx.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	idxHist := &statistics.Index{
 		Histogram:         *hg,
 		CMSketch:          cms,
 		TopN:              topN,
-		FMSketch:          fms,
 		Info:              idxInfo,
 		StatsVer:          statsVer,
 		PhysicalID:        idx.TableID,
