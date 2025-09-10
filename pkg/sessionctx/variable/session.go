@@ -1802,6 +1802,20 @@ const (
 	PlanRiskStaleStats
 )
 
+func (s *SessionVars) GetPlanRiskNames() []string {
+	var names []string
+	if s.PlanRiskFlags&PlanRiskOutOfRangeEst != 0 {
+		names = append(names, "out-of-range-estimation")
+	}
+	if s.PlanRiskFlags&PlanRiskPseudoStats != 0 {
+		names = append(names, "pseudo-stats")
+	}
+	if s.PlanRiskFlags&PlanRiskStaleStats != 0 {
+		names = append(names, "stale-stats")
+	}
+	return names
+}
+
 func (s *SessionVars) ResetPlanRiskFlags() {
 	s.PlanRiskFlags = 0
 }
