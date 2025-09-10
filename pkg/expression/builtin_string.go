@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -416,7 +417,7 @@ func (b *builtinConcatWSSig) evalString(ctx EvalContext, row chunk.Row) (string,
 		}
 		sep = val
 	}
-	for i := 1; i < N; i++ {
+	for i := 1; i < n; i++ {
 		val, isNull, err := args[i].EvalString(ctx, row)
 		if err != nil {
 			return val, isNull, err
@@ -2522,11 +2523,11 @@ func (b *builtinCharSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	bigints := make([]int64, 0, len(b.args)-1)
 
 	for i := range len(b.args) - 1 {
-		val, IsNull, err := b.args[i].EvalInt(ctx, row)
+		val, isNull, err := b.args[i].EvalInt(ctx, row)
 		if err != nil {
 			return "", true, err
 		}
-		if IsNull {
+		if isNull {
 			continue
 		}
 		bigints = append(bigints, val)
@@ -3256,7 +3257,7 @@ func (b *builtinEltSig) Clone() builtinFunc {
 
 // evalString evals a ELT(N,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_elt
-func (b *builtinEltSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+func (b *builtinEltSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
 	idx, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
@@ -4007,12 +4008,12 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 // evalInt evals INSTR(str,substr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	str, IsNull, err := b.args[0].EvalString(ctx, row)
-	if IsNull || err != nil {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
-	substr, IsNull, err := b.args[1].EvalString(ctx, row)
-	if IsNull || err != nil {
+	substr, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 	if collate.IsCICollation(b.collation) {
@@ -4030,13 +4031,13 @@ func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 // evalInt evals INSTR(str,substr), case sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	str, IsNull, err := b.args[0].EvalString(ctx, row)
-	if IsNull || err != nil {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 
-	substr, IsNull, err := b.args[1].EvalString(ctx, row)
-	if IsNull || err != nil {
+	substr, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 
@@ -4075,7 +4076,7 @@ type builtinLoadFileSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (*builtinLoadFileSig) evalString(_ EvalContext, _ chunk.Row) (string, bool, error) {
+func (*builtinLoadFileSig) evalString(_ EvalContext, _ chunk.Row) (d string, isNull bool, err error) {
 	d, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
