@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"sort"
 	"strconv"

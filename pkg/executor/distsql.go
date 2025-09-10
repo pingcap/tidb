@@ -761,7 +761,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				SetStartTS(e.startTS).
 				SetDesc(e.desc).
 				SetKeepOrder(e.keepOrder).
-				SetTxnScope(e.txnScope).
 				SetReadReplicaScope(e.readReplicaScope).
 				SetIsStaleness(e.isStaleness).
 				SetFromSessionVars(e.dctx).

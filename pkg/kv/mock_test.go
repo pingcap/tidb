@@ -25,7 +25,7 @@ func TestInterface(t *testing.T) {
 	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
-	version, err := storage.CurrentVersion(GlobalTxnScope)
+	version, err := storage.CurrentVersion()
 	assert.Nil(t, err)
 
 	snapshot := storage.GetSnapshot(version)

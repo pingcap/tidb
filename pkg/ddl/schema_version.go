@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -424,7 +425,7 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 		return nil
 	}
 
-	ver, err := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := jobCtx.store.CurrentVersion()
 	failpoint.Inject("mockGetCurrentVersionFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			// ref: https://github.com/tikv/client-go/blob/master/tikv/kv.go#L505-L532

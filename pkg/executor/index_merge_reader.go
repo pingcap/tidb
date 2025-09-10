@@ -413,7 +413,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						SetStartTS(e.startTS).
 						SetDesc(e.descs[workID]).
 						SetKeepOrder(e.keepOrder).
-						SetTxnScope(e.txnScope).
 						SetReadReplicaScope(e.readReplicaScope).
 						SetIsStaleness(e.isStaleness).
 						SetFromSessionVars(e.Ctx().GetDistSQLCtx()).

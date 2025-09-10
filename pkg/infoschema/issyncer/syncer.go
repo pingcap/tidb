@@ -416,7 +416,7 @@ func (s *Syncer) Reload() error {
 	defer s.m.Unlock()
 
 	startTime := time.Now()
-	ver, err := s.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := s.store.CurrentVersion()
 	if err != nil {
 		return err
 	}

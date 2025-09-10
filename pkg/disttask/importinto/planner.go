@@ -426,7 +426,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		}, nil)
 	})
 
-	ver, err := planCtx.Store.CurrentVersion(tidbkv.GlobalTxnScope)
+	ver, err := planCtx.Store.CurrentVersion()
 	if err != nil {
 		return nil, err
 	}

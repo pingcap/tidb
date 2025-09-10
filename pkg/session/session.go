@@ -1007,8 +1007,7 @@ func (s *session) setLastTxnInfoBeforeTxnEnd() {
 	}
 
 	lastTxnInfo, err := json.Marshal(transaction.TxnInfo{
-		TxnScope: txnCtx.TxnScope,
-		StartTS:  txnCtx.StartTS,
+		StartTS: txnCtx.StartTS,
 	})
 	terror.Log(err)
 	s.GetSessionVars().LastTxnInfo = string(lastTxnInfo)
@@ -4197,7 +4196,6 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future) err
 	s.txn.changeToPending(&txnFuture{
 		future:                          future,
 		store:                           s.store,
-		txnScope:                        scope,
 		pipelined:                       s.usePipelinedDmlOrWarn(ctx),
 		pipelinedFlushConcurrency:       s.GetSessionVars().PipelinedFlushConcurrency,
 		pipelinedResolveLockConcurrency: s.GetSessionVars().PipelinedResolveLockConcurrency,
