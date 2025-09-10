@@ -246,6 +246,7 @@ func (p *Delete) MemoryUsage() (sum int64) {
 	return
 }
 
+// CleanTblID2HandleMap cleans the tblID2Handle map by removing the handles
 func (p *Delete) CleanTblID2HandleMap(
 	tablesToDelete map[int64][]*resolve.TableNameW,
 	tblID2Handle map[int64][]util.HandleCols,
@@ -435,6 +436,7 @@ func ExtractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 	return nil
 }
 
+// ResolveOnDuplicate resolves the OnDuplicate field of Insert.
 func (p *Insert) ResolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
 	onDupColSet := make(map[string]struct{}, len(onDup))
 	colMap := make(map[string]*table.Column, len(p.Table.Cols()))

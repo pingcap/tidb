@@ -50,10 +50,10 @@ type FKCheck struct {
 }
 
 // Init initializes FKCheck.
-func (p FKCheck) Init(ctx base.PlanContext) *FKCheck {
-	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &p, 0)
-	p.SetStats(&property.StatsInfo{})
-	return &p
+func (f FKCheck) Init(ctx base.PlanContext) *FKCheck {
+	f.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &f, 0)
+	f.SetStats(&property.StatsInfo{})
+	return &f
 }
 
 // FKCascade indicates the foreign key constraint cascade behaviour.
@@ -72,10 +72,10 @@ type FKCascade struct {
 }
 
 // Init initializes FKCascade
-func (p FKCascade) Init(ctx base.PlanContext) *FKCascade {
-	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &p, 0)
-	p.SetStats(&property.StatsInfo{})
-	return &p
+func (f FKCascade) Init(ctx base.PlanContext) *FKCascade {
+	f.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &f, 0)
+	f.SetStats(&property.StatsInfo{})
+	return &f
 }
 
 // FKCascadeType indicates in which (delete/update) statements.
@@ -161,6 +161,7 @@ func (f *FKCascade) MemoryUsage() (sum int64) {
 	return
 }
 
+// BuildOnInsertFKTriggers builds the foreign key triggers for insert statement.
 func (p *Insert) BuildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
@@ -239,6 +240,7 @@ func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infosch
 	return fkChecks, fkCascades, nil
 }
 
+// BuildOnUpdateFKTriggers builds the foreign key triggers for update statement.
 func (updt *Update) BuildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
@@ -282,6 +284,7 @@ func (updt *Update) BuildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 	return nil
 }
 
+// BuildOnDeleteFKTriggers builds the foreign key triggers for delete statement.
 func (del *Delete) BuildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
