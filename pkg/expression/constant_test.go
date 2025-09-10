@@ -184,7 +184,7 @@ func TestConstantPropagation(t *testing.T) {
 			for _, cd := range tt.conditions {
 				conds = append(conds, FoldConstant(ctx, cd))
 			}
-			newConds := solver.PropagateConstant(ctx, nil, conds)
+			newConds := solver.PropagateConstant(ctx, false, nil, nil, nil, conds)
 			var result []string
 			for _, v := range newConds {
 				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
