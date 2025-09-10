@@ -1048,7 +1048,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
 	if noDecorrelate {
 		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
-		if !er.hasLimit(np) {
+		if !hasLimit(np) {
 			limitClause := &ast.Limit{
 				Count: ast.NewValueExpr(1, "", ""),
 			}
@@ -2694,7 +2694,7 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 }
 
 // hasLimit checks if the plan already contains a LIMIT operator
-func (er *expressionRewriter) hasLimit(plan base.LogicalPlan) bool {
+func hasLimit(plan base.LogicalPlan) bool {
 	if plan == nil {
 		return false
 	}
@@ -2704,7 +2704,7 @@ func (er *expressionRewriter) hasLimit(plan base.LogicalPlan) bool {
 	}
 	// Recursively check children
 	for _, child := range plan.Children() {
-		if er.hasLimit(child) {
+		if hasLimit(child) {
 			return true
 		}
 	}
