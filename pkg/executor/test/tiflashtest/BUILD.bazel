@@ -17,7 +17,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/parser/terror",
-        "//pkg/planner/core",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",

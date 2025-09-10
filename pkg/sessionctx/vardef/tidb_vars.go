@@ -315,6 +315,10 @@ const (
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
+	// TiDBEnableSemiJoinRewrite controls automatic rewrite of semi-join to
+	// inner-join with aggregation (equivalent to SEMI_JOIN_REWRITE() hint).
+	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
+
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
@@ -341,6 +345,17 @@ const (
 	// When 0: uses conservative estimate (max of individual column NDVs, production default)
 	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
 	TiDBOptRiskGroupNDVSkewRatio = "tidb_opt_group_ndv_skew_ratio"
+
+	// TiDBOptAlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	TiDBOptAlwaysKeepJoinKey = "tidb_opt_always_keep_join_key"
+
+	// TiDBOptCartesianJoinOrderThreshold controls whether to allow do Cartesian Join first in Join Reorder.
+	// This variable is used as a penalty to trade off the risk and join order quality.
+	// When 0: never do Cartesian Join first.
+	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
+	TiDBOptCartesianJoinOrderThreshold = "tidb_opt_cartesian_join_order_threshold"
 
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
@@ -1357,6 +1372,8 @@ const (
 	DefOptRiskRangeSkewRatio                = 0.0
 	DefOptRiskScaleNDVSkewRatio             = 1.0
 	DefOptRiskGroupNDVSkewRatio             = 0.0
+	DefOptAlwaysKeepJoinKey                 = false
+	DefOptCartesianJoinOrderThreshold       = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0
@@ -1389,6 +1406,7 @@ const (
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
 	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableSemiJoinRewrite             = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false
@@ -1834,15 +1852,6 @@ func serverMemoryLimitDefaultValue() string {
 		return "80%"
 	}
 	return "0"
-}
-
-func mustParseDuration(str string) time.Duration {
-	duration, err := time.ParseDuration(str)
-	if err != nil {
-		panic(fmt.Sprintf("%s is not a duration", str))
-	}
-
-	return duration
 }
 
 func mustParseTime(layout string, str string) time.Time {

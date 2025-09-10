@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,8 @@ func (client *getTiFlashSystemTableRequestMocker) AsOpt() mockstore.MockTiKVStor
 	})
 }
 
+var systemKeyspaceID = uint32(16777214)
+
 func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
 	instances := []string{
 		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
@@ -82,17 +85,30 @@ func TestTiFlashSystemTableWithTiFlashV620(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName, fpExpr))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
+	// Generate the tiflash system table request mocker
 	mocker := newGetTiFlashSystemTableRequestMocker(t)
-	mocker.MockQuery(`SELECT * FROM system.dt_segments LIMIT 0, 1024`, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
-		require.EqualValues(t, req.Sql, "SELECT * FROM system.dt_segments LIMIT 0, 1024")
+	var sqlTiFlashSegment string
+	if keyspace.GetKeyspaceNameBySettings() == "" {
+		sqlTiFlashSegment = `SELECT * FROM system.dt_segments LIMIT 0, 1024`
+	} else {
+		sqlTiFlashSegment = fmt.Sprintf(`SELECT * FROM system.dt_segments WHERE keyspace_id=%d LIMIT 0, 1024`, systemKeyspaceID)
+	}
+	mocker.MockQuery(sqlTiFlashSegment, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
+		require.EqualValues(t, req.Sql, sqlTiFlashSegment)
 		data, err := os.ReadFile("testdata/tiflash_v620_dt_segments.json")
 		require.NoError(t, err)
 		return &kvrpcpb.TiFlashSystemTableResponse{
 			Data: data,
 		}, nil
 	})
-	mocker.MockQuery(`SELECT * FROM system.dt_tables LIMIT 0, 1024`, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
-		require.EqualValues(t, req.Sql, "SELECT * FROM system.dt_tables LIMIT 0, 1024")
+	var sqlTiFlashTable string
+	if keyspace.GetKeyspaceNameBySettings() == "" {
+		sqlTiFlashTable = `SELECT * FROM system.dt_tables LIMIT 0, 1024`
+	} else {
+		sqlTiFlashTable = fmt.Sprintf(`SELECT * FROM system.dt_tables WHERE keyspace_id=%d LIMIT 0, 1024`, systemKeyspaceID)
+	}
+	mocker.MockQuery(sqlTiFlashTable, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
+		require.EqualValues(t, req.Sql, sqlTiFlashTable)
 		data, err := os.ReadFile("testdata/tiflash_v620_dt_tables.json")
 		require.NoError(t, err)
 		return &kvrpcpb.TiFlashSystemTableResponse{
@@ -129,9 +145,16 @@ func TestTiFlashSystemTableWithTiFlashV630(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName, fpExpr))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
+	// Generate the tiflash system table request mocker
 	mocker := newGetTiFlashSystemTableRequestMocker(t)
-	mocker.MockQuery(`SELECT * FROM system.dt_segments LIMIT 0, 1024`, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
-		require.EqualValues(t, req.Sql, "SELECT * FROM system.dt_segments LIMIT 0, 1024")
+	var sqlTiFlashSegment string
+	if keyspace.GetKeyspaceNameBySettings() == "" {
+		sqlTiFlashSegment = `SELECT * FROM system.dt_segments LIMIT 0, 1024`
+	} else {
+		sqlTiFlashSegment = fmt.Sprintf(`SELECT * FROM system.dt_segments WHERE keyspace_id=%d LIMIT 0, 1024`, systemKeyspaceID)
+	}
+	mocker.MockQuery(sqlTiFlashSegment, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
+		require.EqualValues(t, req.Sql, sqlTiFlashSegment)
 		data, err := os.ReadFile("testdata/tiflash_v630_dt_segments.json")
 		require.NoError(t, err)
 		return &kvrpcpb.TiFlashSystemTableResponse{
@@ -167,9 +190,16 @@ func TestTiFlashSystemTableWithTiFlashV640(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName, fpExpr))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
+	// Generate the tiflash system table request mocker
 	mocker := newGetTiFlashSystemTableRequestMocker(t)
-	mocker.MockQuery(`SELECT * FROM system.dt_tables LIMIT 0, 1024`, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
-		require.EqualValues(t, req.Sql, "SELECT * FROM system.dt_tables LIMIT 0, 1024")
+	var sqlTiFlashTable string
+	if keyspace.GetKeyspaceNameBySettings() == "" {
+		sqlTiFlashTable = `SELECT * FROM system.dt_tables LIMIT 0, 1024`
+	} else {
+		sqlTiFlashTable = fmt.Sprintf(`SELECT * FROM system.dt_tables WHERE keyspace_id=%d LIMIT 0, 1024`, systemKeyspaceID)
+	}
+	mocker.MockQuery(sqlTiFlashTable, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
+		require.EqualValues(t, req.Sql, sqlTiFlashTable)
 		data, err := os.ReadFile("testdata/tiflash_v640_dt_tables.json")
 		require.NoError(t, err)
 		return &kvrpcpb.TiFlashSystemTableResponse{

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1536,7 +1538,7 @@ func TestExplainExpand(t *testing.T) {
 
 func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 	// PhysicalApply is expected not to implement PhysicalJoin.
-	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(physicalop.PhysicalApply))
+	require.NotImplements(t, (*base.PhysicalJoin)(nil), new(physicalop.PhysicalApply))
 }
 
 func TestRuleAggElimination4Join(t *testing.T) {
@@ -1601,4 +1603,11 @@ func TestIssue62331(t *testing.T) {
 // Helper: load cascades_template test data
 func getCascadesTemplateData() testdata.TestData {
 	return testDataMap["cascades_template"]
+}
+
+func TestAllocMPPID(t *testing.T) {
+	ctx := mock.NewContext()
+	require.Equal(t, int64(1), physicalop.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(2), physicalop.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(3), physicalop.AllocMPPTaskID(ctx))
 }

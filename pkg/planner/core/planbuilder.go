@@ -1608,7 +1608,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	idxColInfos := getIndexColumnInfos(tblInfo, idx)
 	idxColSchema := getIndexColsSchema(tblInfo, idx, fullExprCols)
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(idxColInfos, idxColSchema.Columns, idx)
-
+	pseudoHistColl := statistics.PseudoHistColl(physicalID, false)
 	is := physicalop.PhysicalIndexScan{
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
@@ -1621,10 +1621,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 		Ranges:           ranger.FullRange(),
 		PhysicalTableID:  physicalID,
 		IsPartition:      isPartition,
-		TblColHists:      &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
+		TblColHists:      &pseudoHistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
-	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo, false, false)).HistColl})
+	is.SetStats(&property.StatsInfo{HistColl: &pseudoHistColl})
 	if hasCommonCols {
 		for _, c := range commonInfos {
 			is.Columns = append(is.Columns, c.ColumnInfo)
@@ -1639,7 +1639,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 		TableAsName:     &tblInfo.Name,
 		DBName:          dbName,
 		PhysicalTableID: physicalID,
-		TblColHists:     &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
+		TblColHists:     &pseudoHistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetIsPartition(isPartition)
 	ts.SetSchema(idxColSchema)
@@ -1672,7 +1672,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 		}
 	}
 	if is.Index.Global {
-		tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(b.ctx, ts.Columns, ts.Schema())
+		tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(b.ctx, ts.Columns, ts.Schema())
 		ts.Columns = tmpColumns
 		ts.SetSchema(tmpSchema)
 	}

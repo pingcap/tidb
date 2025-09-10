@@ -522,3 +522,30 @@ func TestIssue56915(t *testing.T) {
 		))
 	})
 }
+
+func TestIssue63290(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t2 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t3 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec(`insert into t1 values (1, 1, 1)`)
+		tk.MustExec(`insert into t3 values (1, 1, 1)`)
+		tk.MustExec(`analyze table t1, t2, t3`)
+
+		// Cartesian Join t1 and t3 first, then join t2.
+		tk.MustQuery(`explain format='plan_tree' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
+			`Projection root  1->Column#13`,
+			`└─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t3.b, test.t2.b)`,
+			`  ├─HashJoin(Build) root  CARTESIAN inner join`,
+			`  │ ├─IndexReader(Build) root  index:IndexFullScan`,
+			`  │ │ └─IndexFullScan cop[tikv] table:t3, index:b(b) keep order:false`,
+			`  │ └─IndexReader(Probe) root  index:IndexFullScan`,
+			`  │   └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false`,
+			`  └─IndexLookUp(Probe) root  `,
+			`    ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))`,
+			`    │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo`,
+			`    └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))`,
+			`      └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
+	})
+}
