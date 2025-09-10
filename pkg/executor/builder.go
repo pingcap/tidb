@@ -303,6 +303,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSQLBindExec(v)
 	case *plannercore.SplitRegion:
 		return b.buildSplitRegion(v)
+	case *plannercore.DistributeTable:
+		return b.buildDistributeTable(v)
 	case *plannercore.PhysicalIndexMergeReader:
 		return b.buildIndexMergeReader(v)
 	case *plannercore.SelectInto:
@@ -893,6 +895,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
+		DistributionJobID:     v.DistributionJobID,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
@@ -950,6 +953,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
 			tp:           s.Tp,
 			jobID:        s.JobID,
+		}
+	case *ast.CancelDistributionJobStmt:
+		return &CancelDistributionJobExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			jobID:        uint64(s.JobID),
 		}
 	}
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
@@ -2677,6 +2685,21 @@ func buildHandleColsForSplit(tbInfo *model.TableInfo) plannerutil.HandleCols {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	return plannerutil.NewIntHandleCols(intCol)
+}
+
+func (b *executorBuilder) buildDistributeTable(v *plannercore.DistributeTable) exec.Executor {
+	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base.SetInitCap(1)
+	base.SetMaxChunkSize(1)
+	return &DistributeTableExec{
+		BaseExecutor:   base,
+		tableInfo:      v.TableInfo,
+		partitionNames: v.PartitionNames,
+		rule:           v.Rule,
+		engine:         v.Engine,
+		is:             b.is,
+		timeout:        v.Timeout,
+	}
 }
 
 func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) exec.Executor {

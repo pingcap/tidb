@@ -50,6 +50,7 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//errs",
         "@com_github_tikv_pd_client//http",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_client_v3//concurrency",
