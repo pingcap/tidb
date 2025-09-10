@@ -843,6 +843,9 @@ func TestDuplicateFMSketch(t *testing.T) {
 }
 
 func TestIndexFMSketch(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
