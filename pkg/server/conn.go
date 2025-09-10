@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -118,6 +119,8 @@ const (
 	connStatusReading
 	connStatusShutdown     = variable.ConnStatusShutdown // Closed by server.
 	connStatusWaitShutdown = 3                           // Notified by server to close.
+
+	tidbGatewayAttrsConnKey = "TiDB-Gateway-ConnID"
 )
 
 var (
@@ -1111,6 +1114,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
 					} else {
 						idleTime := time.Since(start)
+						tidbGatewayConnID := cc.attrs[tidbGatewayAttrsConnKey]
+						cc.server.SetNormalClosedConn(keyspace.GetKeyspaceNameBySettings(), tidbGatewayConnID, "read packet timeout")
 						logutil.Logger(ctx).Info("read packet timeout, close this connection",
 							zap.Duration("idle", idleTime),
 							zap.Uint64("waitTimeout", waitTimeout),
@@ -1161,7 +1166,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				server_metrics.DisconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
-				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
+				logutil.Logger(ctx).Warn("result undetermined, close this connection", zap.Error(err))
 				server_metrics.DisconnectErrorUndetermined.Inc()
 				return
 			} else if terror.ErrCritical.Equal(err) {
@@ -1344,6 +1349,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 		cc.server.releaseToken(token)
 		cc.lastActive = time.Now()
+		if cc.server.StandbyController != nil {
+			cc.server.StandbyController.OnConnActive()
+		}
 	}()
 
 	vars := cc.ctx.GetSessionVars()
@@ -1867,7 +1875,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	handlePlan := func(sctx sessionctx.Context, p base.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
-		case *plannercore.PointGetPlan:
+		case *physicalop.PointGetPlan:
 			isTableDual, err0 := v.PrunePartitions(sctx)
 			if err0 != nil || isTableDual {
 				return err0
@@ -1875,7 +1883,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
+				idxKey, err1 := physicalop.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
 				if err1 != nil {
 					return err1
 				}
@@ -1884,7 +1892,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			} else {
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
-		case *plannercore.BatchPointGetPlan:
+		case *physicalop.BatchPointGetPlan:
 			_, isTableDual, err1 := v.PrunePartitionsAndValues(sctx)
 			if err1 != nil {
 				return err1
@@ -1902,7 +1910,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
 				for i, idxVals := range v.IndexValues {
-					idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
+					idxKey, err1 := physicalop.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
 					if err1 != nil {
 						return err1
 					}

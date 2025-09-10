@@ -38,10 +38,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func emptyPlanGenerator() (string, string, any) {
-	return "", "", nil
-}
-
 func fakePlanDigestGenerator() string {
 	return "point_get"
 }
@@ -202,7 +198,6 @@ func TestAddStatement(t *testing.T) {
 			TotWaitTime:       40000,
 		},
 		ExecDetail: execdetails.ExecDetails{
-			BackoffTime:  180,
 			RequestCount: 20,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 500,
@@ -231,16 +226,17 @@ func TestAddStatement(t *testing.T) {
 					ResolveLockTime: 10000,
 				},
 			},
-			ScanDetail: &util.ScanDetail{
-				TotalKeys:                 6000,
-				ProcessedKeys:             1500,
-				RocksdbDeleteSkippedCount: 100,
-				RocksdbKeySkippedCount:    10,
-				RocksdbBlockCacheHitCount: 10,
-				RocksdbBlockReadCount:     10,
-				RocksdbBlockReadByte:      1000,
-			},
-			DetailsNeedP90: execdetails.DetailsNeedP90{
+			CopExecDetails: execdetails.CopExecDetails{
+				BackoffTime: 180,
+				ScanDetail: &util.ScanDetail{
+					TotalKeys:                 6000,
+					ProcessedKeys:             1500,
+					RocksdbDeleteSkippedCount: 100,
+					RocksdbKeySkippedCount:    10,
+					RocksdbBlockCacheHitCount: 10,
+					RocksdbBlockReadCount:     10,
+					RocksdbBlockReadByte:      1000,
+				},
 				TimeDetail: util.TimeDetail{
 					ProcessTime: 1500,
 					WaitTime:    150,
@@ -361,7 +357,6 @@ func TestAddStatement(t *testing.T) {
 			TotWaitTime:       40,
 		},
 		ExecDetail: execdetails.ExecDetails{
-			BackoffTime:  18,
 			RequestCount: 2,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 50,
@@ -390,16 +385,17 @@ func TestAddStatement(t *testing.T) {
 					ResolveLockTime: 1000,
 				},
 			},
-			ScanDetail: &util.ScanDetail{
-				TotalKeys:                 600,
-				ProcessedKeys:             150,
-				RocksdbDeleteSkippedCount: 100,
-				RocksdbKeySkippedCount:    10,
-				RocksdbBlockCacheHitCount: 10,
-				RocksdbBlockReadCount:     10,
-				RocksdbBlockReadByte:      1000,
-			},
-			DetailsNeedP90: execdetails.DetailsNeedP90{
+			CopExecDetails: execdetails.CopExecDetails{
+				BackoffTime: 18,
+				ScanDetail: &util.ScanDetail{
+					TotalKeys:                 600,
+					ProcessedKeys:             150,
+					RocksdbDeleteSkippedCount: 100,
+					RocksdbKeySkippedCount:    10,
+					RocksdbBlockCacheHitCount: 10,
+					RocksdbBlockReadCount:     10,
+					RocksdbBlockReadByte:      1000,
+				},
 				TimeDetail: util.TimeDetail{
 					ProcessTime: 150,
 					WaitTime:    15,
@@ -684,7 +680,6 @@ func generateAnyExecInfo() *StmtExecInfo {
 			TotWaitTime:       1000,
 		},
 		ExecDetail: execdetails.ExecDetails{
-			BackoffTime:  80,
 			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 100,
@@ -713,16 +708,17 @@ func generateAnyExecInfo() *StmtExecInfo {
 					ResolveLockTime: 2000,
 				},
 			},
-			ScanDetail: &util.ScanDetail{
-				TotalKeys:                 1000,
-				ProcessedKeys:             500,
-				RocksdbDeleteSkippedCount: 100,
-				RocksdbKeySkippedCount:    10,
-				RocksdbBlockCacheHitCount: 10,
-				RocksdbBlockReadCount:     10,
-				RocksdbBlockReadByte:      1000,
-			},
-			DetailsNeedP90: execdetails.DetailsNeedP90{
+			CopExecDetails: execdetails.CopExecDetails{
+				BackoffTime: 80,
+				ScanDetail: &util.ScanDetail{
+					TotalKeys:                 1000,
+					ProcessedKeys:             500,
+					RocksdbDeleteSkippedCount: 100,
+					RocksdbKeySkippedCount:    10,
+					RocksdbBlockCacheHitCount: 10,
+					RocksdbBlockReadCount:     10,
+					RocksdbBlockReadByte:      1000,
+				},
 				TimeDetail: util.TimeDetail{
 					ProcessTime: 500,
 					WaitTime:    50,

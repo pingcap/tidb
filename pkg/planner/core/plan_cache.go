@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -254,10 +255,10 @@ func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}(time.Now())
 	fastPoint := stmt.PointGet.Executor != nil // this case is specially handled
-	pointPlan, isPoint := plan.(*PointGetPlan)
+	pointPlan, isPoint := plan.(*physicalop.PointGetPlan)
 	if fastPoint && isPoint { // special optimization for fast point plans
 		if stmt.PointGet.FastPlan == nil {
-			stmt.PointGet.FastPlan = new(PointGetPlan)
+			stmt.PointGet.FastPlan = new(physicalop.PointGetPlan)
 		}
 		FastClonePointGetForPlanCache(sctx.GetPlanCtx(), pointPlan, stmt.PointGet.FastPlan)
 		clonedPlan = stmt.PointGet.FastPlan

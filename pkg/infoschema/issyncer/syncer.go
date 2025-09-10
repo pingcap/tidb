@@ -28,21 +28,22 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
-	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
@@ -74,11 +75,13 @@ type Syncer struct {
 	mdlCheckTableInfo *mdlCheckTableInfo
 	schemaValidator   validatorapi.Validator
 	loader            *Loader
+	logger            *zap.Logger
+	crossKS           bool
 
 	// below fields are set when running background routines
-	info              *infosync.InfoSyncer
-	schemaVerSyncer   schemaver.Syncer
-	minJobIDRefresher *systable.MinJobIDRefresher
+	isCoordinatorGetter func() sessmgr.InfoSchemaCoordinator
+	schemaVerSyncer     schemaver.Syncer
+	minJobIDRefresher   *systable.MinJobIDRefresher
 }
 
 // New creates a new Syncer instance.
@@ -87,8 +90,37 @@ func New(
 	infoCache *infoschema.InfoCache,
 	schemaLease time.Duration,
 	sysSessionPool util.DestroyableSessionPool,
+	isValidator validatorapi.Validator,
 ) *Syncer {
-	do := &Syncer{
+	s := newSyncer(store, logutil.BgLogger(), schemaLease, sysSessionPool, isValidator)
+	s.loader = newLoader(store, infoCache, &s.deferFn)
+	return s
+}
+
+// NewCrossKSSyncer creates a new Syncer instance for cross keyspace.
+func NewCrossKSSyncer(
+	store kv.Storage,
+	infoCache *infoschema.InfoCache,
+	schemaLease time.Duration,
+	sysSessionPool util.DestroyableSessionPool,
+	isValidator validatorapi.Validator,
+	targetKS string,
+) *Syncer {
+	logger := logutil.BgLogger().With(zap.String("targetKS", targetKS))
+	s := newSyncer(store, logger, schemaLease, sysSessionPool, isValidator)
+	s.loader = NewLoaderForCrossKS(store, infoCache)
+	s.crossKS = true
+	return s
+}
+
+func newSyncer(
+	store kv.Storage,
+	logger *zap.Logger,
+	schemaLease time.Duration,
+	sysSessionPool util.DestroyableSessionPool,
+	isValidator validatorapi.Validator,
+) *Syncer {
+	s := &Syncer{
 		store:          store,
 		schemaLease:    schemaLease,
 		sysSessionPool: sysSessionPool,
@@ -98,28 +130,20 @@ func New(
 			mu:   sync.Mutex{},
 			jobs: make(map[int64]*mdldef.JobMDL),
 		},
+		logger: logger,
 	}
-	do.schemaValidator = isvalidator.New(schemaLease)
-	mode := LoadModeAuto
-	do.loader = &Loader{
-		mode:      mode,
-		store:     store,
-		infoCache: infoCache,
-		deferFn:   &do.deferFn,
-		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
-	}
-
-	return do
+	s.schemaValidator = isValidator
+	return s
 }
 
 // InitRequiredFields initializes some fields of the Syncer.
 func (s *Syncer) InitRequiredFields(
-	info *infosync.InfoSyncer,
+	isCoordinatorGetter func() sessmgr.InfoSchemaCoordinator,
 	schemaVerSyncer schemaver.Syncer,
 	autoidClient *autoid.ClientDiscover,
 	sysExecutorFactory func() (pools.Resource, error),
 ) {
-	s.info = info
+	s.isCoordinatorGetter = isCoordinatorGetter
 	s.schemaVerSyncer = schemaVerSyncer
 	s.loader.initFields(autoidClient, sysExecutorFactory)
 }
@@ -133,7 +157,7 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 	se, err := s.sysSessionPool.Get()
 
 	if err != nil {
-		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+		s.logger.Warn("get system session failed", zap.Error(err))
 		return
 	}
 	// Make sure the session is new.
@@ -144,14 +168,13 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 		return
 	}
 	defer s.sysSessionPool.Put(se)
-	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := s.InfoSchema().SchemaMetaVersion()
 	// the job must stay inside tidb_ddl_job if we need to wait schema version for it.
 	sql := fmt.Sprintf(`select job_id, version, table_ids from mysql.tidb_mdl_info
 		where job_id >= %d and version <= %d`, s.minJobIDRefresher.GetCurrMinJobID(), domainSchemaVer)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
+	rows, err := sqlexec.ExecSQL(ctx, sctx.GetSQLExecutor(), sql)
 	if err != nil {
-		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
+		s.logger.Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
 	}
 	s.mdlCheckTableInfo.mu.Lock()
@@ -161,12 +184,30 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 	s.mdlCheckTableInfo.jobs = make(map[int64]*mdldef.JobMDL, len(rows))
 	for i := range rows {
 		jobID := rows[i].GetInt64(0)
-
+		tableIDs := util.Str2Int64Map(rows[i].GetString(2))
+		if s.skipMDLCheck(tableIDs) {
+			continue
+		}
 		s.mdlCheckTableInfo.jobs[jobID] = &mdldef.JobMDL{
 			Ver:      rows[i].GetInt64(1),
-			TableIDs: util.Str2Int64Map(rows[i].GetString(2)),
+			TableIDs: tableIDs,
 		}
 	}
+}
+
+func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
+	if !s.crossKS {
+		return false
+	}
+
+	// for cross keyspace syncer, we only care about the system tables, so we can
+	// skip the MDL check for user tables.
+	for id := range tableIDs {
+		if metadef.IsReservedID(id) {
+			return false
+		}
+	}
+	return true
 }
 
 // MDLCheckLoop is a loop that checks the MDL locks periodically.
@@ -185,7 +226,7 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 			return
 		}
 
-		if !vardef.EnableMDL.Load() {
+		if !vardef.IsMDLEnabled() {
 			continue
 		}
 
@@ -211,11 +252,11 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 
 		haveJobToCheck = true
 
-		sm := s.info.GetSessionManager()
-		if sm == nil {
-			logutil.BgLogger().Info("session manager is nil")
+		coordinator := s.isCoordinatorGetter()
+		if coordinator == nil {
+			s.logger.Info("session manager is nil")
 		} else {
-			sm.CheckOldRunningTxn(jobs)
+			coordinator.CheckOldRunningTxn(jobs)
 		}
 
 		// if there are sessions using older schema version to access tables
@@ -236,12 +277,12 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 				// Already update, skip it.
 				continue
 			}
-			logutil.BgLogger().Info("mdl gets lock, update self version to owner",
+			s.logger.Info("mdl gets lock, update self version to owner",
 				zap.Int64("jobID", jobID), zap.Int64("version", ver))
 			err := s.schemaVerSyncer.UpdateSelfVersion(context.Background(), jobID, ver)
 			if err != nil {
 				haveJobToCheck = true
-				logutil.BgLogger().Warn("mdl gets lock, update self version to owner failed",
+				s.logger.Warn("mdl gets lock, update self version to owner failed",
 					zap.Int64("jobID", jobID), zap.Int64("version", ver), zap.Error(err))
 			} else {
 				jobCache[jobID] = ver
@@ -258,7 +299,7 @@ func (s *Syncer) SyncLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.schemaLease / 2)
 	defer func() {
 		ticker.Stop()
-		logutil.BgLogger().Info("info schema sync loop exited.")
+		s.logger.Info("info schema sync loop exited.")
 	}()
 	syncer := s.schemaVerSyncer
 
@@ -270,22 +311,22 @@ func (s *Syncer) SyncLoop(ctx context.Context) {
 			})
 			err := s.Reload()
 			if err != nil {
-				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
+				s.logger.Error("reload schema in loop failed", zap.Error(err))
 			}
 			s.deferFn.check()
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := s.Reload()
 			if err != nil {
-				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
+				s.logger.Error("reload schema in loop failed", zap.Error(err))
 			}
 			if !ok {
-				logutil.BgLogger().Warn("reload schema in loop, schema syncer need rewatch")
+				s.logger.Warn("reload schema in loop, schema syncer need rewatch")
 				// Make sure the rewatch doesn't affect load schema, so we watch the global schema version asynchronously.
 				syncer.WatchGlobalSchemaVer(context.Background())
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
-			logutil.BgLogger().Info("reload schema in loop, schema syncer need restart")
+			s.logger.Info("reload schema in loop, schema syncer need restart")
 			// The etcd is responsible for schema synchronization, we should ensure there is at most two different schema version
 			// in the TiDB cluster, to make the data/schema be consistent. If we lost connection/session to etcd, the cluster
 			// will treats this TiDB as a down instance, and etcd will remove the key of `/tidb/ddl/all_schema_versions/tidb-id`.
@@ -295,18 +336,18 @@ func (s *Syncer) SyncLoop(ctx context.Context) {
 			s.schemaValidator.Stop()
 			err := s.mustRestartSyncer(ctx)
 			if err != nil {
-				logutil.BgLogger().Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
+				s.logger.Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
 				break
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
 			exitLoop := s.mustReload(ctx)
 			// domain is closed.
 			if exitLoop {
-				logutil.BgLogger().Error("domain is closed, exit info schema sync loop")
+				s.logger.Error("domain is closed, exit info schema sync loop")
 				return
 			}
 			s.schemaValidator.Restart(s.InfoSchema().SchemaMetaVersion())
-			logutil.BgLogger().Info("schema syncer restarted")
+			s.logger.Info("schema syncer restarted")
 		case <-ctx.Done():
 			return
 		}
@@ -332,7 +373,7 @@ func (s *Syncer) mustRestartSyncer(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return err
 		}
-		logutil.BgLogger().Error("restart the schema syncer failed", zap.Error(err))
+		s.logger.Error("restart the schema syncer failed", zap.Error(err))
 		time.Sleep(time.Second)
 	}
 }
@@ -343,12 +384,12 @@ func (s *Syncer) mustReload(ctx context.Context) (exitLoop bool) {
 	for {
 		err := s.Reload()
 		if err == nil {
-			logutil.BgLogger().Info("mustReload succeed")
+			s.logger.Info("mustReload succeed")
 			return false
 		}
 
 		// If the domain is closed, we returns immediately.
-		logutil.BgLogger().Info("reload the schema failed", zap.Error(err))
+		s.logger.Info("reload the schema failed", zap.Error(err))
 		if ctx.Err() != nil {
 			return true
 		}
@@ -402,7 +443,7 @@ func (s *Syncer) Reload() error {
 			// Update self schema version to etcd.
 			err = s.schemaVerSyncer.UpdateSelfVersion(context.Background(), 0, is.SchemaMetaVersion())
 			if err != nil {
-				logutil.BgLogger().Info("update self version failed",
+				s.logger.Info("update self version failed",
 					zap.Int64("oldSchemaVersion", oldSchemaVersion),
 					zap.Int64("neededSchemaVersion", is.SchemaMetaVersion()), zap.Error(err))
 			}
@@ -410,7 +451,7 @@ func (s *Syncer) Reload() error {
 
 		// it is full load
 		if changes == nil {
-			logutil.BgLogger().Info("full load and reset schema validator")
+			s.logger.Info("full load and reset schema validator")
 			s.schemaValidator.Reset()
 		}
 	}
@@ -421,7 +462,7 @@ func (s *Syncer) Reload() error {
 	// some query maybe responded by ErrInfoSchemaExpired error.
 	if sub > (lease/2) && lease > 0 {
 		// If it is a full load and there are a lot of tables, this is likely to happen.
-		logutil.BgLogger().Warn("loading schema takes a long time", zap.Duration("take time", sub))
+		s.logger.Warn("loading schema takes a long time", zap.Duration("take time", sub))
 
 		// We can optimize the case by updating the TS to a new value, as long as the schema version is the same.
 		// For example, lease is 45s, and the load process takes 2min, after the load process finish, this
@@ -442,7 +483,7 @@ func (s *Syncer) Reload() error {
 		})
 		if err == nil && latestSchemaVer == is.SchemaMetaVersion() {
 			version = currentTS
-			logutil.BgLogger().Info("use this schema and update ts",
+			s.logger.Info("use this schema and update ts",
 				zap.Int64("schema ver", latestSchemaVer),
 				zap.Uint64("reload ts", currentTS))
 		}
@@ -463,8 +504,9 @@ func (s *Syncer) postReload(oldVer, currVer int64, change *transaction.RelatedSc
 			s.store.GetMemCache().Delete(change.PhyTblIDS[idx])
 		}
 		if ac == uint64(model.ActionFlashbackCluster) {
-			if s.info != nil && s.info.GetSessionManager() != nil {
-				s.info.GetSessionManager().KillNonFlashbackClusterConn()
+			coordinator := s.isCoordinatorGetter()
+			if coordinator != nil {
+				coordinator.KillNonFlashbackClusterConn()
 			}
 		}
 	}

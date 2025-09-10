@@ -22,6 +22,7 @@ go_test(
     ],
     embed = [":lockwaiter"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/store/mockstore/unistore/config",
         "//pkg/testkit/testsetup",
