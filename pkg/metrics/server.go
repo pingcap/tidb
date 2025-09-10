@@ -53,6 +53,7 @@ var (
 	PlanIndexScanSelectivityCounter *prometheus.CounterVec
 	PlanKVReqCounter                *prometheus.CounterVec
 	PlanExecutionTimeCounter        *prometheus.CounterVec
+	PlanUnstableCounter             *prometheus.CounterVec
 
 	ServerEventCounter              *prometheus.CounterVec
 	TimeJumpBackCounter             prometheus.Counter
@@ -494,6 +495,14 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "plan_execution_time_total",
 			Help:      "Counter of queries with different levels of execution time.",
+		}, []string{LblType})
+
+	PlanUnstableCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_unstable_total",
+			Help:      "Counter of unstable queries with different numbers of plans",
 		}, []string{LblType})
 }
 

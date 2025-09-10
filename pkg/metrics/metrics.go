@@ -303,6 +303,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanIndexScanSelectivityCounter)
 	prometheus.MustRegister(PlanKVReqCounter)
 	prometheus.MustRegister(PlanExecutionTimeCounter)
+	prometheus.MustRegister(PlanUnstableCounter)
 
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
 	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
