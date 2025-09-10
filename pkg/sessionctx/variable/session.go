@@ -1106,6 +1106,15 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+<<<<<<< HEAD
+=======
+	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
+	EnableNoDecorrelateInSelect bool
+
+	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
+	EnableSemiJoinRewrite bool
+
+>>>>>>> 6ba98357b9b (planner: Exists subquery to join variable (#63416))
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
@@ -2123,6 +2132,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AutoIncrementOffset:           DefAutoIncrementOffset,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
 		AllowAggPushDown:              false,
+<<<<<<< HEAD
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
@@ -2131,6 +2141,22 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+=======
+		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    vardef.DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
+		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
+		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
+		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
+		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
+		CartesianJoinOrderThreshold:   vardef.DefOptCartesianJoinOrderThreshold,
+		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
+		EnableSemiJoinRewrite:         vardef.DefOptEnableSemiJoinRewrite,
+		RetryLimit:                    vardef.DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,
+>>>>>>> 6ba98357b9b (planner: Exists subquery to join variable (#63416))
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
