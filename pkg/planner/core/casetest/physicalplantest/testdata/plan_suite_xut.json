@@ -4138,16 +4138,15 @@
     "Name": "TestLimitPushdown",
     "Cases": [
       {
-        "SQL": "explain format = 'plan_tree' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix",
+        "SQL": "select /*+ use_index(t1, c1) */ * from t1 order by c1 limit 200;",
         "Plan": [
-          "Projection root  Column#7->Column#12, Column#8->Column#13, Column#9->Column#14, grouping(gid)->Column#15",
-          "└─HashAgg root  group by:Column#7, Column#8, Column#9, gid, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(gid)->gid",
-          "  └─Selection root  ne(grouping(gid), 0)",
-          "    └─Expand root  level-projection:[<nil>->Column#7, <nil>->Column#8, <nil>->Column#9, 0->gid],[Column#7, <nil>->Column#8, <nil>->Column#9, 1->gid],[Column#7, Column#8, <nil>->Column#9, 3->gid],[Column#7, Column#8, Column#9, 7->gid]; schema: [Column#7,Column#8,Column#9,gid]",
-          "      └─TableReader root  data:TableFullScan",
-          "        └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
+          "Projection root  test.t1.c1, test.t1.c2",
+          "└─IndexLookUp root  limit embedded(offset:0, count:200)",
+          "  ├─Limit(Build) cop[tikv]  offset:0, count:200",
+          "  │ └─IndexFullScan cop[tikv] table:t1, index:c1(c1) keep order:true",
+          "  └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false"
         ],
-        "Warning": null
+        "Warn": null
       }
     ]
   }
