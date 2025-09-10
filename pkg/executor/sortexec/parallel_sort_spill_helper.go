@@ -41,10 +41,13 @@ type parallelSortSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	fileNamePrefixForTest string
 }
 
-func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError) *parallelSortSpillHelper {
+func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError, fileNamePrefixForTest string) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
+<<<<<<< HEAD
 		cond:          sync.NewCond(new(sync.Mutex)),
 		spillStatus:   notSpilled,
 		sortExec:      sortExec,
@@ -53,6 +56,16 @@ func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldTyp
 		finishCh:      finishCh,
 		fieldTypes:    fieldTypes,
 		tmpSpillChunk: chunk.NewChunkFromPoolWithCapacity(fieldTypes, spillChunkSize),
+=======
+		cond:                  sync.NewCond(new(sync.Mutex)),
+		spillStatus:           notSpilled,
+		sortExec:              sortExec,
+		lessRowFunc:           lessRowFunc,
+		errOutputChan:         errOutputChan,
+		finishCh:              finishCh,
+		fieldTypes:            fieldTypes,
+		fileNamePrefixForTest: fileNamePrefixForTest,
+>>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 	}
 }
 
@@ -174,14 +187,16 @@ func (p *parallelSortSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByC
 func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", p.bytesConsumed.Load()), zap.Int64("quota", p.bytesLimit.Load()))
 	p.tmpSpillChunk.Reset()
-	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
+	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes, p.fileNamePrefixForTest)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
+	isInDiskAppended := false
 
 	spilledRowChannel := make(chan chunk.Row, 10000)
 
 	// We must wait the finish of the following goroutine,
 	// or we will exit `spillImpl` function in advance and
 	// this will cause data race.
+<<<<<<< HEAD
 	defer channel.Clear(spilledRowChannel)
 	go func() {
 		defer func() {
@@ -190,6 +205,14 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 			}
 			close(spilledRowChannel)
 		}()
+=======
+	defer func() {
+		if !isInDiskAppended && inDisk.NumRows() > 0 {
+			inDisk.Close()
+		}
+		channel.Clear(spilledRowChannel)
+	}()
+>>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 
 		injectParallelSortRandomFail(200)
 
@@ -227,6 +250,7 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 
 				if inDisk.NumRows() > 0 {
 					p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
+					isInDiskAppended = true
 					p.releaseMemory()
 				}
 				return nil
@@ -239,6 +263,8 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 			if err != nil {
 				return err
 			}
+
+			injectPanicForIssue63216()
 		}
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -151,9 +152,10 @@ func buildDataSource(sortCase *testutil.SortCase, schema *expression.Schema) *te
 func buildSortExec(sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) *sortexec.SortExec {
 	dataSource.PrepareChunks()
 	exe := &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(sortCase.Ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(sortCase.OrderByIdx)),
-		ExecSchema:   dataSource.Schema(),
+		BaseExecutor:          exec.NewBaseExecutor(sortCase.Ctx, dataSource.Schema(), 0, dataSource),
+		ByItems:               make([]*plannerutil.ByItems, 0, len(sortCase.OrderByIdx)),
+		ExecSchema:            dataSource.Schema(),
+		FileNamePrefixForTest: sortCase.FileNamePrefixForTest,
 	}
 
 	for _, idx := range sortCase.OrderByIdx {
@@ -344,9 +346,11 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 }
 
 func TestUnparallelSortSpillDisk(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
@@ -357,9 +361,12 @@ func TestUnparallelSortSpillDisk(t *testing.T) {
 		multiPartitionCase(t, ctx, sortCase, true)
 		inMemoryThenSpillCase(t, ctx, sortCase)
 	}
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestFallBackAction(t *testing.T) {
+	testFuncName := util.GetFunctionName()
+
 	hardLimitBytesNum := int64(1000000)
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -372,7 +379,7 @@ func TestFallBackAction(t *testing.T) {
 	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.99999))
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx, FileNamePrefixForTest: testFuncName}
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
@@ -384,4 +391,5 @@ func TestFallBackAction(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
+	util.CheckNoLeakFiles(t, testFuncName)
 }
