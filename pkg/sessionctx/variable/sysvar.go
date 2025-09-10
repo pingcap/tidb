@@ -2050,6 +2050,10 @@ var defaultSysVars = []*SysVar{
 		s.RiskScaleNDVSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskScaleNDVSkewRatio)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCartesianJoinOrderThreshold, Value: strconv.FormatFloat(vardef.DefOptCartesianJoinOrderThreshold, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.CartesianJoinOrderThreshold = tidbOptFloat64(val, vardef.DefOptCartesianJoinOrderThreshold)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskEqSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskEqSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.RiskEqSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskEqSkewRatio)
 		return nil
@@ -2060,6 +2064,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskGroupNDVSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskGroupNDVSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.RiskGroupNDVSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskGroupNDVSkewRatio)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptAlwaysKeepJoinKey, Value: BoolToOnOff(vardef.DefOptAlwaysKeepJoinKey), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.AlwaysKeepJoinKey = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCPUFactor, Value: strconv.FormatFloat(vardef.DefOptCPUFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
@@ -2370,6 +2378,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnablePipelinedWindowFunction, Value: BoolToOnOff(vardef.DefEnablePipelinedWindowFunction), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePipelinedWindowExec = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableNoDecorrelateInSelect, Value: BoolToOnOff(vardef.DefOptEnableNoDecorrelateInSelect), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNoDecorrelateInSelect = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -2690,7 +2702,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnAssertionLevel, Value: vardef.DefTiDBTxnAssertionLevel, PossibleValues: []string{vardef.AssertionOffStr, vardef.AssertionFastStr, vardef.AssertionStrictStr}, Hidden: true, Type: vardef.TypeEnum, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTxnAssertionLevel, Value: vardef.GetDefaultTxnAssertionLevel(), PossibleValues: []string{vardef.AssertionOffStr, vardef.AssertionFastStr, vardef.AssertionStrictStr}, Hidden: true, Type: vardef.TypeEnum, SetSession: func(s *SessionVars, val string) error {
 		s.AssertionLevel = tidbOptAssertionLevel(val)
 		return nil
 	}},
@@ -3665,7 +3677,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case vardef.TiDBRowFormatVersion:
 		varVal = strconv.Itoa(vardef.DefTiDBRowFormatV2)
 	case vardef.TiDBTxnAssertionLevel:
-		varVal = vardef.AssertionFastStr
+		if kerneltype.IsNextGen() {
+			varVal = vardef.GetDefaultTxnAssertionLevel()
+		} else {
+			varVal = vardef.AssertionFastStr
+		}
 	case vardef.TiDBEnableMutationChecker:
 		varVal = vardef.On
 	case vardef.TiDBPessimisticTransactionFairLocking:

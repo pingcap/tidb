@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "physicalop",
@@ -6,12 +6,14 @@ go_library(
         "base_physical_agg.go",
         "base_physical_join.go",
         "base_physical_plan.go",
+        "fragment.go",
         "nominal_sort.go",
         "physical_apply.go",
         "physical_batch_point_get.go",
         "physical_cte.go",
         "physical_cte_table.go",
-        "physical_exchange.go",
+        "physical_exchange_receiver.go",
+        "physical_exchange_sender.go",
         "physical_expand.go",
         "physical_hash_agg.go",
         "physical_hash_join.go",
@@ -50,6 +52,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
+        "//pkg/distsql",
         "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",
@@ -101,9 +105,23 @@ go_library(
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/stringutil",
+        "//pkg/util/tiflashcompute",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "physicalop_test",
+    timeout = "short",
+    srcs = ["fragment_test.go"],
+    embed = [":physicalop"],
+    flaky = True,
+    deps = [
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
     ],
 )

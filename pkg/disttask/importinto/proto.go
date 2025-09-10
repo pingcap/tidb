@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"go.uber.org/zap"
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -35,8 +36,8 @@ type TaskMeta struct {
 	Plan  importer.Plan
 	Stmt  string
 
-	// TaskResult stores the marshalled results
-	TaskResult []byte
+	// Summary is the summary of the whole import task.
+	Summary importer.Summary
 
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
@@ -162,6 +163,7 @@ type importStepMinimalTask struct {
 	Chunk      importer.Chunk
 	SharedVars *SharedVars
 	panicked   *atomic.Bool
+	logger     *zap.Logger
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -163,7 +165,7 @@ func TestRuleColumnPruningLogicalApply(t *testing.T) {
 			require.NoError(t, err, comment)
 			nodeW := resolve.NewNodeW(stmt)
 			p, _, err := planner.Optimize(context.TODO(), testKit.Session(), nodeW, is)
-			row := testKit.MustQuery("explain format = 'brief' " + tt)
+			row := testKit.MustQuery("explain format = 'plan_tree' " + tt)
 			require.NoError(t, err)
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
@@ -264,10 +266,10 @@ func TestIssue37520(t *testing.T) {
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
@@ -306,10 +308,10 @@ func TestMPPHints(t *testing.T) {
 		}
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + tt).Rows())
 			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
@@ -817,12 +819,12 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 
 			testdata.OnRecord(func() {
 				output[i].SQL = test
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief'" + test).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree'" + test).Rows())
 				if len(warnings) > 0 {
 					output[i].Warning = warnings[0].Err.Error()
 				}
 			})
-			testKit.MustQuery("explain format = 'brief'" + test).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree'" + test).Check(testkit.Rows(output[i].Plan...))
 			if output[i].Warning == "" {
 				require.Len(t, warnings, 0)
 			} else {
@@ -928,10 +930,10 @@ func TestGroupConcatOrderby(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 			})
-			tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 		}
 	})
@@ -1248,11 +1250,11 @@ func TestHJBuildAndProbeHint4DynamicPartitionTable(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 				output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 			})
-			tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 		}
 	})
@@ -1288,10 +1290,10 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 				output[i].Warning = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
 }
@@ -1323,9 +1325,9 @@ func TestMPPSinglePartitionType(t *testing.T) {
 			}
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format='brief'" + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format='plan_tree'" + ts).Rows())
 			})
-			testKit.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format='plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
 }
@@ -1355,9 +1357,9 @@ func TestCountStarForTiFlash(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
 }
@@ -1381,9 +1383,9 @@ func TestIssues49377Plan(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
 }
@@ -1441,9 +1443,9 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
 }
@@ -1468,9 +1470,9 @@ func TestPointgetIndexChoosen(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
 }
@@ -1521,7 +1523,7 @@ func TestExplainExpand(t *testing.T) {
 		testKit.MustExec("CREATE TABLE `sales` (`year` int(11) DEFAULT NULL, `country` varchar(20) DEFAULT NULL,  `product` varchar(32) DEFAULT NULL,  `profit` int(11) DEFAULT NULL, `whatever` int)")
 
 		// error test
-		err := testKit.ExecToErr("explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+		err := testKit.ExecToErr("explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
 		require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
 
 		for i, ts := range input {
@@ -1536,7 +1538,7 @@ func TestExplainExpand(t *testing.T) {
 
 func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 	// PhysicalApply is expected not to implement PhysicalJoin.
-	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(physicalop.PhysicalApply))
+	require.NotImplements(t, (*base.PhysicalJoin)(nil), new(physicalop.PhysicalApply))
 }
 
 func TestRuleAggElimination4Join(t *testing.T) {
@@ -1561,10 +1563,10 @@ func TestRuleAggElimination4Join(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
-			tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
@@ -1589,10 +1591,10 @@ func TestIssue62331(t *testing.T) {
 		for i, ts := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + ts).Rows())
 				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 			})
-			tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery("explain format = 'plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
@@ -1600,7 +1602,12 @@ func TestIssue62331(t *testing.T) {
 
 // Helper: load cascades_template test data
 func getCascadesTemplateData() testdata.TestData {
-	var testDataMap = make(testdata.BookKeeper)
-	testDataMap.LoadTestSuiteData("testdata", "cascades_template", true)
 	return testDataMap["cascades_template"]
+}
+
+func TestAllocMPPID(t *testing.T) {
+	ctx := mock.NewContext()
+	require.Equal(t, int64(1), physicalop.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(2), physicalop.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(3), physicalop.AllocMPPTaskID(ctx))
 }

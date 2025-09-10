@@ -39,6 +39,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/slice",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -49,13 +50,17 @@ go_library(
 go_test(
     name = "handle_test",
     timeout = "short",
-    srcs = ["main_test.go"],
+    srcs = [
+        "bootstrap_test.go",
+        "main_test.go",
+    ],
     embed = [":handle"],
     flaky = True,
     race = "on",
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )

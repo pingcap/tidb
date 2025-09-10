@@ -737,6 +737,11 @@ type Performance struct {
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 
+	// SkipInitStats determines whether to skip initializing statistics when TiDB starts.
+	// It is primarily intended for internal use cases in TiDB Cloud and may cause issues if enabled on a standard cluster.
+	// See: https://github.com/pingcap/tidb/issues/63103
+	SkipInitStats bool `toml:"skip-init-stats" json:"skip-init-stats"`
+
 	// LiteInitStats indicates whether to use the lite version of stats.
 	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
 	// 2. Column/index stats are loaded. (only histogram)
@@ -1029,6 +1034,7 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          true,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
+		SkipInitStats:                     false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
 		// Deprecated: Stats are always initialized concurrently.
@@ -1330,7 +1336,7 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
-	if err := naming.Check(c.KeyspaceName); err != nil {
+	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {

@@ -99,6 +99,17 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 	return is.StatsInfo(), true, nil
 }
 
+// deriveStats4DataSource initialize or derive the stats property for type of DataSource plan.
+// It returns the stats, a bool value indicating whether the stats is changed and an error.
+// The ds.stats represent the stats after applying all pushed down conditions
+//
+//	(include all predicates which directly infer the range or predicates that require additional selection execution).
+//
+// So the ds.stats.rowcount is the output rowcount of ds after applying all pushed down conditions,
+//
+//	it's not equal to the rowcount after applying only the access conditions and also not equal to the ds.TableStats.RowCount.
+//
+// The ds.TableStats.RowCount >= ds.stats.RowCount >= ds.stats.CountAfterAccess
 func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, error) {
 	ds := lp.(*logicalop.DataSource)
 	if ds.StatsInfo() != nil {

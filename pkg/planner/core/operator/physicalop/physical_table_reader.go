@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -378,4 +379,19 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 	for _, child := range children {
 		setMppOrBatchCopForTableScan(child)
 	}
+}
+
+// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
+func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
+	reader.PlanPartInfo = &PhysPlanPartInfo{
+		PruningConds:   sg.Source.AllConds,
+		PartitionNames: sg.Source.PartitionNames,
+		Columns:        sg.Source.TblCols,
+		ColumnNames:    sg.Source.OutputNames(),
+	}
+	reader.SetStats(stats)
+	reader.SetSchema(schema)
+	reader.SetChildrenReqProps(props)
+	return reader
 }

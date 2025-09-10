@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -86,8 +85,14 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	}
 
+	failpoint.Inject("MockTableSize", func(v failpoint.Value) {
+		if size, ok := v.(int); ok && size > 0 {
+			tableSizeInBytes = int64(size)
+		}
+	})
+
 	if setReorgParam {
-		if kerneltype.IsNextGen() {
+		if kerneltype.IsNextGen() && setDistTaskParam {
 			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)
 			m.SetConcurrency(autoConc)
 		} else {
@@ -140,6 +145,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
 		zap.Int("maxNodeCount", m.MaxNodeCount),
+		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
 	)
@@ -171,7 +177,7 @@ func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) in
 	}
 	var totalSize int64
 	for _, pid := range pids {
-		size, err := estimateTableSizeByID(ctx, pdCli, pid)
+		size, err := estimateTableSizeByID(ctx, pdCli, helperStore, pid)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to estimate table size for calculating concurrency",
 				zap.Int64("physicalID", pid),
@@ -192,28 +198,12 @@ func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) in
 	return totalSize
 }
 
-func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, pid int64) (int64, error) {
+func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helper.Storage, pid int64) (int64, error) {
 	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
-	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
-	if err != nil {
-		return 0, err
-	}
-	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
-	if err != nil {
-		return 0, err
-	}
-	sk, err = hex.DecodeString(sRegion.StartKey)
-	if err != nil {
-		return 0, err
-	}
-	ek, err = hex.DecodeString(eRegion.EndKey)
-	if err != nil {
-		return 0, err
-	}
-
+	start, end := store.GetCodec().EncodeRegionRange(sk, ek)
 	var totalSize int64
 	for {
-		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(sk, ek), 128)
+		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), 128)
 		if err != nil {
 			return 0, err
 		}
@@ -224,11 +214,11 @@ func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, pid int64) 
 			totalSize += r.ApproximateSize * units.MiB
 		}
 		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
-		sk, err = hex.DecodeString(lastKey)
+		start, err = hex.DecodeString(lastKey)
 		if err != nil {
 			return 0, err
 		}
-		if bytes.Compare(sk, ek) >= 0 {
+		if bytes.Compare(start, end) >= 0 {
 			break
 		}
 	}
