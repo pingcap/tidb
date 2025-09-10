@@ -30,6 +30,62 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLiteInitStatsWithTableIDs(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer store.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "create table t1( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table t2( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table t3( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into t3 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "analyze table t1, t2, t3 all columns;")
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl3, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+	require.NoError(t, err)
+
+	dom.Close()
+
+	vardef.SetStatsLease(-1)
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	_, ok := h.Get(tbl1.Meta().ID)
+	require.False(t, ok)
+	require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID))
+	_, ok = h.Get(tbl1.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl2.Meta().ID)
+	require.False(t, ok)
+	_, ok = h.Get(tbl3.Meta().ID)
+	require.False(t, ok)
+
+	// Make sure it can be loaded multiple times.
+	require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID, tbl2.Meta().ID))
+	_, ok = h.Get(tbl1.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl2.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl3.Meta().ID)
+	require.False(t, ok)
+
+	require.NoError(t, h.InitStatsLite(context.Background()))
+	_, ok = h.Get(tbl1.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl2.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl3.Meta().ID)
+	require.True(t, ok)
+
+	dom.Close()
+}
+
 func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
