@@ -407,8 +407,8 @@ func (b *builtinConcatWSSig) evalString(ctx EvalContext, row chunk.Row) (string,
 	var sep string
 	var targetLength int
 
-	N := len(args)
-	if N > 0 {
+	n := len(args)
+	if n > 0 {
 		val, isNull, err := args[0].EvalString(ctx, row)
 		if err != nil || isNull {
 			// If the separator is NULL, the result is NULL.
@@ -1051,7 +1051,7 @@ func (c *replaceFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 }
 
 // fixLength calculate the flen of the return type.
-func (c *replaceFunctionClass) fixLength(ctx EvalContext, args []Expression) int {
+func (_ *replaceFunctionClass) fixLength(ctx EvalContext, args []Expression) int {
 	charLen := args[0].GetType(ctx).GetFlen()
 	oldStrLen := args[1].GetType(ctx).GetFlen()
 	diff := args[2].GetType(ctx).GetFlen() - oldStrLen
