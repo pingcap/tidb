@@ -302,7 +302,7 @@ func (ctx *ExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConverti
 
 // IsReadonlyUserVar implements the `BuildContext.IsReadonlyUserVar`.
 // This method always returns false for simplicity, ensuring the safest behavior across all scenarios.
-func (*ExprContext) IsReadonlyUserVar(name string) bool {
+func (*ExprContext) IsReadonlyUserVar(string) bool {
 	return false
 }
 
