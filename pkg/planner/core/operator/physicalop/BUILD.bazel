@@ -131,3 +131,9 @@ go_test(
         "@com_github_stretchr_testify//require",
     ],
 )
+
+filegroup(
+    name = "generator_files",
+    srcs = ["plan_clone_generated.go"],
+    visibility = ["//visibility:public"],
+)

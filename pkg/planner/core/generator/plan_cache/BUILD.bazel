@@ -19,7 +19,7 @@ go_test(
     timeout = "short",
     srcs = ["plan_clone_test.go"],
     data = [
-        "//pkg/planner/core:generator_files",
+        "//pkg/planner/core/operator/physicalop:generator_files",
     ],
     embed = [":plan_cache_lib"],
     flaky = True,
