@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -4076,7 +4075,7 @@ type builtinLoadFileSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (*builtinLoadFileSig) evalString(_ EvalContext, _ chunk.Row) (d string, isNull bool, err error) {
+func (b *builtinLoadFileSig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
 	d, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
