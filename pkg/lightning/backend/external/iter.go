@@ -57,7 +57,7 @@ type sortedReader[T heapElem] interface {
 	// immediately release the memory for large prefetching to avoid OOM.
 	// TODO(lance6716): learn more about external merge sort prefetch strategy.
 	switchConcurrentMode(useConcurrent bool) error
-	reloadCount() int64
+	getRequestCount() int64
 	close() error
 }
 
@@ -107,7 +107,7 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 	checkHotspotPeriod int
 	lastHotspotIdx     int
 	elemFromHotspot    *T
-	reloadCnt          atomic.Int64
+	getReqCnt          atomic.Int64
 
 	logger *zap.Logger
 }
@@ -316,7 +316,7 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 					zap.String("path", rd.path()),
 					zap.Error(closeErr))
 			}
-			i.reloadCnt.Add(rd.reloadCount())
+			i.getReqCnt.Add(rd.getRequestCount())
 			i.readers[i.lastReaderIdx] = nil
 			delete(i.hotspotMap, i.lastReaderIdx)
 			closeReaderIdx = i.lastReaderIdx
@@ -502,8 +502,8 @@ func (p kvReaderProxy) close() error {
 	return p.r.Close()
 }
 
-func (p kvReaderProxy) reloadCount() int64 {
-	return p.r.reloadCnt
+func (p kvReaderProxy) getRequestCount() int64 {
+	return p.r.getReqCnt
 }
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
@@ -592,7 +592,7 @@ func (i *MergeKVIter) Close() error {
 
 // ReloadCount returns the total reload count of all readers.
 func (i *MergeKVIter) ReloadCount() int64 {
-	return i.iter.reloadCnt.Load()
+	return i.iter.getReqCnt.Load()
 }
 
 func (p *rangeProperty) sortKey() []byte {
@@ -628,8 +628,8 @@ func (p statReaderProxy) close() error {
 	return p.r.Close()
 }
 
-func (p statReaderProxy) reloadCount() int64 {
-	return p.r.reloadCnt
+func (p statReaderProxy) getRequestCount() int64 {
+	return p.r.getReqCnt
 }
 
 // mergePropBaseIter handles one MultipleFilesStat and use limitSizeMergeIter to
@@ -799,8 +799,8 @@ func (m mergePropBaseIter) close() error {
 	return m.iter.close()
 }
 
-func (m mergePropBaseIter) reloadCount() int64 {
-	return m.iter.reloadCnt.Load()
+func (m mergePropBaseIter) getRequestCount() int64 {
+	return m.iter.getReqCnt.Load()
 }
 
 // MergePropIter is an iterator that merges multiple range properties from different files.

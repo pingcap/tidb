@@ -162,7 +162,7 @@ func readOneFile(
 	defer func() {
 		rd.Close()
 		onClose(&ReaderSummary{
-			GetRequestCount: uint64(rd.reloadCnt),
+			GetRequestCount: uint64(rd.getReqCnt),
 		})
 	}()
 	if concurrency > 1 {

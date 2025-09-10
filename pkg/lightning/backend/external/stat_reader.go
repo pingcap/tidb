@@ -22,7 +22,7 @@ import (
 )
 
 type statsReader struct {
-	reloadCnt  int64
+	getReqCnt  int64
 	byteReader *byteReader
 }
 
@@ -54,6 +54,6 @@ func (r *statsReader) nextProp() (*rangeProperty, error) {
 }
 
 func (r *statsReader) Close() error {
-	r.reloadCnt = r.byteReader.reloadCnt.Load()
+	r.getReqCnt = r.byteReader.requestCnt.Load()
 	return r.byteReader.Close()
 }

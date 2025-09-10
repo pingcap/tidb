@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 	"golang.org/x/exp/rand"
 )
 
@@ -63,6 +64,7 @@ func TestConcurrentRead(t *testing.T) {
 		int64(fileSize),
 		concurrency,
 		readBufferSize,
+		atomic.NewInt64(0),
 	)
 	require.NoError(t, err)
 
