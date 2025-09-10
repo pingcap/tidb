@@ -1069,7 +1069,7 @@ func (b *builtinValidatePasswordStrengthSig) evalInt(ctx EvalContext, row chunk.
 	return b.validateStr(str, user, &globalVars)
 }
 
-func (b *builtinValidatePasswordStrengthSig) validateStr(str string, user *auth.UserIdentity, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
+func (_ *builtinValidatePasswordStrengthSig) validateStr(str string, user *auth.UserIdentity, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
 	if warn, err := pwdValidator.ValidateUserNameInPassword(str, user, globalVars); err != nil {
 		return 0, true, err
 	} else if len(warn) > 0 {
