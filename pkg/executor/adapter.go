@@ -1651,6 +1651,35 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
+func (a *ExecStmt) PlanStabilityMetrics(succ bool) {
+	if !succ {
+		return
+	}
+	vars := a.Ctx.GetSessionVars()
+	costTime := vars.GetTotalCostDuration()
+	// TODO: filter out non-select statements
+	metrics.PlanExecutionTimeCounter.WithLabelValues(a.getPlanExecTimeLabel(costTime)).Inc()
+}
+
+func (a *ExecStmt) getPlanExecTimeLabel(costTime time.Duration) string {
+	if costTime < time.Millisecond {
+		return "<1ms"
+	} else if costTime < time.Millisecond*10 {
+		return "1-10ms"
+	} else if costTime < time.Millisecond*100 {
+		return "10-100ms"
+	} else if costTime < time.Second {
+		return "100ms-1s"
+	} else if costTime < time.Second*10 {
+		return "1s-10s"
+	} else if costTime < time.Minute {
+		return "10s-1m"
+	} else if costTime < time.Minute*10 {
+		return "1m-10m"
+	}
+	return ">=10m"
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
