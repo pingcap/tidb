@@ -113,10 +113,10 @@ func (h subscriber) handle(
 		}
 	case model.ActionModifyColumn:
 		newTableInfo, modifiedColumnInfo, analyzed := change.GetModifyColumnInfo()
+		// since tidb_enable_ddl_analyze will do analyze in ddl, skip col init here.
 		if analyzed {
 			return nil
 		}
-		// since tidb_enable_ddl_analyze will do analyze in ddl, skip col init here.
 		ids, err := getPhysicalIDs(sctx, newTableInfo)
 		if err != nil {
 			return errors.Trace(err)

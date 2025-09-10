@@ -6965,6 +6965,8 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 
 func getEnableDDLAnalyze(sctx sessionctx.Context) string {
 	var enableDDLAnalyze string
+	// TiDBEnableDDLAnalyze will be passed from frond-end ddl session to back-end owner who really does it.
+	// This variable will be stored in jobW by jobW.AddSystemVars(xxx), and get in usage by jobW.GetSystemVars(xxx)
 	val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBEnableDDLAnalyze)
 	if !ok {
 		// set the system default value.

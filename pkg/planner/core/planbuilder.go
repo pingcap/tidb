@@ -2076,6 +2076,8 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		err := b.addColumnsWithVirtualExprs(tbl, cols, func(columns []*expression.Column) []expression.Expression {
 			virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 			for _, idx := range tblInfo.Indices {
+				// for an index in state public, we can always analyze it for internal analyze session.
+				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyze)
 				// for mv index and ci index fail it first, then analyze those analyzable indexes.
@@ -2358,10 +2360,8 @@ func getModifiedIndexesInfoForAnalyze(
 	independentIdxsInfo = make([]*model.IndexInfo, 0)
 	specialGlobalIdxsInfo = make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
-		// create index with analyze:
-		// * we analyze the reorg state index.
-		// change column with covered index analyze:
-		// * we analyze the public state index.
+		// for an index in state public, we can always analyze it for internal analyze session.
+		// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 		indexStateAnalyzable := originIdx.State == model.StatePublic ||
 			(originIdx.State == model.StateWriteReorganization && sCtx.GetSessionVars().EnableDDLAnalyze)
 		if !indexStateAnalyzable {
