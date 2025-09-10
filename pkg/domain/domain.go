@@ -1559,9 +1559,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
+		metricsTicker := time.NewTicker(15 * time.Second)
 		defer func() {
 			bindWorkerTicker.Stop()
 			gcBindTicker.Stop()
+			metricsTicker.Stop()
 		}()
 		for {
 			select {
@@ -1582,6 +1584,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				err := do.BindingHandle().GCBinding()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
+				}
+			case <-metricsTicker.C:
+				err := do.BindingHandle().PlanStabilityMetric()
+				if err != nil {
+					logutil.BgLogger().Error("PlanStabilityMetric", zap.Error(err))
 				}
 			}
 		}

@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"slices"
 	"strings"
 
@@ -71,6 +72,9 @@ type BindingPlanEvolution interface {
 
 	// ExplorePlansForSQL explores plans for this SQL.
 	ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest string, analyze bool) ([]*BindingPlanInfo, error)
+
+	// PlanStabilityMetric ...
+	PlanStabilityMetric() error
 }
 
 type bindingAuto struct {
@@ -364,4 +368,24 @@ func IsSimplePointPlan(plan string) bool {
 		return false
 	}
 	return !empty
+}
+
+func (ba *bindingAuto) PlanStabilityMetric() (err error) {
+	sql := `select num_plan, count(1) as count from (
+		select count(distinct(plan_digest)) as num_plan from information_schema.tidb_statements_stats group by digest
+	) t group by num_plan`
+	var rows []chunk.Row
+	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+		rows, _, err = execRows(sctx, sql)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		numPlan := row.GetInt64(0)
+		count := row.GetInt64(1)
+		metrics.PlanUnstableCounter.WithLabelValues(fmt.Sprintf("num_plan=%v", numPlan)).Set(float64(count))
+	}
+	return nil
 }
