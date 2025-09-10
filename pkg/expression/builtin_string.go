@@ -4075,7 +4075,7 @@ type builtinLoadFileSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (b *builtinLoadFileSig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
+func (*builtinLoadFileSig) evalString(_ EvalContext, _ chunk.Row) (string, bool, error) {
 	d, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
