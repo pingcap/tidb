@@ -1093,4 +1093,14 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	isEmpty, err = pq.IsEmpty()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
+
+	// create index.
+	testKit.MustExec("alter table t modify c1 varchar(10)")
+
+	// Find the create index event.
+	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
+	tblInfo, columnInfo, analyzed := modifyColumnEvent.GetModifyColumnInfo()
+	require.Equal(t, tableInfo.ID, tblInfo.ID)
+	require.Equal(t, analyzed, true)
+	require.Equal(t, columnInfo[0].Name.L, "c1")
 }
