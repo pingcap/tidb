@@ -235,7 +235,7 @@ func (s *mockStorage) UUID() string {
 }
 
 // CurrentVersion returns current max committed version.
-func (s *mockStorage) CurrentVersion(txnScope string) (Version, error) {
+func (s *mockStorage) CurrentVersion() (Version, error) {
 	return NewVersion(1), nil
 }
 
