@@ -346,6 +346,8 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().SetAllowPreferRangeScan(state.varValues[i].(bool))
 		case vardef.TiDBOptEnableNoDecorrelateInSelect:
 			sctx.GetSessionVars().EnableNoDecorrelateInSelect = state.varValues[i].(bool)
+		case vardef.TiDBOptEnableSemiJoinRewrite:
+			sctx.GetSessionVars().EnableSemiJoinRewrite = state.varValues[i].(bool)
 		case vardef.TiDBOptSelectivityFactor:
 			sctx.GetSessionVars().SelectivityFactor = state.varValues[i].(float64)
 		default:
@@ -424,7 +426,7 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 		}
 		// increase 0.1 each step
 		return v + 0.1, nil
-	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey: // flip the switch
+	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey, vardef.TiDBOptEnableSemiJoinRewrite: // flip the switch
 		return !varVal.(bool), nil
 	}
 	return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
@@ -505,6 +507,8 @@ func getStartState(vars []string, fixes []uint64) (*state, error) {
 			s.varValues = append(s.varValues, vardef.DefOptPreferRangeScan)
 		case vardef.TiDBOptEnableNoDecorrelateInSelect:
 			s.varValues = append(s.varValues, vardef.DefOptEnableNoDecorrelateInSelect)
+		case vardef.TiDBOptEnableSemiJoinRewrite:
+			s.varValues = append(s.varValues, vardef.DefOptEnableSemiJoinRewrite)
 		case vardef.TiDBOptAlwaysKeepJoinKey:
 			s.varValues = append(s.varValues, vardef.DefOptAlwaysKeepJoinKey)
 		case vardef.TiDBOptSelectivityFactor:
