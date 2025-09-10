@@ -154,7 +154,7 @@ func WithNullRejectCheck(ctx ExprContext) *NullRejectCheckExprContext {
 }
 
 // IsInNullRejectCheck always returns true for `NullRejectCheckExprContext`
-func (ctx *NullRejectCheckExprContext) IsInNullRejectCheck() bool {
+func (*NullRejectCheckExprContext) IsInNullRejectCheck() bool {
 	return true
 }
 
@@ -169,7 +169,7 @@ func WithConstantPropagateCheck(ctx ExprContext) *ConstantPropagateCheckContext 
 }
 
 // IsConstantPropagateCheck always returns true for `ConstantPropagateCheckContext`
-func (ctx *ConstantPropagateCheckContext) IsConstantPropagateCheck() bool {
+func (*ConstantPropagateCheckContext) IsConstantPropagateCheck() bool {
 	return true
 }
 
