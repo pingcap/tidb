@@ -189,14 +189,21 @@ type Collector interface {
 	Processed(bytes, rows int64)
 }
 
+// NoopCollector is a no-op implementation of Collector.
+type NoopCollector struct{}
+
+// Accepted implements Collector.Accepted
+func (*NoopCollector) Accepted(_, _ int64) {}
+
+// Processed implements Collector.Processed
+func (*NoopCollector) Processed(_, _ int64) {}
+
 // TestCollector is an implementation used for test.
 type TestCollector struct {
+	NoopCollector
 	Bytes atomic.Int64
 	Rows  atomic.Int64
 }
-
-// Accepted implements Collector.Accepted
-func (*TestCollector) Accepted(_, _ int64) {}
 
 // Processed implements Collector.Processed
 func (c *TestCollector) Processed(bytes, rows int64) {

@@ -59,6 +59,7 @@ import (
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
 	taskexecutor.BaseStepExecutor
+	execute.NoopCollector
 
 	taskID        int64
 	taskMeta      *TaskMeta
@@ -164,9 +165,6 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		zap.String("index-buf-block-size", units.BytesSize(float64(s.indexBlockSize))))
 	return nil
 }
-
-// Accepted implements Collector.Accepted interface.
-func (*importStepExecutor) Accepted(_, _ int64) {}
 
 // Processed implements Collector.Processed interface.
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
@@ -478,11 +476,10 @@ func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 }
 
 type ingestCollector struct {
+	execute.NoopCollector
 	summary *execute.SubtaskSummary
 	kvGroup string
 }
-
-func (*ingestCollector) Accepted(_, _ int64) {}
 
 func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	c.summary.Bytes.Add(bytes)
