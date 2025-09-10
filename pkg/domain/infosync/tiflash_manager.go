@@ -104,7 +104,7 @@ func (*TiFlashReplicaManagerCtx) Close(context.Context) {}
 // getTiFlashPeerWithoutLagCount returns
 // - the number of tiflash peers without lag
 // - the number of regions that have at least 1 tiflash peer
-func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspaceID tikv.KeyspaceID, tableID int64) (flashPeerCount int, flashRegionCount int, err error, errStoreAddr string) {
+func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspaceID tikv.KeyspaceID, tableID int64) (flashPeerCount int, flashRegionCount int, errStoreAddr string, err error) {
 	// For each storeIDs -> regionID, PD will not create two peer on the same store
 	// The regionIDs that have at least 1 tiflash peer
 	allRegionReplica := make(map[int64]int)
@@ -119,7 +119,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspac
 		if err != nil {
 			// Just skip down or offline or tombstone stores, because PD will migrate regions from these stores.
 			if store.Store.StateName == "Up" || store.Store.StateName == "Disconnected" {
-				return 0, 0, err, store.Store.StatusAddress
+				return 0, 0, store.Store.StatusAddress, err
 			}
 			continue
 		}
@@ -128,7 +128,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspac
 			allRegionReplica[r] = 1
 		}
 	}
-	return flashPeerCount, len(allRegionReplica), nil, ""
+	return flashPeerCount, len(allRegionReplica), "", nil
 }
 
 // calculateTiFlashProgress calculates progress based on the region status from PD and TiFlash.
@@ -146,7 +146,7 @@ func calculateTiFlashProgress(keyspaceID tikv.KeyspaceID, tableID int64, replica
 		return 0, 0, fmt.Errorf("region count getting from PD is 0")
 	}
 
-	tiflashPeerCount, tiflashRegionCount, err, errStoreAddr := getTiFlashPeerWithoutLagCount(tiFlashStores, keyspaceID, tableID)
+	tiflashPeerCount, tiflashRegionCount, errStoreAddr, err := getTiFlashPeerWithoutLagCount(tiFlashStores, keyspaceID, tableID)
 	if err != nil {
 		logutil.BgLogger().Warn("Fail to get peer count from TiFlash.",
 			zap.Int64("tableID", tableID), zap.String("storeAddr", errStoreAddr), zap.Error(err))
