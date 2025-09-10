@@ -237,8 +237,8 @@ github.com/dolthub/swiss v0.2.1/go.mod h1:8AhKZZ1HK7g18j7v7k6c5cYIGEZJcPn0ARsai8
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
-github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20250910080030-7a0b904ddfdb h1:8T5XdFwWXbSZFAudX4lxWzYABQVJQq0KECMskqOSZdc=
-github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20250910080030-7a0b904ddfdb/go.mod h1:5mywG89scAyV30i1B4Brhz6lOqmye0ArD6fah7U9paw=
+github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20250910083038-2b44a8a737b6 h1:NhdW2DOIvGkmrFVpME4ISyvIzjbmHQ34ykAPO3GmRak=
+github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20250910083038-2b44a8a737b6/go.mod h1:5mywG89scAyV30i1B4Brhz6lOqmye0ArD6fah7U9paw=
 github.com/emirpasic/gods v1.18.1 h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc=
 github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FMNAnJvWQ=
 github.com/envoyproxy/go-control-plane v0.9.0/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=

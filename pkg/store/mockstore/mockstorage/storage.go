@@ -112,7 +112,7 @@ func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
 	return driver.NewSnapshot(s.KVStore.GetSnapshot(ver.Ver))
 }
 
-// CurrentVersion returns current max committed version with the given txnScope (local or global).
+// CurrentVersion returns current max committed version.
 func (s *mockStorage) CurrentVersion() (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp()
 	return kv.NewVersion(ver), err
