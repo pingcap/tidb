@@ -86,6 +86,7 @@ go_test(
     shard_count = 42,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
