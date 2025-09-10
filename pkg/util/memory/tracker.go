@@ -454,17 +454,33 @@ func (t *Tracker) Consume(bs int64) {
 		}
 		if m := tracker.MemArbitrator; m != nil {
 			if bs > 0 {
-				useBigBudget := m.useBigBudget()
-				if !useBigBudget && !m.addSmallBudgetUnderLimit(bs) {
-					m.initBigBudget()
-					useBigBudget = true
+				if m.useBigBudget() {
+					goto useBigBudget
 				}
-				if useBigBudget && m.addBigBudgetUsed(bs) > m.bigBudgetGrowThreshold() {
+				{ // fast path for small budget
+					if m.addSmallBudget(bs) > m.budget.smallLimit {
+						m.addSmallBudget(-bs)
+						m.initBigBudget()
+						goto useBigBudget
+					}
+					b := m.smallBudget()
+					if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
+						b.setLastUsedTimeSec(t)
+					}
+					if b.Used.Load() > b.Capacity.Load() && b.PullFromUpstream() != nil {
+						m.initBigBudget()
+						goto useBigBudget
+					}
+					goto endUseBudget
+				}
+			useBigBudget:
+				if m.addBigBudgetUsed(bs) > m.bigBudgetGrowThreshold() {
 					m.growBigBudget()
 				}
-			} else if m.useBigBudget() {
+			endUseBudget: // nop
+			} else if m.useBigBudget() { // delta <= 0 && use big budget
 				m.addBigBudgetUsed(bs)
-			} else {
+			} else { // delta <= 0 && use small budget
 				m.addSmallBudget(bs)
 			}
 		}
@@ -990,21 +1006,6 @@ func (m *memArbitrator) smallBudgetUsed() int64 {
 	return m.budget.mu.smallUsed.Load()
 }
 
-func (m *memArbitrator) addSmallBudgetUnderLimit(inc int64) bool {
-	if m.addSmallBudget(inc) > m.budget.smallLimit {
-		m.addSmallBudget(-inc)
-		return false
-	}
-	b := m.smallBudget()
-	if t := m.UnixTimeSec.Load(); b.LastUsedTimeSec != t {
-		b.LastUsedTimeSec = t
-	}
-	if b.Used.Load() > b.Capacity.Load() && b.PullFromUpstream() != nil {
-		return false
-	}
-	return true
-}
-
 func (m *memArbitrator) addSmallBudget(d int64) int64 {
 	m.smallBudget().HeapInuse.Add(d)
 	m.smallBudget().Used.Add(d)
@@ -1192,7 +1193,7 @@ func (t *Tracker) detachMemArbitrator() bool {
 	maxConsumed := t.maxConsumed.Load()
 
 	if !killed {
-		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.UnixTimeSec.Load())
+		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
 	}
 
 	if m.useBigBudget() {
@@ -1231,7 +1232,7 @@ func (t *Tracker) InitMemArbitrator(
 	prevMaxMem := int64(0)
 
 	if explicitReserveSize == 0 && len(digestKey) > 0 {
-		if maxMem, found := g.GetDigestProfileCache(digestID, g.UnixTimeSec.Load()); found {
+		if maxMem, found := g.GetDigestProfileCache(digestID, g.approxUnixTimeSec()); found {
 			prevMaxMem = maxMem
 		}
 	}

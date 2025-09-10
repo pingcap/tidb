@@ -3724,3 +3724,10 @@ const (
 	MemArbitratorWaitAverseEnable
 	MemArbitratorNolimit
 )
+
+// Error definitions for memory arbitrator session variables.
+var (
+	TiDBMemArbitratorSoftLimitErr     = errors.New(vardef.TiDBMemArbitratorSoftLimit + ": 0 (default); (0, 1.0] float-rate * server-limit; (1, server-limit] integer bytes; auto;")
+	TiDBMemArbitratorWaitAverseErr    = errors.New(vardef.TiDBMemArbitratorWaitAverse + ": 0 (disable); 1 (enable); nolimit;")
+	TiDBMemArbitratorQueryReservedErr = errors.New(vardef.TiDBMemArbitratorQueryReserved + ": 0 (default); (1, server-limit] integer bytes;")
+)

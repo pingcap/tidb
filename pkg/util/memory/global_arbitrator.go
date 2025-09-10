@@ -137,8 +137,8 @@ func reportGlobalMemArbitratorMetrics() {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorRootPool, label, value)
 		}
 		setRootPool("root-pool-uid", m.RootPoolNum())
-		setRootPool("under-kill", m.underKill.num)
-		setRootPool("under-cancel", m.underCancel.num)
+		setRootPool("under-kill", m.underKill.approxSize())
+		setRootPool("under-cancel", m.underCancel.approxSize())
 		setRootPool("digest-cache", m.digestProfileCache.num.Load())
 		setRootPool("big-running", globalArbitrator.metrics.bigPool.Load())
 		setRootPool("small-running", globalArbitrator.metrics.smallPool.Load())
@@ -223,19 +223,11 @@ func doSetGlobalMemArbitratorSoftLimit() {
 	case ArbitratorSoftLimitModeAutoName:
 		mode = SoftLimitModeAuto
 	default:
-		success := false
-		if intValue, err := strconv.ParseUint(str, 10, 64); err == nil && intValue > 1 {
+		mode = SoftLimitModeSpecified
+		if intValue, err := strconv.ParseUint(str, 10, 64); err == nil && int64(intValue) > 1 {
 			softLimit = int64(intValue)
-			success = true
-		} else if floatValue, err := strconv.ParseFloat(str, 64); err == nil {
-			if floatValue > 0 && floatValue <= 1 {
-				softLimitRate = floatValue
-				success = true
-			}
-		}
-
-		if success {
-			mode = SoftLimitModeSpecified
+		} else if floatValue, err := strconv.ParseFloat(str, 64); err == nil && floatValue > 0 && floatValue <= 1 {
+			softLimitRate = floatValue
 		} else {
 			mode = SoftLimitModeDisable
 		}

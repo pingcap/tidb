@@ -1185,20 +1185,22 @@ var defaultSysVars = []*SysVar{
 			if strings.ToLower(normalizedValue) == memory.ArbitratorSoftLimitModeAutoName {
 				return memory.ArbitratorSoftLimitModeAutoName, nil
 			}
-			if _, err := strconv.ParseUint(normalizedValue, 10, 64); err == nil {
-				return normalizedValue, nil
+			if v, err := strconv.ParseInt(normalizedValue, 10, 64); err == nil {
+				if v > 1 {
+					return normalizedValue, nil
+				} else if v <= 0 {
+					return "", TiDBMemArbitratorSoftLimitErr
+				}
+				// v == 1 is legal
 			}
-
-			var retErr error
 			if floatValue, err := strconv.ParseFloat(normalizedValue, 64); err == nil {
 				if floatValue > 0 && floatValue <= 1 {
 					return normalizedValue, nil
 				}
-				retErr = fmt.Errorf("%s: 0 (default); (0, 1.0] float-rate * server-limit; (1, server-limit] integer bytes; AUTO;", vardef.TiDBMemArbitratorSoftLimit)
+				return "", TiDBMemArbitratorSoftLimitErr
 			} else {
-				retErr = err
+				return "", err
 			}
-			return "", retErr
 		},
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return memory.GetGlobalMemArbitratorSoftLimitText(), nil
@@ -1235,7 +1237,7 @@ var defaultSysVars = []*SysVar{
 			if normalizedValue == "0" || normalizedValue == "1" || normalizedValue == "nolimit" {
 				return normalizedValue, nil
 			}
-			return "", fmt.Errorf("%s: 0 (disable); 1 (enable); nolimit;", vardef.TiDBMemArbitratorWaitAverse)
+			return "", TiDBMemArbitratorWaitAverseErr
 		},
 		SetSession: func(s *SessionVars, val string) error {
 			switch val {
@@ -1255,10 +1257,10 @@ var defaultSysVars = []*SysVar{
 			if normalizedValue == "0" {
 				return normalizedValue, nil
 			}
-			if v, err := strconv.ParseUint(normalizedValue, 10, 64); err == nil && v > 1 {
+			if v, err := strconv.ParseUint(normalizedValue, 10, 64); err == nil && int64(v) > 1 {
 				return normalizedValue, nil
 			}
-			return "", fmt.Errorf("%s: 0 (default); (1, server-limit] integer bytes;", vardef.TiDBMemArbitratorQueryReserved)
+			return "", TiDBMemArbitratorQueryReservedErr
 		},
 		SetSession: func(s *SessionVars, val string) error {
 			intValue, err := strconv.ParseUint(val, 10, 64)

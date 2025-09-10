@@ -2464,7 +2464,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if execUseArbitrator {
 		releaseCommonQuota()
 
-		reserveSize := sessVars.MemArbitrator.QueryReserved
+		reserveSize := min(sessVars.MemArbitrator.QueryReserved, memory.DefMaxLimit)
 
 		memPriority := memory.ArbitrationPriorityMedium
 

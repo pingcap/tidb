@@ -160,16 +160,22 @@ func GenLogFields(costTime time.Duration, info *sessmgr.ProcessInfo, needTruncat
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
 	if memTracker := info.MemTracker; memTracker != nil {
-		s := fmt.Sprintf("max %d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))
-		if info.StmtCtx.MemTracker != nil {
-			if dur := info.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
-				s += fmt.Sprintf(", arbitration_time %ss", strconv.FormatFloat(dur.Seconds(), 'f', -1, 64)) // mem quota arbitration time of current SQL
-			}
-			if ts, sz := info.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {
-				s += fmt.Sprintf(", wait_arbitrate_start %s, wait_arbitrate_bytes %d", ts.In(time.UTC).Format("2006-01-02 15:04:05.999 MST"), sz) // mem quota wait arbitrate time of current SQL
-			}
+		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
+	}
+	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
+		s := ""
+		if dur := memTracker.MemArbitration(); dur > 0 {
+			s += fmt.Sprintf("cost_time %ss", strconv.FormatFloat(dur.Seconds(), 'f', -1, 64)) // mem quota arbitration time of current SQL
 		}
-		logFields = append(logFields, zap.String("mem", s))
+		if ts, sz := memTracker.WaitArbitrate(); sz > 0 {
+			if s != "" {
+				s += ", "
+			}
+			s += fmt.Sprintf("wait_start %s, wait_bytes %d Bytes (%v)", ts.In(time.UTC).Format("2006-01-02 15:04:05.999 MST"), sz, memTracker.FormatBytes(sz)) // mem quota wait arbitrate time of current SQL
+		}
+		if s != "" {
+			logFields = append(logFields, zap.String("mem_arbitration", s))
+		}
 	}
 
 	const logSQLLen = 1024 * 8

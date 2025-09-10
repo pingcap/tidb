@@ -3200,7 +3200,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	require.Equal(t, maxServerLimit, memory.ServerMemoryLimit.Load())
 	require.Equal(t, uint64(0), memory.GlobalMemArbitrator().Limit()) // 0 under disable mode
 
-	require.Equal(t, tk.ExecToErr("set global tidb_mem_arbitrator_soft_limit=-1").Error(), "tidb_mem_arbitrator_soft_limit: 0 (default); (0, 1.0] float-rate * server-limit; (1, server-limit] integer bytes; AUTO;")
+	require.Equal(t, tk.ExecToErr("set global tidb_mem_arbitrator_soft_limit=-1").Error(), variable.TiDBMemArbitratorSoftLimitErr.Error())
 	tk.MustExec("set global tidb_mem_arbitrator_soft_limit = 12345678")
 	tk.MustQuery("select @@tidb_mem_arbitrator_soft_limit").Check(testkit.Rows("12345678"))
 	require.Equal(t, uint64(0), memory.GlobalMemArbitrator().SoftLimit()) // 0 under disable mode
@@ -3239,7 +3239,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	tk.MustQuery("select @@tidb_mem_arbitrator_soft_limit").Check(testkit.Rows("auto"))
 	require.Equal(t, uint64(float64(memory.ServerMemoryLimit.Load())*0.95), memory.GlobalMemArbitrator().SoftLimit())
 
-	require.Equal(t, tk.ExecToErr("set tidb_mem_arbitrator_wait_averse=anonymous").Error(), "tidb_mem_arbitrator_wait_averse: 0 (disable); 1 (enable); nolimit;")
+	require.Equal(t, tk.ExecToErr("set tidb_mem_arbitrator_wait_averse=anonymous").Error(), variable.TiDBMemArbitratorWaitAverseErr.Error())
 	tk.MustExec("set tidb_mem_arbitrator_wait_averse = 1")
 	tk.MustQuery("select @@tidb_mem_arbitrator_wait_averse").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_mem_arbitrator_wait_averse = default")
@@ -3254,6 +3254,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	tk.MustQuery("select @@tidb_mem_arbitrator_query_reserved").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_mem_arbitrator_query_reserved = default")
 	tk.MustQuery("select @@tidb_mem_arbitrator_query_reserved").Check(testkit.Rows("0"))
+	require.Equal(t, tk.ExecToErr("set tidb_mem_arbitrator_query_reserved = 9223372036854775808").Error(), variable.TiDBMemArbitratorQueryReservedErr.Error())
 
 	tk.MustExecToErr("set tidb_mem_arbitrator_query_reserved = 1")
 	tk.MustExec("set tidb_mem_arbitrator_query_reserved = 2")

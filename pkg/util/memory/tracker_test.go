@@ -984,7 +984,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		}
 
 		m.debug.now = func() time.Time {
-			return m.heapController.memRisk.startTime.Add(time.Second)
+			return m.heapController.memRisk.startTime.t.Add(time.Second)
 		}
 		mockRuntimeMemStats = RuntimeMemStats{
 			HeapAlloc:  m.limit(),

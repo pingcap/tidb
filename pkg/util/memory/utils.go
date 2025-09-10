@@ -19,8 +19,6 @@ import (
 	"math/bits"
 	"sync/atomic"
 	"time"
-
-	"github.com/pingcap/tidb/pkg/util/israce"
 )
 
 const (
@@ -61,10 +59,6 @@ func (l *wrapList[V]) moveToFront(e wrapListElement) {
 }
 
 func (l *wrapList[V]) doAddNum(x int64) {
-	if israce.RaceEnabled {
-		atomic.AddInt64(&l.num, x)
-		return
-	}
 	l.num += x
 }
 
@@ -92,11 +86,21 @@ func (l *wrapList[V]) popFront() (res V) {
 }
 
 func (l *wrapList[V]) size() int64 {
-	return atomic.LoadInt64(&l.num)
+	return l.num
 }
 
 func (l *wrapList[V]) empty() bool {
 	return l.size() == 0
+}
+
+//go:norace
+func (l *wrapList[V]) approxSize() int64 {
+	return l.size()
+}
+
+//go:norace
+func (l *wrapList[V]) approxEmpty() bool {
+	return l.empty()
 }
 
 func (l *wrapList[V]) pushBack(v V) wrapListElement {

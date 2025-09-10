@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/util/israce"
 	"go.uber.org/zap"
 )
 
@@ -151,11 +150,11 @@ func (m ArbitratorWorkMode) String() string {
 }
 
 func (m *MemArbitrator) taskNumByPriority(priority ArbitrationPriority) int64 {
-	return m.tasks.fifoByPriority[priority].size()
+	return m.tasks.fifoByPriority[priority].approxSize()
 }
 
 func (m *MemArbitrator) taskNumOfWaitAverse() int64 {
-	return m.tasks.fifoWaitAverse.size()
+	return m.tasks.fifoWaitAverse.approxSize()
 }
 
 func (m *MemArbitrator) firstTaskEntry(priority ArbitrationPriority) *rootPoolEntry {
@@ -601,10 +600,9 @@ type MemArbitrator struct {
 		sync.Mutex
 		lastTickUtimeMilli atomic.Int64
 	}
-	UnixTimeSec atomic.Int64 // approximate unix time in seconds
+	UnixTimeSec int64 // approximate unix time in seconds
 	rootPoolNum atomic.Int64
 	mode        ArbitratorWorkMode
-	sync.Mutex
 }
 
 type buffer struct {
@@ -681,32 +679,13 @@ type execMetricsCounter struct {
 }
 
 // ExecMetrics returns the reference of the execution metrics
+//
+//go:norace
 func (m *MemArbitrator) ExecMetrics() execMetricsCounter {
 	if m == nil {
 		return execMetricsCounter{}
 	}
-
-	if !israce.RaceEnabled {
-		return m.execMetrics
-	}
-
-	m.Lock()
-	defer m.Unlock()
-
-	return execMetricsCounter{
-		Task: execMetricsTask{
-			pairSuccessFail{
-				Succ: atomic.LoadInt64(&m.execMetrics.Task.Succ),
-				Fail: atomic.LoadInt64(&m.execMetrics.Task.Fail),
-			},
-			m.execMetrics.Task.SuccByPriority,
-		},
-		Cancel:       m.execMetrics.Cancel,
-		AwaitFree:    m.execMetrics.AwaitFree,
-		Action:       m.execMetrics.Action,
-		Risk:         m.execMetrics.Risk,
-		ShrinkDigest: m.execMetrics.ShrinkDigest,
-	}
+	return m.execMetrics
 }
 
 // SetWorkMode sets the work mode of the mem-arbitrator
@@ -970,6 +949,11 @@ func (x *mapEntryWithMem) delete(entry *rootPoolEntry) {
 	x.num--
 }
 
+//go:norace
+func (x *mapEntryWithMem) approxSize() int64 {
+	return x.num
+}
+
 func (x *mapEntryWithMem) init() {
 	x.entries = make(mapUIDEntry)
 }
@@ -1031,16 +1015,17 @@ type heapController struct {
 		lastMemState         atomic.Pointer[RuntimeMemStateV1]
 		lastRecordUtimeMilli atomic.Int64
 		sync.Mutex
-		pendingStore atomic.Bool
 	}
 	memRisk struct {
-		startTime    time.Time
+		startTime struct {
+			t    time.Time
+			nano atomic.Int64
+		}
 		lastMemStats struct {
 			startTime     time.Time
 			heapTotalFree int64
 		}
 		minHeapFreeBPS int64
-		start          atomic.Int64
 		oomRisk        bool
 	}
 	timedMemProfile [2]memProfile
@@ -1229,12 +1214,12 @@ func (m *MemArbitrator) ResetRootPoolByID(uid uint64, maxMemConsumed int64, tune
 		m.tryToUpdateBuffer(
 			maxMemConsumed,
 			memQuotaLimit,
-			m.UnixTimeSec.Load())
+			m.approxUnixTimeSec())
 
 		if maxMemConsumed > m.poolAllocStats.SmallPoolLimit {
 			m.recordMemConsumed(
 				maxMemConsumed,
-				m.UnixTimeSec.Load())
+				m.approxUnixTimeSec())
 		}
 	}
 
@@ -1401,7 +1386,7 @@ func (m *MemArbitrator) doAdjustSoftLimit() {
 	} else {
 		softLimit = m.oomRisk()
 	}
-	atomic.StoreInt64(&m.mu.softLimit.size, softLimit)
+	m.mu.softLimit.size = softLimit
 }
 
 // SetSoftLimit sets the soft limit of the mem-arbitrator
@@ -1418,8 +1403,9 @@ func (m *MemArbitrator) SetSoftLimit(softLimit int64, sortLimitRatio float64, mo
 	m.mu.Unlock()
 }
 
+//go:norace
 func (m *MemArbitrator) softLimit() int64 {
-	return atomic.LoadInt64(&m.mu.softLimit.size)
+	return m.mu.softLimit.size
 }
 
 // SoftLimit returns the soft limit of the mem-arbitrator
@@ -1431,9 +1417,9 @@ func (m *MemArbitrator) SoftLimit() uint64 {
 }
 
 func (m *MemArbitrator) doSetLimit(limit int64) {
-	atomic.StoreInt64(&m.mu.limit, limit)
-	atomic.StoreInt64(&m.mu.threshold.oomRisk, int64(float64(limit)*defOOMRiskRatio))
-	atomic.StoreInt64(&m.mu.threshold.risk, int64(float64(limit)*defMemRiskRatio))
+	m.mu.limit = limit
+	m.mu.threshold.oomRisk = int64(float64(limit) * defOOMRiskRatio)
+	m.mu.threshold.risk = int64(float64(limit) * defMemRiskRatio)
 	m.doAdjustSoftLimit()
 }
 
@@ -1487,10 +1473,6 @@ func (m *MemArbitrator) alloc(x int64) {
 }
 
 func (m *MemArbitrator) doAlloc(x int64) {
-	if israce.RaceEnabled {
-		atomic.AddInt64(&m.mu.allocated, x)
-		return
-	}
 	m.mu.allocated += x
 }
 
@@ -1501,29 +1483,23 @@ func (m *MemArbitrator) release(x int64) {
 	m.alloc(-x)
 }
 
+//go:norace
 func (m *MemArbitrator) allocated() int64 {
-	if israce.RaceEnabled {
-		return atomic.LoadInt64(&m.mu.allocated)
-	}
 	return m.mu.allocated
 }
 
 func (m *MemArbitrator) lastBlockedAt() (allocated, utimeSec int64) {
-	return atomic.LoadInt64(&m.execMu.blockedState.allocated), atomic.LoadInt64(&m.execMu.blockedState.utimeSec)
+	return m.execMu.blockedState.allocated, m.execMu.blockedState.utimeSec
 }
 
+//go:norace
 func (b *blockedState) reset() {
-	atomic.StoreInt64(&b.allocated, 0)
-	atomic.StoreInt64(&b.utimeSec, 0)
+	*b = blockedState{}
 }
 
+//go:norace
 func (m *MemArbitrator) updateBlockedAt() {
-	if israce.RaceEnabled {
-		atomic.StoreInt64(&m.execMu.blockedState.allocated, m.allocated())
-		atomic.StoreInt64(&m.execMu.blockedState.utimeSec, m.UnixTimeSec.Load())
-		return
-	}
-	m.execMu.blockedState = blockedState{m.allocated(), m.UnixTimeSec.Load()}
+	m.execMu.blockedState = blockedState{m.allocated(), m.approxUnixTimeSec()}
 }
 
 // Allocated returns the allocated mem quota of the mem-arbitrator
@@ -1543,7 +1519,7 @@ func (m *MemArbitrator) WaitingAllocSize() int64 {
 
 // TaskNum returns the number of pending tasks in the mem-arbitrator
 func (m *MemArbitrator) TaskNum() int64 {
-	return m.tasks.fifoTasks.size()
+	return m.tasks.fifoTasks.approxSize()
 }
 
 // RootPoolNum returns the number of root pools in the mem-arbitrator
@@ -1551,10 +1527,8 @@ func (m *MemArbitrator) RootPoolNum() int64 {
 	return m.rootPoolNum.Load()
 }
 
+//go:norace
 func (m *MemArbitrator) limit() int64 {
-	if israce.RaceEnabled {
-		return atomic.LoadInt64(&m.mu.limit)
-	}
 	return m.mu.limit
 }
 
@@ -1837,7 +1811,7 @@ func (m *MemArbitrator) doCancelPendingTasks(prio ArbitrationPriority, waitAvers
 }
 
 func (m *MemArbitrator) doExecuteFirstTask() (exec bool) {
-	if m.tasks.fifoTasks.empty() {
+	if m.tasks.fifoTasks.approxEmpty() {
 		return
 	}
 
@@ -1951,7 +1925,7 @@ func (m *MemArbitrator) doExecuteCleanupTasks() {
 }
 
 func (m *MemArbitrator) implicitRun() { // satisfy any subscription task
-	if m.tasks.fifoTasks.empty() {
+	if m.tasks.fifoTasks.approxEmpty() {
 		return
 	}
 
@@ -1980,14 +1954,9 @@ func (m *MemArbitrator) implicitRun() { // satisfy any subscription task
 // -2: mem unsafe
 // >= 0: execute / cancel task num
 func (m *MemArbitrator) runOneRound() (taskExecNum int) {
-	if israce.RaceEnabled {
-		m.Lock()
-		defer m.Unlock()
-	}
-
 	m.execMu.startTime = now()
-	if t := m.execMu.startTime.Unix(); t != m.UnixTimeSec.Load() { // update per second duration and reduce force sharing
-		m.UnixTimeSec.Store(t)
+	if t := m.execMu.startTime.Unix(); t != m.approxUnixTimeSec() { // update per second duration and reduce force sharing
+		m.setUnixTimeSec(t)
 	}
 
 	if mode := m.workMode(); m.execMu.mode != mode {
@@ -1998,7 +1967,7 @@ func (m *MemArbitrator) runOneRound() (taskExecNum int) {
 		}
 	}
 
-	if !m.cleanupMu.fifoTasks.empty() {
+	if !m.cleanupMu.fifoTasks.approxEmpty() {
 		m.doExecuteCleanupTasks()
 	}
 
@@ -2128,6 +2097,15 @@ type ConcurrentBudget struct {
 	_    holder64Bytes
 	Used atomic.Int64
 	_    holder64Bytes
+}
+
+//go:norace
+func (b *ConcurrentBudget) setLastUsedTimeSec(t int64) {
+	b.LastUsedTimeSec = t
+}
+
+func (b *ConcurrentBudget) getLastUsedTimeSec() int64 {
+	return b.LastUsedTimeSec
 }
 
 // TrackedConcurrentBudget consists of ConcurrentBudget and heap inuse
@@ -2498,18 +2476,17 @@ func (m *MemArbitrator) memMagnif() int64 {
 	return m.avoidance.memMagnif.ratio.Load()
 }
 
+//go:norace
 func (m *MemArbitrator) awaitFreePoolCap() int64 {
 	if m.awaitFree.pool == nil {
 		return 0
-	}
-	if israce.RaceEnabled {
-		return m.awaitFree.pool.Capacity()
 	}
 	return m.awaitFree.pool.capacity()
 }
 
 type memPoolQuotaUsage struct{ trackedHeap, quota int64 }
 
+//go:norace
 func (m *MemArbitrator) awaitFreePoolUsed() (res memPoolQuotaUsage) {
 	for i := range m.awaitFree.budget.shards {
 		if d := m.awaitFree.budget.shards[i].Used.Load(); d > 0 {
@@ -2519,29 +2496,13 @@ func (m *MemArbitrator) awaitFreePoolUsed() (res memPoolQuotaUsage) {
 			res.trackedHeap += d
 		}
 	}
-	if israce.RaceEnabled {
-		m.awaitFree.pool.mu.Lock()
-
-		m.awaitFree.lastQuotaUsage = res
-
-		m.awaitFree.pool.mu.Unlock()
-	} else {
-		m.awaitFree.lastQuotaUsage = res
-	}
+	m.awaitFree.lastQuotaUsage = res
 	return
 }
 
-func (m *MemArbitrator) approxAwaitFreePoolUsed() (res memPoolQuotaUsage) {
-	if israce.RaceEnabled {
-		m.awaitFree.pool.mu.Lock()
-
-		res = m.awaitFree.lastQuotaUsage
-
-		m.awaitFree.pool.mu.Unlock()
-	} else {
-		res = m.awaitFree.lastQuotaUsage
-	}
-	return
+//go:norace
+func (m *MemArbitrator) approxAwaitFreePoolUsed() memPoolQuotaUsage {
+	return m.awaitFree.lastQuotaUsage
 }
 
 func (m *MemArbitrator) executeTick(utimeMilli int64) bool { // exec batch tasks every 1s
@@ -2614,7 +2575,7 @@ func (m *MemArbitrator) recordDebugProfile() (f DebugFields) {
 		zap.Int64("pending-alloc-size", m.WaitingAllocSize()),
 		zap.Int64("digest-cache-num", m.digestProfileCache.num.Load()),
 	)
-	if memRisk := m.heapController.memRisk.start.Load(); memRisk != 0 {
+	if memRisk := m.heapController.memRisk.startTime.nano.Load(); memRisk != 0 {
 		f.append(zap.Time("mem-risk-start", time.Unix(0, memRisk)))
 	}
 	return
@@ -2658,12 +2619,11 @@ func (m *MemArbitrator) updateTrackedHeapStats() {
 			return true
 		})
 		if m.buffer.size.Load() < maxMemUsed {
-			m.tryToUpdateBuffer(maxMemUsed, 0, m.UnixTimeSec.Load())
+			m.tryToUpdateBuffer(maxMemUsed, 0, m.approxUnixTimeSec())
 		}
 	}
 
 	totalTrackedHeap += m.awaitFreePoolUsed().trackedHeap
-
 	m.avoidance.heapTracked.Store(totalTrackedHeap)
 	m.avoidance.heapTracked.lastUpdateUtimeMilli.Store(nowUnixMilli())
 }
@@ -2700,7 +2660,7 @@ func (m *MemArbitrator) shrinkAwaitFreePool(minRemain int64, utimeMilli int64) {
 				b.Unlock()
 			}
 		} else {
-			if b.Capacity.Load() > 0 && b.LastUsedTimeSec*kilo+defAwaitFreePoolShrinkDurMilli <= utimeMilli && b.TryLock() {
+			if b.Capacity.Load() > 0 && b.getLastUsedTimeSec()*kilo+defAwaitFreePoolShrinkDurMilli <= utimeMilli && b.TryLock() {
 				if toReclaim := b.Capacity.Load(); b.Used.Load() <= 0 && toReclaim > 0 {
 					b.Capacity.Add(-toReclaim)
 					reclaimed += toReclaim
@@ -2812,7 +2772,7 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 		heapFrees := m.heapController.heapTotalFree.Load() - m.heapController.memRisk.lastMemStats.heapTotalFree
 		heapUseBPS = int64(float64(heapFrees) / dur.Seconds())
 	}
-	if oomRisk || memHangRisk(heapUseBPS, m.minHeapFreeBPS(), now, m.heapController.memRisk.startTime) {
+	if oomRisk || memHangRisk(heapUseBPS, m.minHeapFreeBPS(), now, m.heapController.memRisk.startTime.t) {
 		m.intoOOMRisk()
 
 		memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
@@ -2828,8 +2788,8 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 		}
 
 		if newKillNum, reclaiming := m.killTopnEntry(memToReclaim); newKillNum != 0 {
-			m.heapController.memRisk.startTime = m.innerTime() // restart oom check
-			m.heapController.memRisk.start.Store(m.heapController.memRisk.startTime.UnixNano())
+			m.heapController.memRisk.startTime.t = m.innerTime() // restart oom check
+			m.heapController.memRisk.startTime.nano.Store(m.heapController.memRisk.startTime.t.UnixNano())
 
 			{ // warning
 				profile := m.recordDebugProfile()
@@ -3164,7 +3124,7 @@ func (m *MemArbitrator) TaskNumByPattern() (res NumByPattern) {
 
 // ConsumeQuotaFromAwaitFreePool consumes quota from the awaitfree-pool by the given uid
 func (m *MemArbitrator) ConsumeQuotaFromAwaitFreePool(uid uint64, req int64) bool {
-	return m.GetAwaitFreeBudgets(uid).ConsumeQuota(m.UnixTimeSec.Load(), req) == nil
+	return m.GetAwaitFreeBudgets(uid).ConsumeQuota(m.approxUnixTimeSec(), req) == nil
 }
 
 // ConsumeQuota consumes quota from the concurrent budget
@@ -3172,8 +3132,8 @@ func (m *MemArbitrator) ConsumeQuotaFromAwaitFreePool(uid uint64, req int64) boo
 // req <= 0: release quota
 func (b *ConcurrentBudget) ConsumeQuota(utimeSec int64, req int64) error {
 	if req > 0 {
-		if b.LastUsedTimeSec != utimeSec {
-			b.LastUsedTimeSec = utimeSec
+		if b.getLastUsedTimeSec() != utimeSec {
+			b.setLastUsedTimeSec(utimeSec)
 		}
 		if b.Used.Add(req) > b.Capacity.Load() {
 			if err := b.PullFromUpstream(); err != nil {
@@ -3222,12 +3182,14 @@ func (m *MemArbitrator) AtMemRisk() bool {
 }
 
 // AtOOMRisk checks if the memory is under risk
+//
+//go:norace
 func (m *MemArbitrator) AtOOMRisk() bool {
 	return m.heapController.memRisk.oomRisk
 }
 
 func (m *MemArbitrator) atMemRisk() bool {
-	return m.heapController.memRisk.start.Load() != 0
+	return m.heapController.memRisk.startTime.nano.Load() != 0
 }
 
 func (m *MemArbitrator) intoOOMRisk() {
@@ -3235,18 +3197,20 @@ func (m *MemArbitrator) intoOOMRisk() {
 	atomic.AddInt64(&m.execMetrics.Risk.OOM, 1)
 }
 
+//go:norace
 func (m *MemArbitrator) oomRisk() int64 {
-	return atomic.LoadInt64(&m.mu.threshold.oomRisk)
+	return m.mu.threshold.oomRisk
 }
 
+//go:norace
 func (m *MemArbitrator) memRisk() int64 {
-	return atomic.LoadInt64(&m.mu.threshold.risk)
+	return m.mu.threshold.risk
 }
 
 func (m *MemArbitrator) intoMemRisk() {
 	now := m.innerTime()
-	m.heapController.memRisk.startTime = now
-	m.heapController.memRisk.start.Store(now.UnixNano())
+	m.heapController.memRisk.startTime.t = now
+	m.heapController.memRisk.startTime.nano.Store(now.UnixNano())
 	m.heapController.memRisk.lastMemStats.heapTotalFree = m.heapController.heapTotalFree.Load()
 	m.heapController.memRisk.lastMemStats.startTime = now
 	atomic.AddInt64(&m.execMetrics.Risk.Mem, 1)
@@ -3288,6 +3252,15 @@ func (m *MemArbitrator) intoMemRisk() {
 }
 
 func (m *MemArbitrator) setMemSafe() {
-	m.heapController.memRisk.start.Store(0)
+	m.heapController.memRisk.startTime.nano.Store(0)
 	m.heapController.memRisk.oomRisk = false
+}
+
+//go:norace
+func (m *MemArbitrator) setUnixTimeSec(s int64) {
+	m.UnixTimeSec = s
+}
+
+func (m *MemArbitrator) approxUnixTimeSec() int64 {
+	return m.UnixTimeSec
 }
