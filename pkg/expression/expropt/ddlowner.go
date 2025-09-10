@@ -26,7 +26,7 @@ var _ RequireOptionalEvalProps = DDLOwnerPropReader{}
 type DDLOwnerInfoProvider func() bool
 
 // Desc returns the description for the property key.
-func (p DDLOwnerInfoProvider) Desc() *exprctx.OptionalEvalPropDesc {
+func (DDLOwnerInfoProvider) Desc() *exprctx.OptionalEvalPropDesc {
 	return exprctx.OptPropDDLOwnerInfo.Desc()
 }
 
