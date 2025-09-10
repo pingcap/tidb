@@ -1666,10 +1666,6 @@ func (a *ExecStmt) PlanStabilityMetrics(succ bool) {
 	// TODO: filter out non-select statements
 	metrics.PlanExecutionTimeCounter.WithLabelValues(a.getPlanExecTimeLabel(costTime)).Inc()
 
-	//if strings.Contains(a.Ctx.GetSessionVars().StmtCtx.OriginalSQL, "from t1 where a=100") {
-	//	fmt.Println(">>>>> ", vars.GetPlanRiskNames())
-	//}
-
 	for _, risk := range vars.GetPlanRiskNames() {
 		metrics.PlanRiskCounter.WithLabelValues(risk).Inc()
 	}

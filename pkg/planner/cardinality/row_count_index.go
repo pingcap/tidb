@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -443,6 +444,7 @@ func estimateRowCountWithUniformDistribution(
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
 		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		sctx.GetSessionVars().RecordPlanRiskFlag(variable.PlanRiskOutOfRangeEst)
 		return statistics.DefaultRowEst(outOfRangeCnt)
 	}
 	// branch 2: some NDV's are in histograms
@@ -482,8 +484,12 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		}
 	}
 	val := types.NewBytesDatum(b)
+	outOfRangeVal := idx.Histogram.NDV > 0 && outOfRangeOnIndex(idx, val)
+	if outOfRangeVal {
+		sctx.GetSessionVars().RecordPlanRiskFlag(variable.PlanRiskOutOfRangeEst)
+	}
 	if idx.StatsVer < statistics.Version2 {
-		if idx.Histogram.NDV > 0 && outOfRangeOnIndex(idx, val) {
+		if outOfRangeVal {
 			outOfRangeCnt := outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 			return statistics.DefaultRowEst(outOfRangeCnt)
 		}
