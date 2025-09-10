@@ -64,7 +64,7 @@ func (ctx *ExprContext) GetEvalCtx() exprctx.EvalContext {
 }
 
 // GetCharsetInfo gets charset and collation for current context.
-func (ctx *ExprContext) GetCharsetInfo() (string, string) {
+func (ctx *ExprContext) GetCharsetInfo() (charset, collation string) {
 	return ctx.sctx.GetSessionVars().GetCharsetInfo()
 }
 
@@ -112,12 +112,12 @@ func (ctx *ExprContext) AllocPlanColumnID() int64 {
 }
 
 // IsInNullRejectCheck returns whether the expression is in null reject check.
-func (ctx *ExprContext) IsInNullRejectCheck() bool {
+func (*ExprContext) IsInNullRejectCheck() bool {
 	return false
 }
 
 // IsConstantPropagateCheck returns whether the ctx is in constant propagate check.
-func (ctx *ExprContext) IsConstantPropagateCheck() bool {
+func (*ExprContext) IsConstantPropagateCheck() bool {
 	return false
 }
 
