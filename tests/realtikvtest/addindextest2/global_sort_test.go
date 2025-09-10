@@ -673,8 +673,8 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 			json_extract(summary, '$.read_bytes'),
 			json_extract(summary, '$.bytes')
 		from subtasks where task_key = '%s' and step = %d;`
-		fmtSql := fmt.Sprintf(sql, taskID, 1)
-		rs := tk.MustQuery(fmtSql).Rows()
+		fmtSQL := fmt.Sprintf(sql, taskID, 1)
+		rs := tk.MustQuery(fmtSQL).Rows()
 		require.Len(t, rs, 1)
 		getReqCnt, err := strconv.Atoi(rs[0][0].(string))
 		require.NoError(t, err)
@@ -698,8 +698,8 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 			json_extract(summary, '$.read_bytes'),
 			json_extract(summary, '$.bytes')
 		from subtasks where task_key = '%s' and step = %d;`
-		fmtSql := fmt.Sprintf(sql, taskID, 3)
-		rs := tk.MustQuery(fmtSql).Rows()
+		fmtSQL := fmt.Sprintf(sql, taskID, 3)
+		rs := tk.MustQuery(fmtSQL).Rows()
 		require.Len(t, rs, 1)
 		getReqCnt, err := strconv.Atoi(rs[0][0].(string))
 		require.NoError(t, err)

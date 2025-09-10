@@ -590,6 +590,7 @@ func (i *MergeKVIter) Close() error {
 	return nil
 }
 
+// ReloadCount returns the total reload count of all readers.
 func (i *MergeKVIter) ReloadCount() int64 {
 	return i.iter.reloadCnt.Load()
 }
