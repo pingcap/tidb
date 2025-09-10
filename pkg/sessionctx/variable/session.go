@@ -1004,6 +1004,35 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
+<<<<<<< HEAD
+=======
+	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
+	RiskEqSkewRatio float64
+
+	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket or outside the histogram bucket range.
+	RiskRangeSkewRatio float64
+
+	// RiskScaleNDVSkewRatio controls the NDV estimation risk strategy for scaling NDV estimation.
+	RiskScaleNDVSkewRatio float64
+
+	// TiDBOptRiskGroupNDVSkewRatio controls the NDV estimation risk strategy for multi-column operations
+	// including GROUP BY, JOIN, and DISTINCT operations.
+	// When 0: uses conservative estimate (max of individual column NDVs, production default)
+	// When > 0: blends conservative and exponential backoff estimates (0.1=mostly conservative, 1.0=full exponential)
+	RiskGroupNDVSkewRatio float64
+
+	// AlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	AlwaysKeepJoinKey bool
+
+	// CartesianJoinOrderThreshold controls whether to allow do Cartesian Join first in Join Reorder.
+	// This variable is used as a penalty to trade off the risk and join order quality.
+	// When 0: never do Cartesian Join first.
+	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
+	CartesianJoinOrderThreshold float64
+
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -2144,6 +2173,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AutoIncrementOffset:           DefAutoIncrementOffset,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
 		AllowAggPushDown:              false,
+<<<<<<< HEAD
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
@@ -2153,6 +2183,21 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+=======
+		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    vardef.DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
+		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
+		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
+		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
+		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
+		CartesianJoinOrderThreshold:   vardef.DefOptCartesianJoinOrderThreshold,
+		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
+		RetryLimit:                    vardef.DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
