@@ -509,6 +509,8 @@ func getStartState(vars []string, fixes []uint64) (*state, error) {
 			s.varValues = append(s.varValues, vardef.DefOptAlwaysKeepJoinKey)
 		case vardef.TiDBOptSelectivityFactor:
 			s.varValues = append(s.varValues, vardef.DefOptSelectivityFactor)
+		case vardef.TiDBOptCartesianJoinOrderThreshold:
+			s.varValues = append(s.varValues, vardef.DefOptCartesianJoinOrderThreshold)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}

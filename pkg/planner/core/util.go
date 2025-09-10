@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
@@ -129,7 +130,7 @@ func GetStatsInfo(i any) map[string]uint64 {
 	}
 
 	statsInfos := make(map[string]uint64)
-	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
+	statsInfos = physicalop.CollectPlanStatsVersion(physicalPlan, statsInfos)
 	return statsInfos
 }
 
