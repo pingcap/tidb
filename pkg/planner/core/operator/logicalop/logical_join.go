@@ -265,7 +265,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	AddSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
-	return ret, p.Self(), nil
+	newnChild, err := p.SemiJoinRewrite()
+	return ret, newnChild, err
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -1775,31 +1776,51 @@ func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression)
 	return combinedCond
 }
 
+// SemiJoinRewrite rewrites semi join to inner join with aggregation.
+// Note: This rewriter is only used for exists subquery.
+// And it also requires the hint `SEMI_JOIN_REWRITE` or variable tidb_opt_enable_sem_join_rewrite
+// to be set.
+// For example:
+//
+//	select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ * from s where s.a = t.a);
+//
+// will be rewriten to:
+//
+//	select * from t join (select a from s group by a) s on t.a = s.a;
 func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
-	// If it's not a p, or not a (outer) semi p. We just return it since no optimization is needed.
-	// Actually the check of the preferRewriteSemiJoin is a superset of checking the p type. We remain them for a better understanding.
+	// If it's not a join, or not a (outer) semi join. We just return it since no optimization is needed.
+	// Actually the check of the preferRewriteSemiJoin is a superset of checking the join type. We remain them for a better understanding.
 	if !(p.JoinType == base.SemiJoin || p.JoinType == base.LeftOuterSemiJoin) {
-		return p, nil
+		return p.Self(), nil
 	}
+	if _, ok := p.Self().(*LogicalApply); ok {
+		return p.Self(), nil
+	}
+	// Gate by hint or session variable.
+	if (p.PreferJoinType&utilhint.PreferRewriteSemiJoin) == 0 && !p.SCtx().GetSessionVars().EnableSemiJoinRewrite {
+		return p.Self(), nil
+	}
+	// The preferRewriteSemiJoin flag only be used here. We should reset it in order to not affect other parts.
+	p.PreferJoinType &= ^utilhint.PreferRewriteSemiJoin
 
 	if p.JoinType == base.LeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin.")
-		return p, nil
+		return p.Self(), nil
 	}
 
-	// If we have jumped the above if condition. We can make sure that the current p is a non-correlated one.
+	// If we have jumped the above if condition. We can make sure that the current join is a non-correlated one.
 
 	// If there's left condition or other condition, we cannot rewrite
 	if len(p.LeftConditions) > 0 || len(p.OtherConditions) > 0 {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions.")
-		return p, nil
+		return p.Self(), nil
 	}
 
 	innerChild := p.Children()[1]
 
 	// If there's right conditions:
-	//   - If it's semi p, then right condition should be pushed.
-	//   - If it's outer semi p, then it still should be pushed since the outer p should not remain any cond of the inner side.
+	//   - If it's semi join, then right condition should be pushed.
+	//   - If it's outer semi join, then it still should be pushed since the outer join should not remain any cond of the inner side.
 	// But the aggregation we added may block the predicate push down since we've not maintained the functional dependency to pass the equiv class to guide the push down.
 	// So we create a selection before we build the aggregation.
 	if len(p.RightConditions) > 0 {
@@ -1828,7 +1849,6 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 	subAgg.SetChildren(innerChild)
 	subAgg.SetSchema(expression.NewSchema(aggOutputCols...))
 	subAgg.BuildSelfKeyInfo(subAgg.Schema())
-
 	innerJoin := LogicalJoin{
 		JoinType:        base.InnerJoin,
 		HintInfo:        p.HintInfo,
@@ -1837,14 +1857,13 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 		EqualConditions: make([]*expression.ScalarFunction, 0, len(p.EqualConditions)),
 	}.Init(p.SCtx(), p.QueryBlockOffset())
 	innerJoin.SetChildren(p.Children()[0], subAgg)
-	innerJoin.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), subAgg.Schema()))
+	innerJoin.SetSchema(expression.MergeSchema(p.Children()[0].Schema().Clone(), subAgg.Schema().Clone()))
 	innerJoin.AttachOnConds(expression.ScalarFuncs2Exprs(p.EqualConditions))
-
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(p.Children()[0].Schema().Columns),
 	}.Init(p.SCtx(), p.QueryBlockOffset())
 	proj.SetChildren(innerJoin)
-	proj.SetSchema(p.Children()[0].Schema())
+	proj.SetSchema(p.Children()[0].Schema().Clone())
 	return proj, nil
 }
 
