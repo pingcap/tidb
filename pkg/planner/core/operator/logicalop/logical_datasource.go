@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/partidx"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -169,6 +171,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+	ds.CheckPartialIndexes()
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds, nil
 }
@@ -622,4 +625,65 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+func (ds *DataSource) CheckPartialIndexes() {
+	var columnNames types.NameSlice = nil
+	var removedPaths map[int64]struct{} = nil
+	partialIndexUsedHint, hasPartialIndex := false, false
+	for _, path := range ds.PossibleAccessPaths {
+		if path.Index == nil || path.Index.ConditionExprString == "" {
+			continue
+		}
+		hasPartialIndex = true
+		if columnNames == nil {
+			columnNames = make(types.NameSlice, 0, ds.schema.Len())
+			for i := range ds.Schema().Columns {
+				columnNames = append(columnNames, &types.FieldName{
+					TblName: ds.TableInfo.Name,
+					ColName: ds.Columns[i].Name,
+				})
+			}
+		}
+		expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), path.Index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
+		cnfExprs := expression.SplitCNFItems(expr)
+		if err != nil || !partidx.CheckConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+			if removedPaths == nil {
+				removedPaths = make(map[int64]struct{})
+			}
+			removedPaths[path.Index.ID] = struct{}{}
+			continue
+		}
+		if path.Forced {
+			partialIndexUsedHint = true
+		}
+	}
+	// 1. No partial index,
+	// 2. Or no partial index is removed and no partial index is used by hint.
+	// In these cases, we don't need to do anything.
+	if !hasPartialIndex || (len(removedPaths) == 0 && !partialIndexUsedHint) {
+		return
+	}
+	checkIndex := func(path *util.AccessPath, checkForced bool) bool {
+		isRemoved := false
+		if path.Index != nil {
+			_, isRemoved = removedPaths[path.Index.ID]
+		}
+		return isRemoved || (checkForced && !path.Forced)
+	}
+	if partialIndexUsedHint {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+	} else {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+	}
 }
