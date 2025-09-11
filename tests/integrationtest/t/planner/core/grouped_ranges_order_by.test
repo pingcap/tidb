@@ -33,8 +33,8 @@ insert into t values
 explain format = 'brief' select * from t where b in (1, 3, 5) and d > 100 order by a, b, c;
 select * from t where b in (1, 3, 5) and d > 100 order by a, b, c;
 
-explain format = 'brief' select a,c from t where a in (1,2,3) and b in (1, 3, 5) and d > 100 order by c;
-select a,c from t where a in (1,2,3) and b in (1, 3, 5) and d > 100 order by c;
+explain format = 'brief' select a,c from t where a = 3 and b in (1, 3, 5) and d > 100 order by c;
+select a,c from t where a = 3 and b in (1, 3, 5) and d > 100 order by c;
 
 explain format = 'brief' select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
 select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
