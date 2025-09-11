@@ -51,7 +51,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB", "return(1048576)"))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB")
 	/// 1. test partition table.
-	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
+	tk.MustExec("create table tp1(id int primary key, v int, key idx (id)) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
@@ -80,6 +80,18 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	// 1.2 test partition table OnNextSubtasksBatch after BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.BackfillStepMergeTempIndex, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, 4)
+	for i := range tblInfo.Partition.Definitions {
+		var subTask ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal(metas[i], &subTask))
+		require.NotNil(t, subTask.StartKey)
+		require.NotNil(t, subTask.EndKey)
+	}
+
+	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
@@ -98,7 +110,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 	// 2.2 non empty table.
-	tk.MustExec("create table t2(id bigint auto_random primary key)")
+	tk.MustExec("create table t2(id bigint auto_random primary key, key idx(id))")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
@@ -113,6 +125,16 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 	// 2.2.2 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
+	task.Step = sch.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.BackfillStepMergeTempIndex, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	var subTask ddl.BackfillSubTaskMeta
+	require.NoError(t, json.Unmarshal(metas[0], &subTask))
+	require.NotNil(t, subTask.StartKey)
+	require.NotNil(t, subTask.EndKey)
+
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
@@ -322,10 +344,21 @@ func createAddIndexTask(t *testing.T,
 				ReorgTp:     model.ReorgTypeLitMerge,
 				IsDistReorg: true,
 			},
+			Version: model.JobVersion2,
 		},
 		EleIDs:     []int64{10},
 		EleTypeKey: meta.IndexElementKey,
 	}
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName: ast.NewCIStr("idx"),
+			Global:    false,
+		}},
+		OpType: model.OpAddIndex,
+	}
+	taskMeta.Job.FillArgs(args)
+	_, err = taskMeta.Job.Encode(true)
+	require.NoError(t, err)
 	if useGlobalSort {
 		var err error
 		opt := fakestorage.Options{
