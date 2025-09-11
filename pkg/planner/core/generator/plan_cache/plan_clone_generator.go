@@ -35,12 +35,27 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
+<<<<<<< HEAD
 	var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
 		core.PhysicalProjection{}, core.PhysicalSort{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
 		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
 		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, core.PhysicalUnionAll{}}
+=======
+	var structures = []any{
+		physicalop.Update{}, physicalop.Delete{}, physicalop.Insert{},
+		physicalop.PhysicalTableScan{}, physicalop.PhysicalIndexScan{},
+		physicalop.PhysicalSelection{}, physicalop.PhysicalProjection{}, physicalop.PhysicalTopN{}, physicalop.PhysicalLimit{},
+		physicalop.PhysicalStreamAgg{}, physicalop.PhysicalHashAgg{},
+		physicalop.PhysicalHashJoin{}, physicalop.PhysicalMergeJoin{}, physicalop.PhysicalIndexJoin{},
+		physicalop.PhysicalIndexHashJoin{},
+		physicalop.PhysicalIndexReader{}, physicalop.PhysicalTableReader{}, physicalop.PhysicalIndexMergeReader{},
+		physicalop.PhysicalIndexLookUpReader{},
+		physicalop.BatchPointGetPlan{}, physicalop.PointGetPlan{},
+		physicalop.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}, physicalop.PhysicalTableDual{},
+	}
+>>>>>>> a4f7468af3a (planner: use generator to implement the PhysicalTableDual's CloneForPlanCache (#63472))
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
@@ -111,6 +126,8 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[][]*expression.Constant", "[][]types.Datum", "[][]expression.Expression":
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = util.Clone%v2D(op.%v)", f.Name, structureName, f.Name)
+		case "[]*types.FieldName":
+			c.write("cloned.%v = util.CloneFieldNames(op.%v)", f.Name, f.Name)
 		case "planctx.PlanContext":
 			c.write("cloned.%v = newCtx", f.Name)
 		case "util.HandleCols":
