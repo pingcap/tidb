@@ -1193,18 +1193,18 @@ var defaultSysVars = []*SysVar{
 				if v > 1 {
 					return normalizedValue, nil
 				} else if v <= 0 {
-					return "", TiDBMemArbitratorSoftLimitErr
+					return "", ErrTiDBMemArbitratorSoftLimit
 				}
 				// v == 1 is legal
 			}
-			if floatValue, err := strconv.ParseFloat(normalizedValue, 64); err == nil {
-				if floatValue > 0 && floatValue <= 1 {
-					return normalizedValue, nil
-				}
-				return "", TiDBMemArbitratorSoftLimitErr
-			} else {
+			floatValue, err := strconv.ParseFloat(normalizedValue, 64)
+			if err != nil {
 				return "", err
 			}
+			if floatValue > 0 && floatValue <= 1 {
+				return normalizedValue, nil
+			}
+			return "", ErrTiDBMemArbitratorSoftLimit
 		},
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return memory.GetGlobalMemArbitratorSoftLimitText(), nil
@@ -1241,7 +1241,7 @@ var defaultSysVars = []*SysVar{
 			if normalizedValue == "0" || normalizedValue == "1" || normalizedValue == "nolimit" {
 				return normalizedValue, nil
 			}
-			return "", TiDBMemArbitratorWaitAverseErr
+			return "", ErrTiDBMemArbitratorWaitAverse
 		},
 		SetSession: func(s *SessionVars, val string) error {
 			switch val {
@@ -1264,7 +1264,7 @@ var defaultSysVars = []*SysVar{
 			if v, err := strconv.ParseUint(normalizedValue, 10, 64); err == nil && int64(v) > 1 {
 				return normalizedValue, nil
 			}
-			return "", TiDBMemArbitratorQueryReservedErr
+			return "", ErrTiDBMemArbitratorQueryReserved
 		},
 		SetSession: func(s *SessionVars, val string) error {
 			intValue, err := strconv.ParseUint(val, 10, 64)
