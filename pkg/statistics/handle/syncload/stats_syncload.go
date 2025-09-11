@@ -443,7 +443,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
 	})
-	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
@@ -462,7 +461,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 	}
 	var cms *statistics.CMSketch
 	var topN *statistics.TopN
-	var fms *statistics.FMSketch
 	if fullLoad {
 		if item.IsIndex {
 			hg, err = storage.HistogramFromStorageWithPriority(sctx, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
@@ -479,19 +477,12 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if loadFMSketch {
-			fms, err = storage.FMSketchFromStorage(sctx, item.TableID, isIndexFlag, item.ID)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 	}
 	if item.IsIndex {
 		idxHist := &statistics.Index{
 			Histogram:  *hg,
 			CMSketch:   cms,
 			TopN:       topN,
-			FMSketch:   fms,
 			Info:       w.idxInfo,
 			StatsVer:   statsVer,
 			PhysicalID: item.TableID,
@@ -511,7 +502,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 			Info:       w.colInfo,
 			CMSketch:   cms,
 			TopN:       topN,
-			FMSketch:   fms,
 			IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(w.colInfo.GetFlag()),
 			StatsVer:   statsVer,
 		}
