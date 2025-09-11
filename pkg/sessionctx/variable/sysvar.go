@@ -783,7 +783,7 @@ var defaultSysVars = []*SysVar{
 		vardef.SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, vardef.DefTiDBDDLReorgWorkerCount)))
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDDLReorgBatchSize, Value: strconv.Itoa(vardef.DefTiDBDDLReorgBatchSize), Type: vardef.TypeUnsigned, MinValue: int64(vardef.MinDDLReorgBatchSize), MaxValue: uint64(vardef.MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBDDLReorgBatchSize, Value: strconv.Itoa(vardef.DefTiDBDDLReorgBatchSize), Type: vardef.TypeUnsigned, MinValue: int64(1), MaxValue: uint64(vardef.MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, vardef.DefTiDBDDLReorgBatchSize)))
 		return nil
 	}},
@@ -804,6 +804,14 @@ var defaultSysVars = []*SysVar{
 		}, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 			return strconv.FormatInt(vardef.DDLReorgMaxWriteSpeed.Load(), 10), nil
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBDDLModifyColumnReaderCnt, Value: strconv.Itoa(2), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		vardef.DDLModifyColumnReaderCnt.Store(TidbOptInt64(val, 2))
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBDDLModifyColumnWriterCnt, Value: strconv.Itoa(4), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		vardef.DDLModifyColumnWriterCnt.Store(TidbOptInt64(val, 4))
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBDDLErrorCountLimit, Value: strconv.Itoa(vardef.DefTiDBDDLErrorCountLimit), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.SetDDLErrorCountLimit(TidbOptInt64(val, vardef.DefTiDBDDLErrorCountLimit))
 		return nil

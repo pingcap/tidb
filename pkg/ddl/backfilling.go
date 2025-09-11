@@ -843,6 +843,54 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
+func (dc *ddlCtx) modifyColumnInPipeline(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	t table.PhysicalTable,
+	reorgInfo *reorgInfo,
+) error {
+	if err := dc.isReorgRunnable(ctx, false); err != nil {
+		return errors.Trace(err)
+	}
+	job := reorgInfo.Job
+	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
+	defer cancel()
+
+	oldCol, _ := getOldAndNewColumnsForUpdateColumn(t, reorgInfo.currElement.ID)
+	rc := dc.getReorgCtx(job.ID)
+	rowCntListener := &localRowCntCollector{
+		prevPhysicalRowCnt: rc.getRowCount(),
+		reorgCtx:           rc,
+		counter:            metrics.GetBackfillTotalByLabel(metrics.LblUpdateColRate, job.SchemaName, job.TableName, oldCol.Name.String()),
+	}
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(sctx)
+	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
+	importConc := job.ReorgMeta.GetConcurrency()
+	pipe, err := NewModifyColumnPipeline(
+		opCtx,
+		dc.store,
+		sessPool,
+		job.ID,
+		t,
+		reorgInfo.StartKey,
+		reorgInfo.EndKey,
+		job.ReorgMeta,
+		avgRowSize,
+		importConc,
+		rowCntListener,
+		reorgInfo,
+	)
+
+	if err != nil {
+		return err
+	}
+	return executeAndClosePipeline(opCtx, pipe, job, nil, 0)
+}
+
 func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
 	reader, writer := pipe.GetReaderAndWriter()
 	if reader == nil || writer == nil {
@@ -889,7 +937,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	// Adjust worker pool size and max write speed dynamically.
 	var wg util.WaitGroupWrapper
 	adjustCtx, cancel := context.WithCancel(ctx)
-	if job != nil {
+	if job != nil && bcCtx != nil {
 		wg.RunWithLog(func() {
 			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
 		})
@@ -974,6 +1022,17 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	})
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		return dc.addIndexWithLocalIngest(ctx, sessPool, t, reorgInfo)
+	}
+
+	if bfWorkerType == typeUpdateColumnWorker {
+		logutil.DDLLogger().Info("modify column use pipeline")
+		ts := time.Now()
+		defer func() {
+			logutil.DDLLogger().Info("modify column pipeline exec time",
+				zap.Time("end time", time.Now()),
+				zap.Duration("takes time", time.Since(ts)))
+		}()
+		return dc.modifyColumnInPipeline(ctx, sessPool, t, reorgInfo)
 	}
 
 	jc := reorgInfo.NewJobContext()

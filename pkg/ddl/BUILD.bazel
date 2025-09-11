@@ -50,6 +50,7 @@ go_library(
         "metabuild.go",
         "mock.go",
         "modify_column.go",
+        "modify_column_operator.go",
         "multi_schema_change.go",
         "options.go",
         "owner_mgr.go",
