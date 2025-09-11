@@ -228,6 +228,7 @@ func buildHist(
 	rangeChecker *SequentialRangeChecker, // optional range checker for skipping TopN indices
 ) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
+	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleCountExcludeTopN)
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
