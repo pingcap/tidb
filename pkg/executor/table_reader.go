@@ -206,7 +206,7 @@ func (e *TableReaderExecutor) setDummy() {
 }
 
 func (e *TableReaderExecutor) memUsage() int64 {
-	const sizeofTableReaderExecutor = int64(unsafe.Sizeof(*(*TableReaderExecutor)(nil)))
+	const sizeofTableReaderExecutor = int64(unsafe.Sizeof(TableReaderExecutor{}))
 
 	res := sizeofTableReaderExecutor
 	res += size.SizeOfPointer * int64(cap(e.ranges))

@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,7 +69,10 @@ func TestConcurrentMap(t *testing.T) {
 
 func TestConcurrentMapMemoryUsage(t *testing.T) {
 	m := newConcurrentMap()
-	var iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen
+	for _, s := range m {
+		s.items.MockSeedForTest(4992862800126241206)
+	}
+	var iterations = 6656
 	var memUsage int64
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
@@ -97,6 +99,10 @@ func TestConcurrentMapMemoryUsage(t *testing.T) {
 	wg.Wait()
 
 	// The first bucket memory usage will be recorded in concurrentMapHashTable, here only test the memory delta.
-	require.Equal(t, int64(1023)*hack.DefBucketMemoryUsageForMapIntToPtr, memUsage)
-	require.Equal(t, int64(10), m.getShard(0).bInMap)
+	require.Equal(t, int64(170275), memUsage)
+	realSize := int64(0)
+	for _, s := range m {
+		realSize += int64(s.items.RealBytes())
+	}
+	require.Equal(t, int64(198328), realSize)
 }
