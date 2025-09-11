@@ -45,7 +45,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		physicalop.PhysicalIndexReader{}, physicalop.PhysicalTableReader{}, physicalop.PhysicalIndexMergeReader{},
 		physicalop.PhysicalIndexLookUpReader{},
 		physicalop.BatchPointGetPlan{}, physicalop.PointGetPlan{},
-		physicalop.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{},
+		physicalop.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}, physicalop.PhysicalTableDual{},
 	}
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
@@ -132,6 +132,8 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[][]types.Datum":
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = util.Clone%v2D(op.%v)", f.Name, structureName, f.Name)
+		case "[]*types.FieldName":
+			c.write("cloned.%v = util.CloneFieldNames(op.%v)", f.Name, f.Name)
 		case "planctx.PlanContext":
 			c.write("cloned.%v = newCtx", f.Name)
 		case "util.HandleCols":
