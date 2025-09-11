@@ -648,6 +648,8 @@ type HashJoinV2Exec struct {
 	inRestore bool
 
 	isMemoryClearedForTest bool
+
+	FileNamePrefixForTest string
 }
 
 func (e *HashJoinV2Exec) isAllMemoryClearedForTest() bool {
@@ -739,7 +741,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 	}
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
-	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
+	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes(), e.FileNamePrefixForTest)
 	e.maxSpillRound = 1
 
 	if variable.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {

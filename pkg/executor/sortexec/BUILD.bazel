@@ -69,11 +69,16 @@ go_test(
     ],
     embed = [":sortexec"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 6,
+=======
+    shard_count = 19,
+>>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
     deps = [
         "//pkg/config",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
+        "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/parser/mysql",
@@ -81,6 +86,7 @@ go_test(
         "//pkg/planner/util",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
