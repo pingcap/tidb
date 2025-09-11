@@ -65,13 +65,13 @@ func NewIterator(txn *badger.Txn, reverse bool, startKey, endKey []byte) *badger
 
 // DBReader reads data from DB, for read-only requests, the locks must already be checked before DBReader is created.
 type DBReader struct {
-	StartKey  []byte
-	EndKey    []byte
-	txn       *badger.Txn
-	iter      *badger.Iterator
-	extraIter *badger.Iterator
-	revIter   *badger.Iterator
-	RcCheckTS bool
+	StartKey        []byte
+	EndKey          []byte
+	txn             *badger.Txn
+	iter            *badger.Iterator
+	extraIter       *badger.Iterator
+	revIter         *badger.Iterator
+	RcCheckTS       bool
 	SkipNewerChange bool
 }
 
@@ -207,47 +207,6 @@ func exceedEndKey(current, endKey []byte) bool {
 		return false
 	}
 	return bytes.Compare(current, endKey) >= 0
-}
-
-// DDLScan scans the key range with the given ScanProcessor.
-func (r *DBReader) DDLBackfillScan(startKey, endKey []byte, limit int, startTS uint64, proc ScanProcessor) error {
-	r.txn.SetReadTS(startTS)
-	iter := r.GetIter()
-	var cnt int
-	var err error
-	for iter.Seek(startKey); iter.Valid(); iter.Next() {
-		item := iter.Item()
-		key := item.Key()
-		if exceedEndKey(key, endKey) {
-			break
-		}
-		// DDL protocol backfill can safely ignore the records that is modified after start TS
-		userMeta := mvcc.DBUserMeta(item.UserMeta())
-		if userMeta.CommitTS() > startTS {
-			continue
-		}
-
-		if item.IsEmpty() {
-			continue
-		}
-		var val []byte
-		val, err = item.Value()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = proc.Process(key, val)
-		if err != nil {
-			if err == ErrScanBreak {
-				break
-			}
-			return errors.Trace(err)
-		}
-		cnt++
-		if cnt >= limit {
-			break
-		}
-	}
-	return nil
 }
 
 // Scan scans the key range with the given ScanProcessor.
