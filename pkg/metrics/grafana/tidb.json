@@ -11819,6 +11819,110 @@
           "yaxis": {
             "align": false
           }
+        },
+        {
+          "aliasColors": {},
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "TiDB read requests traffic statistic",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 78
+          },
+          "id": 23763573004,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_tikvclient_read_request_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type, result)",
+              "legendFormat": "{{type}}-{{result}}",
+              "interval": "",
+              "exemplar": true,
+              "format": "time_series",
+              "hide": false,
+              "intervalFactor": 2,
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Read Req Traffic",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:327",
+              "format": "Bps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:328",
+              "format": "Bps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "bars": false,
+          "dashes": false,
+          "fill": 0,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "percentage": false,
+          "points": false,
+          "stack": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
         }
       ],
       "repeat": null,
