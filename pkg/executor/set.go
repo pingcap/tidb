@@ -274,6 +274,8 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	if co == "" {
 		if cs == mysql.UTF8MB4Charset {
 			co = sessionVars.DefaultCollationForUTF8MB4
+		} else if cs == mysql.UTF8Charset {
+			co = sessionVars.DefaultCollationForUTF8
 		} else if co, err = charset.GetDefaultCollation(cs); err != nil {
 			return err
 		}

@@ -274,6 +274,8 @@ const (
 	CollationServer = "collation_server"
 	// DefaultCollationForUTF8MB4 is the name of 'default_collation_for_utf8mb4' variable.
 	DefaultCollationForUTF8MB4 = "default_collation_for_utf8mb4"
+	// DefaultCollationForUTF8 is the name of 'default_collation_for_utf8' variable.
+	DefaultCollationForUTF8 = "default_collation_for_utf8"
 	// NetWriteTimeout is the name of 'net_write_timeout' variable.
 	NetWriteTimeout = "net_write_timeout"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.
