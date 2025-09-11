@@ -1310,22 +1310,29 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 
-	if kerneltype.IsNextGen() {
-		targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
-		if err != nil {
-			return err
-		}
-		failpoint.InjectCall("mockImportDataSize", &totalSize)
-		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
-		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
-		e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
-		e.logger.Info("auto calculate resource related params",
-			zap.Int("thread count", e.ThreadCnt),
-			zap.Int("max node count", e.MaxNodeCnt),
-			zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
-			zap.Int("target node cpu count", targetNodeCPUCnt),
-			zap.String("total file size", units.BytesSize(float64(totalSize))))
+	return nil
+}
+
+// CalResourceParams calculates resource related parameters according to the total
+// file size and target node cpu count.
+func (e *LoadDataController) CalResourceParams(ctx context.Context) error {
+	targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return err
 	}
+	totalSize := e.TotalFileSize
+	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
+	e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
+	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
+	e.logger.Info("auto calculate resource related params",
+		zap.Int("thread count", e.ThreadCnt),
+		zap.Int("max node count", e.MaxNodeCnt),
+		zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
+		zap.Int("target node cpu count", targetNodeCPUCnt),
+		zap.String("total file size", units.BytesSize(float64(totalSize))),
+		zap.Int("file count", len(e.dataFiles)),
+	)
 	return nil
 }
 

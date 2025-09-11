@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -65,7 +66,7 @@ func calcMaxNodeCountBySize(size int64, coresPerNode int, factor float64) int {
 	nodeCnt := float64(size) * r / baseDataSize
 	nodeCnt = min(nodeCnt, factor*r)
 	nodeCnt = max(nodeCnt, 1)
-	return int(nodeCnt)
+	return int(math.Round(nodeCnt))
 }
 
 // CalcMaxNodeCountByStoresNum calculates the maximum number of nodes to execute DXF based on the number of stores.
@@ -95,10 +96,10 @@ func CalcConcurrencyByDataSize(size int64, coresPerNode int) int {
 	if size <= 0 {
 		return 4
 	}
-	concurrency := size / baseSizePerConc
-	concurrency = min(concurrency, int64(coresPerNode))
+	concurrency := float64(size) / baseSizePerConc
+	concurrency = min(concurrency, float64(coresPerNode))
 	concurrency = max(concurrency, 1)
-	return int(concurrency)
+	return int(math.Round(concurrency))
 }
 
 // GetExecCPUNode returns the number of CPU cores on the system keyspace node.
