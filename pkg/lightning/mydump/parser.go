@@ -164,11 +164,6 @@ type Parser interface {
 	// ReadRow reads a row from the datafile.
 	ReadRow() error
 
-	// ReadRowUnsafe reads a row from the datafile,
-	// and the returned Row is only valid until the
-	// next call to ReadRow or ReadRowUnsafe.
-	ReadRowUnsafe() error
-
 	LastRow() Row
 	RecycleRow(row Row)
 
@@ -399,10 +394,6 @@ func (parser *ChunkParser) unescapeString(input string) string {
 		}
 	}
 	return input
-}
-
-func (parser *ChunkParser) ReadRowUnsafe() error {
-	return parser.ReadRow()
 }
 
 // ReadRow reads a row from the datafile.

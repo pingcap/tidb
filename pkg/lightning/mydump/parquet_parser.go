@@ -418,20 +418,10 @@ func (pp *ParquetParser) Close() error {
 	return pp.reader.Close()
 }
 
+// ReadRow reads a row in the parquet file by the parser.
+// The read data is shallow copied from the internal buffer of parquet reader,
+// so it's only valid before the next ReadRow call.
 func (pp *ParquetParser) ReadRow() error {
-	if err := pp.ReadRowUnsafe(); err != nil {
-		return err
-	}
-	for i, d := range pp.lastRow.Row {
-		pp.lastRow.Row[i] = *d.Clone()
-	}
-	return nil
-}
-
-// ReadRowUnsafe reads a row in the parquet file by the parser.
-// It implements the Parser interface.
-// Return io.EOF if reaching the end of the file.
-func (pp *ParquetParser) ReadRowUnsafe() error {
 	pp.lastRow.RowID++
 	pp.lastRow.Length = 0
 
@@ -635,7 +625,7 @@ func SampleStatisticsFromParquet(
 
 	totalReadRows := reader.MetaData().RowGroups[0].NumRows
 	for range totalReadRows {
-		err = parser.ReadRowUnsafe()
+		err = parser.ReadRow()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				break

@@ -69,7 +69,7 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 			return
 		}
 
-		err = parser.ReadRowUnsafe()
+		err = parser.ReadRow()
 		// todo: we can implement a ScannedPos which don't return error, will change it later.
 		currOffset, _ := parser.ScannedPos()
 		switch errors.Cause(err) {

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"slices"
 	"strings"
 
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
@@ -513,7 +512,10 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 			}
 			break
 		}
-		lastRowDatums := slices.Clone(parser.LastRow().Row)
+		lastRowDatums := make([]types.Datum, 0, len(parser.LastRow().Row))
+		for _, d := range parser.LastRow().Row {
+			lastRowDatums = append(lastRowDatums, *d.Clone())
+		}
 		rows = append(rows, lastRowDatums)
 	}
 	return parser.Columns(), rows, nil
