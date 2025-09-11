@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -57,6 +58,7 @@ type sortedReader[T heapElem] interface {
 	// TODO(lance6716): learn more about external merge sort prefetch strategy.
 	switchConcurrentMode(useConcurrent bool) error
 	close() error
+	reloadCount() int64
 }
 
 type mergeHeapElem[T heapElem] struct {
@@ -105,6 +107,7 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 	checkHotspotPeriod int
 	lastHotspotIdx     int
 	elemFromHotspot    *T
+	reloadCnt          atomic.Int64
 
 	logger *zap.Logger
 }
@@ -313,6 +316,7 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 					zap.String("path", rd.path()),
 					zap.Error(closeErr))
 			}
+			i.reloadCnt.Add(rd.reloadCount())
 			i.readers[i.lastReaderIdx] = nil
 			delete(i.hotspotMap, i.lastReaderIdx)
 			closeReaderIdx = i.lastReaderIdx
@@ -498,6 +502,10 @@ func (p kvReaderProxy) close() error {
 	return p.r.Close()
 }
 
+func (p kvReaderProxy) reloadCount() int64 {
+	return p.r.reloadCnt
+}
+
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeKVIter struct {
 	iter    *mergeIter[*kvPair, kvReaderProxy]
@@ -547,7 +555,7 @@ func NewMergeKVIter(
 		})
 	}
 
-	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, readerOpeners, checkHotspot)
+	it, err := newMergeIter(ctx, readerOpeners, checkHotspot)
 	return &MergeKVIter{iter: it, memPool: memPool}, err
 }
 
@@ -582,6 +590,10 @@ func (i *MergeKVIter) Close() error {
 	return nil
 }
 
+func (i *MergeKVIter) ReloadCount() int64 {
+	return i.iter.reloadCnt.Load()
+}
+
 func (p *rangeProperty) sortKey() []byte {
 	return p.firstKey
 }
@@ -613,6 +625,10 @@ func (p statReaderProxy) switchConcurrentMode(bool) error { return nil }
 
 func (p statReaderProxy) close() error {
 	return p.r.Close()
+}
+
+func (p statReaderProxy) reloadCount() int64 {
+	return p.r.reloadCnt
 }
 
 // mergePropBaseIter handles one MultipleFilesStat and use limitSizeMergeIter to
@@ -780,6 +796,10 @@ func (m mergePropBaseIter) close() error {
 	close(m.closeCh)
 	m.wg.Wait()
 	return m.iter.close()
+}
+
+func (m mergePropBaseIter) reloadCount() int64 {
+	return m.iter.reloadCnt.Load()
 }
 
 // MergePropIter is an iterator that merges multiple range properties from different files.

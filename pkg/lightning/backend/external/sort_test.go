@@ -151,7 +151,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 
 	collector := &execute.TestCollector{}
 
-	closeFn := func(s *WriterSummary) {
+	onWriterClose := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
@@ -185,7 +185,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			int64(5*size.MB),
 			"/test2",
 			mergeMemSize,
-			closeFn,
+			onWriterClose,
+			dummyReaderOnCloseFunc,
 			collector,
 			1,
 			true,
@@ -291,6 +292,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			100,
 			2,
 			closeFn1,
+			dummyReaderOnCloseFunc,
 			1,
 			true))
 	}

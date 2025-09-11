@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "meter",
+    srcs = ["meter.go"],
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/meter",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/util/logutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_metering_sdk//common",
+        "@com_github_pingcap_metering_sdk//config",
+        "@com_github_pingcap_metering_sdk//storage",
+        "@com_github_pingcap_metering_sdk//writer/metering",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "meter_test",
+    timeout = "short",
+    srcs = ["meter_test.go"],
+    embed = [":meter"],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "@com_github_pingcap_metering_sdk//config",
+        "@com_github_pingcap_metering_sdk//reader/metering",
+        "@com_github_pingcap_metering_sdk//storage",
+        "@com_github_pingcap_metering_sdk//writer/metering",
+        "@com_github_stretchr_testify//require",
+    ],
+)

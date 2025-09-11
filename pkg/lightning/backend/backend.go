@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -137,7 +138,8 @@ type ExternalEngineConfig struct {
 	// MemCapacity is the memory capacity for the whole subtask.
 	MemCapacity int64
 	// OnDup is the action when a duplicate key is found during global sort.
-	OnDup engineapi.OnDuplicateKey
+	OnDup         engineapi.OnDuplicateKey
+	OnReaderClose external.OnReaderCloseFunc
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -424,16 +426,11 @@ func (engine *ClosedEngine) Logger() log.Logger {
 	return engine.logger
 }
 
-// ChunkFlushStatus is the status of a chunk flush.
-type ChunkFlushStatus interface {
-	Flushed() bool
-}
-
 // EngineWriter is the interface for writing data to an engine.
 type EngineWriter interface {
 	AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error
 	IsSynced() bool
-	Close(ctx context.Context) (ChunkFlushStatus, error)
+	Close(ctx context.Context) (common.ChunkFlushStatus, error)
 }
 
 // GetEngineUUID returns the engine UUID.
