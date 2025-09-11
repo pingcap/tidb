@@ -1560,6 +1560,82 @@ type SessionVars struct {
 	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
 	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
 	OptObjective string
+<<<<<<< HEAD
+=======
+
+	CompressionAlgorithm int
+	CompressionLevel     int
+
+	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
+	// overwritten if this value is not 0.
+	TxnEntrySizeLimit uint64
+
+	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result
+	// of division operations performed with the / operator.
+	DivPrecisionIncrement int
+
+	// allowed when tikv disk full happened.
+	DiskFullOpt kvrpcpb.DiskFullOpt
+
+	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
+	GroupConcatMaxLen uint64
+
+	// TiFlashPreAggMode indicates the policy of pre aggregation.
+	TiFlashPreAggMode string
+
+	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
+	EnableLazyCursorFetch bool
+
+	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
+	// `select for update` statements which do acquire pessimsitic locks.
+	SharedLockPromotion bool
+
+	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
+	ScatterRegion string
+
+	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
+	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
+
+	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	InternalSQLScanUserTable bool
+}
+
+// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
+func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
+	s.RecordRelevantOptVarsAndFixes = record
+	s.RelevantOptVars = nil
+	s.RelevantOptFixes = nil
+}
+
+// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptVar(varName string) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptVars == nil {
+		s.RelevantOptVars = make(map[string]struct{})
+	}
+	s.RelevantOptVars[varName] = struct{}{}
+}
+
+// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptFixes == nil {
+		s.RelevantOptFixes = make(map[uint64]struct{})
+	}
+	s.RelevantOptFixes[fixID] = struct{}{}
+}
+
+// GetSessionVars implements the `SessionVarsProvider` interface.
+func (s *SessionVars) GetSessionVars() *SessionVars {
+	return s
+>>>>>>> e54fe94984f (planner: TTL scan can trigger sync/async load/generateRuntimeFilter (#62616))
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
