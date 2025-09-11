@@ -373,11 +373,11 @@ func getSelectPlan(p base.Plan) base.PhysicalPlan {
 		selectPlan = physicalPlan
 	} else {
 		switch x := p.(type) {
-		case *Delete:
+		case *physicalop.Delete:
 			selectPlan = x.SelectPlan
-		case *Update:
+		case *physicalop.Update:
 			selectPlan = x.SelectPlan
-		case *Insert:
+		case *physicalop.Insert:
 			selectPlan = x.SelectPlan
 		case *Explain:
 			selectPlan = getSelectPlan(x.TargetPlan)

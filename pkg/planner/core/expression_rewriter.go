@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -177,7 +178,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	return expr, err
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *physicalop.Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -339,7 +340,7 @@ type exprRewriterPlanCtx struct {
 
 	// insertPlan is only used to rewrite the expressions inside the assignment
 	// of the "INSERT" statement.
-	insertPlan *Insert
+	insertPlan *physicalop.Insert
 
 	rollExpand *logicalop.LogicalExpand
 }
@@ -613,8 +614,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			// expressions inside the assignment of "INSERT" statement. we have to
 			// use the "tableSchema" of that "insertPlan".
 			if planCtx.insertPlan != nil {
-				schema = planCtx.insertPlan.tableSchema
-				names = planCtx.insertPlan.tableColNames
+				schema = planCtx.insertPlan.TableSchema
+				names = planCtx.insertPlan.TableColNames
 			}
 			idx, err := expression.FindFieldName(names, v.Column.Name)
 			if err != nil {

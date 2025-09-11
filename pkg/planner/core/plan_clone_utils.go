@@ -50,17 +50,6 @@ func cloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expre
 	return cloned
 }
 
-func cloneExpression2DForPlanCache(exprs [][]expression.Expression) [][]expression.Expression {
-	if exprs == nil {
-		return nil
-	}
-	cloned := make([][]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		cloned = append(cloned, cloneExpressionsForPlanCache(e, nil))
-	}
-	return cloned
-}
-
 func cloneScalarFunctionsForPlanCache(scalarFuncs, cloned []*expression.ScalarFunction) []*expression.ScalarFunction {
 	if scalarFuncs == nil {
 		return nil

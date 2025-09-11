@@ -209,23 +209,6 @@ func (p *PhysicalHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, er
 	return cloned, nil
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalHashJoin)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalJoin = *basePlan
-	cloned.EqualConditions = utilfuncp.CloneScalarFunctionsForPlanCache(p.EqualConditions, nil)
-	cloned.NAEqualConditions = utilfuncp.CloneScalarFunctionsForPlanCache(p.NAEqualConditions, nil)
-	if p.runtimeFilterList != nil {
-		return nil, false
-	}
-	return cloned, true
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
 	return p.explainInfo(false)

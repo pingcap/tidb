@@ -486,13 +486,13 @@ func getActualPhysicalPlan(plan base.Plan) base.PhysicalPlan {
 		return getActualPhysicalPlan(x.TargetPlan)
 	case *plannercore.SelectInto:
 		return getActualPhysicalPlan(x.TargetPlan)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		return x.SelectPlan
 	case *plannercore.ImportInto:
 		return x.SelectPlan
-	case *plannercore.Update:
+	case *physicalop.Update:
 		return x.SelectPlan
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		return x.SelectPlan
 	case *plannercore.Execute:
 		return getActualPhysicalPlan(x.Plan)
