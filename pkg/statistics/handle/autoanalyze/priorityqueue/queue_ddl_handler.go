@@ -169,7 +169,11 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
-	tableInfo, idxes := event.GetAddIndexInfo()
+	tableInfo, idxes, analyzed := event.GetAddIndexInfo()
+	if analyzed {
+		// if an added index is already analyzed in ddl, skip it here.
+		return nil
+	}
 
 	intest.AssertFunc(func() bool {
 		// Columnar index has a separate job type. We should not see columnar index here.
