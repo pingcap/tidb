@@ -875,7 +875,7 @@ func setGlobalVars() {
 		old := variable.GetSysVar(name)
 		tmp := *old
 		tmp.Value = value
-		tmp.ReadOnly = true
+		tmp.Scope |= vardef.ScopeInstance
 		variable.RegisterSysVar(&tmp)
 	}
 	{
