@@ -35,8 +35,8 @@ func TestLimitOptimization(t *testing.T) {
 		Offset: 0,
 	}
 
-	// This should return true for LIMIT 1 with offset 0
-	require.True(t, canRemoveLimit1(limit))
+	// This should return false for LIMIT 1 without children (can't determine uniqueness)
+	require.False(t, canRemoveLimit1(limit))
 
 	// Test with different count
 	limit.Count = 2

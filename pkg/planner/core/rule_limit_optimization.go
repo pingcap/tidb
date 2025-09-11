@@ -80,13 +80,23 @@ func canRemoveLimit1(limit *logicalop.LogicalLimit) bool {
 		return false
 	}
 
+	// Check if the limit has children
+	children := limit.Children()
+	if len(children) == 0 {
+		return false
+	}
+
 	// Check if the child plan guarantees at most one row
-	child := limit.Children()[0]
+	child := children[0]
 	return hasMaxOneRowGuarantee(child)
 }
 
 // hasMaxOneRowGuarantee checks if a logical plan guarantees at most one row.
 func hasMaxOneRowGuarantee(p base.LogicalPlan) bool {
+	if p == nil {
+		return false
+	}
+
 	// Use the existing HasMaxOneRow function with child information
 	childMaxOneRow := make([]bool, len(p.Children()))
 	for i, child := range p.Children() {
@@ -151,6 +161,10 @@ func hasJoinMaxOneRowGuarantee(join *logicalop.LogicalJoin, childMaxOneRow []boo
 
 // checkJoinColumnsFormUniqueKey checks if the join columns form a unique key.
 func checkJoinColumnsFormUniqueKey(joinCols map[int64]bool, schema *expression.Schema) bool {
+	if schema == nil {
+		return false
+	}
+
 	// Check primary key
 	for _, pk := range schema.PKOrUK {
 		if isSubsetOfJoinColumns(pk, joinCols) {
