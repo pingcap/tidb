@@ -225,7 +225,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			v, err := txn.GetMemBuffer().Get(ctx, key)
 			if err == nil {
 				if len(v) != 0 {
-					return nil, nil
+					continue
 				}
 				// The key is marked as deleted in the memory buffer, as the existence check is done lazily
 				// for optimistic transactions by default. The "untouched" key could still exist in the store,
@@ -425,7 +425,6 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		}
 		return handle, kv.ErrKeyExists
 	}
-
 	return nil, nil
 }
 
