@@ -814,7 +814,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 
 	// Before writing the new row, compare the encoded value for old and new column.
 	// If they are the same, skip writing it.
-	oldEncoded, err := rowcodec.EncodeValueDatum(sysTZ, &newColVal, w.encodeBuf[:0])
+	oldEncoded, err := rowcodec.EncodeValueDatum(sysTZ, &oldColVal, w.encodeBuf[:0])
 	if err != nil {
 		return errors.Trace(err)
 	}
