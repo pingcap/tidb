@@ -290,30 +290,6 @@ func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
 	return "data:" + p.TablePlan.ExplainID().String()
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if p.TablePlan != nil {
-		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.TableScanAndPartitionInfos != nil {
-		return nil, false
-	}
-	return cloned, true
-}
-
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTableReader) ResolveIndices() error {
 	err := ResolveIndicesForVirtualColumn(p.Schema().Columns, p.Schema())

@@ -541,6 +541,18 @@ var CloneConstantsForPlanCache func(constants, cloned []*expression.Constant) []
 // CloneScalarFunctionsForPlanCache is used clone scalar functions for plan cache
 var CloneScalarFunctionsForPlanCache func(scalarFuncs, cloned []*expression.ScalarFunction) []*expression.ScalarFunction
 
+// CloneExpression2DForPlanCache is used to clone 2D expressions for plan cache.
+func CloneExpression2DForPlanCache(exprs [][]expression.Expression) [][]expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	cloned := make([][]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		cloned = append(cloned, CloneExpressionsForPlanCache(e, nil))
+	}
+	return cloned
+}
+
 // ****************************************** optimize portal *********************************************
 
 // DoOptimize is to optimize a logical plan.

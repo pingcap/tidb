@@ -14,7 +14,6 @@ go_library(
         "expression_rewriter.go",
         "find_best_task.go",
         "flat_plan.go",
-        "foreign_key.go",
         "hint_utils.go",
         "index_join_path.go",
         "indexmerge_path.go",
@@ -26,7 +25,6 @@ go_library(
         "memtable_predicate_extractor.go",
         "optimizer.go",
         "pb_to_plan.go",
-        "physical_plans.go",
         "plan.go",
         "plan_cache.go",
         "plan_cache_instance.go",
@@ -35,7 +33,6 @@ go_library(
         "plan_cache_rebuild.go",
         "plan_cache_utils.go",
         "plan_cacheable_checker.go",
-        "plan_clone_generated.go",
         "plan_clone_utils.go",
         "plan_cost_detail.go",
         "plan_cost_ver1.go",
@@ -118,7 +115,6 @@ go_library(
         "//pkg/planner/cascades/base",
         "//pkg/planner/cascades/impl",
         "//pkg/planner/cascades/memo",
-        "//pkg/planner/core/access",
         "//pkg/planner/core/base",
         "//pkg/planner/core/cost",
         "//pkg/planner/core/metrics",
@@ -334,10 +330,4 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
-)
-
-filegroup(
-    name = "generator_files",
-    srcs = ["plan_clone_generated.go"],
-    visibility = ["//visibility:public"],
 )

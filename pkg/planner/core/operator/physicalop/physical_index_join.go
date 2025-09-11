@@ -205,33 +205,6 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 	return p.ExplainInfoInternal(false, false)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexJoin)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalJoin = *basePlan
-	if p.InnerPlan != nil {
-		innerPlan, ok := p.InnerPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.InnerPlan = innerPlan.(base.PhysicalPlan)
-	}
-	cloned.Ranges = p.Ranges.CloneForPlanCache()
-	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = utilfuncp.CloneColumnsForPlanCache(p.OuterHashKeys, nil)
-	cloned.InnerHashKeys = utilfuncp.CloneColumnsForPlanCache(p.InnerHashKeys, nil)
-	return cloned, true
-}
-
 // GetCost computes the cost of index join operator and its children.
 func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
 	return utilfuncp.GetCost4PhysicalIndexJoin(p, outerCnt, innerCnt, outerCost, innerCost, costFlag)

@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -579,56 +578,6 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 	return nil
 }
 
-func (*Handle) initStatsFMSketch4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.Get(row.GetInt64(0))
-		if !ok {
-			continue
-		}
-		fms, err := statistics.DecodeFMSketch(row.GetBytes(3))
-		if err != nil {
-			fms = nil
-			terror.Log(errors.Trace(err))
-		}
-
-		isIndex := row.GetInt64(1)
-		id := row.GetInt64(2)
-		if isIndex == 1 {
-			if idxStats := table.GetIdx(id); idxStats != nil {
-				idxStats.FMSketch = fms
-			}
-		} else {
-			if colStats := table.GetCol(id); colStats != nil {
-				colStats.FMSketch = fms
-			}
-		}
-		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
-	}
-}
-
-func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value from mysql.stats_fm_sketch"
-	rc, err := util.Exec(h.initStatsCtx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer terror.Call(rc.Close)
-	req := rc.NewChunk(nil)
-	iter := chunk.NewIterator4Chunk(req)
-	for {
-		err := rc.Next(ctx, req)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if req.NumRows() == 0 {
-			break
-		}
-		h.initStatsFMSketch4Chunk(cache, iter)
-	}
-	return nil
-}
-
 func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	var (
@@ -826,7 +775,6 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return err
 	}
-	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
@@ -858,14 +806,6 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	}
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
 	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
-	if loadFMSketch {
-		start = time.Now()
-		err = h.initStatsFMSketch(cache)
-		if err != nil {
-			return err
-		}
-		statslogutil.StatsLogger().Info("Complete loading the FM Sketch", zap.Duration("duration", time.Since(start)))
-	}
 	start = time.Now()
 	err = h.initStatsBuckets(cache, totalMemory)
 	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
