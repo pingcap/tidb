@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -55,7 +55,7 @@ var (
 // 2. If the mode is DumpAll, then return true.
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
-func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
+func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item stmtctx.TableDelta, currentTime time.Time) bool {
 	tableItem, ok := s.statsHandle.TableItemByID(is, id)
 	if !ok {
 		return false
@@ -517,14 +517,14 @@ func (sl *SessionStatsList) ResetSessionStatsList() {
 // TableDelta is used to collect tables' change information.
 // All methods of it are thread-safe.
 type TableDelta struct {
-	delta map[int64]variable.TableDelta // map[tableID]delta
+	delta map[int64]stmtctx.TableDelta // map[tableID]delta
 	lock  sync.Mutex
 }
 
 // NewTableDelta creates a new TableDelta.
 func NewTableDelta() *TableDelta {
 	return &TableDelta{
-		delta: make(map[int64]variable.TableDelta),
+		delta: make(map[int64]stmtctx.TableDelta),
 	}
 }
 
@@ -532,15 +532,15 @@ func NewTableDelta() *TableDelta {
 func (m *TableDelta) Reset() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	m.delta = make(map[int64]variable.TableDelta)
+	m.delta = make(map[int64]stmtctx.TableDelta)
 }
 
 // GetDeltaAndReset gets the delta and resets the TableDelta.
-func (m *TableDelta) GetDeltaAndReset() map[int64]variable.TableDelta {
+func (m *TableDelta) GetDeltaAndReset() map[int64]stmtctx.TableDelta {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	ret := m.delta
-	m.delta = make(map[int64]variable.TableDelta)
+	m.delta = make(map[int64]stmtctx.TableDelta)
 	return ret
 }
 
@@ -552,7 +552,7 @@ func (m *TableDelta) Update(id int64, delta int64, count int64) {
 }
 
 // Merge merges the deltaMap into the TableDelta.
-func (m *TableDelta) Merge(deltaMap map[int64]variable.TableDelta) {
+func (m *TableDelta) Merge(deltaMap map[int64]stmtctx.TableDelta) {
 	if len(deltaMap) == 0 {
 		return
 	}
@@ -564,7 +564,7 @@ func (m *TableDelta) Merge(deltaMap map[int64]variable.TableDelta) {
 }
 
 // UpdateTableDeltaMap updates the delta of the table.
-func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64) {
+func UpdateTableDeltaMap(m map[int64]stmtctx.TableDelta, id int64, delta int64, count int64) {
 	item := m[id]
 	item.Delta += delta
 	item.Count += count
