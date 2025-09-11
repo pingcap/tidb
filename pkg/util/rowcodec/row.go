@@ -308,7 +308,7 @@ func (r *row) CalculateRawChecksum(
 	loc *time.Location, colIDs []int64, values []*types.Datum, key kv.Key, handle kv.Handle, buf []byte,
 ) (uint32, error) {
 	for idx, colID := range colIDs {
-		data, err := encodeValueDatum(loc, values[idx], nil)
+		data, err := EncodeValueDatum(loc, values[idx], nil)
 		if err != nil {
 			return 0, err
 		}

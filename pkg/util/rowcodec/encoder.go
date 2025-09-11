@@ -144,7 +144,7 @@ func (encoder *Encoder) encodeRowCols(loc *time.Location, numCols, notNullIdx in
 	for i := range notNullIdx {
 		d := encoder.values[i]
 		var err error
-		r.data, err = encodeValueDatum(loc, d, r.data)
+		r.data, err = EncodeValueDatum(loc, d, r.data)
 		if err != nil {
 			errs = multierr.Append(errs, err)
 		}
@@ -169,9 +169,9 @@ func (encoder *Encoder) encodeRowCols(loc *time.Location, numCols, notNullIdx in
 	return errs
 }
 
-// encodeValueDatum encodes one row datum entry into bytes.
+// EncodeValueDatum encodes one row datum entry into bytes.
 // due to encode as value, this method will flatten value type like tablecodec.flatten
-func encodeValueDatum(loc *time.Location, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
+func EncodeValueDatum(loc *time.Location, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
 	switch d.Kind() {
 	case types.KindInt64:
 		buffer = encodeInt(buffer, d.GetInt64())
