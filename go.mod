@@ -321,7 +321,11 @@ require (
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	github.com/tikv/client-go/v2 => git.musta.ch/company/tidb-client-go/v2 v2.0.0-20250821004118-47bff1c09ae5
+	// In order to bring a new version below, you need to run the following command to get a right version reference to the SHA of required dependency:
+	// GOPRIVATE=git.musta.ch/company/* go get git.musta.ch/company/tidb-client-go/v2@BRANCH_OR_SHA
+	// Use the ouput from command about to modify the dependency: `go mod edit -replace=github.com/tikv/client-go/v2=git.musta.ch/company/tidb-client-go/v2@v2.X.X-XXX-XXX`
+	// Finally run `GOPRIVATE=git.musta.ch/company/* go mod tidy`
+	github.com/tikv/client-go/v2 => git.musta.ch/company/tidb-client-go/v2 v2.0.10-0.20250909174730-8af484b98851
 	github.com/tikv/pd/client => git.musta.ch/company/tidb-pd/client v0.0.0-20250903174936-0cbb10a0b95f
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
