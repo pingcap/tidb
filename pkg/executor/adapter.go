@@ -825,8 +825,13 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 // prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
 // cascade behaviour and this ExecStmt is in transaction.
 func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
-	exec, ok := e.(WithForeignKeyTrigger)
-	if !ok || !exec.HasFKCascades() {
+	var execWithFKTrigger WithForeignKeyTrigger
+	if explain, ok := e.(*ExplainExec); ok {
+		execWithFKTrigger = explain.getAnalyzeExecWithForeignKeyTrigger()
+	} else {
+		execWithFKTrigger, _ = e.(WithForeignKeyTrigger)
+	}
+	if execWithFKTrigger == nil || !execWithFKTrigger.HasFKCascades() {
 		return
 	}
 	sessVar := a.Ctx.GetSessionVars()

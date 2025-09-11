@@ -551,8 +551,18 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 	}, nil
 }
 
+// Option is used to set optional parameters for LoadDataController.
+type Option func(c *LoadDataController)
+
+// WithLogger sets the logger for LoadDataController.
+func WithLogger(logger *zap.Logger) Option {
+	return func(c *LoadDataController) {
+		c.logger = logger
+	}
+}
+
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
+func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs, options ...Option) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
@@ -562,6 +572,10 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		logger:          logger,
 		ExecuteNodesCnt: 1,
 	}
+	for _, opt := range options {
+		opt(c)
+	}
+
 	if err := c.checkFieldParams(); err != nil {
 		return nil, err
 	}
@@ -1317,9 +1331,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		failpoint.InjectCall("mockImportDataSize", &totalSize)
 		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
 		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
-		e.logger.Info("set import thread count for nextgen kernel",
+		e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
+		e.logger.Info("auto calculate resource related params",
 			zap.Int("thread count", e.ThreadCnt),
 			zap.Int("max node count", e.MaxNodeCnt),
+			zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
 			zap.Int("target node cpu count", targetNodeCPUCnt),
 			zap.String("total file size", units.BytesSize(float64(totalSize))))
 	}
@@ -1625,6 +1641,3 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	}
 	return handle.GetCPUCountOfNode(ctx)
 }
-
-// TestSyncCh is used in unit test to synchronize the execution.
-var TestSyncCh = make(chan struct{})

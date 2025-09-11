@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -456,7 +455,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 
 	colsNeedResolving := p.Schema().Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.

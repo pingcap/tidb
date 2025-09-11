@@ -55,6 +55,7 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*serverinfo.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
+	Logger            *zap.Logger
 
 	// summary for next step
 	summary importer.StepSummary
@@ -294,7 +295,7 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(plan, tbl, astArgs)
+	controller, err := importer.NewLoadDataController(plan, tbl, astArgs, importer.WithLogger(p.Logger))
 	if err != nil {
 		return nil, err
 	}

@@ -194,7 +194,7 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 	return coord
 }
 
-func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, allTiFlashZoneInfo map[string]string) error {
+func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allTiFlashZoneInfo map[string]string) error {
 	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.Sink}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -922,7 +922,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := c.originalPlan.(*physicalop.PhysicalExchangeSender)
 	sctx := c.sessionCtx
-	frags, kvRanges, nodeInfo, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
+	frags, kvRanges, nodeInfo, err := physicalop.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

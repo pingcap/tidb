@@ -1125,6 +1125,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
 	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
+	lhsFullMatch := !lhsFullScan && isFullIndexMatch(lhs)
+	rhsFullMatch := !rhsFullScan && isFullIndexMatch(rhs)
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
 		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
@@ -1136,6 +1138,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// comparable1: whether the access conditions are comparable between LHS and RHS
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	// scanResult: comparison result of index back scan efficiency (1=LHS better, -1=RHS better, 0=equal)
+	//             scanResult will always be true for a table scan (because it is a single scan).
+	//             This has the effect of allowing the table scan plan to not be pruned.
 	// comparable2: whether the index back scan characteristics are comparable between LHS and RHS
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
@@ -1143,38 +1147,22 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
-	// sum is the aggregate score of various comparison metrics between lhs and rhs. riskResult is excluded
-	// because more work is required.
+	// totalSum is the aggregate score of all comparison metrics
+	// riskResult is excluded because more work is required.
 	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
 	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
 	// bound was applied, etc.)
-	sum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
+	totalSum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
 
-	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
-	// TO-DO: Consider a separate set of rules for global indexes.
-	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
-		// If one index has statistics and the other does not, choose the index with statistics if it
-		// has the same or higher number of equal/IN predicates.
-		if !lhsPseudo && sum >= 0 &&
-			(eqOrInResult > 0 || (lhs.path.EqOrInCondCount > 0 && lhsEqOrInCount >= rhsEqOrInCount)) {
-			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
+	pseudoResult := 0
+	// Determine winner if one index doesn't have statistics and another has statistics
+	if (lhsPseudo || rhsPseudo) && !tablePseudo { // At least one index doesn't have statistics
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
+		if pseudoResult > 0 && totalSum >= 0 {
+			return pseudoResult, lhsPseudo
 		}
-		if !rhsPseudo && sum <= 0 &&
-			(eqOrInResult < 0 || (rhs.path.EqOrInCondCount > 0 && rhsEqOrInCount >= lhsEqOrInCount)) {
-			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
-		}
-		if preferRange {
-			// keep an index without statistics if that index has more equal/IN predicates, AND:
-			// 1) there are at least 2 equal/INs
-			// 2) OR - it's a full index match for all index predicates
-			if lhsPseudo && eqOrInResult > 0 && sum >= 0 &&
-				(lhsEqOrInCount > 1 || isFullIndexMatch(lhs)) {
-				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
-			}
-			if rhsPseudo && eqOrInResult < 0 && sum <= 0 &&
-				(rhsEqOrInCount > 1 || isFullIndexMatch(rhs)) {
-				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
-			}
+		if pseudoResult < 0 && totalSum <= 0 {
+			return pseudoResult, rhsPseudo
 		}
 	}
 
@@ -1197,24 +1185,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	// Below compares the two candidate paths on four dimensions:
-	// (1): the set of columns that occurred in the access condition,
-	// (2): does it require a double scan,
-	// (3): whether or not it matches the physical property,
-	// (4): it's a global index path or not.
-	// (5): whether the path has more equal/IN predicates.
-	// If `x` is not worse than `y` at all factors,
-	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
-	if !comparable1 {
+	if !comparable1 && !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if !comparable2 {
-		return 0, false // No winner (0). Do not return the pseudo result
-	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && sum > 0 {
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
@@ -1239,6 +1216,32 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 		}
 	}
 	return lhsPseudo, rhsPseudo
+}
+
+func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int, preferRange bool) int {
+	// TO-DO: Consider a separate set of rules for global indexes.
+	// If one index has statistics and the other does not, choose the index with statistics if it
+	// has the same or higher number of equal/IN predicates.
+	if !lhsPseudo && lhsEqOrInCount > 0 && eqOrInResult >= 0 {
+		return 1 // left wins
+	}
+	if !rhsPseudo && rhsEqOrInCount > 0 && eqOrInResult <= 0 {
+		return -1 // right wins
+	}
+	if preferRange {
+		// keep an index without statistics if that index has more equal/IN predicates, AND:
+		// 1) there are at least 2 equal/INs
+		// 2) OR - it's a full index match for all index predicates
+		if lhsPseudo && eqOrInResult > 0 &&
+			(lhsEqOrInCount > 1 || lhsFullMatch) {
+			return 1 // left wins
+		}
+		if rhsPseudo && eqOrInResult < 0 &&
+			(rhsEqOrInCount > 1 || rhsFullMatch) {
+			return -1 // right wins
+		}
+	}
+	return 0
 }
 
 // Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
@@ -1266,10 +1269,10 @@ func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqO
 
 func isFullIndexMatch(candidate *candidatePath) bool {
 	// Check if the DNF condition is a full match
-	if candidate.hasOnlyEqualPredicatesInDNF() {
-		return true
+	if candidate.path.IsDNFCond && candidate.hasOnlyEqualPredicatesInDNF() {
+		return candidate.path.MinAccessCondsForDNFCond >= len(candidate.path.Index.Columns)
 	}
-	// Return the non-DNF full index match result
+	// Check if the index covers all access conditions for non-DNF conditions
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
@@ -1607,17 +1610,17 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			var result int
-			currentMissingStats := false
-			result, currentMissingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
-			if currentMissingStats {
+			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
+			if missingStats {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
 			if result == 1 {
 				pruned = true
-				// We can break here because the current candidate cannot prune others anymore.
+				// We can break here because the current candidate lost to another plan.
+				// This means that we won't add it to the candidates below.
 				break
 			} else if result == -1 {
+				// The current candidate is better - so remove the old one from "candidates"
 				candidates = slices.Delete(candidates, i, i+1)
 			}
 		}
@@ -1679,30 +1682,26 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 		if !ok {
 			return false
 		}
-
-		// Reject NOT operators - they can make predicates non-equal
-		if sf.FuncName.L == ast.UnaryNot {
+		switch sf.FuncName.L {
+		case ast.UnaryNot:
+			// Reject NOT operators - they can make predicates non-equal
 			return false
-		}
-
-		if sf.FuncName.L == ast.LogicOr {
+		case ast.LogicOr, ast.LogicAnd:
 			for _, arg := range sf.GetArgs() {
 				if !isEqualPredicateOrOr(arg) {
 					return false
 				}
 			}
 			return true
-		}
-
-		// Check if it's an equal predicate (eq) or IN predicate (in)
-		// Also reject any other comparison operators that are not equal/IN
-		if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
+		case ast.EQ, ast.In:
+			// Check if it's an equal predicate (eq) or IN predicate (in)
+			// Also reject any other comparison operators that are not equal/IN
 			return true
+		default:
+			// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
+			// and any other functions that are not equal/IN predicates
+			return false
 		}
-
-		// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
-		// and any other functions that are not equal/IN predicates
-		return false
 	}
 
 	// Check all access conditions
@@ -2263,7 +2262,7 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *physi
 	indexConds := path.IndexFilters
 	if matchProp {
 		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+			tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 			is.Columns = tmpColumns
 			is.SetSchema(tmpSchema)
 		}
@@ -2320,7 +2319,7 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 	ts.FilterCondition = newFilterConds
 	if matchProp {
 		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+			tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 			ts.Columns = tmpColumns
 			ts.SetSchema(tmpSchema)
 		}
@@ -2459,7 +2458,7 @@ func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 
 	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
 	if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		tmpColumns, tmpSchema, newColAdded := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+		tmpColumns, tmpSchema, newColAdded := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 		ts.Columns = tmpColumns
 		ts.SetSchema(tmpSchema)
 		columnAdded = columnAdded || newColAdded
@@ -2501,30 +2500,61 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 }
 
 func indexCoveringColumn(ds *logicalop.DataSource, column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
-		return true
-	}
-	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+	handleCoveringState := handleCoveringColumn(ds, column, ignoreLen)
+	// Original int pk can always cover the column.
+	if handleCoveringState == stateCoveredByIntHandle {
 		return true
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
-	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
-	if !coveredByPlainIndex && !coveredByClusteredIndex {
+	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
 		return false
 	}
 	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 		column.GetType(evalCtx).EvalType() == types.ETString &&
 		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
-	if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
+	if !coveredByPlainIndex && handleCoveringState == stateCoveredByCommonHandle && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
 		return false
 	}
 	return true
 }
 
+type handleCoverState uint8
+
+const (
+	stateNotCoveredByHandle handleCoverState = iota
+	stateCoveredByIntHandle
+	stateCoveredByCommonHandle
+)
+
+// handleCoveringColumn checks if the column is covered by the primary key or extra handle columns.
+func handleCoveringColumn(ds *logicalop.DataSource, column *expression.Column, ignoreLen bool) handleCoverState {
+	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
+		return stateCoveredByIntHandle
+	}
+	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+		return stateCoveredByIntHandle
+	}
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
+	if coveredByClusteredIndex {
+		return stateCoveredByCommonHandle
+	}
+	return stateNotCoveredByHandle
+}
+
 func isIndexCoveringColumns(ds *logicalop.DataSource, columns, indexColumns []*expression.Column, idxColLens []int) bool {
 	for _, col := range columns {
 		if !indexCoveringColumn(ds, col, indexColumns, idxColLens, false) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHandleCoveringColumns(ds *logicalop.DataSource, columns []*expression.Column) bool {
+	for _, col := range columns {
+		if pkCoveringState := handleCoveringColumn(ds, col, false); pkCoveringState == stateNotCoveredByHandle {
 			return false
 		}
 	}
@@ -2671,13 +2701,13 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
-					tmpColumns, tmpSchema, _ := AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
+					tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 					is.Columns = tmpColumns
 					is.SetSchema(tmpSchema)
 				}
 				// global index for tableScan with keepOrder also need PhysicalTblID
 				ts := cop.tablePlan.(*physicalop.PhysicalTableScan)
-				tmpColumns, tmpSchema, succ := AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
+				tmpColumns, tmpSchema, succ := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 				ts.Columns = tmpColumns
 				ts.SetSchema(tmpSchema)
 				cop.needExtraProj = cop.needExtraProj || succ

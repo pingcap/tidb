@@ -53,6 +53,12 @@ const (
 	outOfRangeBetweenRate float64 = 100
 )
 
+var (
+	// Global static chunk for pseudo histograms to avoid chunk allocation
+	globalPseudoChunkOnce sync.Once
+	globalPseudoChunk     *chunk.Chunk
+)
+
 // Histogram represents statistics for a column or index.
 type Histogram struct {
 	Tp *types.FieldType
@@ -115,15 +121,55 @@ type scalar struct {
 // EmptyScalarSize is the size of empty scalar.
 const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
 
-// NewHistogram creates a new histogram.
-func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+// initGlobalPseudoChunk initializes the global static chunk for pseudo histograms
+func initGlobalPseudoChunk() {
+	// Create a minimal empty chunk that can be shared across all pseudo histograms
+	// Use a basic field type that won't cause issues when shared
+	globalPseudoChunk = chunk.NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)})
+}
+
+// getGlobalPseudoChunk returns the shared static chunk for pseudo histograms
+// WARNING: The returned chunk MUST NOT be modified. It is shared across all pseudo histograms.
+// Pseudo histograms should never have buckets added or bounds modified.
+func getGlobalPseudoChunk() *chunk.Chunk {
+	globalPseudoChunkOnce.Do(initGlobalPseudoChunk)
+	return globalPseudoChunk
+}
+
+// prepareFieldTypeForHistogram prepares the field type for histogram usage.
+// For string types, it clones the field type and sets the collation to binary
+// to avoid decoding issues with the histogram's key representation.
+func prepareFieldTypeForHistogram(tp *types.FieldType) *types.FieldType {
 	if tp.EvalType() == types.ETString {
 		// The histogram will store the string value's 'sort key' representation of its collation.
-		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
+		// If we directly set the field type's collation to its original one, we would decode the Key representation using its collation.
 		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
 		tp = tp.DeepClone()
 		tp.SetCollate(charset.CollationBin)
 	}
+	return tp
+}
+
+// NewPseudoHistogram creates a pseudo histogram that reuses global static components
+// This avoids chunk allocation while preserving field type semantics.
+func NewPseudoHistogram(id int64, tp *types.FieldType) *Histogram {
+	tp = prepareFieldTypeForHistogram(tp)
+	return &Histogram{
+		ID:                id,
+		NDV:               0,
+		NullCount:         0,
+		LastUpdateVersion: 0,
+		Tp:                tp,
+		Bounds:            getGlobalPseudoChunk(),
+		Buckets:           make([]Bucket, 0),
+		TotColSize:        0,
+		Correlation:       0,
+	}
+}
+
+// NewHistogram creates a new histogram.
+func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+	tp = prepareFieldTypeForHistogram(tp)
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,

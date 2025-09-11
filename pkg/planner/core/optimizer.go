@@ -1002,7 +1002,7 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
-		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
+		_, err := physicalop.SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
@@ -1269,7 +1269,7 @@ func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base
 
 func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
-		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
+		return join.JoinType == base.InnerJoin || join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin
 	}
 	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }
