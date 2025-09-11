@@ -188,6 +188,7 @@ func CleanupPartialFolders(dataDir, tableName string, indexIDs []int64) error {
 	return nil
 }
 
+// partialCleanupDirectory is used in test to simulate partial cleanup of a directory.
 func partialCleanupDirectory(dir string) {
 	var allFiles []string
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -236,6 +237,12 @@ func cleanupDBFolder(dataDir string, uuid string) error {
 			return errors.Trace(err)
 		}
 	}
+
+	failpoint.Inject("mockRemoveTombstoneError", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(errors.New("mock cleanup tombstone error"))
+		}
+	})
 
 	return errors.Trace(os.Remove(tombstoneFile))
 }

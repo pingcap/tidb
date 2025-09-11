@@ -181,6 +181,9 @@ func TestAddIndexWithPartialCleanup(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockCleanupDBFolderError", "2*return(true)")
 	tk.MustExec("create index idx_c1 on t(c1)")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRemoveTombstoneError", "2*return(true)")
+	tk.MustExec("create index idx_c2 on t(c1)")
 }
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {
