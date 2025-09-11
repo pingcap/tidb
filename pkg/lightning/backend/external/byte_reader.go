@@ -211,68 +211,57 @@ func (r *byteReader) switchToConcurrentReader() error {
 // readNBytes reads the next n bytes from the reader and returns a buffer slice
 // containing those bytes. The content of returned slice may be changed after
 // next call.
-func (r *byteReader) readNBytes(n int) ([]byte, error) {
+func (r *byteReader) readNBytes(buf []byte) error {
+	n := len(buf)
 	if n <= 0 {
-		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
+		return errors.Errorf("illegal n (%d) when reading from external storage", n)
 	}
 	if n > int(size.GB) {
-		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
+		return errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
 	}
 
-	readLen, bs := r.next(n)
-	if readLen == n && len(bs) == 1 {
-		return bs[0], nil
-	}
-	// need to flatten bs
-	auxBuf := make([]byte, n)
-	for _, b := range bs {
-		copy(auxBuf[len(auxBuf)-n:], b)
-		n -= len(b)
-	}
-	hasRead := readLen > 0
-	for n > 0 {
+	readCount := 0
+	hasRead := false
+
+	for readCount < n {
+		count := r.next(buf[readCount:])
+		readCount += count
+		hasRead = hasRead || count > 0
+
+		if readCount == n {
+			break
+		}
+
 		err := r.reload()
 		if err != nil {
 			if goerrors.Is(err, io.EOF) && hasRead {
 				// EOF is only allowed when we have not read any data
-				return nil, errors.Annotatef(io.ErrUnexpectedEOF, "file: %s", r.concurrentReader.filename)
+				return errors.Annotatef(io.ErrUnexpectedEOF, "file: %s", r.concurrentReader.filename)
 			}
-			return nil, errors.Trace(err)
-		}
-		readLen, bs = r.next(n)
-		hasRead = hasRead || readLen > 0
-		for _, b := range bs {
-			copy(auxBuf[len(auxBuf)-n:], b)
-			n -= len(b)
+			return errors.Trace(err)
 		}
 	}
-	return auxBuf, nil
+
+	return nil
 }
 
-func (r *byteReader) next(n int) (int, [][]byte) {
-	retCnt := 0
-	// TODO(lance6716): heap escape performance?
-	ret := make([][]byte, 0, len(r.curBuf)-r.curBufIdx+1)
+func (r *byteReader) next(buf []byte) int {
+	n := len(buf)
+	tempBuf := buf[:0]
+
 	for r.curBufIdx < len(r.curBuf) && n > 0 {
 		cur := r.curBuf[r.curBufIdx]
-		if r.curBufOffset+n <= len(cur) {
-			ret = append(ret, cur[r.curBufOffset:r.curBufOffset+n])
-			retCnt += n
-			r.curBufOffset += n
-			if r.curBufOffset == len(cur) {
-				r.curBufIdx++
-				r.curBufOffset = 0
-			}
-			break
+		readCount := min(n, len(cur)-r.curBufOffset)
+		tempBuf = append(tempBuf, cur[r.curBufOffset:r.curBufOffset+readCount]...)
+		r.curBufOffset += readCount
+		n -= readCount
+		if r.curBufOffset == len(cur) {
+			r.curBufIdx++
+			r.curBufOffset = 0
 		}
-		ret = append(ret, cur[r.curBufOffset:])
-		retCnt += len(cur) - r.curBufOffset
-		n -= len(cur) - r.curBufOffset
-		r.curBufIdx++
-		r.curBufOffset = 0
 	}
 
-	return retCnt, ret
+	return len(tempBuf)
 }
 
 func (r *byteReader) reload() error {
