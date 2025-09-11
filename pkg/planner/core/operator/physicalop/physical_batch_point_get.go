@@ -488,35 +488,6 @@ func (p *PointGetPlan) AccessObject() base.AccessObject {
 	return res
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PointGetPlan)
-	*cloned = *p
-	cloned.Plan = *p.Plan.CloneWithNewCtx(newCtx)
-	if p.PartitionIdx != nil {
-		cloned.PartitionIdx = new(int)
-		*cloned.PartitionIdx = *p.PartitionIdx
-	}
-	if p.Handle != nil {
-		cloned.Handle = p.Handle.Copy()
-	}
-	if p.HandleConstant != nil {
-		if p.HandleConstant.SafeToShareAcrossSession() {
-			cloned.HandleConstant = p.HandleConstant
-		} else {
-			cloned.HandleConstant = p.HandleConstant.Clone().(*expression.Constant)
-		}
-	}
-	cloned.IndexValues = util.CloneDatums(p.IndexValues)
-	cloned.IndexConstants = utilfuncp.CloneConstantsForPlanCache(p.IndexConstants, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(p.AccessConditions, nil)
-	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(p.accessCols, nil)
-	return cloned, true
-}
-
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {

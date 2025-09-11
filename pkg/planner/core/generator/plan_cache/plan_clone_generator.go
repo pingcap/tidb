@@ -37,13 +37,14 @@ import (
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{
 		physicalop.Update{}, physicalop.Delete{}, physicalop.Insert{},
-		physicalop.PhysicalTableScan{}, physicalop.PhysicalIndexScan{}, physicalop.PhysicalSelection{}}
+		physicalop.PhysicalTableScan{}, physicalop.PhysicalIndexScan{}, physicalop.PhysicalSelection{},
+		physicalop.PhysicalProjection{}, physicalop.PhysicalTopN{}, physicalop.PhysicalStreamAgg{},
+		physicalop.PhysicalHashAgg{}, physicalop.PhysicalHashJoin{}, physicalop.PhysicalMergeJoin{}, physicalop.PhysicalTableReader{},
+		physicalop.PhysicalIndexReader{}, physicalop.PointGetPlan{}}
 
 	// todo: add all back with physicalop.x
-	// var structures = []any{,
-	//		core.PhysicalProjection{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
-	//		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
-	//		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
+	// var structures = []any{
+	//		core.BatchPointGetPlan{}, core.PhysicalLimit{},
 	//		physicalop.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{},
 	//      core.PhysicalIndexMergeReader{},
 	//		core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
@@ -166,7 +167,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = %v.(base.PhysicalPlan)", f.Name, f.Name)
 			c.write("}")
 		case "[]base.PhysicalPlan":
-			c.write("%v, ok := physicalop.ClonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
+			c.write("%v, ok := ClonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
 			c.write("if !ok {return nil, false}")
 			c.write("cloned.%v = %v", f.Name, f.Name)
 		case "*int":
