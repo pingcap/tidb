@@ -1237,6 +1237,8 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil {
 		onFlush = option.OnUpload
 		if onFlush != nil {
+			// Total number of PUT operations for an multi-part uploaded file = total file size / part-size + 2. For details, see
+			// https://repost.aws/questions/QUXmwDga0VRvSOOjYWMfor-w/are-we-billed-a-put-request-for-each-part-with-s3-multipart-upload-or-only-once-for-the-final-merged-file
 			onFlush() // Initiate: PUT
 			onFlush() // Complete: PUT
 		}
