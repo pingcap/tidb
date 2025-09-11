@@ -354,6 +354,9 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 }
 
 func TestEstimationForUnknownValues(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen kernel don't support the analyze version 1")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
