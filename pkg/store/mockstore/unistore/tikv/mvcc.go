@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
@@ -758,7 +759,7 @@ func (store *MVCCStore) getLatestExtraMetaForKey(reqCtx *requestCtx, m *kvrpcpb.
 }
 
 // Prewrite implements the MVCCStore interface.
-func (store *MVCCStore) Prewrite(reqCtx *requestCtx, req *kvrpcpb.PrewriteRequest) error {
+func (store *MVCCStore) Prewrite(reqCtx *requestCtx, req *kvrpcpb.PrewriteRequest) ToPBErrors {
 	mutations := sortPrewrite(req)
 	regCtx := reqCtx.regCtx
 	hashVals := mutationsToHashVals(mutations)
@@ -767,7 +768,7 @@ func (store *MVCCStore) Prewrite(reqCtx *requestCtx, req *kvrpcpb.PrewriteReques
 	defer regCtx.ReleaseLatches(hashVals)
 
 	isPessimistic := req.ForUpdateTs > 0
-	var err error
+	var err ToPBErrors
 	if isPessimistic {
 		err = store.prewritePessimistic(reqCtx, mutations, req)
 	} else {
@@ -788,13 +789,46 @@ func (store *MVCCStore) Prewrite(reqCtx *requestCtx, req *kvrpcpb.PrewriteReques
 	return nil
 }
 
-func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, req *kvrpcpb.PrewriteRequest) error {
+type ToPBErrors interface {
+	ToPBErrors() ([]*kvrpcpb.KeyError, *errorpb.Error)
+}
+
+type anyErr struct {
+	error
+}
+
+func (e anyErr) ToPBErrors() ([]*kvrpcpb.KeyError, *errorpb.Error) {
+	if e.error == nil {
+		return nil, nil
+	}
+	return convertToPBErrors(e.error)
+}
+
+type skipConflict []*kverrors.ErrConflict
+
+func (e skipConflict) ToPBErrors() ([]*kvrpcpb.KeyError, *errorpb.Error) {
+	ret := make([]*kvrpcpb.KeyError, 0, len(e))
+	for _, x := range e {
+		ret = append(ret, &kvrpcpb.KeyError{
+			Conflict: &kvrpcpb.WriteConflict{
+				StartTs:          x.StartTS,
+				ConflictTs:       x.ConflictTS,
+				ConflictCommitTs: x.ConflictCommitTS,
+				Key:              x.Key,
+				Reason:           x.Reason,
+			},
+		})
+	}
+	return ret, nil
+}
+
+func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, req *kvrpcpb.PrewriteRequest) ToPBErrors {
 	startTS := req.StartVersion
 	// Must check the LockStore first.
 	for _, m := range mutations {
 		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
 		if err != nil {
-			return err
+			return anyErr{err}
 		}
 		if lock != nil {
 			// duplicated command
@@ -803,7 +837,7 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 		if bytes.Equal(m.Key, req.PrimaryLock) {
 			status := store.checkExtraTxnStatus(reqCtx, m.Key, req.StartVersion)
 			if status.isRollback {
-				return kverrors.ErrAlreadyRollback
+				return anyErr{kverrors.ErrAlreadyRollback}
 			}
 			if status.isOpLockCommitted() {
 				// duplicated command
@@ -813,20 +847,29 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 	}
 	items, err := store.getDBItems(reqCtx, mutations)
 	if err != nil {
-		return err
+		return anyErr{err}
 	}
+
+	var conflicts []*kverrors.ErrConflict
 	for i, m := range mutations {
 		item := items[i]
 		if item != nil {
 			userMeta := mvcc.DBUserMeta(item.UserMeta())
-			if userMeta.CommitTS() > startTS {
-				return &kverrors.ErrConflict{
+			meetCommitted := userMeta.CommitTS() > startTS
+			if meetCommitted {
+				conflict := &kverrors.ErrConflict{
 					StartTS:          startTS,
 					ConflictTS:       userMeta.StartTS(),
 					ConflictCommitTS: userMeta.CommitTS(),
 					Key:              item.KeyCopy(nil),
 					Reason:           kvrpcpb.WriteConflict_Optimistic,
 				}
+				if req.SkipNewerChange {
+					// Ignore the committed record directly, this is not taken as conflict.
+					conflicts = append(conflicts, conflict)
+					continue
+				}
+				return anyErr{conflict}
 			}
 		}
 		// Op_CheckNotExists type requests should not add lock
@@ -834,27 +877,34 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 			if item != nil {
 				val, err := item.Value()
 				if err != nil {
-					return err
+					return anyErr{err}
 				}
 				if len(val) > 0 {
-					return &kverrors.ErrKeyAlreadyExists{Key: m.Key}
+					return anyErr{&kverrors.ErrKeyAlreadyExists{Key: m.Key}}
 				}
 			}
 			continue
 		}
 		// TODO add memory lock for async commit protocol.
 	}
-	return store.prewriteMutations(reqCtx, mutations, req, items)
+	err = store.prewriteMutations(reqCtx, mutations, req, items)
+	if err != nil {
+		return anyErr{err}
+	}
+	if req.SkipNewerChange && len(conflicts) > 0 {
+		return skipConflict(conflicts)
+	}
+	return nil
 }
 
-func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, req *kvrpcpb.PrewriteRequest) error {
+func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, req *kvrpcpb.PrewriteRequest) ToPBErrors {
 	startTS := req.StartVersion
 
 	expectedForUpdateTSMap := make(map[int]uint64, len(req.GetForUpdateTsConstraints()))
 	for _, constraint := range req.GetForUpdateTsConstraints() {
 		index := int(constraint.Index)
 		if index >= len(mutations) {
-			return errors.Errorf("prewrite request invalid: for_update_ts constraint set for index %v while %v mutations were given", index, len(mutations))
+			return anyErr{errors.Errorf("prewrite request invalid: for_update_ts constraint set for index %v while %v mutations were given", index, len(mutations))}
 		}
 
 		expectedForUpdateTSMap[index] = constraint.ExpectedForUpdateTs
@@ -865,7 +915,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 
 	for i, m := range mutations {
 		if m.Op == kvrpcpb.Op_CheckNotExists {
-			return kverrors.ErrInvalidOp{Op: m.Op}
+			return anyErr{kverrors.ErrInvalidOp{Op: m.Op}}
 		}
 		lock := store.getLock(reqCtx, m.Key)
 		isPessimisticLock := len(req.PessimisticActions) > 0 && req.PessimisticActions[i] == kvrpcpb.PrewriteRequest_DO_PESSIMISTIC_CHECK
@@ -881,7 +931,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 		if isPessimisticLock {
 			valid := lockExists && lockMatch && lockConstraintPasses
 			if !valid {
-				return errors.New("pessimistic lock not found")
+				return anyErr{errors.New("pessimistic lock not found")}
 			}
 			if lock.Op != uint8(kvrpcpb.Op_PessimisticLock) {
 				// Duplicated command.
@@ -894,19 +944,19 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 		} else if needConstraintCheck {
 			item, err := txn.Get(m.Key)
 			if err != nil && err != badger.ErrKeyNotFound {
-				return errors.Trace(err)
+				return anyErr{errors.Trace(err)}
 			}
 			// check conflict
 			if item != nil {
 				userMeta := mvcc.DBUserMeta(item.UserMeta())
 				if userMeta.CommitTS() > startTS {
-					return &kverrors.ErrConflict{
+					return anyErr{&kverrors.ErrConflict{
 						StartTS:          startTS,
 						ConflictTS:       userMeta.StartTS(),
 						ConflictCommitTS: userMeta.CommitTS(),
 						Key:              item.KeyCopy(nil),
 						Reason:           kvrpcpb.WriteConflict_LazyUniquenessCheck,
-					}
+					}}
 				}
 			}
 		} else {
@@ -916,7 +966,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 				// Safe to set TTL to zero because the transaction of the lock is committed
 				// or rollbacked or must be rollbacked.
 				lock.TTL = 0
-				return kverrors.BuildLockErr(m.Key, lock)
+				return anyErr{kverrors.BuildLockErr(m.Key, lock)}
 			}
 			if lockMatch {
 				// Duplicate command.
@@ -927,9 +977,13 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 	}
 	items, err := store.getDBItems(reqCtx, mutations)
 	if err != nil {
-		return err
+		return anyErr{err}
 	}
-	return store.prewriteMutations(reqCtx, mutations, req, items)
+	err = store.prewriteMutations(reqCtx, mutations, req, items)
+	if err != nil {
+		return anyErr{err}
+	}
+	return nil
 }
 
 func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation,
@@ -1882,7 +1936,7 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 }
 
 func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte, resolved, committed []uint64,
-	isolationLEvel kvrpcpb.IsolationLevel) []*kvrpcpb.KvPair {
+	isolationLEvel kvrpcpb.IsolationLevel, skipNewerChange bool) []*kvrpcpb.KvPair {
 	var pairs []*kvrpcpb.KvPair
 	it := store.lockStore.NewIterator()
 	for it.Seek(startKey); it.Valid(); it.Next() {
@@ -1893,6 +1947,11 @@ func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte
 		if isolationLEvel == kvrpcpb.IsolationLevel_SI {
 			lockPair, err := checkLock(lock, it.Key(), startTS, resolved, committed)
 			if lockPair != nil {
+				if skipNewerChange {
+					// meet a lock, and its state is committed, in that case,
+					// do not collect the value when skipNewerChange is set
+					continue
+				}
 				pairs = append(pairs, &kvrpcpb.KvPair{
 					Key: lockPair.key,
 					// deleted key's value is nil
@@ -1971,10 +2030,10 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 		if reqCtx.isSnapshotIsolation() || reqCtx.isRcCheckTSIsolationLevel() {
 			if bytes.Compare(startKey, endKey) <= 0 {
 				lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks,
-					reqCtx.rpcCtx.CommittedLocks, reqCtx.rpcCtx.IsolationLevel)
+					reqCtx.rpcCtx.CommittedLocks, reqCtx.rpcCtx.IsolationLevel, req.SkipNewerChange)
 			} else {
 				lockPairs = store.collectRangeLock(req.GetVersion(), endKey, startKey, reqCtx.rpcCtx.ResolvedLocks,
-					reqCtx.rpcCtx.CommittedLocks, reqCtx.rpcCtx.IsolationLevel)
+					reqCtx.rpcCtx.CommittedLocks, reqCtx.rpcCtx.IsolationLevel, req.SkipNewerChange)
 			}
 		}
 	} else {
@@ -1984,6 +2043,7 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 		sampleStep: req.SampleStep,
 	}
 	reader := reqCtx.getDBReader()
+	reader.SkipNewerChange = req.SkipNewerChange
 	var err error
 	if req.Reverse {
 		err = reader.ReverseScan(startKey, endKey, int(limit), req.GetVersion(), scanProc)

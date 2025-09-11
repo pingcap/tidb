@@ -72,6 +72,7 @@ type DBReader struct {
 	extraIter *badger.Iterator
 	revIter   *badger.Iterator
 	RcCheckTS bool
+	SkipNewerChange bool
 }
 
 // GetMvccInfoByKey fills MvccInfo reading committed keys from db
@@ -208,13 +209,9 @@ func exceedEndKey(current, endKey []byte) bool {
 	return bytes.Compare(current, endKey) >= 0
 }
 
-// Scan scans the key range with the given ScanProcessor.
-func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc ScanProcessor) error {
+// DDLScan scans the key range with the given ScanProcessor.
+func (r *DBReader) DDLBackfillScan(startKey, endKey []byte, limit int, startTS uint64, proc ScanProcessor) error {
 	r.txn.SetReadTS(startTS)
-	if r.RcCheckTS {
-		r.txn.SetReadTS(math.MaxUint64)
-	}
-	skipValue := proc.SkipValue()
 	iter := r.GetIter()
 	var cnt int
 	var err error
@@ -224,6 +221,58 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 		if exceedEndKey(key, endKey) {
 			break
 		}
+		// DDL protocol backfill can safely ignore the records that is modified after start TS
+		userMeta := mvcc.DBUserMeta(item.UserMeta())
+		if userMeta.CommitTS() > startTS {
+			continue
+		}
+
+		if item.IsEmpty() {
+			continue
+		}
+		var val []byte
+		val, err = item.Value()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = proc.Process(key, val)
+		if err != nil {
+			if err == ErrScanBreak {
+				break
+			}
+			return errors.Trace(err)
+		}
+		cnt++
+		if cnt >= limit {
+			break
+		}
+	}
+	return nil
+}
+
+// Scan scans the key range with the given ScanProcessor.
+func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc ScanProcessor) error {
+	r.txn.SetReadTS(startTS)
+	if r.RcCheckTS {
+		r.txn.SetReadTS(math.MaxUint64)
+	}
+	iter := r.GetIter()
+	var cnt int
+	var err error
+	for iter.Seek(startKey); iter.Valid(); iter.Next() {
+		item := iter.Item()
+		key := item.Key()
+		if exceedEndKey(key, endKey) {
+			break
+		}
+		if r.SkipNewerChange {
+			// If the item has newer version, and skipNewerChange flag is set, skip this item.
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				continue
+			}
+		}
+
 		err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 		if err != nil {
 			return errors.Trace(err)
@@ -232,11 +281,9 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 			continue
 		}
 		var val []byte
-		if !skipValue {
-			val, err = item.Value()
-			if err != nil {
-				return errors.Trace(err)
-			}
+		val, err = item.Value()
+		if err != nil {
+			return errors.Trace(err)
 		}
 		err = proc.Process(key, val)
 		if err != nil {
@@ -288,6 +335,13 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 		}
 		if cnt == 0 && bytes.Equal(key, endKey) {
 			continue
+		}
+		if r.SkipNewerChange {
+			// If the item has newer version, and skipNewerChange flag is set, skip this item.
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				continue
+			}
 		}
 		var err error
 		err = r.CheckWriteItemForRcCheckTSRead(startTS, item)

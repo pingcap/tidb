@@ -118,6 +118,11 @@ const (
 	BackgroundGoroutineLifecycleHooks
 	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
 	PrewriteEncounterLockPolicy
+	// SkipNewerChange skips KV records that is newer than the start ts.
+	// When this option is set on Snapshot, snapshot scan operation will not return the newer kv pairs.
+	// When this option is set on Transactino, it skips mutations that meet newer changes in transaction commit.
+	// It is used by DDL backfill only.
+	SkipNewerChange
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option
