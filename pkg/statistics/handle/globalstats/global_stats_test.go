@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -866,7 +867,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("use test")
 
 	for i, version := range []string{"1", "2"} {
-		if i == 0 {
+		if i == 0 && kerneltype.IsNextGen() {
 			t.Log("next gen cannot support the analyze version 1")
 			continue
 		}
@@ -874,7 +875,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 		// analyze table t
 		tk.MustExec("drop table if exists t")
-		if i != 0 {
+		if i != 0 && kerneltype.IsClassic() {
 			err := statstestutil.HandleNextDDLEventWithTxn(h)
 			require.NoError(t, err)
 		}
