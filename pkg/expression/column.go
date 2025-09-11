@@ -288,6 +288,8 @@ type Column struct {
 	// Index is used for execution, to tell the column's position in the given row.
 	Index int
 
+	PrevID int64
+
 	hashcode []byte
 
 	// VirtualExpr is used to save expression for virtual column

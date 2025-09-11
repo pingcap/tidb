@@ -38,6 +38,7 @@ type Chunk struct {
 	sel []int
 
 	columns []*Column
+	Deps    []int
 	// numVirtualRows indicates the number of virtual rows, which have zero Column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int

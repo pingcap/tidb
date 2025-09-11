@@ -72,6 +72,7 @@ type ColumnInfo struct {
 	// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
 	//              This will fix bug in version 0. For compatibility with version 0, we add version field in column info struct.
 	Version uint64 `json:"version"`
+	PrevID  int64
 }
 
 // Clone clones ColumnInfo.

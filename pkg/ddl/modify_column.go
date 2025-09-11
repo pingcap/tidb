@@ -572,6 +572,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		moveOldColumnInfo(tblInfo, oldCol)
 		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
 		updateModifyingCols(oldCol, changingCol)
+		changingCol.PrevID = oldCol.ID
 
 		job.SchemaState = model.StatePublic
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)

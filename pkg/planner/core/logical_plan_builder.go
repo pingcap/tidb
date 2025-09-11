@@ -4721,6 +4721,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			RetType:  col.FieldType.Clone(),
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
+			PrevID:   col.ColumnInfo.PrevID,
 		}
 		if col.IsPKHandleColumn(tableInfo) {
 			handleCols = util.NewIntHandleCols(newCol)
