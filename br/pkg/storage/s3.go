@@ -1236,8 +1236,10 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	var onFlush func()
 	if option != nil {
 		onFlush = option.OnUpload
-		onFlush() // Initiate: PUT
-		onFlush() // Complete: PUT
+		if onFlush != nil {
+			onFlush() // Initiate: PUT
+			onFlush() // Complete: PUT
+		}
 	}
 	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
 	return uploaderWriter, nil
