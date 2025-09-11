@@ -836,6 +836,67 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
+// AddPartitionRangeForTable implements Backend interface
+func (local *Backend) AddPartitionRangeForTable(ctx context.Context, tableID int64) (func(), error) {
+	tableStartKey := tablecodec.EncodeTablePrefix(tableID)
+	checkEndKey := tablecodec.EncodeTablePrefix(tableID + 1)
+
+	startKey, endKey := local.tikvCodec.EncodeRange(tableStartKey, checkEndKey)
+
+	stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	checkReq := &sst.AddPartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+		Ttl: 3600,
+	}
+	clients := make([]sst.ImportSSTClient, 0, len(stores))
+	storeAddrs := make([]string, 0, len(stores))
+	for _, store := range stores {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) {
+			continue
+		}
+
+		importCli, err := local.importClientFactory.create(ctx, store.Id)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		_, err = importCli.AddForcePartitionRange(ctx, checkReq)
+		if err == nil {
+			clients = append(clients, importCli)
+			storeAddrs = append(storeAddrs, store.StatusAddress)
+			tidblogutil.Logger(ctx).Info("AddForcePartitionRange success", zap.String("store", store.StatusAddress))
+		} else {
+			tidblogutil.Logger(ctx).Warn("AddForcePartitionRange failed", zap.Error(err), zap.String("store", store.StatusAddress))
+		}
+	}
+	var cleanupFunc func()
+	if len(clients) > 0 {
+		cleanupFunc = func() {
+			removeReq := &sst.RemovePartitionRangeRequest{
+				Range: &sst.Range{
+					Start: startKey,
+					End:   endKey,
+				},
+			}
+			for i, c := range clients {
+				_, err = c.RemoveForcePartitionRange(ctx, removeReq)
+				if err == nil {
+					tidblogutil.Logger(ctx).Info("RemoveForcePartitionRange success", zap.String("store", storeAddrs[i]))
+				} else {
+					tidblogutil.Logger(ctx).Warn("RemoveForcePartitionRange failed", zap.Error(err), zap.String("store", storeAddrs[i]))
+				}
+			}
+		}
+	}
+	return cleanupFunc, nil
+}
+
 func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {
 	ranges := make([]engineapi.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
 	curSize := uint64(0)
