@@ -693,8 +693,9 @@ func (do *Domain) Init(
 			do.ddlExecutor = eBak
 		}
 	})
+	var checker *schematracker.Checker
 	if ddlInjector != nil {
-		checker := ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
+		checker = ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
 		checker.CreateTestDB(nil)
 		do.ddl = checker
 		do.ddlExecutor = checker
@@ -760,7 +761,13 @@ func (do *Domain) Init(
 		},
 	)
 	// step 3: domain reload the infoSchema.
-	return do.isSyncer.Reload()
+	if err = do.isSyncer.Reload(); err != nil {
+		return err
+	}
+	if checker != nil {
+		checker.InitFromIS(do.InfoSchema())
+	}
+	return nil
 }
 
 // Start starts the domain. After start, DDLs can be executed using session, see
@@ -1999,6 +2006,14 @@ func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 
 func (do *Domain) initStats(ctx context.Context) {
 	statsHandle := do.StatsHandle()
+	// If skip-init-stats is configured, skip the heavy initial stats loading as well.
+	// Still close InitStatsDone to unblock waiters that may depend on it.
+	if config.GetGlobalConfig().Performance.SkipInitStats {
+		close(statsHandle.InitStatsDone)
+		statslogutil.StatsLogger().Info("Skipping initial stats due to skip-grant-table being set")
+		return
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("panic when initiating stats", zap.Any("r", r),

@@ -142,19 +142,19 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		idxs = idxs[:last]
 		id := "MergeJoin"
 		switch x.JoinType {
-		case logicalop.SemiJoin:
+		case base.SemiJoin:
 			id = "MergeSemiJoin"
-		case logicalop.AntiSemiJoin:
+		case base.AntiSemiJoin:
 			id = "MergeAntiSemiJoin"
-		case logicalop.LeftOuterSemiJoin:
+		case base.LeftOuterSemiJoin:
 			id = "MergeLeftOuterSemiJoin"
-		case logicalop.AntiLeftOuterSemiJoin:
+		case base.AntiLeftOuterSemiJoin:
 			id = "MergeAntiLeftOuterSemiJoin"
-		case logicalop.LeftOuterJoin:
+		case base.LeftOuterJoin:
 			id = "MergeLeftOuterJoin"
-		case logicalop.RightOuterJoin:
+		case base.RightOuterJoin:
 			id = "MergeRightOuterJoin"
-		case logicalop.InnerJoin:
+		case base.InnerJoin:
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"

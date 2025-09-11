@@ -42,7 +42,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/store/helper",
-        "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/store/mockstore/unistore",
         "//pkg/tablecodec",
         "//pkg/testkit",

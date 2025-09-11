@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -849,7 +850,12 @@ func TestStmtSummaryTable(t *testing.T) {
 	rows := tk.MustQuery("select tidb_decode_plan('" + p1 + "');").Rows()
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, 1, len(rows[0]))
-	require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	if kerneltype.IsNextGen() {
+		// next-gen system tables use clustered index.
+		require.Regexp(t, "\n.*Point_Get.*table.tidb, clustered index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	} else {
+		require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	}
 
 	sql = "select table_names from information_schema.statements_summary " +
 		"where digest_text like 'select `variable_value`%' and `schema_name`='test'"

@@ -1995,7 +1995,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
-			result: "PRIMARY_KEY,c_d_e,g,f_g",
+			result: "PRIMARY_KEY,c_d_e,f_g",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
@@ -2011,7 +2011,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c`
+			result: "PRIMARY_KEY,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -2214,7 +2214,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
 	require.True(t, ok)
 	// previous wrong JoinType is InnerJoin
-	require.Equal(t, logicalop.RightOuterJoin, join.JoinType)
+	require.Equal(t, base.RightOuterJoin, join.JoinType)
 }
 
 func TestResolvingCorrelatedAggregate(t *testing.T) {
@@ -2392,6 +2392,34 @@ func TestRemoveOrderbyInSubquery(t *testing.T) {
 	}
 }
 
+func TestAddLimitForCorrelatedExistsSubquery(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{ // First query should add LIMIT because it's an EXISTS subquery with NO_DECORRELATE
+			sql:  "select * from t t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Limit}->Projection",
+		},
+		{ // Second query should NOT add LIMIT because it is NOT an EXISTS subquery
+			sql:  "select * from t t1 where b in (select /*+ NO_DECORRELATE() */ b from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection",
+		},
+	}
+
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.GetParser().ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, ToString(p), comment)
+	}
+}
 func TestRollupExpand(t *testing.T) {
 	ctx := context.Background()
 	sql := "select count(a) from t group by a, b with rollup"
