@@ -865,7 +865,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 }
 
 // slowLogFieldRe is uses to compile field:value
-var slowLogFieldRe = regexp.MustCompile(`\s*([^:,]+)\s*:\s*("[^"]*"|'[^']*'|[^,]+)\s*`)
+var slowLogFieldRe = regexp.MustCompile(`\s*(\w+)\s*:\s*([^,]+)\s*`)
 
 // ParseSlowLogRules parses a raw slow log rules string into a structured SlowLogRules object.
 // Each rule is separated by a semicolon (';'), and within each rule, fields are separated by commas (',').
@@ -898,13 +898,13 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 			return nil, fmt.Errorf("invalid slow log rule format:%s", rule)
 		}
 		fieldMap := make(map[string]any, len(matches))
-		for _, matche := range matches {
-			if len(matche) != 3 {
-				return nil, errors.Errorf("invalid slow log condition format:%s", matche)
+		for _, match := range matches {
+			if len(match) != 3 {
+				return nil, errors.Errorf("invalid slow log condition format:%s", match)
 			}
 
-			fieldName := strings.ToLower(strings.TrimSpace(matche[1]))
-			value := strings.TrimSpace(matche[2])
+			fieldName := strings.ToLower(strings.TrimSpace(match[1]))
+			value := strings.TrimSpace(match[2])
 			fieldValue, err := ParseSlowLogFieldValue(fieldName, strings.Trim(value, "\"'"))
 			if err != nil {
 				return nil, errors.Errorf("invalid slow log format, value:%s, err:%s", value, err)

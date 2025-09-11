@@ -234,7 +234,7 @@ func compareConditionsUnordered(t *testing.T, got, want []variable.SlowLogCondit
 func TestParseSlowLogRules(t *testing.T) {
 	// normal tests
 	// a rule that ends without a ';'
-	slowLogRules, err := variable.ParseSlowLogRules(`Conn_ID: 123, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1`)
+	slowLogRules, err := variable.ParseSlowLogRules(`Conn_ID: 123, DB: 'db1', Succ: true, Query_time: 0.5276, Resource_group: "rg1""`)
 	require.NoError(t, err)
 	rules := []variable.SlowLogRule{
 		{
