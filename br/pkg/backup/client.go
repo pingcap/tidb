@@ -1061,7 +1061,7 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
-			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
+			logutil.CL(ctx).Warn("find region failed", zap.Error(err), zap.Reflect("region", region))
 			time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 			continue
 		}
