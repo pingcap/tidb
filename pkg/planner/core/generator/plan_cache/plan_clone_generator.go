@@ -40,11 +40,12 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		physicalop.PhysicalTableScan{}, physicalop.PhysicalIndexScan{}, physicalop.PhysicalSelection{},
 		physicalop.PhysicalProjection{}, physicalop.PhysicalTopN{}, physicalop.PhysicalStreamAgg{},
 		physicalop.PhysicalHashAgg{}, physicalop.PhysicalHashJoin{}, physicalop.PhysicalMergeJoin{}, physicalop.PhysicalTableReader{},
-		physicalop.PhysicalIndexReader{}, physicalop.PointGetPlan{}}
+		physicalop.PhysicalIndexReader{}, physicalop.PointGetPlan{},
+		physicalop.BatchPointGetPlan{}, physicalop.PhysicalLimit{}}
 
 	// todo: add all back with physicalop.x
 	// var structures = []any{
-	//		core.BatchPointGetPlan{}, core.PhysicalLimit{},
+	//
 	//		physicalop.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{},
 	//      core.PhysicalIndexMergeReader{},
 	//		core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
@@ -121,9 +122,12 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			"[]*expression.Constant", "[]*expression.ScalarFunction":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
 			c.write("cloned.%v = utilfuncp.Clone%vForPlanCache(op.%v, nil)", f.Name, structureName, f.Name)
-		case "[][]*expression.Constant", "[][]expression.Expression":
+		case "[][]expression.Expression":
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = utilfuncp.Clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
+		case "[][]*expression.Constant":
+			structureName := strings.Split(f.Type.String(), ".")[1]
+			c.write("cloned.%v = Clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
 		case "[]*ranger.Range", "[]*util.ByItems", "[]model.CIStr", "[]property.SortItem",
 			"[]types.Datum", "[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
