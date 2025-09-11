@@ -50,7 +50,7 @@ import (
 
 func TestAnalyzeBuildSucc(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("next-gen cannot support analyze version 1")
+		t.Skip("the next-gen kernel does not support analyze version 1")
 	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

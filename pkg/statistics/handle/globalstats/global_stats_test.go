@@ -868,7 +868,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 	for i, version := range []string{"1", "2"} {
 		if i == 0 && kerneltype.IsNextGen() {
-			t.Log("next gen cannot support the analyze version 1")
+			t.Log("the next-gen kernel does not support analyze version 1")
 			continue
 		}
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
