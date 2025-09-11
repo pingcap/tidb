@@ -1153,6 +1153,9 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan,
 	for _, explainedCTE := range flat.CTEs {
 		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan))
 	}
+	for _, subQ := range flat.ScalarSubQueries {
+		res.Subqueries = append(res.Subqueries, binaryOpTreeFromFlatOps(explainCtx, subQ, briefBinaryPlan))
+	}
 	return res
 }
 
