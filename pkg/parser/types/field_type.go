@@ -60,6 +60,7 @@ type FieldType struct {
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
+<<<<<<< HEAD
 // NewFieldType returns a FieldType,
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
@@ -67,6 +68,44 @@ func NewFieldType(tp byte) *FieldType {
 		tp:      tp,
 		flen:    UnspecifiedLength,
 		decimal: UnspecifiedLength,
+=======
+// DeepCopy returns a deep copy of the FieldType.
+func (ft *FieldType) DeepCopy() *FieldType {
+	if ft == nil {
+		return nil
+	}
+	ret := &FieldType{
+		tp:      ft.tp,
+		flag:    ft.flag,
+		flen:    ft.flen,
+		decimal: ft.decimal,
+		charset: ft.charset,
+		collate: ft.collate,
+		array:   ft.array,
+	}
+	if len(ft.elems) > 0 {
+		ret.elems = make([]string, len(ft.elems))
+		copy(ret.elems, ft.elems)
+	}
+	if len(ft.elemsIsBinaryLit) > 0 {
+		ret.elemsIsBinaryLit = make([]bool, len(ft.elemsIsBinaryLit))
+		copy(ret.elemsIsBinaryLit, ft.elemsIsBinaryLit)
+	}
+	return ret
+}
+
+// Hash64 implements the cascades/base.Hasher.<0th> interface.
+func (ft *FieldType) Hash64(h IHasher) {
+	h.HashByte(ft.tp)
+	h.HashUint64(uint64(ft.flag))
+	h.HashInt(ft.flen)
+	h.HashInt(ft.decimal)
+	h.HashString(ft.charset)
+	h.HashString(ft.collate)
+	h.HashInt(len(ft.elems))
+	for _, elem := range ft.elems {
+		h.HashString(elem)
+>>>>>>> 73ee7e2d2b0 (expression: fix unexpected modification of shared return type of cast expr (#63072))
 	}
 }
 
