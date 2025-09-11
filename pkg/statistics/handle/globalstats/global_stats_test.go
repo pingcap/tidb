@@ -866,6 +866,10 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("use test")
 
 	for i, version := range []string{"1", "2"} {
+		if i == 0 {
+			t.Log("next gen cannot support the analyze version 1")
+			continue
+		}
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
 
 		// analyze table t
