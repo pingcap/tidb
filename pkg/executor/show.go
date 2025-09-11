@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -797,6 +798,22 @@ func (e *ShowExec) fetchShowIndex() error {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
+	// helper: get NDV from cache first, then directly from storage without polluting cache
+	getNDV := func(colInfo *model.ColumnInfo) int64 {
+		if colInfo == nil {
+			return 0
+		}
+		if colStats := statsTbl.GetCol(colInfo.ID); colStats != nil && !statsTbl.Pseudo {
+			return colStats.NDV
+		}
+		item := model.TableItemID{TableID: tb.Meta().ID, ID: colInfo.ID, IsIndex: false}
+		hg, _, err := statsstorage.HistMetaFromStorageWithHighPriority(e.Ctx(), &item, colInfo)
+		if err == nil && hg != nil {
+			return hg.NDV
+		}
+		return 0
+	}
+
 	if tb.Meta().PKIsHandle {
 		var pkCol *table.Column
 		for _, col := range tb.Cols() {
@@ -805,11 +822,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				break
 			}
 		}
-		colStats := statsTbl.GetCol(pkCol.ID)
-		var ndv int64
-		if colStats != nil {
-			ndv = colStats.NDV
-		}
+		// compute NDV w/o polluting cache
+		pkColInfo := tb.Meta().GetColumnByID(pkCol.ID)
+		ndv := getNDV(pkColInfo)
 		e.appendRow([]any{
 			tb.Meta().Name.O, // Table
 			0,                // Non_unique
@@ -874,11 +889,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				expression = tblCol.GeneratedExprString
 			}
 
-			colStats := statsTbl.GetCol(tblCol.ID)
-			var ndv int64
-			if colStats != nil {
-				ndv = colStats.NDV
-			}
+			ndv := getNDV(tblCol)
 
 			e.appendRow([]any{
 				tb.Meta().Name.O,       // Table
