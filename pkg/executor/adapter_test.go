@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -114,7 +116,7 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	goCtx := context.WithValue(ctx.GoCtx(), util.ExecDetailsKey, tikvExecDetail)
 
 	// only require a subset of fields
-	sessVars.SlowLogRules = &variable.SlowLogRules{
+	sessVars.SlowLogRules = &slowlogrule.SlowLogRules{
 		AllConditionFields: map[string]struct{}{
 			strings.ToLower(variable.SlowLogConnIDStr):  {},
 			strings.ToLower(variable.SlowLogDBStr):      {},
@@ -147,4 +149,180 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.Equal(t, sessVars.StmtCtx.ExecSuccess, items.Succ)
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogKVTotal)].Match(ctx.GetSessionVars(), items, time.Duration(tikvExecDetail.WaitKVRespDuration).Seconds()))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPDTotal)].Match(ctx.GetSessionVars(), items, time.Duration(tikvExecDetail.WaitPDRespDuration).Seconds()))
+}
+
+func TestShouldWriteSlowLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	baseItems := &variable.SlowQueryLogItems{
+		Succ:              true,
+		MemMax:            200,
+		ResourceGroupName: "testRG",
+	}
+
+	t.Run("no rules return false", func(t *testing.T) {
+		// default value
+		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
+			testkit.Rows("tidb_slow_log_rules query_time:0.3"),
+		)
+		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
+			testkit.Rows("query_time:0.3"),
+		)
+		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
+			testkit.Rows("query_time:0.3"),
+		)
+
+		tk.MustExec(`set session tidb_slow_log_rules=""`)
+		tk.MustExec(`set global tidb_slow_log_rules=""`)
+		seVars := tk.Session().GetSessionVars()
+		require.False(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+
+		// show
+		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
+			testkit.Rows("tidb_slow_log_rules "),
+		)
+		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
+			testkit.Rows(""),
+		)
+		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
+			testkit.Rows(""),
+		)
+	})
+
+	t.Run("session rules match", func(t *testing.T) {
+		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:testRG"`)
+		seVars := tk.Session().GetSessionVars()
+		require.True(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+
+		// show
+		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
+			testkit.Rows("tidb_slow_log_rules resource_group:testRG"),
+		)
+		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
+			testkit.Rows("resource_group:testRG"),
+		)
+		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
+			testkit.Rows(""),
+		)
+	})
+
+	t.Run("session rules not match, global ConnID rules match", func(t *testing.T) {
+		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:otherRG"`)
+		connID := tk.Session().GetSessionVars().ConnectionID
+		tk.MustExec(`set global tidb_slow_log_rules="Conn_id:` +
+			fmt.Sprintf("%d", connID) + `,Resource_group:testRG"`)
+		seVars := tk.Session().GetSessionVars()
+		require.True(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+
+		// show
+		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
+			testkit.Rows("tidb_slow_log_rules resource_group:otherRG"),
+		)
+		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
+			testkit.Rows("resource_group:otherRG"),
+		)
+		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
+			testkit.Rows(fmt.Sprintf("conn_id:%d,resource_group:testRG", connID)),
+		)
+	})
+
+	t.Run("session rules not match, global ConnID rules match", func(t *testing.T) {
+		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:otherRG"`)
+		connID := tk.Session().GetSessionVars().ConnectionID
+		tk.MustExec(`set global tidb_slow_log_rules="Conn_id:` +
+			fmt.Sprintf("%d", connID) + `,Resource_group:testRG"`)
+		seVars := tk.Session().GetSessionVars()
+		require.True(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+
+		// show
+		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
+			testkit.Rows("tidb_slow_log_rules resource_group:otherRG"),
+		)
+		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
+			testkit.Rows("resource_group:otherRG"),
+		)
+		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
+			testkit.Rows(fmt.Sprintf("conn_id:%d,resource_group:testRG", connID)),
+		)
+	})
+
+	t.Run("session not match, global ConnID not match, global unsetConnID match", func(t *testing.T) {
+		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:otherRG"`)
+		tk.MustExec(`set global tidb_slow_log_rules="Resource_group:testRG"`)
+		seVars := tk.Session().GetSessionVars()
+		require.True(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+
+		// show
+		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
+			testkit.Rows("tidb_slow_log_rules resource_group:otherRG"),
+		)
+		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
+			testkit.Rows("resource_group:otherRG"),
+		)
+		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
+			testkit.Rows("resource_group:testRG"),
+		)
+	})
+
+	t.Run("all rules not match return false", func(t *testing.T) {
+		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:otherRG2"`)
+		tk.MustExec(`set global tidb_slow_log_rules="Resource_group:notmatch"`)
+		seVars := tk.Session().GetSessionVars()
+		require.False(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+
+		// show
+		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
+			testkit.Rows("tidb_slow_log_rules resource_group:otherRG2"),
+		)
+		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
+			testkit.Rows("resource_group:otherRG2"),
+		)
+		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
+			testkit.Rows("resource_group:notmatch"),
+		)
+	})
+
+	t.Run("multiple rules one matches", func(t *testing.T) {
+		tk.MustExec(`set session tidb_slow_log_rules="Resource_group:otherRG"`)
+		connID := tk.Session().GetSessionVars().ConnectionID
+		tk.MustExec(`set global tidb_slow_log_rules="Conn_id:` +
+			fmt.Sprintf("%d", connID) + `,Resource_group:testRG;Succ:false"`)
+		seVars := tk.Session().GetSessionVars()
+		require.True(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+
+		// show
+		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
+			testkit.Rows("tidb_slow_log_rules resource_group:otherRG"),
+		)
+		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
+			testkit.Rows("resource_group:otherRG"),
+		)
+		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
+			// TODO: unstable test case
+			testkit.Rows(fmt.Sprintf("conn_id:%d,resource_group:testRG;succ:false", connID)),
+		)
+	})
+
+	t.Run("multiple rules with complex conditions, one matches", func(t *testing.T) {
+		seVars := tk.Session().GetSessionVars()
+		tk.MustExec(`set session tidb_slow_log_rules="Succ:false, Query_Time:1.5276, Resource_group:rg1, Exec_retry_count:10, DB:db1"`)
+		gConditions := fmt.Sprintf(`"Conn_ID:%d, Exec_retry_count:8, Session_alias:sessA, PD_total:5.123, Succ:false, KV_total:12.123;
+			Exec_retry_count:8, Session_alias:sessA, PD_total:5.123, Succ:false, Resource_group:rg1;
+			Total_keys:54321, DB:dbA, PD_total:5.123, Is_internal:false, Resource_group:rg2"`, seVars.ConnectionID)
+		tk.MustExec(`set global tidb_slow_log_rules=` + gConditions)
+		require.False(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+
+		tikvExecDetail := util.ExecDetails{
+			WaitPDRespDuration: (6 * time.Second).Nanoseconds(),
+		}
+		baseItems = &variable.SlowQueryLogItems{
+			Succ:              false,
+			ResourceGroupName: "rg1",
+			ExecRetryCount:    8,
+			KVExecDetail:      &tikvExecDetail,
+		}
+		seVars.SessionAlias = "sessA"
+		require.True(t, executor.ShouldWriteSlowLog(seVars, baseItems))
+	})
 }

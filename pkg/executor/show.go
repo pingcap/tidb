@@ -991,6 +991,11 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
 			continue
 		}
+		if e.Ctx().GetSessionVars().SlowLogRules != nil && len(e.Ctx().GetSessionVars().SlowLogRules.Rules) > 0 {
+			logutil.BgLogger().Warn(fmt.Sprintf("yyy-----------------------------------------, fetchShowVariables rules:%#v", e.Ctx().GetSessionVars().SlowLogRules.Rules[0]))
+		} else {
+			logutil.BgLogger().Warn("yyy-----------------------------------------, fetchShowVariables rules is empty")
+		}
 		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
 		if err != nil {
 			return errors.Trace(err)

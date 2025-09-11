@@ -17,12 +17,16 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -39,13 +43,31 @@ func init() {
 	}
 }
 
+func mergeConditionFields(dst, src map[string]struct{}) {
+	for k := range src {
+		dst[k] = struct{}{}
+	}
+}
+
 // PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by current session's SlowLogRules.
 // These pre-collected fields are later used for matching SQL execution details against the rules.
 func PrepareSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionVars) *variable.SlowQueryLogItems {
 	items := &variable.SlowQueryLogItems{}
-	for field := range seVars.SlowLogRules.AllConditionFields {
-		gs := variable.SlowLogRuleFieldAccessors[field]
-		if gs.Setter != nil {
+
+	allConditionFields := make(map[string]struct{})
+	if seVars.SlowLogRules != nil {
+		mergeConditionFields(allConditionFields, seVars.SlowLogRules.AllConditionFields)
+	}
+	globalRules := vardef.GlobalSlowLogRules.Load().RulesMap
+	if specificSessionRules, ok := globalRules[int64(seVars.ConnectionID)]; ok {
+		mergeConditionFields(allConditionFields, specificSessionRules.AllConditionFields)
+	}
+	if clusterRules, ok := globalRules[variable.UnsetConnID]; ok {
+		mergeConditionFields(allConditionFields, clusterRules.AllConditionFields)
+	}
+
+	for field := range allConditionFields {
+		if gs, ok := variable.SlowLogRuleFieldAccessors[field]; ok && gs.Setter != nil {
 			gs.Setter(ctx, seVars, items)
 		}
 	}
@@ -61,24 +83,64 @@ func PrepareSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionVa
 //   - Conditions inside a rule are combined with AND: all conditions must be met for that rule.
 //
 // Returns true if any rule matches, false otherwise.
-func Match(seVars *variable.SessionVars, items *variable.SlowQueryLogItems) bool {
-	rules := seVars.SlowLogRules
+func Match(seVars *variable.SessionVars, items *variable.SlowQueryLogItems, rules *slowlogrule.SlowLogRules) bool {
+	if rules == nil {
+		return false
+	}
+
 	// Or logical relationship
 	for _, rule := range rules.Rules {
-		matched := true
+		match := true
 
 		// And logical relationship
 		for _, condition := range rule.Conditions {
 			accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(condition.Field)]
 			if ok := accessor.Match(seVars, items, condition.Threshold); !ok {
-				matched = false
+				match = false
+				logutil.BgLogger().Warn(fmt.Sprintf("match ---------------------------------K:%v, V:%v, match:%v", strings.ToLower(condition.Field), condition.Threshold, match))
 				break
 			}
 		}
-		if matched {
-			return matched
+
+		if match {
+			return true
 		}
 	}
+
+	return false
+}
+
+// ShouldWriteSlowLog determines whether the current query should be written to the slow log.
+// The decision is based on the following rule hierarchy:
+//
+// 1. Session-level rules: if defined, they take precedence.
+// 2. Global-level rules:
+//   - If a rule specifies a ConnID that matches the current session, it is applied.
+//   - If a rule does not specify ConnID (global default), it is also applied.
+//
+// 3. All applicable rules are combined with logical OR.
+//
+// Returns true if any rule matches, otherwise false.
+func ShouldWriteSlowLog(seVars *variable.SessionVars, items *variable.SlowQueryLogItems) bool {
+	if isMatched := Match(seVars, items, seVars.SlowLogRules); isMatched {
+		logutil.BgLogger().Warn("xx----------------------------------------------- true 00")
+		return isMatched
+	}
+
+	globalRules := vardef.GlobalSlowLogRules.Load().RulesMap
+	if specificSessionRules, ok := globalRules[int64(seVars.ConnectionID)]; ok {
+		if isMatched := Match(seVars, items, specificSessionRules); isMatched {
+			logutil.BgLogger().Warn("xx----------------------------------------------- true 11")
+			return isMatched
+		}
+	}
+	if clusterRules, ok := globalRules[variable.UnsetConnID]; ok {
+		if isMatched := Match(seVars, items, clusterRules); isMatched {
+			logutil.BgLogger().Warn("xx----------------------------------------------- true 22")
+			return isMatched
+		}
+	}
+	logutil.BgLogger().Warn("xx----------------------------------------------- false")
 
 	return false
 }
@@ -92,8 +154,10 @@ func CompleteSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionV
 	}
 
 	for field, sg := range variable.SlowLogRuleFieldAccessors {
-		if _, ok := seVars.SlowLogRules.AllConditionFields[field]; ok {
-			continue
+		if seVars.SlowLogRules != nil {
+			if _, ok := seVars.SlowLogRules.AllConditionFields[field]; ok {
+				continue
+			}
 		}
 
 		if sg.Setter != nil {
@@ -104,6 +168,8 @@ func CompleteSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionV
 
 // SetSlowLogItems fills the remaining fields of SlowQueryLogItems after SQL execution.
 func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *variable.SlowQueryLogItems) {
+	logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------------------------------ SetSlowLogItems, connID:%d",
+		a.Ctx.GetSessionVars().ConnectionID))
 	CompleteSlowLogItemsForRules(a.GoCtx, a.Ctx.GetSessionVars(), items)
 
 	sessVars := a.Ctx.GetSessionVars()
