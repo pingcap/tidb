@@ -257,13 +257,73 @@ func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 func TestIssue53872(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table test(id int, col int)`)
 	tk.MustExec(`prepare stmt from "select id, ? as col1 from test where col=? group by id,col1"`)
 	tk.MustExec(`set @a=100, @b=100`)
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // no error
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+	tk.MustExec(`create table t1(id bigint primary key, name varchar(100));`)
+	tk.MustExec(`INSERT INTO t1 (id, name) VALUES (1, 'Alice'),(2, 'Bob'),(3, 'Charlie'),(4, 'David'),(5, 'Eve'),(6, 'Frank'),(7, 'Grace'),(8, 'Hannah'),(9, 'Ivy'),(10, 'Jack'),(11, null),(12, 'Alice');`)
+	tk.MustExec(`prepare stmt from 'select name, ? from t1 group by name, ? order by name';`)
+	tk.MustExec(`set @a=1, @b=0;`)
+	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
+		`<nil> 1`, `Alice 1`, `Bob 1`, `Charlie 1`, `David 1`, `Eve 1`, `Frank 1`, `Grace 1`, `Hannah 1`, `Ivy 1`, `Jack 1`))
+	tk.MustExec(`set @a="0", @b="0";`)
+	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
+		`<nil> 0`, `Alice 0`, `Bob 0`, `Charlie 0`, `David 0`, `Eve 0`, `Frank 0`, `Grace 0`, `Hannah 0`, `Ivy 0`, `Jack 0`))
+	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
+		`<nil> 0`, `Alice 0`, `Bob 0`, `Charlie 0`, `David 0`, `Eve 0`, `Frank 0`, `Grace 0`, `Hannah 0`, `Ivy 0`, `Jack 0`))
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		`Sort_5 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 test.t1.name N/A N/A`,
+		`└─Projection_7 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 test.t1.name, 0->Column#3 N/A N/A`,
+		`  └─HashAgg_16 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 group by:test.t1.name, funcs:firstrow(test.t1.name)->test.t1.name N/A N/A`,
+		`    └─TableReader_17 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 data:HashAgg_9 N/A N/A`,
+		`      └─HashAgg_9 8000.00 0 cop[tikv]   group by:test.t1.name,  N/A N/A`,
+		`        └─TableFullScan_15 10000.00 0 cop[tikv] table:t1  keep order:false, stats:pseudo N/A N/A`))
+	tk.MustExec(`set @a="abc", @b="abc";`)
+	tk.MustQuery(`execute stmt using @a, @b;`).Check(testkit.Rows(
+		`<nil> abc`, `Alice abc`, `Bob abc`, `Charlie abc`, `David abc`, `Eve abc`, `Frank abc`, `Grace abc`, `Hannah abc`, `Ivy abc`, `Jack abc`))
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		`Sort_5 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 test.t1.name N/A N/A`,
+		`└─Projection_7 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 test.t1.name, abc->Column#3 N/A N/A`,
+		`  └─HashAgg_16 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 group by:test.t1.name, funcs:firstrow(test.t1.name)->test.t1.name N/A N/A`,
+		`    └─TableReader_17 8000.00 0 root  time:0s, open:0s, close:0s, loops:0 data:HashAgg_9 N/A N/A`,
+		`      └─HashAgg_9 8000.00 0 cop[tikv]   group by:test.t1.name,  N/A N/A`,
+		`        └─TableFullScan_15 10000.00 0 cop[tikv] table:t1  keep order:false, stats:pseudo N/A N/A`))
+	tk.MustQuery(`execute stmt using @a, @b;`)
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		`Warning 1105 skip prepared plan-cache: query has 'group by ?' is un-cacheable`,
+		`Warning 1292 Truncated incorrect DOUBLE value: 'abc'`))
+	// with agg
+	tk.MustExec(`prepare stmt from 'select count(*),name from t1 group by name, ? order by name';`)
+	tk.MustExec(`set @a="abc";`)
+	tk.MustQuery(`execute stmt using @a;`).Check(testkit.Rows(
+		`1 <nil>`, `2 Alice`, `1 Bob`, `1 Charlie`, `1 David`,
+		`1 Eve`, `1 Frank`, `1 Grace`, `1 Hannah`, `1 Ivy`, `1 Jack`))
+	// this is incompatible with sql_mode=only_full_group_by
+	tk.MustGetErrCode(`prepare stmt from 'select name, ? from t1 group by ? order by name';`, 1055)
+	tk.MustExec(`prepare stmt from 'select name from t1 group by name,? order by name'`)
+	tk.MustExec(`set @a=1;`)
+	tk.MustQuery(`execute stmt using @a;`).Check(testkit.Rows(
+		`<nil>`, `Alice`, `Bob`, `Charlie`, `David`, `Eve`, `Frank`, `Grace`, `Hannah`, `Ivy`, `Jack`))
+	tk.MustExec(`set @a=2;`)
+	tk.MustExecToErr(`execute stmt using @a;`) //  Unknown column '2' in 'group statement'
+	tk.MustExec(`set @a=-1;`)
+	tk.MustQuery(`execute stmt using @a;`).Check(testkit.Rows(
+		`<nil>`, `Alice`, `Bob`, `Charlie`, `David`, `Eve`, `Frank`, `Grace`, `Hannah`, `Ivy`, `Jack`))
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows(
+		`<nil>`, `Alice`, `Bob`, `Charlie`, `David`, `Eve`, `Frank`, `Grace`, `Hannah`, `Ivy`, `Jack`))
+	tk.MustExec(`set @a=0;`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows(
+		`<nil>`, `Alice`, `Bob`, `Charlie`, `David`, `Eve`, `Frank`, `Grace`, `Hannah`, `Ivy`, `Jack`))
 }
 
 func TestIssue38269(t *testing.T) {
