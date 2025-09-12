@@ -1429,6 +1429,10 @@ func RunStreamRestore(
 	log.Info("captured restore start timestamp for blocklist",
 		zap.Uint64("restoreStartTS", restoreStartTS))
 
+	if err = ensureTiKVConfigFromFile(ctx, g, mgr, cfg.TikvRestoreConfigOverridesFile); err != nil {
+		return errors.Trace(err)
+	}
+
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
 		logStorage := cfg.Config.Storage
@@ -1463,6 +1467,9 @@ func RunStreamRestore(
 		ddlFiles:            ddlFiles,
 	}
 	if err := restoreStream(ctx, mgr, g, logRestoreConfig); err != nil {
+		return errors.Trace(err)
+	}
+	if err = ensureTiKVConfigFromFile(ctx, g, mgr, cfg.TikvPostRestoreConfigOverridesFile); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
