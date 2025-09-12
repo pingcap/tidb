@@ -19,13 +19,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -227,9 +227,9 @@ func TestIssue32632(t *testing.T) {
 		tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 		tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-		statsTbl1 := h.GetTableStats(tbl1.Meta())
+		statsTbl1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
 		statsTbl1.RealtimeCount = 800000
-		statsTbl2 := h.GetTableStats(tbl2.Meta())
+		statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 		statsTbl2.RealtimeCount = 10000
 		var input []string
 		var output []struct {
@@ -251,8 +251,7 @@ func TestIssue32632(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableScan(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -314,14 +313,14 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				testKit.MustExec("set session tidb_redact_log=off")
+				testKit.MustExec("set global tidb_redact_log=off")
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-				testKit.MustExec("set session tidb_redact_log=on")
+				testKit.MustExec("set global tidb_redact_log=on")
 				output[i].Redact = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 			})
-			testKit.MustExec("set session tidb_redact_log=off")
+			testKit.MustExec("set global tidb_redact_log=off")
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-			testKit.MustExec("set session tidb_redact_log=on")
+			testKit.MustExec("set global tidb_redact_log=on")
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Redact...))
 		}
 	})
@@ -439,15 +438,15 @@ func TestIssue52023(t *testing.T) {
 		testKit.MustQuery(`select * from t where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
 		testKit.MustQuery(`explain select * from t where a = 0x5`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:P4, clustered index:PRIMARY(a) "))
 		testKit.MustQuery(`explain format='brief' select * from t where a = 5`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:P4 data:Selection",
+			"TableReader 1.00 root partition:all data:Selection",
 			"└─Selection 1.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 5)",
 			"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 		testKit.MustQuery(`explain format='brief' select * from t where a IN (5,55)`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:P4 data:Selection",
+			"TableReader 1.00 root partition:all data:Selection",
 			"└─Selection 1.00 cop[tikv]  or(eq(cast(test.t.a, double BINARY), 5), eq(cast(test.t.a, double BINARY), 55))",
 			"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 		testKit.MustQuery(`explain format='brief' select * from t where a IN (0x5,55)`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:P4 data:Selection",
+			"TableReader 1.00 root partition:all data:Selection",
 			"└─Selection 1.00 cop[tikv]  or(eq(test.t.a, \"0x05\"), eq(cast(test.t.a, double BINARY), 55))",
 			"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 	})
@@ -521,5 +520,32 @@ func TestIssue56915(t *testing.T) {
 			"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
 			"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 		))
+	})
+}
+
+func TestIssue63290(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t2 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec("create table t3 (a int, b int, c int, key(a), key(b))")
+		tk.MustExec(`insert into t1 values (1, 1, 1)`)
+		tk.MustExec(`insert into t3 values (1, 1, 1)`)
+		tk.MustExec(`analyze table t1, t2, t3`)
+
+		// Cartesian Join t1 and t3 first, then join t2.
+		tk.MustQuery(`explain format='plan_tree' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
+			`Projection root  1->Column#13`,
+			`└─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t3.b, test.t2.b)`,
+			`  ├─HashJoin(Build) root  CARTESIAN inner join`,
+			`  │ ├─IndexReader(Build) root  index:IndexFullScan`,
+			`  │ │ └─IndexFullScan cop[tikv] table:t3, index:b(b) keep order:false`,
+			`  │ └─IndexReader(Probe) root  index:IndexFullScan`,
+			`  │   └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false`,
+			`  └─IndexLookUp(Probe) root  `,
+			`    ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))`,
+			`    │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo`,
+			`    └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))`,
+			`      └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
 	})
 }

@@ -118,19 +118,6 @@ func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option 
 	return utilfuncp.GetPlanCostVer14PhysicalProjection(p, taskType, option)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalProjection)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.Exprs = utilfuncp.CloneExpressionsForPlanCache(p.Exprs, nil)
-	return cloned, true
-}
-
 // GetPlanCostVer2 implements PhysicalPlan interface.
 func (p *PhysicalProjection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalProjection(p, taskType, option, isChildOfINL...)

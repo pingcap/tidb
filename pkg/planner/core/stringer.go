@@ -99,7 +99,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, c := range x.Children() {
 			strs, idxs = toString(c, strs, idxs)
 		}
-	case *PhysicalExchangeReceiver: // do nothing
+	case *physicalop.PhysicalExchangeReceiver: // do nothing
 	case base.PhysicalPlan:
 		if needIncludeChildrenString(in) {
 			idxs = append(idxs, len(strs))
@@ -114,11 +114,11 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case *CheckTable:
 		str = "CheckTable"
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -134,7 +134,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalMergeJoin:
+	case *physicalop.PhysicalMergeJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -142,19 +142,19 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		idxs = idxs[:last]
 		id := "MergeJoin"
 		switch x.JoinType {
-		case logicalop.SemiJoin:
+		case base.SemiJoin:
 			id = "MergeSemiJoin"
-		case logicalop.AntiSemiJoin:
+		case base.AntiSemiJoin:
 			id = "MergeAntiSemiJoin"
-		case logicalop.LeftOuterSemiJoin:
+		case base.LeftOuterSemiJoin:
 			id = "MergeLeftOuterSemiJoin"
-		case logicalop.AntiLeftOuterSemiJoin:
+		case base.AntiLeftOuterSemiJoin:
 			id = "MergeAntiLeftOuterSemiJoin"
-		case logicalop.LeftOuterJoin:
+		case base.LeftOuterJoin:
 			id = "MergeLeftOuterJoin"
-		case logicalop.RightOuterJoin:
+		case base.RightOuterJoin:
 			id = "MergeRightOuterJoin"
-		case logicalop.InnerJoin:
+		case base.InnerJoin:
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
@@ -163,7 +163,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.RightJoinKeys[i].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *logicalop.LogicalApply, *PhysicalApply:
+	case *logicalop.LogicalApply, *physicalop.PhysicalApply:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -174,7 +174,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "MaxOneRow"
 	case *logicalop.LogicalLimit, *physicalop.PhysicalLimit:
 		str = "Limit"
-	case *PhysicalLock, *logicalop.LogicalLock:
+	case *physicalop.PhysicalLock, *logicalop.LogicalLock:
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
@@ -183,12 +183,12 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		if pl := in.(*logicalop.LogicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
-	case *PhysicalShow:
+	case *physicalop.PhysicalShow:
 		str = "Show"
-		if pl := in.(*PhysicalShow); pl.Extractor != nil {
+		if pl := in.(*physicalop.PhysicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
-	case *logicalop.LogicalShowDDLJobs, *PhysicalShowDDLJobs:
+	case *logicalop.LogicalShowDDLJobs, *physicalop.PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
 	case *logicalop.LogicalSort, *physicalop.PhysicalSort:
 		str = "Sort"
@@ -247,9 +247,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *logicalop.LogicalTableDual, *physicalop.PhysicalTableDual:
 		str = "Dual"
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		str = "HashAgg"
-	case *PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		str = "StreamAgg"
 	case *logicalop.LogicalAggregation:
 		str = "Aggr("
@@ -260,21 +260,21 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 		str += ")"
-	case *PhysicalTableReader:
-		str = fmt.Sprintf("TableReader(%s)", ToString(x.tablePlan))
-	case *PhysicalIndexReader:
-		str = fmt.Sprintf("IndexReader(%s)", ToString(x.indexPlan))
-	case *PhysicalIndexLookUpReader:
-		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))
-	case *PhysicalIndexMergeReader:
+	case *physicalop.PhysicalTableReader:
+		str = fmt.Sprintf("TableReader(%s)", ToString(x.TablePlan))
+	case *physicalop.PhysicalIndexReader:
+		str = fmt.Sprintf("IndexReader(%s)", ToString(x.IndexPlan))
+	case *physicalop.PhysicalIndexLookUpReader:
+		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.IndexPlan), ToString(x.TablePlan))
+	case *physicalop.PhysicalIndexMergeReader:
 		str = "IndexMergeReader(PartialPlans->["
-		for i, paritalPlan := range x.partialPlans {
+		for i, paritalPlan := range x.PartialPlansRaw {
 			if i > 0 {
 				str += ", "
 			}
 			str += ToString(paritalPlan)
 		}
-		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
+		str += "], TablePlan->" + ToString(x.TablePlan) + ")"
 	case *physicalop.PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *physicalop.PhysicalIndexJoin:
@@ -289,7 +289,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.InnerJoinKeys[i]
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -301,7 +301,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.InnerJoinKeys[i]
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -330,46 +330,46 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}
 		str = str + strings.Join(children, ",") + "}"
-	case *Update:
+	case *physicalop.Update:
 		str = fmt.Sprintf("%s->Update", ToString(x.SelectPlan))
-	case *Delete:
+	case *physicalop.Delete:
 		str = fmt.Sprintf("%s->Delete", ToString(x.SelectPlan))
-	case *Insert:
+	case *physicalop.Insert:
 		str = "Insert"
 		if x.SelectPlan != nil {
 			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
 		}
 	case *logicalop.LogicalWindow:
 		buffer := bytes.NewBufferString("")
-		formatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
+		physicalop.FormatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
 		str = fmt.Sprintf("Window(%s)", buffer.String())
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
-	case *PhysicalShuffle:
+	case *physicalop.PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
-	case *PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		str = fmt.Sprintf("PartitionReceiverStub(%s)", x.ExplainInfo())
-	case *PointGetPlan:
+	case *physicalop.PointGetPlan:
 		str = "PointGet("
 		if x.IndexInfo != nil {
 			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handle)
 		}
-	case *BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		str = "BatchPointGet("
 		if x.IndexInfo != nil {
 			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
 		}
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		str = "Recv("
 		for _, task := range x.Tasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
 		str += ")"
-	case *PhysicalExchangeSender:
+	case *physicalop.PhysicalExchangeSender:
 		str = "Send("
 		for _, task := range x.TargetTasks {
 			str += fmt.Sprintf("%d, ", task.ID)
@@ -382,7 +382,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			str += ")"
 		}
 		str += ")"
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		str = "CTEReader("
 		str += fmt.Sprintf("%v", x.CTE.IDForStorage)
 		str += ")"

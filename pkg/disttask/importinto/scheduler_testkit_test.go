@@ -24,6 +24,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -50,12 +51,12 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
 
 	// create job
 	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 123)
+		"root", "", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
@@ -86,14 +87,13 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	}
 	manager, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto,
-		1, "", 1, proto.ExtraParams{}, bs)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 1, proto.ExtraParams{}, bs)
 	require.NoError(t, err)
 	task.ID = taskID
 
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(false)
+	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(manager, store), store)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -138,7 +138,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// create another job, start it, and fail it.
 	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 123)
+		"root", "", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
 	logicalPlan.JobID = jobID
 	bs, err = logicalPlan.ToTaskMeta()
@@ -155,7 +155,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// create another job, start it, and cancel it.
 	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 123)
+		"root", "", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
 	logicalPlan.JobID = jobID
 	bs, err = logicalPlan.ToTaskMeta()
@@ -192,6 +192,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	// we test import task management in this case.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
+	keyspace := store.GetKeyspace()
+	scope := handle.GetTargetScope()
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return tk.Session(), nil
@@ -201,13 +203,13 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port", proto.NodeResourceForTest)
-	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", scope))
 
 	// create job
 	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 123)
+		"root", "", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
@@ -249,13 +251,13 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, keyspace, 1, scope, 1, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
 	// to encode-sort stage, job should be running
 	d := sch.MockScheduler(task)
-	ext := importinto.NewImportSchedulerForTest(true)
+	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(manager, store), store)
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)

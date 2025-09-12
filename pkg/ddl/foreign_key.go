@@ -274,7 +274,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 		if refCol == nil {
 			return infoschema.ErrForeignKeyNoColumnInParent.GenWithStackByArgs(fkInfo.RefCols[i], fkInfo.Name, fkInfo.RefTable)
 		}
-		if refCol.IsGenerated() && !refCol.GeneratedStored {
+		if refCol.IsVirtualGenerated() {
 			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name, fkInfo.RefCols[i])
 		}
 		col := model.FindColumnInfo(tblInfo.Columns, fkInfo.Cols[i].L)
@@ -309,19 +309,16 @@ func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName 
 	for _, fkInfo := range tbInfo.ForeignKeys {
 		for i, col := range fkInfo.Cols {
 			if col.L == originalCol.Name.L {
-				if !is.TableExists(fkInfo.RefSchema, fkInfo.RefTable) {
-					continue
-				}
 				referTable, err := is.TableByName(context.Background(), fkInfo.RefSchema, fkInfo.RefTable)
 				if err != nil {
 					return err
 				}
 				referCol := model.FindColumnInfo(referTable.Meta().Columns, fkInfo.RefCols[i].L)
 				if referCol == nil {
-					continue
+					return infoschema.ErrColumnNotExists.GenWithStackByArgs(fkInfo.RefCols[i].L, referTable.Meta().Name.L)
 				}
 				if newCol.GetType() != referCol.GetType() {
-					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(originalCol.Name, fkInfo.RefCols[i], fkInfo.Name)
+					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(newCol.Name, fkInfo.RefCols[i], fkInfo.Name)
 				}
 				if !isAcceptableForeignKeyColumnChange(newCol, originalCol, referCol) {
 					return dbterror.ErrForeignKeyColumnCannotChange.GenWithStackByArgs(originalCol.Name, fkInfo.Name)

@@ -24,6 +24,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/store/gcworker",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/store/mockstore/unistore",
         "//pkg/table",
         "//pkg/tablecodec",

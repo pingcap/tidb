@@ -21,6 +21,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
@@ -61,6 +62,7 @@ go_test(
     deps = [
         ":isolation",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/executor",
         "//pkg/expression",
         "//pkg/infoschema",

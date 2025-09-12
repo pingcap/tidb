@@ -159,10 +159,10 @@ func appendDistinctEliminateTraceStep(agg *logicalop.LogicalAggregation, uniqueK
 func CheckCanConvertAggToProj(agg *logicalop.LogicalAggregation) bool {
 	var mayNullSchema *expression.Schema
 	if join, ok := agg.Children()[0].(*logicalop.LogicalJoin); ok {
-		if join.JoinType == logicalop.LeftOuterJoin {
+		if join.JoinType == base.LeftOuterJoin {
 			mayNullSchema = join.Children()[1].Schema()
 		}
-		if join.JoinType == logicalop.RightOuterJoin {
+		if join.JoinType == base.RightOuterJoin {
 			mayNullSchema = join.Children()[0].Schema()
 		}
 		if mayNullSchema == nil {
@@ -170,7 +170,7 @@ func CheckCanConvertAggToProj(agg *logicalop.LogicalAggregation) bool {
 		}
 		// once agg function args has intersection with mayNullSchema, return nil (means elimination fail)
 		for _, fun := range agg.AggFuncs {
-			mayNullCols := expression.ExtractColumnsFromExpressions(nil, fun.Args, func(column *expression.Column) bool {
+			mayNullCols := expression.ExtractColumnsFromExpressions(fun.Args, func(column *expression.Column) bool {
 				// collect may-null cols.
 				return mayNullSchema.Contains(column)
 			})

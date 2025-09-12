@@ -134,13 +134,6 @@ func TestSession(t *testing.T) {
 	require.Equal(t, uint16(0), ss.WarningCount())
 }
 
-func TestAllocMPPID(t *testing.T) {
-	ctx := mock.NewContext()
-	require.Equal(t, int64(1), plannercore.AllocMPPTaskID(ctx))
-	require.Equal(t, int64(2), plannercore.AllocMPPTaskID(ctx))
-	require.Equal(t, int64(3), plannercore.AllocMPPTaskID(ctx))
-}
-
 func TestSlowLogFormat(t *testing.T) {
 	ctx := mock.NewContext()
 
@@ -158,13 +151,13 @@ func TestSlowLogFormat(t *testing.T) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
-		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		ScanDetail: &util.ScanDetail{
-			ProcessedKeys: 20001,
-			TotalKeys:     10000,
-		},
-		DetailsNeedP90: execdetails.DetailsNeedP90{
+		CopExecDetails: execdetails.CopExecDetails{
+			BackoffTime: time.Millisecond,
+			ScanDetail: &util.ScanDetail{
+				ProcessedKeys: 20001,
+				TotalKeys:     10000,
+			},
 			TimeDetail: util.TimeDetail{
 				ProcessTime: time.Second * time.Duration(2),
 				WaitTime:    time.Minute,
@@ -284,6 +277,11 @@ func TestSlowLogFormat(t *testing.T) {
 		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
 		BackoffDuration:    (12 * time.Second).Nanoseconds(),
 	}
+	ruDetails := util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond)
+	seVar.DurationParse = time.Duration(10)
+	seVar.DurationCompile = time.Duration(10)
+	seVar.DurationOptimization = time.Duration(10)
+	seVar.DurationWaitTS = time.Duration(3)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -291,10 +289,6 @@ func TestSlowLogFormat(t *testing.T) {
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
-		TimeParse:         time.Duration(10),
-		TimeCompile:       time.Duration(10),
-		TimeOptimize:      time.Duration(10),
-		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
@@ -319,9 +313,7 @@ func TestSlowLogFormat(t *testing.T) {
 		IsWriteCacheTable: true,
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
-		RRU:               50.0,
-		WRU:               100.56,
-		WaitRUDuration:    134 * time.Millisecond,
+		RUDetails:         ruDetails,
 		StorageKV:         true,
 		StorageMPP:        false,
 	}

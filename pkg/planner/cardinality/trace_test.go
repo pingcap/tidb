@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -197,7 +198,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
-	statsTbl := statsHandle.GetTableStats(tblInfo)
+	statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.EnableOptimizerDebugTrace = true
 
@@ -243,11 +244,14 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		})
 		require.Equal(t, out[i].ResultForV2, res, sql, fmt.Sprintf("For ver2: test#%d", i))
 	}
-
+	if kerneltype.IsNextGen() {
+		t.Log("the next gen kernel only supports ver2 stats")
+		return
+	}
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 20 topn")
 	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
-	statsTbl = statsHandle.GetTableStats(tblInfo)
+	statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 
 	// Test using ver1 stats.
 	stmtCtx = sctx.GetSessionVars().StmtCtx
