@@ -839,10 +839,15 @@ func filterSchemaObjectByRegexp[targetTp any](
 	}
 	filtered := targets[:0]
 	for _, target := range targets {
+		allMatch := true
 		for _, re := range regs {
-			if re.DoMatch(strFn(target)) {
-				filtered = append(filtered, target)
+			if !re.DoMatch(strFn(target)) {
+				allMatch = false
+				break
 			}
+		}
+		if allMatch {
+			filtered = append(filtered, target)
 		}
 	}
 	return filtered
