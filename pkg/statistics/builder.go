@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"math"
 	"sort"
 
@@ -430,12 +431,7 @@ func BuildHistAndTopN(
 
 	// Step1: collect topn from samples using bounded min-heap and track their index ranges
 	boundedMinHeap := generic.NewBoundedMinHeap(numTopN, func(a, b TopNWithRange) int {
-		if a.Count < b.Count {
-			return -1 // min-heap: smaller counts at root
-		} else if a.Count > b.Count {
-			return 1
-		}
-		return 0
+		return cmp.Compare(a.Count, b.Count) // min-heap: smaller counts at root
 	})
 
 	cur, err := getComparedBytes(samples[0].Value)

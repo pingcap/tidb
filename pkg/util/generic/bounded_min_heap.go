@@ -16,12 +16,12 @@ package generic
 
 import (
 	"container/heap"
-	"sort"
+	"slices"
 )
 
 // BoundedMinHeap implements a min-heap for maintaining the best N items efficiently.
-// It keeps the N items with the highest values according to the comparison function.
-// The root of the heap is always the smallest item, making it easy to remove when adding better items.
+// It keeps the N best items according to the comparison function.
+// The root of the heap is always the worst item, making it easy to remove when a better item arrives.
 type BoundedMinHeap[T any] struct {
 	cmpFunc func(T, T) int
 	items   []T
@@ -47,7 +47,7 @@ func NewBoundedMinHeap[T any](maxSize int, cmpFunc func(T, T) int) *BoundedMinHe
 // Len returns the number of items in the heap.
 func (h *BoundedMinHeap[T]) Len() int { return len(h.items) }
 
-// Less compares two items in the heap. We use a min-heap for efficient bounded operations.
+// Less compares two items; the min-heap keeps the worst item at the root.
 func (h *BoundedMinHeap[T]) Less(i, j int) bool {
 	return h.cmpFunc(h.items[i], h.items[j]) < 0
 }
@@ -62,7 +62,7 @@ func (h *BoundedMinHeap[T]) Push(x any) {
 	h.items = append(h.items, x.(T))
 }
 
-// Pop removes and returns the smallest item from the heap.
+// Pop removes and returns the worst item from the heap.
 func (h *BoundedMinHeap[T]) Pop() any {
 	old := h.items
 	n := len(old)
@@ -103,9 +103,8 @@ func (h *BoundedMinHeap[T]) ToSortedSlice() []T {
 	result := make([]T, len(h.items))
 	copy(result, h.items)
 
-	sort.Slice(result, func(i, j int) bool {
-		return h.cmpFunc(result[i], result[j]) > 0
-	})
+	// sort from best to worst using a negated comparator
+	slices.SortFunc(result, func(a, b T) int { return -h.cmpFunc(a, b) })
 
 	return result
 }
