@@ -43,7 +43,7 @@ var Analyzer = &analysis.Analyzer{
 					}
 				}
 			}
-			pkgName := pass.Pkg.Name()
+			pkgName := pass.Pkg.Path()
 			if cnt > checkRule(pass.Pkg.Name()) {
 				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pkgName)
 				return nil, nil
