@@ -728,6 +728,7 @@ const (
 type IndexOption struct {
 	node
 
+<<<<<<< HEAD
 	KeyBlockSize uint64
 	Tp           model.IndexType
 	Comment      string
@@ -735,6 +736,19 @@ type IndexOption struct {
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
 	Global       bool
+=======
+	KeyBlockSize               uint64
+	Tp                         IndexType
+	Comment                    string
+	ParserName                 CIStr
+	Visibility                 IndexVisibility
+	PrimaryKeyTp               PrimaryKeyType
+	Global                     bool
+	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	SecondaryEngineAttr        string
+	AddColumnarReplicaOnDemand int
+	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+>>>>>>> 7b93bcb4150 (parser: modify parser to support partial index (#63448))
 }
 
 // IsEmpty is true if only default options are given
@@ -746,7 +760,14 @@ func (n *IndexOption) IsEmpty() bool {
 		len(n.ParserName.O) > 0 ||
 		n.Comment != "" ||
 		n.Global ||
+<<<<<<< HEAD
 		n.Visibility != IndexVisibilityDefault {
+=======
+		n.Visibility != IndexVisibilityDefault ||
+		n.SplitOpt != nil ||
+		len(n.SecondaryEngineAttr) > 0 ||
+		n.Condition != nil {
+>>>>>>> 7b93bcb4150 (parser: modify parser to support partial index (#63448))
 		return false
 	}
 	return true
@@ -820,6 +841,55 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("INVISIBLE")
 		}
 	}
+<<<<<<< HEAD
+=======
+
+	if n.SplitOpt != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPresplit, func() error {
+			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+			ctx.WritePlain(" = ")
+			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
+				ctx.WritePlainf("%d", n.SplitOpt.Num)
+			} else {
+				ctx.WritePlain("(")
+				if err := n.SplitOpt.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while splicing IndexOption SplitOpt")
+				}
+				ctx.WritePlain(")")
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		hasPrevOption = true
+	}
+
+	if n.SecondaryEngineAttr != "" {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.SecondaryEngineAttr)
+		// If a new option is added after, please also uncomment:
+		//hasPrevOption = true
+	}
+
+	if n.Condition != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("WHERE ")
+		if err := n.Condition.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing IndexOption Condition")
+		}
+	}
+
+>>>>>>> 7b93bcb4150 (parser: modify parser to support partial index (#63448))
 	return nil
 }
 

@@ -3917,7 +3917,6 @@ ConstraintElem:
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
 		}
-
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
@@ -6636,6 +6635,15 @@ IndexOptionList:
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
 			} else if opt2.Global {
 				opt1.Global = true
+<<<<<<< HEAD
+=======
+			} else if opt2.SplitOpt != nil {
+				opt1.SplitOpt = opt2.SplitOpt
+			} else if len(opt2.SecondaryEngineAttr) > 0 {
+				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
+			} else if opt2.Condition != nil {
+				opt1.Condition = opt2.Condition
+>>>>>>> 7b93bcb4150 (parser: modify parser to support partial index (#63448))
 			}
 			$$ = opt1
 		}
@@ -6692,6 +6700,33 @@ IndexOption:
 			Global: false,
 		}
 	}
+<<<<<<< HEAD
+=======
+|	"PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+	{
+		$$ = &ast.IndexOption{
+			SplitOpt: $4.(*ast.SplitOption),
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt Int64Num
+	{
+		$$ = &ast.IndexOption{
+			SplitOpt: &ast.SplitOption{
+				Num: $3.(int64),
+			},
+		}
+	}
+|	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
+	{
+		$$ = &ast.IndexOption{SecondaryEngineAttr: $3}
+	}
+| "WHERE" Expression
+	{
+		$$ =  &ast.IndexOption{
+			Condition: $2.(ast.ExprNode),
+		}
+	}
+>>>>>>> 7b93bcb4150 (parser: modify parser to support partial index (#63448))
 
 /*
   See: https://github.com/mysql/mysql-server/blob/8.0/sql/sql_yacc.yy#L7179
