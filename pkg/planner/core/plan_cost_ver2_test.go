@@ -662,11 +662,14 @@ func TestIssue63487(t *testing.T) {
 			}
 			vs = append(vs, fmt.Sprintf("%v", i))
 		}
+		// where a=1 and b in (1,3,5,...,9999)
 		whereClause := fmt.Sprintf("where a=1 and b in (%v)", strings.Join(vs, ","))
+		// range scan on index abc
 		q1 := fmt.Sprintf("explain format='verbose' select /*+ USE_INDEX(t, abc) */ * from t %v", whereClause)
 		costStr := tk.MustQuery(q1).Rows()[0][2].(string)
 		cost1, err := strconv.ParseFloat(costStr, 64)
 		require.Nil(t, err)
+		// full scan on index cba: full scan --> selection
 		q2 := fmt.Sprintf("explain format='verbose' select /*+ USE_INDEX(t, cba) */ * from t %v", whereClause)
 		costStr = tk.MustQuery(q2).Rows()[0][2].(string)
 		cost2, err := strconv.ParseFloat(costStr, 64)
