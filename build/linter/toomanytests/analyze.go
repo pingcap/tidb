@@ -62,7 +62,7 @@ func checkRule(pkg string) int {
 	case "pkg/planner/core":
 		return 1
 	default:
-		return 50
+		return 1
 	}
 }
 
