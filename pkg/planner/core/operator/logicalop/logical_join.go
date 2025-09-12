@@ -682,16 +682,18 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	// Next simplify join children
 
 	combinedCond := mergeOnClausePredicates(p, predicates)
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+	switch p.JoinType {
+	case base.LeftOuterJoin, base.RightOuterJoin:
 		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
 		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	} else if p.JoinType == base.InnerJoin || p.JoinType == base.SemiJoin {
+	case base.InnerJoin, base.SemiJoin:
 		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
 		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else if p.JoinType == base.AntiSemiJoin {
+	case base.AntiSemiJoin:
+		safeChildCond := mergeOnClausePredicatesWithoutOther(p, predicates)
 		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else {
+		outerTable = outerTable.ConvertOuterToInnerJoin(safeChildCond)
+	default:
 		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
 		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
 	}
@@ -1762,14 +1764,28 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression, vai
 }
 
 func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	combinedCond := make([]expression.Expression, 0,
-		len(p.LeftConditions)+len(p.RightConditions)+
-			len(p.EqualConditions)+len(p.OtherConditions)+
-			len(predicates))
+	return mergeOnClausePredicatesWithOptions(p, predicates, true)
+}
+
+func mergeOnClausePredicatesWithoutOther(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
+	return mergeOnClausePredicatesWithOptions(p, predicates, false)
+}
+
+func mergeOnClausePredicatesWithOptions(p *LogicalJoin, predicates []expression.Expression, includeOtherConditions bool) []expression.Expression {
+	capacity := len(p.LeftConditions) + len(p.RightConditions) + len(p.EqualConditions) + len(predicates)
+	if includeOtherConditions {
+		capacity += len(p.OtherConditions)
+	}
+
+	combinedCond := make([]expression.Expression, 0, capacity)
 	combinedCond = append(combinedCond, p.LeftConditions...)
 	combinedCond = append(combinedCond, p.RightConditions...)
 	combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-	combinedCond = append(combinedCond, p.OtherConditions...)
+
+	if includeOtherConditions {
+		combinedCond = append(combinedCond, p.OtherConditions...)
+	}
+
 	combinedCond = append(combinedCond, predicates...)
 	return combinedCond
 }
