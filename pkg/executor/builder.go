@@ -3890,10 +3890,16 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 // assertByItemsAreColumns asserts that all expressions in ByItems are Column types.
 // This function is used to validate PhysicalIndexScan and PhysicalTableScan ByItems.
 func assertByItemsAreColumns(byItems []*plannerutil.ByItems) {
-	for _, byItem := range byItems {
-		_, ok := byItem.Expr.(*expression.Column)
-		intest.Assert(ok, "The executor only supports Column type in ByItems")
-	}
+	intest.AssertFunc(func() bool {
+		for _, byItem := range byItems {
+			_, ok := byItem.Expr.(*expression.Column)
+			if !ok {
+				return false
+			}
+		}
+		return true
+	},
+		"The executor only supports Column type in ByItems")
 }
 
 // buildTableReader builds a table reader executor. It first build a no range table reader,
