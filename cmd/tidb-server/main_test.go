@@ -56,6 +56,15 @@ func TestSetGlobalVars(t *testing.T) {
 	require.Equal(t, "1073741824", variable.GetSysVar(vardef.TiDBMemQuotaQuery).Value)
 	require.NotEqual(t, "test", variable.GetSysVar(vardef.Version).Value)
 
+	// test setInstanceVar
+	require.False(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).HasInstanceScope())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.InstancePlanCacheMaxMemSize = "444"
+	})
+	setGlobalVars()
+	require.Equal(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).Value, "444")
+	require.True(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).HasInstanceScope())
+
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
 		conf.ServerVersion = "test"
