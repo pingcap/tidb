@@ -3913,7 +3913,6 @@ ConstraintElem:
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
 		}
-
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
@@ -6632,6 +6631,8 @@ IndexOptionList:
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
 			} else if opt2.Global {
 				opt1.Global = true
+			} else if opt2.Condition != nil {
+				opt1.Condition = opt2.Condition
 			}
 			$$ = opt1
 		}
@@ -6686,6 +6687,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Global: false,
+		}
+	}
+| "WHERE" Expression
+	{
+		$$ =  &ast.IndexOption{
+			Condition: $2.(ast.ExprNode),
 		}
 	}
 

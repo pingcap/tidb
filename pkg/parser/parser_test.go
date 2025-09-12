@@ -7721,3 +7721,12 @@ func TestTableAffinityOption(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestPartialIndex(t *testing.T) {
+	cases := []testCase{
+		{"create table `t` (`id` int primary key,`col` int,index(`col`) where `col`>100)", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`col` INT,INDEX(`col`) WHERE `col`>100)"},
+		{"create index `idx` on `t` (`col`) where `col`>100", true, "CREATE INDEX `idx` ON `t` (`col`) WHERE `col`>100"},
+		{"alter table `t` add index `idx`(`col`) where `col`>100", true, "ALTER TABLE `t` ADD INDEX `idx`(`col`) WHERE `col`>100"},
+	}
+	RunTest(t, cases, false)
+}
