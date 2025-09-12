@@ -391,7 +391,11 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 
 	// TODO(joechenrh): skip rows use underlying SkipRow interface
 	// For now it's ok, since only UTs use this interface
-	for range pos {
+	toRead := pos - pp.totalRowsRead
+	if toRead < 0 {
+		return errors.New("cannot set pos backwards")
+	}
+	for range toRead {
 		if err := pp.readSingleRows(row); err != nil {
 			return err
 		}

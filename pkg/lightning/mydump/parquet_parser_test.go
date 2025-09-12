@@ -24,7 +24,9 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -208,11 +210,29 @@ func TestParquetVariousTypes(t *testing.T) {
 		"2020-10-29", "17:26:15.123Z", "17:26:15.123456Z", "2020-10-29 09:27:52.356Z", "2020-10-29 09:27:52.356956Z",
 		"-123456.78", "0.0456", "1234567890123456.78", "-0.0001",
 	}
+
+	timeFormats := []string{
+		"2006-01-02", "15:04:05.000Z", "15:04:05.000000Z", "2006-01-02 15:04:05.000Z", "2006-01-02 15:04:05.000000Z",
+		"", "", "", "",
+	}
+
+	types.NewFieldType(mysql.TypeTimestamp)
+
+	loc := timeutil.SystemLocation()
+
 	row := reader.lastRow.Row
 	require.Len(t, rowValue, len(row))
 	for i := range row {
-		assert.Equal(t, types.KindString, row[i].Kind())
-		assert.Equal(t, row[i].GetString(), rowValue[i])
+		var s string
+		if row[i].Kind() != types.KindMysqlTime {
+			s = row[i].GetString()
+		} else {
+			gotime, err := row[i].GetMysqlTime().GoTime(loc)
+			require.NoError(t, err)
+			s = gotime.UTC().Format(timeFormats[i])
+		}
+
+		assert.Equal(t, rowValue[i], s)
 	}
 
 	pc = []ParquetColumn{
