@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -52,11 +53,11 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 	} else {
 		dst.IndexValues = dst.IndexValues[:len(src.IndexValues)]
 	}
-	dst.IndexConstants = cloneConstantsForPlanCache(src.IndexConstants, dst.IndexConstants)
+	dst.IndexConstants = utilfuncp.CloneConstantsForPlanCache(src.IndexConstants, dst.IndexConstants)
 	dst.ColsFieldType = src.ColsFieldType
-	dst.IdxCols = cloneColumnsForPlanCache(src.IdxCols, dst.IdxCols)
+	dst.IdxCols = utilfuncp.CloneColumnsForPlanCache(src.IdxCols, dst.IdxCols)
 	dst.IdxColLens = src.IdxColLens
-	dst.AccessConditions = cloneExpressionsForPlanCache(src.AccessConditions, dst.AccessConditions)
+	dst.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(src.AccessConditions, dst.AccessConditions)
 	dst.UnsignedHandle = src.UnsignedHandle
 	dst.IsTableDual = src.IsTableDual
 	dst.Lock = src.Lock
