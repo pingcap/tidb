@@ -76,7 +76,6 @@ go_library(
         "//pkg/util/topsql/state",
         "//pkg/util/versioninfo",
         "@com_github_docker_go_units//:go-units",
-        "@com_github_grafana_regexp//:regexp",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_tipb//go-tipb",
