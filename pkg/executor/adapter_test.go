@@ -16,14 +16,19 @@ package executor_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -72,4 +77,74 @@ func TestContextCancelWhenReadFromCopIterator(t *testing.T) {
 	cancelFunc()
 	syncCh <- struct{}{}
 	wg.Wait()
+}
+
+func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
+	ctx := mock.NewContext()
+	sessVars := ctx.GetSessionVars()
+	sessVars.ConnectionID = 123
+	sessVars.SessionAlias = "alias1"
+	sessVars.CurrentDB = "testdb"
+	sessVars.DurationParse = time.Second
+	sessVars.DurationCompile = 2 * time.Second
+	sessVars.DurationOptimization = 3 * time.Second
+	sessVars.DurationWaitTS = 4 * time.Second
+	sessVars.StmtCtx.ExecRetryCount = 2
+	sessVars.StmtCtx.ExecSuccess = true
+	sessVars.MemTracker.Consume(1000)
+	sessVars.DiskTracker.Consume(2000)
+
+	copExec := execdetails.CopExecDetails{
+		BackoffTime: time.Millisecond,
+		ScanDetail: &util.ScanDetail{
+			ProcessedKeys: 20001,
+			TotalKeys:     10000,
+		},
+		TimeDetail: util.TimeDetail{
+			ProcessTime: time.Second * time.Duration(2),
+			WaitTime:    time.Minute,
+		},
+	}
+	ctx.GetSessionVars().StmtCtx.MergeCopExecDetails(&copExec, 0)
+	tikvExecDetail := &util.ExecDetails{
+		WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
+		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
+		BackoffDuration:    (12 * time.Second).Nanoseconds(),
+	}
+	goCtx := context.WithValue(ctx.GoCtx(), util.ExecDetailsKey, tikvExecDetail)
+
+	// only require a subset of fields
+	sessVars.SlowLogRules = &variable.SlowLogRules{
+		AllConditionFields: map[string]struct{}{
+			strings.ToLower(variable.SlowLogConnIDStr):  {},
+			strings.ToLower(variable.SlowLogDBStr):      {},
+			strings.ToLower(variable.SlowLogSucc):       {},
+			strings.ToLower(execdetails.ProcessTimeStr): {},
+		},
+	}
+
+	items := executor.PrepareSlowLogItemsForRules(goCtx, ctx.GetSessionVars())
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogConnIDStr)].Match(ctx.GetSessionVars(), items, uint64(123)))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogDBStr)].Match(ctx.GetSessionVars(), items, "testdb"))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogSucc)].Match(ctx.GetSessionVars(), items, true))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessTimeStr)].Match(ctx.GetSessionVars(), items, copExec.TimeDetail.ProcessTime.Seconds()))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.BackoffTimeStr)].Match(ctx.GetSessionVars(), items, copExec.BackoffTime.Seconds()))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.ProcessedKeys))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.TotalKeys))
+
+	// fields not in AllConditionFields should be zero at this point
+	require.Equal(t, uint64(0), items.ExecRetryCount)
+	// fields not in SlowLogRuleFieldAccessors should be zero at this point
+	waitTimeAccessor, ok := variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.WaitTimeStr)]
+	require.False(t, ok)
+	require.Equal(t, variable.SlowLogFieldAccessor{}, waitTimeAccessor)
+
+	// fill the rest
+	executor.CompleteSlowLogItemsForRules(goCtx, ctx.GetSessionVars(), items)
+	require.Equal(t, uint64(2), items.ExecRetryCount)
+	require.Equal(t, int64(1000), items.MemMax)
+	require.Equal(t, int64(2000), items.DiskMax)
+	require.Equal(t, sessVars.StmtCtx.ExecSuccess, items.Succ)
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogKVTotal)].Match(ctx.GetSessionVars(), items, time.Duration(tikvExecDetail.WaitKVRespDuration).Seconds()))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPDTotal)].Match(ctx.GetSessionVars(), items, time.Duration(tikvExecDetail.WaitPDRespDuration).Seconds()))
 }
