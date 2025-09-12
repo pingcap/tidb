@@ -437,6 +437,8 @@ type Writer struct {
 
 	kvBuffer    *membuf.Buffer
 	kvLocations []membuf.SliceLocation
+	keys        [][]byte
+	indices     []int
 	kvSize      int64
 
 	onClose OnCloseFunc
@@ -559,14 +561,51 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		dupFound bool
 		dupLoc   *membuf.SliceLocation
 	)
-	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
-		if res == 0 && !dupFound {
-			dupFound = true
-			dupLoc = &i
+
+	// Pre-extract keys to avoid repeated getKeyByLoc calls during sorting
+	// This optimization is particularly effective for small KV pairs where
+	// the overhead of getKeyByLoc becomes significant relative to the comparison cost
+	if len(w.kvLocations) > 1000000 {
+		if cap(w.keys) < len(w.kvLocations) {
+			w.indices = make([]int, len(w.kvLocations))
+			w.keys = make([][]byte, len(w.kvLocations))
 		}
-		return res
-	})
+		w.keys = w.keys[:len(w.kvLocations)]
+		w.indices = w.indices[:len(w.kvLocations)]
+		for i := range w.kvLocations {
+			w.keys[i] = w.getKeyByLoc(&w.kvLocations[i])
+		}
+
+		// Create index slice for indirect sorting
+		for i := range w.indices {
+			w.indices[i] = i
+		}
+
+		slices.SortFunc(w.indices, func(i, j int) int {
+			res := bytes.Compare(w.keys[i], w.keys[j])
+			if res == 0 && !dupFound {
+				dupFound = true
+				dupLoc = &w.kvLocations[i]
+			}
+			return res
+		})
+
+		// Reorder kvLocations based on sorted indices
+		originalLocations := make([]membuf.SliceLocation, len(w.kvLocations))
+		copy(originalLocations, w.kvLocations)
+		for i, idx := range w.indices {
+			w.kvLocations[i] = originalLocations[idx]
+		}
+	} else {
+		slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
+			res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
+			if res == 0 && !dupFound {
+				dupFound = true
+				dupLoc = &i
+			}
+			return res
+		})
+	}
 	sortDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())

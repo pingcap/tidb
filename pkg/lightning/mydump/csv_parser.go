@@ -55,6 +55,7 @@ type CSVParser struct {
 	newLine        []byte
 	startingBy     []byte
 	escapedBy      string
+	escapedByN     string
 	unescapeRegexp *regexp.Regexp
 
 	charsetConvertor *CharsetConvertor
@@ -168,6 +169,7 @@ func NewCSVParser(
 		newLine:           []byte(lineTerminator),
 		startingBy:        []byte(cfg.LinesStartingBy),
 		escapedBy:         cfg.FieldsEscapedBy,
+		escapedByN:        cfg.FieldsEscapedBy + `N`,
 		unescapeRegexp:    r,
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
@@ -206,7 +208,7 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 	if unescaped, err = parser.charsetConvertor.Decode(input.content); err != nil {
 		return
 	}
-	if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedBy+`N` {
+	if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedByN {
 		return input.content, true, nil
 	}
 	if len(parser.escapedBy) > 0 {
@@ -218,7 +220,7 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 		isNull = !parser.cfg.NotNull &&
 			slices.Contains(parser.cfg.FieldNullDefinedBy, unescaped)
 		// avoid \\N becomes NULL
-		if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedBy+`N` {
+		if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedByN {
 			isNull = false
 		}
 	}
