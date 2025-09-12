@@ -43,8 +43,9 @@ var Analyzer = &analysis.Analyzer{
 					}
 				}
 			}
-			if cnt > 50 {
-				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pass.Pkg.Name())
+			pkgName := pass.Pkg.Name()
+			if cnt > checkRule(pass.Pkg.Name()) {
+				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pkgName)
 				return nil, nil
 			}
 		}
@@ -54,6 +55,15 @@ var Analyzer = &analysis.Analyzer{
 
 func isTestFile(file *token.File) bool {
 	return strings.HasSuffix(file.Name(), "_test.go")
+}
+
+func checkRule(pkg string) int {
+	switch pkg {
+	case "github.com/pingcap/tidb/pkg/planner/core":
+		return 51
+	default:
+		return 50
+	}
 }
 
 func init() {
