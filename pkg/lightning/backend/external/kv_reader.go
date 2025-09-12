@@ -39,7 +39,6 @@ var (
 //   - each <kv-pair-block> is <key-len><value-len><key><value>
 //   - <key-len> and <value-len> are uint64 in big-endian
 type KVReader struct {
-	getReqCnt  int64
 	byteReader *byteReader
 }
 
@@ -98,7 +97,6 @@ func noEOF(err error) error {
 
 // Close the reader.
 func (r *KVReader) Close() error {
-	r.getReqCnt = r.byteReader.requestCnt.Load()
 	if p := r.byteReader.concurrentReader.largeBufferPool; p != nil {
 		p.Destroy()
 	}

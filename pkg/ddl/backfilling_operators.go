@@ -550,16 +550,16 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
-	var ctx context.Context = w.ctx
-	if ctx.Value(kvutil.ExecDetailsKey) == nil {
-		ctx = context.WithValue(ctx, kvutil.ExecDetailsKey, &execDetails)
+	var scanCtx context.Context = w.ctx
+	if scanCtx.Value(kvutil.ExecDetailsKey) == nil {
+		scanCtx = context.WithValue(w.ctx, kvutil.ExecDetailsKey, &execDetails)
 	}
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
 		})
 		failpoint.InjectCall("scanRecordExec", w.reorgMeta)
-		rs, err := buildTableScan(ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
+		rs, err := buildTableScan(scanCtx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err
 		}
@@ -570,13 +570,13 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for !done {
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
-			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
-			if err != nil || w.ctx.Err() != nil {
+			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
+			if err != nil || scanCtx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err
 			}
-			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal, 0)
+			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal)
 			execDetails = kvutil.ExecDetails{}
 			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx})
 		}
@@ -697,7 +697,7 @@ func (o *WriteExternalStoreOperator) Close() error {
 type IndexWriteResult struct {
 	ID     int
 	RowCnt int
-	Bytes  int
+	Bytes  int // Bytes means the written index kv size of this result.
 }
 
 // IndexIngestOperator writes index records to ingest engine.

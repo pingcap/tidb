@@ -40,8 +40,8 @@ type ReaderSummary struct {
 // OnReaderCloseFunc is the callback function when a reader is closed.
 type OnReaderCloseFunc func(summary *ReaderSummary)
 
-// dummyReaderOnCloseFunc is a dummy OnReaderCloseFunc.
-func dummyReaderOnCloseFunc(*ReaderSummary) {}
+// dummyOnReaderCloseFunc is a dummy OnReaderCloseFunc.
+func dummyOnReaderCloseFunc(*ReaderSummary) {}
 
 func readAllData(
 	ctx context.Context,
@@ -162,7 +162,7 @@ func readOneFile(
 	defer func() {
 		rd.Close()
 		onClose(&ReaderSummary{
-			GetRequestCount: uint64(rd.getReqCnt),
+			GetRequestCount: uint64(rd.byteReader.requestCnt.Load()),
 		})
 	}()
 	if concurrency > 1 {

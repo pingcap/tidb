@@ -91,10 +91,14 @@ type Progress struct {
 // It tracks the progress in terms of rows and bytes processed.
 type SubtaskSummary struct {
 	// RowCnt and Bytes are updated by the collector.
-	RowCnt    atomic.Int64  `json:"row_count,omitempty"`
-	Bytes     atomic.Int64  `json:"bytes,omitempty"`
-	ReadBytes atomic.Int64  `json:"read_bytes,omitempty"`
+	RowCnt atomic.Int64 `json:"row_count,omitempty"`
+	// Bytes is the number of bytes to process.
+	Bytes atomic.Int64 `json:"bytes,omitempty"`
+	// ReadBytes is the number of bytes that read from the source.
+	ReadBytes atomic.Int64 `json:"read_bytes,omitempty"`
+	// PutReqCnt is the number of put requests to the external storage.
 	PutReqCnt atomic.Uint64 `json:"put_request_count,omitempty"`
+	// GetReqCnt is the number of get requests to the external storage.
 	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
 
 	// Progresses are the history of data processed, which is used to get a
@@ -180,7 +184,7 @@ type Collector interface {
 	// Accepted is used collects metrics.
 	// The difference between Accepted and Processed is that Accepted is called
 	// when the data is accepted to be processed.
-	Accepted(bytes, rows int64)
+	Accepted(bytes int64)
 	// Processed is used collects metrics.
 	// `bytes` is the number of bytes processed, and `rows` is the number of rows processed.
 	// The meaning of `bytes` may vary by scenario, for example:
@@ -193,7 +197,7 @@ type Collector interface {
 type NoopCollector struct{}
 
 // Accepted implements Collector.Accepted
-func (*NoopCollector) Accepted(_, _ int64) {}
+func (*NoopCollector) Accepted(_ int64) {}
 
 // Processed implements Collector.Processed
 func (*NoopCollector) Processed(_, _ int64) {}

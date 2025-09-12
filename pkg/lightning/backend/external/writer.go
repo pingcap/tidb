@@ -195,8 +195,8 @@ type WriterSummary struct {
 // OnWriterCloseFunc is the callback function when a writer is closed.
 type OnWriterCloseFunc func(summary *WriterSummary)
 
-// dummyWriterOnCloseFunc is a dummy OnCloseFunc.
-func dummyWriterOnCloseFunc(*WriterSummary) {}
+// dummyOnWriterCloseFunc is a dummy OnWriterCloseFunc.
+func dummyOnWriterCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
@@ -217,7 +217,7 @@ func NewWriterBuilder() *WriterBuilder {
 		blockSize:    DefaultBlockSize,
 		propSizeDist: defaultPropSizeDist,
 		propKeysDist: defaultPropKeysDist,
-		onClose:      dummyWriterOnCloseFunc,
+		onClose:      dummyOnWriterCloseFunc,
 	}
 }
 
@@ -245,7 +245,7 @@ func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 // SetOnCloseFunc sets the callback function when a writer is closed.
 func (b *WriterBuilder) SetOnCloseFunc(onClose OnWriterCloseFunc) *WriterBuilder {
 	if onClose == nil {
-		onClose = dummyWriterOnCloseFunc
+		onClose = dummyOnWriterCloseFunc
 	}
 	b.onClose = onClose
 	return b
@@ -499,6 +499,11 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 // this is implemented as noop.
 func (w *Writer) LockForWrite() func() {
 	return func() {}
+}
+
+// WrittenBytes returns the number of bytes written by this writer.
+func (w *Writer) WrittenBytes() int64 {
+	return int64(w.totalSize)
 }
 
 // Close closes the writer.
@@ -808,7 +813,9 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
-		OnUpload:    func() { w.putReqCnt++ },
+		OnUpload: func() {
+			w.putReqCnt++
+		},
 	})
 	if err != nil {
 		return "", "", nil, nil, err
@@ -817,7 +824,9 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
-		OnUpload:    func() { w.putReqCnt++ },
+		OnUpload: func() {
+			w.putReqCnt++
+		},
 	})
 	if err != nil {
 		_ = dataWriter.Close(ctx)

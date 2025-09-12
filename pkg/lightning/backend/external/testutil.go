@@ -82,7 +82,7 @@ func testReadAndCompare(
 			bufPool,
 			bufPool,
 			loaded,
-			dummyReaderOnCloseFunc,
+			dummyOnReaderCloseFunc,
 		)
 		require.NoError(t, err)
 		loaded.build(ctx)

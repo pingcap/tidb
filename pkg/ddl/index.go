@@ -2368,7 +2368,7 @@ func writeChunk(
 				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
 				return 0, totalBytes, errors.Trace(err)
 			}
-			totalBytes += kvBytes
+			totalBytes += int(kvBytes)
 		}
 		count++
 	}
@@ -2395,29 +2395,27 @@ func writeOneKV(
 	writeBufs *variable.WriteStmtBufs,
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
-) (int, error) {
-	totalKVBytes := 0
+) (int64, error) {
 	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
-			return totalKVBytes, errors.Trace(err)
+			return writer.WrittenBytes(), errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
-			return totalKVBytes, errors.Trace(err)
+			return writer.WrittenBytes(), errors.Trace(err)
 		}
-		totalKVBytes += len(key) + len(idxVal)
 		failpoint.Inject("mockLocalWriterError", func() {
 			failpoint.Return(0, errors.New("mock engine error"))
 		})
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal
 	}
-	return totalKVBytes, nil
+	return writer.WrittenBytes(), nil
 }
 
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,

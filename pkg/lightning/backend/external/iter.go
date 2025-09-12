@@ -503,7 +503,7 @@ func (p kvReaderProxy) close() error {
 }
 
 func (p kvReaderProxy) getRequestCount() int64 {
-	return p.r.getReqCnt
+	return p.r.byteReader.requestCnt.Load()
 }
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
@@ -629,7 +629,7 @@ func (p statReaderProxy) close() error {
 }
 
 func (p statReaderProxy) getRequestCount() int64 {
-	return p.r.getReqCnt
+	return p.r.byteReader.requestCnt.Load()
 }
 
 // mergePropBaseIter handles one MultipleFilesStat and use limitSizeMergeIter to

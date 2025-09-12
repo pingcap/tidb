@@ -227,7 +227,7 @@ func TestEngineOnDup(t *testing.T) {
 			16*units.GiB,
 			onDup,
 			"/",
-			dummyReaderOnCloseFunc,
+			dummyOnReaderCloseFunc,
 		)
 	}
 

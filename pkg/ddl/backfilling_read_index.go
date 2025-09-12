@@ -453,7 +453,7 @@ func newDistTaskRowCntCollector(
 	}
 }
 
-func (d *distTaskRowCntCollector) Accepted(bytes, _ int64) {
+func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
 }
 

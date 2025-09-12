@@ -186,7 +186,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			"/test2",
 			mergeMemSize,
 			onWriterClose,
-			dummyReaderOnCloseFunc,
+			dummyOnReaderCloseFunc,
 			collector,
 			1,
 			true,
@@ -292,7 +292,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			100,
 			2,
 			closeFn1,
-			dummyReaderOnCloseFunc,
+			dummyOnReaderCloseFunc,
 			1,
 			true))
 	}

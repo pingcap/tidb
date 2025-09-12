@@ -60,7 +60,7 @@ func NewMergeCollector(ctx context.Context, summary *execute.SubtaskSummary) *me
 	}
 }
 
-func (c *mergeCollector) Accepted(bytes, rowCnt int64) {}
+func (*mergeCollector) Accepted(_ int64) {}
 
 func (c *mergeCollector) Processed(bytes, rowCnt int64) {
 	if c.summary != nil {
