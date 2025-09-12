@@ -2707,7 +2707,7 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 	value := "0"
 	err = ddlutil.PutKVToEtcd(ctx, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
 	if err != nil {
-		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
+		logutil.BgLogger().Warn("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("refreshServerIDTTL succeed", zap.Uint64("serverID", do.ServerID()),
 			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
