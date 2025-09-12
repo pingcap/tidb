@@ -212,7 +212,7 @@ func getByteArrayGetter(converted *convertedType) getter[parquet.ByteArray] {
 	switch converted.converted {
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
 		return func(val parquet.ByteArray) (d types.Datum) {
-			d.SetBytesAsString(val, "utf8mb4_bin", uint32(len(val)))
+			d.SetBytesAsString(val, "utf8mb4_bin", 0) // equvialent to SetString(string(val), "utf8mb4_bin")
 			return
 		}
 	case schema.ConvertedTypes.Decimal:
@@ -230,7 +230,7 @@ func getFixedLenByteArrayGetter(converted *convertedType) getter[parquet.FixedLe
 	switch converted.converted {
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
 		return func(val parquet.FixedLenByteArray) (d types.Datum) {
-			d.SetBytesAsString(val, "utf8mb4_bin", uint32(len(val)))
+			d.SetBytesAsString(val, "utf8mb4_bin", 0) // equvialent to SetString(string(val), "utf8mb4_bin")
 			return
 		}
 	case schema.ConvertedTypes.Decimal:
