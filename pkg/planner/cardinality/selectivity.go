@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"cmp"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"maps"
 	"math"
 	"math/bits"
@@ -1141,6 +1142,7 @@ func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl
 // same number of rows(Tot/NDV) of it.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
+	sctx.GetSessionVars().RecordPlanRiskFlag(variable.PlanRiskOutOfRangeEst)
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {

@@ -15,6 +15,7 @@
 package indexusage
 
 import (
+	"github.com/pingcap/tidb/pkg/metrics"
 	"sync"
 	"time"
 
@@ -38,6 +39,8 @@ type Sample struct {
 	KvReqTotal uint64
 	// RowAccessTotal sums the number of the rows scanned using this index.
 	RowAccessTotal uint64
+	// TableTotalRows records the total number of rows in the table when this sample is collected.
+	TableTotalRows uint64
 	// PercentageAccess is a histogram where each bucket represents the number of accesses to the index where the
 	// percentage of scanned rows to the total number of rows in the table falls within the ranges of
 	// 0, 0-1, 1-10, 10-20, 20-50, 50-100, and 100.
@@ -82,6 +85,7 @@ func NewSample(queryTotal uint64, kvReqTotal uint64, rowAccess uint64, tableTota
 		KvReqTotal:       kvReqTotal,
 		RowAccessTotal:   rowAccess,
 		PercentageAccess: percentageAccess,
+		TableTotalRows:   tableTotalRows,
 		LastUsedAt:       time.Now(),
 	}
 }
@@ -226,6 +230,7 @@ func (s *SessionIndexUsageCollector) Report() {
 	if len(s.indexUsage) == 0 {
 		return
 	}
+	// TODO: add metrics
 	if s.collector.SendDelta(s.indexUsage) {
 		s.indexUsage = indexUsagePool.Get().(indexUsage)
 	}
@@ -237,6 +242,7 @@ func (s *SessionIndexUsageCollector) Flush() {
 	if len(s.indexUsage) == 0 {
 		return
 	}
+	// TODO: add metrics
 	s.collector.SendDeltaSync(s.indexUsage)
 	s.indexUsage = indexUsagePool.Get().(indexUsage)
 }
@@ -258,7 +264,7 @@ func NewStmtIndexUsageCollector(sessionCollector *SessionIndexUsageCollector) *S
 
 // Update updates the index usage in the internal session collector. The `sample.QueryTotal` will be modified according
 // to whether this index has been recorded in this statement usage collector.
-func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sample) {
+func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, isTableScan bool, sample Sample) {
 	// The session index usage collector and the map inside cannot be updated concurrently. However, for executors with
 	// multiple workers, it's possible for them to be closed (and update stats) at the same time, so a lock is needed
 	// here.
@@ -275,6 +281,8 @@ func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sa
 		sample.QueryTotal = 0
 	}
 
+	// TODO: add metrics
+	ScanMetrics(isTableScan, sample)
 	s.sessionCollector.Update(tableID, indexID, sample)
 }
 
@@ -284,4 +292,85 @@ func (s *StmtIndexUsageCollector) Reset() {
 	defer s.Unlock()
 
 	clear(s.recordedIndex)
+}
+
+func ScanMetrics(isTableScan bool, sample Sample) {
+	scanPercentage := float64(sample.RowAccessTotal) / float64(sample.TableTotalRows)
+	isFullScan := scanPercentage >= 0.9999
+
+	// full scan metrics
+	if isFullScan {
+		label := getScanLabel(sample.RowAccessTotal)
+		if isTableScan {
+			metrics.PlanTableFullScanCounter.WithLabelValues(label).Inc()
+		} else {
+			metrics.PlanIndexFullScanCounter.WithLabelValues(label).Inc()
+		}
+	}
+
+	// scan metrics
+	scanLabel := getScanLabel(sample.RowAccessTotal)
+	if isTableScan {
+		metrics.PlanTableScanRowsCounter.WithLabelValues(scanLabel).Inc()
+	} else {
+		metrics.PlanIndexScanRowsCounter.WithLabelValues(scanLabel).Inc()
+	}
+
+	// scan selectivity metrics
+	label := getScanSelectivityLabel(scanPercentage)
+	if isTableScan {
+		metrics.PlanTableScanSelectivityCounter.WithLabelValues(label).Inc()
+	} else {
+		metrics.PlanIndexScanSelectivityCounter.WithLabelValues(label).Inc()
+	}
+
+	// cop-request metrics
+	kvReqLabel := getKVReqLabel(sample.KvReqTotal)
+	metrics.PlanKVReqCounter.WithLabelValues(kvReqLabel).Inc()
+}
+
+func getKVReqLabel(kvReq uint64) string {
+	if kvReq < 10 {
+		return "0-10"
+	} else if kvReq < 100 {
+		return "10-100"
+	} else if kvReq < 1000 {
+		return "100-1000"
+	} else if kvReq < 10000 {
+		return "1000-10000"
+	} else if kvReq < 100000 {
+		return "10000-100000"
+	} else {
+		return "100000+"
+	}
+}
+
+func getScanSelectivityLabel(scanPercentage float64) string {
+	if scanPercentage < 0.001 {
+		return "0-0.1%"
+	} else if scanPercentage < 0.01 {
+		return "0.1-1%"
+	} else if scanPercentage < 0.1 {
+		return "1-10%"
+	} else if scanPercentage < 0.2 {
+		return "10-20%"
+	} else if scanPercentage < 0.5 {
+		return "20-50%"
+	} else {
+		return "50-100%"
+	}
+}
+
+func getScanLabel(scanRows uint64) string {
+	if scanRows < 1000 {
+		return "0-1000"
+	} else if scanRows < 10000 {
+		return "1000-10000"
+	} else if scanRows < 100000 {
+		return "10000-100000"
+	} else if scanRows < 1000000 {
+		return "100000-1000000"
+	} else {
+		return "1000000+"
+	}
 }
