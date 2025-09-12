@@ -1480,28 +1480,29 @@ func TestDBAStmt(t *testing.T) {
 
 func TestSetVariable(t *testing.T) {
 	table := []struct {
-		Input    string
-		Name     string
-		IsGlobal bool
-		IsSystem bool
+		Input      string
+		Name       string
+		IsGlobal   bool
+		IsInstance bool
+		IsSystem   bool
 	}{
 
 		// Set system variable xx.xx, although xx.xx isn't a system variable, the parser should accept it.
-		{"set xx.xx = 666", "xx.xx", false, true},
+		{"set xx.xx = 666", "xx.xx", false, false, true},
 		// Set session system variable xx.xx
-		{"set session xx.xx = 666", "xx.xx", false, true},
-		{"set local xx.xx = 666", "xx.xx", false, true},
-		{"set global xx.xx = 666", "xx.xx", true, true},
-		{"set instance xx.xx = 666", "xx.xx", true, true},
+		{"set session xx.xx = 666", "xx.xx", false, false, true},
+		{"set local xx.xx = 666", "xx.xx", false, false, true},
+		{"set global xx.xx = 666", "xx.xx", true, false, true},
+		{"set instance xx.xx = 666", "xx.xx", true, false, true},
 
-		{"set @@xx.xx = 666", "xx.xx", false, true},
-		{"set @@session.xx.xx = 666", "xx.xx", false, true},
-		{"set @@local.xx.xx = 666", "xx.xx", false, true},
-		{"set @@global.xx.xx = 666", "xx.xx", true, true},
-		{"set @@instance.xx.xx = 666", "xx.xx", true, true},
+		{"set @@xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@session.xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@local.xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@global.xx.xx = 666", "xx.xx", true, false, true},
+		{"set @@instance.xx.xx = 666", "xx.xx", false, true, true},
 
 		// Set user defined variable xx.xx
-		{"set @xx.xx = 666", "xx.xx", false, false},
+		{"set @xx.xx = 666", "xx.xx", false, false, false},
 	}
 
 	p := parser.New()
@@ -1516,6 +1517,7 @@ func TestSetVariable(t *testing.T) {
 		v := setStmt.Variables[0]
 		require.Equal(t, tbl.Name, v.Name)
 		require.Equal(t, tbl.IsGlobal, v.IsGlobal)
+		require.Equal(t, tbl.IsInstance, v.IsInstance)
 		require.Equal(t, tbl.IsSystem, v.IsSystem)
 	}
 
