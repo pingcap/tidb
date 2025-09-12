@@ -262,8 +262,16 @@ func (tr *TableImporter) importTable(
 		}
 	}
 
+	cleanupFunc, err := rc.backend.AddPartitionRangeForTable(ctx, tr.tableInfo.ID)
+	if err != nil {
+		tr.logger.Warn("add partition range for table failed", zap.String("table", tr.tableName), zap.Error(err))
+	}
+	if cleanupFunc != nil {
+		defer cleanupFunc()
+	}
+
 	// 4. Restore engines (if still needed)
-	err := tr.importEngines(ctx, rc, cp)
+	err = tr.importEngines(ctx, rc, cp)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

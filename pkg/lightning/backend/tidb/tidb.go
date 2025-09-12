@@ -704,6 +704,11 @@ func (*tidbBackend) CloseEngine(context.Context, *backend.EngineConfig, uuid.UUI
 	return nil
 }
 
+// AddPartitionRangeForTable implements Backend interface
+func (*tidbBackend) AddPartitionRangeForTable(context.Context, int64) (func(), error) {
+	return nil, nil
+}
+
 func (*tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
