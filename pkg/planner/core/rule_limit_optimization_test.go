@@ -57,38 +57,19 @@ func TestHasMaxOneRowGuarantee(t *testing.T) {
 	require.False(t, hasMaxOneRowGuarantee(nil))
 }
 
-func TestCheckJoinColumnsFormUniqueKey(t *testing.T) {
-	// Test the checkJoinColumnsFormUniqueKey function
+func TestIsJoinKeysContainUniqueKey(t *testing.T) {
+	// Test the isJoinKeysContainUniqueKey function
 	// This is a basic test to ensure the function doesn't panic
-	// More comprehensive tests would require setting up actual schemas
+	// More comprehensive tests would require setting up actual schemas and plans
 
-	// Test with nil schema (should not panic)
-	joinCols := make(map[int64]bool)
-	require.False(t, checkJoinColumnsFormUniqueKey(joinCols, nil))
-}
+	// Test with nil joinKeys (should not panic)
+	result, err := isJoinKeysContainUniqueKey(nil, nil)
+	require.NoError(t, err)
+	require.False(t, result)
 
-func TestIsSubsetOfJoinColumns(t *testing.T) {
-	// Test the isSubsetOfJoinColumns function
-	joinCols := map[int64]bool{
-		1: true,
-		2: true,
-		3: true,
-	}
-
-	// Test with empty key
-	key := expression.KeyInfo{}
-	require.True(t, isSubsetOfJoinColumns(key, joinCols))
-
-	// Test with matching columns
-	key = expression.KeyInfo{
-		&expression.Column{UniqueID: 1},
-		&expression.Column{UniqueID: 2},
-	}
-	require.True(t, isSubsetOfJoinColumns(key, joinCols))
-
-	// Test with non-matching column
-	key = expression.KeyInfo{
-		&expression.Column{UniqueID: 4},
-	}
-	require.False(t, isSubsetOfJoinColumns(key, joinCols))
+	// Test with empty joinKeys (should not panic)
+	emptySchema := expression.NewSchema()
+	result, err = isJoinKeysContainUniqueKey(nil, emptySchema)
+	require.NoError(t, err)
+	require.False(t, result)
 }

@@ -1050,15 +1050,20 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	if noDecorrelate {
 		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
 		if !hasLimit(np) {
-			limitClause := &ast.Limit{
-				Count: ast.NewValueExpr(1, "", ""),
+			// Check if the LIMIT 1 would be redundant due to unique constraints
+			if !hasMaxOneRowGuarantee(np) {
+				limitClause := &ast.Limit{
+					Count: ast.NewValueExpr(1, "", ""),
+				}
+				var err error
+				np, err = planCtx.builder.buildLimit(np, limitClause)
+				if err != nil {
+					er.err = err
+					return v, true
+				}
 			}
-			var err error
-			np, err = planCtx.builder.buildLimit(np, limitClause)
-			if err != nil {
-				er.err = err
-				return v, true
-			}
+			// If hasMaxOneRowGuarantee returns true, we skip adding LIMIT 1
+			// because the plan already guarantees at most one row
 		}
 	}
 	np = er.popExistsSubPlan(planCtx, np)

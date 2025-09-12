@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -65,7 +66,7 @@ func optimizeLimitRecursively(p base.LogicalPlan) (base.LogicalPlan, bool, error
 	// Then, optimize this node if it's a LIMIT
 	if limit, ok := p.(*logicalop.LogicalLimit); ok {
 		if canRemoveLimit1(limit) {
-			// Remove the LIMIT 1 by returning its child
+			// Remove the limit by returning its child
 			return limit.Children()[0], true, nil
 		}
 	}
@@ -91,13 +92,60 @@ func canRemoveLimit1(limit *logicalop.LogicalLimit) bool {
 	return hasMaxOneRowGuarantee(child)
 }
 
+// hasSchemaMaxOneRowGuarantee checks if the schema guarantees at most one row.
+func hasSchemaMaxOneRowGuarantee(p base.LogicalPlan) bool {
+	schema := p.Schema()
+	if schema == nil {
+		return false
+	}
+
+	// Check if there are any primary or unique keys
+	// If there are any unique constraints, the plan could potentially return at most one row
+	// depending on the selection conditions
+	if len(schema.PKOrUK) > 0 || len(schema.NullableUK) > 0 {
+		// For DataSource, if there are selection conditions that use unique keys,
+		// it guarantees at most one row
+		if ds, ok := p.(*logicalop.DataSource); ok {
+			return hasDataSourceUniqueSelection(ds)
+		}
+
+		// For other plan types with unique constraints, we need to be more conservative
+		// Only return true if we can be certain about uniqueness
+		return false
+	}
+
+	return false
+}
+
+// hasDataSourceUniqueSelection checks if a DataSource with selection conditions guarantees at most one row.
+func hasDataSourceUniqueSelection(ds *logicalop.DataSource) bool {
+	if len(ds.AllConds) == 0 {
+		return false // No conditions means no uniqueness guarantee
+	}
+
+	// Extract columns used in selection conditions (equal conditions only)
+	eqColIDs := make(map[int64]struct{})
+	for _, cond := range ds.AllConds {
+		// Only check equality conditions for uniqueness
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == "eq" {
+			cols := expression.ExtractColumns(cond)
+			for _, col := range cols {
+				eqColIDs[col.UniqueID] = struct{}{}
+			}
+		}
+	}
+
+	// Use the existing CheckMaxOneRowCond function
+	return util.CheckMaxOneRowCond(eqColIDs, ds.Schema())
+}
+
 // hasMaxOneRowGuarantee checks if a logical plan guarantees at most one row.
 func hasMaxOneRowGuarantee(p base.LogicalPlan) bool {
 	if p == nil {
 		return false
 	}
 
-	// Use the existing HasMaxOneRow function with child information
+	// First check if the plan structure itself guarantees at most one row
 	childMaxOneRow := make([]bool, len(p.Children()))
 	for i, child := range p.Children() {
 		childMaxOneRow[i] = hasMaxOneRowGuarantee(child)
@@ -109,8 +157,19 @@ func hasMaxOneRowGuarantee(p base.LogicalPlan) bool {
 		return hasJoinMaxOneRowGuarantee(join, childMaxOneRow)
 	}
 
-	// For other plan types, use the existing HasMaxOneRow logic
-	return logicalop.HasMaxOneRow(p, childMaxOneRow)
+	// For Apply (correlated subqueries), we need to check if the inner child
+	// with correlation conditions guarantees at most one row
+	if apply, ok := p.(*logicalop.LogicalApply); ok {
+		return hasApplyMaxOneRowGuarantee(apply, childMaxOneRow)
+	}
+
+	// Check if the plan structure guarantees at most one row
+	if logicalop.HasMaxOneRow(p, childMaxOneRow) {
+		return true
+	}
+
+	// Check if the schema has unique constraints that guarantee at most one row
+	return hasSchemaMaxOneRowGuarantee(p)
 }
 
 // hasJoinMaxOneRowGuarantee checks if a join guarantees at most one row.
@@ -122,29 +181,14 @@ func hasJoinMaxOneRowGuarantee(join *logicalop.LogicalJoin, childMaxOneRow []boo
 
 	// For inner joins, check if the join conditions ensure uniqueness
 	if join.JoinType == base.InnerJoin && len(join.EqualConditions) > 0 {
-		// Check if the join conditions involve unique keys from both sides
-		leftSchema := join.Children()[0].Schema()
-		rightSchema := join.Children()[1].Schema()
+		// Extract join keys for both sides
+		leftJoinKeys := join.ExtractJoinKeys(0)
+		rightJoinKeys := join.ExtractJoinKeys(1)
 
-		// Extract columns involved in join conditions
-		leftJoinCols := make(map[int64]bool)
-		rightJoinCols := make(map[int64]bool)
-
-		for _, eqCond := range join.EqualConditions {
-			if len(eqCond.GetArgs()) >= 2 {
-				if leftCol, ok := eqCond.GetArgs()[0].(*expression.Column); ok {
-					leftJoinCols[leftCol.UniqueID] = true
-				}
-				if rightCol, ok := eqCond.GetArgs()[1].(*expression.Column); ok {
-					rightJoinCols[rightCol.UniqueID] = true
-				}
-			}
-		}
-
-		// Check if left side join columns form a unique key
-		leftHasUniqueKey := checkJoinColumnsFormUniqueKey(leftJoinCols, leftSchema)
-		// Check if right side join columns form a unique key
-		rightHasUniqueKey := checkJoinColumnsFormUniqueKey(rightJoinCols, rightSchema)
+		// Check if left side join keys contain a unique key
+		leftHasUniqueKey, _ := isJoinKeysContainUniqueKey(join.Children()[0], leftJoinKeys)
+		// Check if right side join keys contain a unique key
+		rightHasUniqueKey, _ := isJoinKeysContainUniqueKey(join.Children()[1], rightJoinKeys)
 
 		// If either side has a unique key on the join columns, the result is unique
 		return leftHasUniqueKey || rightHasUniqueKey
@@ -159,35 +203,93 @@ func hasJoinMaxOneRowGuarantee(join *logicalop.LogicalJoin, childMaxOneRow []boo
 	return false
 }
 
-// checkJoinColumnsFormUniqueKey checks if the join columns form a unique key.
-func checkJoinColumnsFormUniqueKey(joinCols map[int64]bool, schema *expression.Schema) bool {
-	if schema == nil {
+// isJoinKeysContainUniqueKey checks whether one of unique keys sets is contained by join keys.
+// This is based on the existing isInnerJoinKeysContainUniqueKey function.
+func isJoinKeysContainUniqueKey(plan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+	if joinKeys == nil || len(joinKeys.Columns) == 0 {
+		return false, nil
+	}
+
+	for _, keyInfo := range plan.Schema().PKOrUK {
+		joinKeysContainKeyInfo := true
+		for _, col := range keyInfo {
+			if !joinKeys.Contains(col) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+		}
+		if joinKeysContainKeyInfo {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// hasApplyMaxOneRowGuarantee checks if an Apply (correlated subquery) guarantees at most one row.
+func hasApplyMaxOneRowGuarantee(apply *logicalop.LogicalApply, childMaxOneRow []bool) bool {
+	// For Apply, we need to check if the inner child guarantees at most one row
+	// when considering the correlation conditions
+	if len(childMaxOneRow) < 2 {
 		return false
 	}
 
-	// Check primary key
-	for _, pk := range schema.PKOrUK {
-		if isSubsetOfJoinColumns(pk, joinCols) {
-			return true
+	// If the inner child already guarantees at most one row, the Apply will too
+	if childMaxOneRow[1] {
+		return true
+	}
+
+	// For Apply with correlation conditions, check if the correlation conditions
+	// combined with the inner child's conditions guarantee at most one row
+	if len(apply.EqualConditions) > 0 {
+		// Extract correlation columns from the inner child
+		innerPlan := apply.Children()[1]
+		corCols := make(map[int64]bool)
+
+		// Get all correlated columns used in this Apply
+		for _, corCol := range apply.CorCols {
+			corCols[corCol.UniqueID] = true
+		}
+
+		// Check if the correlation conditions involve unique keys from the inner child
+		if ds, ok := innerPlan.(*logicalop.DataSource); ok {
+			return hasDataSourceCorrelationUniqueSelection(ds, corCols)
+		}
+
+		// For other inner plan types, check if join conditions involve unique keys
+		innerJoinKeys := apply.ExtractJoinKeys(1)
+		if innerJoinKeys != nil && len(innerJoinKeys.Columns) > 0 {
+			hasUniqueKey, _ := isJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)
+			return hasUniqueKey
 		}
 	}
 
-	// Check unique keys
-	for _, uk := range schema.NullableUK {
-		if isSubsetOfJoinColumns(uk, joinCols) {
-			return true
-		}
-	}
-
-	return false
+	// Fall back to the existing HasMaxOneRow logic for Apply
+	return childMaxOneRow[1]
 }
 
-// isSubsetOfJoinColumns checks if a key is a subset of join columns.
-func isSubsetOfJoinColumns(key expression.KeyInfo, joinCols map[int64]bool) bool {
-	for _, col := range key {
-		if !joinCols[col.UniqueID] {
-			return false
+// hasDataSourceCorrelationUniqueSelection checks if a DataSource with correlation conditions guarantees at most one row.
+func hasDataSourceCorrelationUniqueSelection(ds *logicalop.DataSource, corCols map[int64]bool) bool {
+	if len(ds.AllConds) == 0 {
+		return false // No conditions means no uniqueness guarantee
+	}
+
+	// Extract columns used in selection conditions (equal conditions only)
+	eqColIDs := make(map[int64]struct{})
+	for _, cond := range ds.AllConds {
+		// Only check equality conditions for uniqueness
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == "eq" {
+			cols := expression.ExtractColumns(cond)
+			for _, col := range cols {
+				eqColIDs[col.UniqueID] = struct{}{}
+			}
 		}
 	}
-	return true
+
+	// Add correlation columns to the equality conditions
+	for corColID := range corCols {
+		eqColIDs[corColID] = struct{}{}
+	}
+
+	// Use the existing CheckMaxOneRowCond function
+	return util.CheckMaxOneRowCond(eqColIDs, ds.Schema())
 }
