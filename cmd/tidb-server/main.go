@@ -340,7 +340,7 @@ func main() {
 	err = setupLog()
 	terror.MustNil(err)
 
-	err = memory.InitMemoryHook()
+	_ = memory.InitMemoryHook()
 	terror.MustNil(err)
 	_, err = setupExtensions()
 	terror.MustNil(err)
