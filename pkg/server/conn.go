@@ -93,6 +93,7 @@ import (
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -2030,6 +2031,15 @@ func (cc *clientConn) handleStmt(
 ) (bool, error) {
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
+
+	// In this stage, the session variables are still about the previous statement, so the message in audit
+	// log is wrong. Fixing this requires to move the audit log after the optimization stage, which is risky.
+	// So, at least we can have a correct SQL for the audit log, which will make it easier for us to find
+	// other issues in audit log.
+	cc.ctx.GetSessionVars().StmtCtx.ResetForAuditPlugin()
+	cc.ctx.GetSessionVars().PlanCacheParams.Reset()
+	cc.ctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text()
+	cc.ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), stmt)
 	cc.audit(plugin.Starting)
 
 	// if stmt is load data stmt, store the channel that reads from the conn

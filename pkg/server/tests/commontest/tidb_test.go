@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/plugin"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -3537,4 +3538,138 @@ func TestCloseConnForUndeterminedError(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "commit")
 	// because TiKV responses UndeterminedResult, the connection should be disconnected without reporting mysql error.
 	require.EqualError(t, err, "invalid connection")
+}
+
+func TestAuditPluginInfoForStarting(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	type normalTest struct {
+		sql         string
+		rows        uint64
+		stmtType    string
+		dbs         string
+		tables      string
+		cmd         string
+		event       plugin.GeneralEvent
+		params      string
+		redactedSQL string
+	}
+
+	var dbNames, tableNames []string
+	var testResults []normalTest
+
+	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
+		dbNames = dbNames[:0]
+		tableNames = tableNames[:0]
+		for _, value := range sctx.StmtCtx.Tables {
+			dbNames = append(dbNames, value.DB)
+			tableNames = append(tableNames, value.Table)
+		}
+		redactedSQL, _ := sctx.StmtCtx.SQLDigest()
+		audit := normalTest{
+			sql:         sctx.StmtCtx.OriginalSQL,
+			rows:        sctx.StmtCtx.AffectedRows(),
+			stmtType:    sctx.StmtCtx.StmtType,
+			dbs:         strings.Join(dbNames, ","),
+			tables:      strings.Join(tableNames, ","),
+			cmd:         cmd,
+			event:       event,
+			params:      sctx.PlanCacheParams.String(),
+			redactedSQL: redactedSQL,
+		}
+		testResults = append(testResults, audit)
+	}
+	plugin.LoadPluginForTest(t, onGeneralEvent)
+	defer plugin.Shutdown(context.Background())
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(context.Background(), "use test")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "drop table if exists t")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "create table t(a int)")
+		require.NoError(t, err)
+		testResults = testResults[:0]
+		for i := range 1000 {
+			_, err = conn.ExecContext(context.Background(), "insert into t values (?)", i)
+			require.NoError(t, err)
+		}
+		require.Eventually(t, func() bool {
+			return len(testResults) == 2000
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[len(testResults)-1], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Execute",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+		})
+
+		testResults = testResults[:0]
+
+		// Execute statement with Query
+		rows, err := conn.QueryContext(context.Background(), "select * from t where a = 1")
+		require.NoError(t, err)
+		rows.Close()
+
+		require.Eventually(t, func() bool {
+			return len(testResults) == 2
+		}, time.Second, time.Millisecond*10)
+		require.Len(t, testResults, 2)
+		require.Equal(t, testResults[0], normalTest{
+			sql:         "select * from t where a = 1",
+			rows:        0,
+			stmtType:    "Select",
+			dbs:         "",
+			tables:      "",
+			cmd:         "Query",
+			event:       plugin.Starting,
+			redactedSQL: "select * from `t` where `a` = ?",
+		})
+		require.Equal(t, testResults[1], normalTest{
+			sql:         "select * from t where a = 1",
+			rows:        0,
+			stmtType:    "Select",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Query",
+			event:       plugin.Completed,
+			redactedSQL: "select * from `t` where `a` = ?",
+		})
+
+		// Execute statement with Prepare/Execute
+		testResults = testResults[:0]
+		stmt, err := conn.PrepareContext(context.Background(), "update t set a = ? where a = ?")
+		require.NoError(t, err)
+		_, err = stmt.Exec(500, 499)
+		require.NoError(t, err)
+		require.Equal(t, testResults[0], normalTest{
+			sql:         "update t set a = ? where a = ?",
+			rows:        0,
+			stmtType:    "Update",
+			dbs:         "",
+			tables:      "",
+			cmd:         "Execute",
+			event:       plugin.Starting,
+			redactedSQL: "update `t` set `a` = ? where `a` = ?",
+		})
+		require.Equal(t, testResults[1], normalTest{
+			sql:         "update t set a = ? where a = ?",
+			rows:        1,
+			stmtType:    "Update",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Execute",
+			event:       plugin.Completed,
+			params:      " [arguments: (500, 499)]",
+			redactedSQL: "update `t` set `a` = ? where `a` = ?",
+		})
+	})
 }
