@@ -596,7 +596,28 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 		argsHashCode = append(argsHashCode, arg.CanonicalHashCode())
 	}
 	switch sf.FuncName.L {
-	case ast.Plus, ast.Mul, ast.EQ, ast.In, ast.LogicOr, ast.LogicAnd:
+	case ast.Grouping:
+		// encode original function name.
+		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
+		for _, argCode := range argsHashCode {
+			sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+		}
+		sf.canonicalhashcode = codec.EncodeInt(sf.canonicalhashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
+		marks := sf.Function.(*BuiltinGroupingImplSig).GetMetaGroupingMarks()
+		sf.canonicalhashcode = codec.EncodeInt(sf.canonicalhashcode, int64(len(marks)))
+		for _, mark := range marks {
+			sf.canonicalhashcode = codec.EncodeInt(sf.canonicalhashcode, int64(len(mark)))
+			// we need to sort map keys to ensure the canonicalhashcode is deterministic.
+			keys := make([]uint64, 0, len(mark))
+			for k := range mark {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				sf.canonicalhashcode = codec.EncodeInt(sf.canonicalhashcode, int64(k))
+			}
+		}
+	case ast.Plus, ast.Mul, ast.EQ, ast.In, ast.LogicOr, ast.LogicAnd, ast.IsNull, ast.NullEQ:
 		// encode original function name.
 		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
 		// reorder parameters hashcode, eg: a+b and b+a should has the same hashcode here.
@@ -664,6 +685,12 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 			case ast.LE: // not LE  ==> GT
 				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(ast.GT))
 				for _, argCode := range childArgsHashCode {
+					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+				}
+			default:
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
+				// use the origin arg hash code.
+				for _, argCode := range argsHashCode {
 					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 				}
 			}
