@@ -24,6 +24,11 @@ import (
 type generalCICollator struct {
 }
 
+// ImmutableKey implement Collator interface.
+func (g *generalCICollator) ImmutableKey(str string) []byte {
+	return g.Key(str)
+}
+
 // Compare implements Collator interface.
 func (*generalCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)

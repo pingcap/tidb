@@ -524,11 +524,13 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&f)), sizeFloat64)...)
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		collator := collate.GetCollator(tp.GetCollate())
 		for logicalRowIndex, physicalRowIndex := range usedRows {
 			if canSkip(physicalRowIndex) {
 				continue
 			}
-			data := ConvertByCollation(column.GetBytes(physicalRowIndex), tp)
+			// data := ConvertByCollation(column.GetBytes(physicalRowIndex), tp)
+			data := collator.ImmutableKey(string(hack.String(column.GetBytes(physicalRowIndex))))
 			size := uint32(len(data))
 
 			// TODO remove

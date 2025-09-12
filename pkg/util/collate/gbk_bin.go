@@ -27,6 +27,11 @@ type gbkBinCollator struct {
 	e *encoding.Encoder
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gbkBinCollator) ImmutableKey(str string) []byte {
+	return g.Key(str)
+}
+
 // Clone implements Collator interface.
 func (*gbkBinCollator) Clone() Collator {
 	return &gbkBinCollator{charset.NewCustomGBKEncoder()}

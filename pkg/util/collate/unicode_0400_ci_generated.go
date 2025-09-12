@@ -34,6 +34,11 @@ func (uc *unicodeCICollator) Clone() Collator {
 	return &unicodeCICollator{impl: uc.impl.Clone()}
 }
 
+// ImmutableKey implements Collator interface.
+func (uc *unicodeCICollator) ImmutableKey(str string) []byte {
+	return uc.Key(str)
+}
+
 // Compare implements Collator interface.
 func (uc *unicodeCICollator) Compare(a, b string) int {
 	a = uc.impl.Preprocess(a)

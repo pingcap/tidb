@@ -29,6 +29,11 @@ type {{.Name}} struct {
 	impl {{.ImplName}}
 }
 
+// ImmutableKey implements Collator interface.
+func (uc *{{.Name}}) ImmutableKey(str string) []byte {
+	return uc.Key(str)
+}
+
 // Clone implements Collator interface.
 func (uc *{{.Name}}) Clone() Collator {
     return &{{.Name}}{impl: uc.impl.Clone()}

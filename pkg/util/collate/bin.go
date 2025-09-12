@@ -17,11 +17,17 @@ package collate
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
 // binCollator match pattern in bytes
 type binCollator struct {
+}
+
+// ImmutableKey implement Collator interface.
+func (*binCollator) ImmutableKey(str string) []byte {
+	return hack.Slice(str)
 }
 
 // Compare implement Collator interface.
@@ -59,6 +65,11 @@ func (*derivedBinCollator) Pattern() WildcardPattern {
 }
 
 type binPaddingCollator struct {
+}
+
+// ImmutableKey implement Collator interface.
+func (*binPaddingCollator) ImmutableKey(str string) []byte {
+	return hack.Slice(truncateTailingSpace(str))
 }
 
 func (*binPaddingCollator) Compare(a, b string) int {
