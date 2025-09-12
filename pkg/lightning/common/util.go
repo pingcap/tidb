@@ -753,3 +753,8 @@ func SkipReadRowCount(tblInfo *model.TableInfo) bool {
 
 	return true
 }
+
+// ChunkFlushStatus is the status of a chunk flush.
+type ChunkFlushStatus interface {
+	Flushed() bool
+}

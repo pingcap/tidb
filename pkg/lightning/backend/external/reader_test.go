@@ -154,7 +154,7 @@ func TestReadLargeFile(t *testing.T) {
 	startKey := []byte("key000000")
 	maxKey := []byte("key004998")
 	endKey := []byte("key004999")
-	err := readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
+	err := readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output, dummyOnReaderCloseFunc)
 	require.NoError(t, err)
 	output.build(ctx)
 	require.Equal(t, startKey, output.kvs[0].key)

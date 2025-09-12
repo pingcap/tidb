@@ -343,7 +343,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+		return newFlushStorageWriter(wc, &callbackFlusher{wo.OnUpload}, wc), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
@@ -353,7 +353,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		return nil, errors.Trace(err)
 	}
 	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	bw := newBufferedWriter(fw, int(partSize), NoCompression, wo.OnUpload)
 	return bw, nil
 }
 

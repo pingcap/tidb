@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -906,6 +907,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 }
 
 type localRowCntCollector struct {
+	execute.NoopCollector
 	reorgCtx *reorgCtx
 	counter  prometheus.Counter
 
@@ -918,7 +920,7 @@ type localRowCntCollector struct {
 	}
 }
 
-func (s *localRowCntCollector) Add(_, rowCnt int64) {
+func (s *localRowCntCollector) Processed(_, rowCnt int64) {
 	s.curPhysicalRowCnt.mu.Lock()
 	s.curPhysicalRowCnt.cnt += rowCnt
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)

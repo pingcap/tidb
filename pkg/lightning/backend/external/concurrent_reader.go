@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -32,8 +33,9 @@ type concurrentFileReader struct {
 	storage storage.ExternalStorage
 	name    string
 
-	offset   int64
-	fileSize int64
+	offset     int64
+	fileSize   int64
+	requestCnt *atomic.Int64
 }
 
 // newConcurrentFileReader creates a new concurrentFileReader.
@@ -45,6 +47,7 @@ func newConcurrentFileReader(
 	fileSize int64,
 	concurrency int,
 	readBufferSize int,
+	requestCnt *atomic.Int64,
 ) (*concurrentFileReader, error) {
 	return &concurrentFileReader{
 		ctx:            ctx,
@@ -54,6 +57,7 @@ func newConcurrentFileReader(
 		fileSize:       fileSize,
 		name:           name,
 		storage:        st,
+		requestCnt:     requestCnt,
 	}, nil
 }
 
@@ -88,6 +92,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 			if err != nil {
 				return errors.Annotatef(err, "offset: %d, readSize: %d", offset, len(buf))
 			}
+			r.requestCnt.Add(1)
 			return nil
 		})
 	}

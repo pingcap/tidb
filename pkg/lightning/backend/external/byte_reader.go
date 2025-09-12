@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -70,6 +71,7 @@ type byteReader struct {
 
 	logger               *zap.Logger
 	mergeSortReadCounter prometheus.Counter
+	requestCnt           atomic.Int64
 }
 
 func openStoreReaderAndSeek(
@@ -189,6 +191,7 @@ func (r *byteReader) switchToConcurrentReader() error {
 		fileSize,
 		readerFields.concurrency,
 		readerFields.bufSizePerConc,
+		&r.requestCnt,
 	)
 	if err != nil {
 		return err
@@ -308,6 +311,7 @@ func (r *byteReader) reload() error {
 		return nil
 	}
 
+	defer r.requestCnt.Add(1)
 	return util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, r.readFromStorageReader)
 }
 

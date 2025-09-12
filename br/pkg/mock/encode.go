@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -39,6 +40,11 @@ func NewMockEncoder(ctrl *gomock.Controller) *MockEncoder {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockEncoder) EXPECT() *MockEncoderMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockEncoder) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // Close mocks base method.
@@ -89,6 +95,11 @@ func NewMockEncodingBuilder(ctrl *gomock.Controller) *MockEncodingBuilder {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockEncodingBuilder) EXPECT() *MockEncodingBuilderMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockEncodingBuilder) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // MakeEmptyRows mocks base method.
@@ -143,6 +154,11 @@ func (m *MockRows) EXPECT() *MockRowsMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockRows) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // Clear mocks base method.
 func (m *MockRows) Clear() encode.Rows {
 	m.ctrl.T.Helper()
@@ -178,6 +194,11 @@ func NewMockRow(ctrl *gomock.Controller) *MockRow {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockRow) EXPECT() *MockRowMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockRow) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // ClassifyAndAppend mocks base method.
