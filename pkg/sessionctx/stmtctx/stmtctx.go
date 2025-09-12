@@ -573,6 +573,28 @@ func (sc *StatementContext) Reset() bool {
 	return true
 }
 
+// ResetForAuditPlugin resets a statement context for audit plugin
+// We record the audit event before the execution, so most of the `StatementContext` fields are not set properly.
+// It may represent the information left from the previous SQL. This function will reset the fields which are used
+// in audit log to empty value, to avoid confusion.
+func (sc *StatementContext) ResetForAuditPlugin() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	sc.OriginalSQL = ""
+	if len(sc.Tables) > 0 {
+		sc.Tables = sc.Tables[:0]
+	}
+	sc.affectedRows.Store(0)
+	sc.StmtType = ""
+
+	sc.digestMemo = struct {
+		sync.Once
+		normalized string
+		digest     *parser.Digest
+	}{}
+}
+
 // CtxID returns the context id of the statement
 func (sc *StatementContext) CtxID() uint64 {
 	return sc.ctxID
