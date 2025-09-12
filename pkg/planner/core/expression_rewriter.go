@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -177,7 +178,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	return expr, err
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *physicalop.Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -339,7 +340,7 @@ type exprRewriterPlanCtx struct {
 
 	// insertPlan is only used to rewrite the expressions inside the assignment
 	// of the "INSERT" statement.
-	insertPlan *Insert
+	insertPlan *physicalop.Insert
 
 	rollExpand *logicalop.LogicalExpand
 }
@@ -613,8 +614,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			// expressions inside the assignment of "INSERT" statement. we have to
 			// use the "tableSchema" of that "insertPlan".
 			if planCtx.insertPlan != nil {
-				schema = planCtx.insertPlan.tableSchema
-				names = planCtx.insertPlan.tableColNames
+				schema = planCtx.insertPlan.TableSchema
+				names = planCtx.insertPlan.TableColNames
 			}
 			idx, err := expression.FindFieldName(names, v.Column.Name)
 			if err != nil {
@@ -1112,6 +1113,21 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			er.ctxStackAppend(scalarSubQ, types.EmptyName)
 			return v, true
 		}
+		// register the subquery plan but continue with normal execution
+		subqueryCtx := ScalarSubqueryEvalCtx{
+			scalarSubQuery: physicalPlan,
+			ctx:            ctx,
+			is:             b.is,
+		}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
+		newColIDs := make([]int64, 0, np.Schema().Len())
+		for range np.Schema().Columns {
+			newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
+			newColIDs = append(newColIDs, newColID)
+		}
+		subqueryCtx.outputColIDs = newColIDs
+
+		planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+
 		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
 		if err != nil {
 			er.err = err
@@ -1387,33 +1403,46 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		}
 		return v, true
 	}
+
+	// register the subquery plan but continue with normal execution
+	subqueryCtx := ScalarSubqueryEvalCtx{
+		scalarSubQuery: physicalPlan,
+		ctx:            ctx,
+		is:             planCtx.builder.is,
+	}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
+	newColIDs := make([]int64, 0, np.Schema().Len())
+	for range np.Schema().Columns {
+		newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
+		newColIDs = append(newColIDs, newColID)
+	}
+	subqueryCtx.outputColIDs = newColIDs
+
+	planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
 	if err != nil {
 		er.err = err
 		return v, true
 	}
-	if np.Schema().Len() > 1 {
-		newCols := make([]expression.Expression, 0, np.Schema().Len())
-		for i, data := range row {
-			constant := &expression.Constant{
-				Value:   data,
-				RetType: np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx())}
-			constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
-			newCols = append(newCols, constant)
+	newCols := make([]expression.Expression, 0, np.Schema().Len())
+	for i, data := range row {
+		constant := &expression.Constant{
+			Value:         data,
+			RetType:       np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx()),
+			SubqueryRefID: newColIDs[i],
 		}
-		expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
-		if err1 != nil {
-			er.err = err1
+		constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
+		newCols = append(newCols, constant)
+	}
+
+	if np.Schema().Len() > 1 {
+		expr, err := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
+		if err != nil {
+			er.err = err
 			return v, true
 		}
 		er.ctxStackAppend(expr, types.EmptyName)
 	} else {
-		constant := &expression.Constant{
-			Value:   row[0],
-			RetType: np.Schema().Columns[0].GetType(er.sctx.GetEvalCtx()),
-		}
-		constant.SetCoercibility(np.Schema().Columns[0].Coercibility())
-		er.ctxStackAppend(constant, types.EmptyName)
+		er.ctxStackAppend(newCols[0], types.EmptyName)
 	}
 	return v, true
 }

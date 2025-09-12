@@ -146,15 +146,15 @@ func rebuildRange(p base.Plan) error {
 				return err
 			}
 		}
-	case *Insert:
+	case *physicalop.Insert:
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
 		}
-	case *Update:
+	case *physicalop.Update:
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
 		}
-	case *Delete:
+	case *physicalop.Delete:
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
 		}

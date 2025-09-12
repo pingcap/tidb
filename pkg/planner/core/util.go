@@ -115,11 +115,11 @@ func GetStatsInfo(i any) map[string]uint64 {
 	p := i.(base.Plan)
 	var physicalPlan base.PhysicalPlan
 	switch x := p.(type) {
-	case *Insert:
+	case *physicalop.Insert:
 		physicalPlan = x.SelectPlan
-	case *Update:
+	case *physicalop.Update:
 		physicalPlan = x.SelectPlan
-	case *Delete:
+	case *physicalop.Delete:
 		physicalPlan = x.SelectPlan
 	case base.PhysicalPlan:
 		physicalPlan = x

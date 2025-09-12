@@ -192,7 +192,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildDDL(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		return b.buildDelete(v)
 	case *plannercore.Execute:
 		return b.buildExecute(v)
@@ -204,7 +204,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildPointGet(v)
 	case *physicalop.BatchPointGetPlan:
 		return b.buildBatchPointGet(v)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		return b.buildInsert(v)
 	case *plannercore.ImportInto:
 		return b.buildImportInto(v)
@@ -262,7 +262,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildTopN(v)
 	case *physicalop.PhysicalUnionAll:
 		return b.buildUnionAll(v)
-	case *plannercore.Update:
+	case *physicalop.Update:
 		return b.buildUpdate(v)
 	case *physicalop.PhysicalUnionScan:
 		return b.buildUnionScanExec(v)
@@ -1001,7 +1001,7 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) exec.Executor
 	}
 }
 
-func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
+func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 	b.inInsertStmt = true
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
@@ -2858,7 +2858,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) exec.Exec
 	}
 }
 
-func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
+func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
@@ -2922,7 +2922,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 	return updateExec
 }
 
-func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int) ([]int, error) {
+func getAssignFlag(ctx sessionctx.Context, v *physicalop.Update, schemaLen int) ([]int, error) {
 	assignFlag := make([]int, schemaLen)
 	for i := range assignFlag {
 		assignFlag[i] = -1
@@ -2940,7 +2940,7 @@ func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int)
 	return assignFlag, nil
 }
 
-func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
+func (b *executorBuilder) buildDelete(v *physicalop.Delete) exec.Executor {
 	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
