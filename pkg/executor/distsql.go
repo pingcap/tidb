@@ -377,7 +377,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
-	if !needMergeSort(e.byItems, len(kvRanges)) {
+	if !needMergeSort(e.byItems, len(e.partitions)) {
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
 			return err
