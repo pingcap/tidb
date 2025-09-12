@@ -314,6 +314,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
 	case kv.PrewriteEncounterLockPolicy:
 		txn.KVTxn.SetPrewriteEncounterLockPolicy(val.(transaction.PrewriteEncounterLockPolicy))
+	case kv.SkipNewerChange:
+		txn.KVTxn.SetSkipNewerChange()
 	}
 }
 
