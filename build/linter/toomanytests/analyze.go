@@ -44,7 +44,7 @@ var Analyzer = &analysis.Analyzer{
 				}
 			}
 			pkgName := pass.Pkg.Path()
-			if cnt > checkRule(pass.Pkg.Name()) {
+			if cnt > checkRule(pkgName) {
 				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pkgName)
 				return nil, nil
 			}
@@ -60,7 +60,7 @@ func isTestFile(file *token.File) bool {
 func checkRule(pkg string) int {
 	switch pkg {
 	case "github.com/pingcap/tidb/pkg/planner/core":
-		return 1
+		return 288
 	default:
 		return 50
 	}

@@ -249,7 +249,6 @@ go_test(
     ],
     data = glob([
         "testdata/**",
-        "*.go",
     ]),
     embed = [":core"],
     flaky = True,
