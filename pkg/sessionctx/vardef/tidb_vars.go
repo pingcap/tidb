@@ -315,6 +315,10 @@ const (
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
+	// TiDBEnableSemiJoinRewrite controls automatic rewrite of semi-join to
+	// inner-join with aggregation (equivalent to SEMI_JOIN_REWRITE() hint).
+	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
+
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
@@ -1368,7 +1372,7 @@ const (
 	DefOptRiskRangeSkewRatio                = 0.0
 	DefOptRiskScaleNDVSkewRatio             = 1.0
 	DefOptRiskGroupNDVSkewRatio             = 0.0
-	DefOptAlwaysKeepJoinKey                 = false
+	DefOptAlwaysKeepJoinKey                 = true
 	DefOptCartesianJoinOrderThreshold       = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
@@ -1402,6 +1406,7 @@ const (
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
 	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableSemiJoinRewrite             = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false

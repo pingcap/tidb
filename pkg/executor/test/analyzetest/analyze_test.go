@@ -607,8 +607,10 @@ func TestIssue20874(t *testing.T) {
 }
 
 func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -952,7 +954,10 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
-
+	if kerneltype.IsNextGen() {
+		t.Log("analyze V1 cannot support in the next gen")
+		return
+	}
 	// set analyze version back to 1, will not use persisted
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t partition p2")
@@ -2579,6 +2584,9 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
@@ -2632,6 +2640,9 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestIssue35056(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

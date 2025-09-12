@@ -248,7 +248,15 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		if isDeferredConst {
 			return &Constant{Value: value, RetType: retType, DeferredExpr: x}, true
 		}
-		return &Constant{Value: value, RetType: retType}, false
+		// Extract SubqueryRefID from function arguments
+		var subqRef int64
+		for _, arg := range x.GetArgs() {
+			if c, ok := arg.(*Constant); ok && c.SubqueryRefID > 0 {
+				subqRef = c.SubqueryRefID
+				break
+			}
+		}
+		return &Constant{Value: value, RetType: retType, SubqueryRefID: subqRef}, false
 	case *Constant:
 		if x.ParamMarker != nil {
 			val, err := x.ParamMarker.GetUserVar(ctx.GetEvalCtx())

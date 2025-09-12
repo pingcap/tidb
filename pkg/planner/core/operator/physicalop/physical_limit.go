@@ -98,19 +98,6 @@ func (p *PhysicalLimit) ExplainInfo() string {
 	return buffer.String()
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalLimit)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.PartitionBy = util.CloneSortItems(p.PartitionBy)
-	return cloned, true
-}
-
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
