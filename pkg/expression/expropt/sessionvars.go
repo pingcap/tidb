@@ -35,7 +35,7 @@ func NewSessionVarsProvider(provider variable.SessionVarsProvider) *SessionVarsP
 }
 
 // Desc implements the OptionalEvalPropProvider interface.
-func (p *SessionVarsPropProvider) Desc() *exprctx.OptionalEvalPropDesc {
+func (*SessionVarsPropProvider) Desc() *exprctx.OptionalEvalPropDesc {
 	return exprctx.OptPropSessionVars.Desc()
 }
 

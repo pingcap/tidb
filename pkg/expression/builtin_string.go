@@ -407,8 +407,8 @@ func (b *builtinConcatWSSig) evalString(ctx EvalContext, row chunk.Row) (string,
 	var sep string
 	var targetLength int
 
-	N := len(args)
-	if N > 0 {
+	n := len(args)
+	if n > 0 {
 		val, isNull, err := args[0].EvalString(ctx, row)
 		if err != nil || isNull {
 			// If the separator is NULL, the result is NULL.
@@ -416,7 +416,7 @@ func (b *builtinConcatWSSig) evalString(ctx EvalContext, row chunk.Row) (string,
 		}
 		sep = val
 	}
-	for i := 1; i < N; i++ {
+	for i := 1; i < n; i++ {
 		val, isNull, err := args[i].EvalString(ctx, row)
 		if err != nil {
 			return val, isNull, err
@@ -1051,7 +1051,7 @@ func (c *replaceFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 }
 
 // fixLength calculate the flen of the return type.
-func (c *replaceFunctionClass) fixLength(ctx EvalContext, args []Expression) int {
+func (_ *replaceFunctionClass) fixLength(ctx EvalContext, args []Expression) int {
 	charLen := args[0].GetType(ctx).GetFlen()
 	oldStrLen := args[1].GetType(ctx).GetFlen()
 	diff := args[2].GetType(ctx).GetFlen() - oldStrLen
@@ -2522,11 +2522,11 @@ func (b *builtinCharSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	bigints := make([]int64, 0, len(b.args)-1)
 
 	for i := range len(b.args) - 1 {
-		val, IsNull, err := b.args[i].EvalInt(ctx, row)
+		val, isNull, err := b.args[i].EvalInt(ctx, row)
 		if err != nil {
 			return "", true, err
 		}
-		if IsNull {
+		if isNull {
 			continue
 		}
 		bigints = append(bigints, val)
@@ -3256,7 +3256,7 @@ func (b *builtinEltSig) Clone() builtinFunc {
 
 // evalString evals a ELT(N,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_elt
-func (b *builtinEltSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+func (b *builtinEltSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
 	idx, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
@@ -4007,12 +4007,12 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 // evalInt evals INSTR(str,substr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	str, IsNull, err := b.args[0].EvalString(ctx, row)
-	if IsNull || err != nil {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
-	substr, IsNull, err := b.args[1].EvalString(ctx, row)
-	if IsNull || err != nil {
+	substr, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 	if collate.IsCICollation(b.collation) {
@@ -4030,13 +4030,13 @@ func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 // evalInt evals INSTR(str,substr), case sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	str, IsNull, err := b.args[0].EvalString(ctx, row)
-	if IsNull || err != nil {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 
-	substr, IsNull, err := b.args[1].EvalString(ctx, row)
-	if IsNull || err != nil {
+	substr, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
 		return 0, true, err
 	}
 

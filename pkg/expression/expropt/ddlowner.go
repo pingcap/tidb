@@ -26,7 +26,7 @@ var _ RequireOptionalEvalProps = DDLOwnerPropReader{}
 type DDLOwnerInfoProvider func() bool
 
 // Desc returns the description for the property key.
-func (p DDLOwnerInfoProvider) Desc() *exprctx.OptionalEvalPropDesc {
+func (DDLOwnerInfoProvider) Desc() *exprctx.OptionalEvalPropDesc {
 	return exprctx.OptPropDDLOwnerInfo.Desc()
 }
 
@@ -34,12 +34,12 @@ func (p DDLOwnerInfoProvider) Desc() *exprctx.OptionalEvalPropDesc {
 type DDLOwnerPropReader struct{}
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (r DDLOwnerPropReader) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
+func (DDLOwnerPropReader) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
 	return exprctx.OptPropDDLOwnerInfo.AsPropKeySet()
 }
 
 // IsDDLOwner returns whether the current node is DDL owner
-func (r DDLOwnerPropReader) IsDDLOwner(ctx exprctx.EvalContext) (bool, error) {
+func (DDLOwnerPropReader) IsDDLOwner(ctx exprctx.EvalContext) (bool, error) {
 	p, err := getPropProvider[DDLOwnerInfoProvider](ctx, exprctx.OptPropDDLOwnerInfo)
 	if err != nil {
 		return false, err

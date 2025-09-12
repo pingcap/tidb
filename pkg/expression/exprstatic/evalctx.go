@@ -439,7 +439,7 @@ func (ctx *EvalContext) loadSessionVarsInternal(
 	return ctx.Apply(opts...)
 }
 
-func (ctx *EvalContext) currentTimeFuncFromStringVal(val string) func() (time.Time, error) {
+func (*EvalContext) currentTimeFuncFromStringVal(val string) func() (time.Time, error) {
 	return func() (time.Time, error) {
 		if val == vardef.DefTimestamp {
 			return time.Now(), nil
