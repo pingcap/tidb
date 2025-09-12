@@ -21,7 +21,6 @@ import (
 
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -49,7 +48,7 @@ func TestV2Basic(t *testing.T) {
 	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
 	is.base().schemaMetaVersion = 1
 	require.Equal(t, 1, len(is.AllSchemas()))
-	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
+	ver, err := r.Store().CurrentVersion()
 	require.NoError(t, err)
 	is.base().schemaMetaVersion = 2
 	is.ts = ver.Ver

@@ -268,9 +268,6 @@ func (txn *LazyTxn) GoString() string {
 // GetOption implements the GetOption
 func (txn *LazyTxn) GetOption(opt int) any {
 	if txn.Transaction == nil {
-		if opt == kv.TxnScope {
-			return ""
-		}
 		return nil
 	}
 	return txn.Transaction.GetOption(opt)
@@ -692,7 +689,7 @@ type txnFuture struct {
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
-	options := []tikv.TxnOption{tikv.WithTxnScope(tf.txnScope)}
+	options := make([]tikv.TxnOption, 0, 1)
 	startTS, err := tf.future.Wait()
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {

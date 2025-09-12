@@ -754,7 +754,7 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 
 	wg.Wait()
 
-	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
+	ts, _ := store.CurrentVersion()
 	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
 
 	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))

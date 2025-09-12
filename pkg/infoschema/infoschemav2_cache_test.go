@@ -224,7 +224,7 @@ func (tc *testCase) createTable(args []any) {
 // args: tblID, version, cacheOp, cacheOp, ...
 func (tc *testCase) tableByID(args []any) {
 	tc.is.base().schemaMetaVersion = int64(args[1].(int))
-	ver, err := tc.r.Store().CurrentVersion(kv.GlobalTxnScope)
+	ver, err := tc.r.Store().CurrentVersion()
 	require.NoError(tc.t, err)
 	tc.is.ts = ver.Ver
 
@@ -245,7 +245,7 @@ func (tc *testCase) tableByID(args []any) {
 // args: dbName, tblName, version, cacheOp, cacheOp, ...
 func (tc *testCase) tableByName(args []any) {
 	tc.is.base().schemaMetaVersion = int64(args[2].(int))
-	ver, err := tc.r.Store().CurrentVersion(kv.GlobalTxnScope)
+	ver, err := tc.r.Store().CurrentVersion()
 	require.NoError(tc.t, err)
 	tc.is.ts = ver.Ver
 

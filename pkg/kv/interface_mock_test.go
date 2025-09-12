@@ -235,7 +235,7 @@ func (s *mockStorage) UUID() string {
 }
 
 // CurrentVersion returns current max committed version.
-func (s *mockStorage) CurrentVersion(txnScope string) (Version, error) {
+func (s *mockStorage) CurrentVersion() (Version, error) {
 	return NewVersion(1), nil
 }
 
@@ -275,7 +275,7 @@ func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	return nil, nil
 }
 
-func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+func (s *mockStorage) GetMinSafeTS() uint64 {
 	return 0
 }
 

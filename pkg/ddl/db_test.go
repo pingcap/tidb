@@ -739,7 +739,7 @@ func TestSchemaValidator(t *testing.T) {
 	err := dom.Reload()
 	require.NoError(t, err)
 	schemaVer := dom.InfoSchema().SchemaMetaVersion()
-	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := store.CurrentVersion()
 	require.NoError(t, err)
 
 	ts := ver.Ver
@@ -754,7 +754,7 @@ func TestSchemaValidator(t *testing.T) {
 	require.Equal(t, validatorapi.ResultSucc, res)
 	time.Sleep(dbTestLease)
 
-	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err = store.CurrentVersion()
 	require.NoError(t, err)
 	ts = ver.Ver
 	_, res = dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)

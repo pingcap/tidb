@@ -121,7 +121,7 @@ type Context interface {
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
-	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
+	PrepareTSFuture(ctx context.Context, future oracle.Future) error
 	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
 	// It returns nil otherwise.
 	GetPreparedTxnFuture() TxnFuture
@@ -197,5 +197,5 @@ const (
 // function is only needed when it's not proper to delay the check to when RPC requests are being sent (e.g., `BEGIN`
 // statements that don't make reading operation immediately).
 func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64, isStaleRead bool) error {
-	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{})
 }

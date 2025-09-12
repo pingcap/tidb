@@ -54,11 +54,6 @@ func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
-// GetTxnScope returns the current txn scope
-func (p *StalenessTxnContextProvider) GetTxnScope() string {
-	return p.sctx.GetSessionVars().TxnCtx.TxnScope
-}
-
 // GetReadReplicaScope returns the read replica scope
 func (p *StalenessTxnContextProvider) GetReadReplicaScope() string {
 	return config.GetTxnScopeFromConfig()
@@ -95,8 +90,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 		return err
 	}
 
-	txnScope := kv.GlobalTxnScope
-	if err = p.sctx.PrepareTSFuture(p.ctx, sessiontxn.ConstantFuture(p.ts), txnScope); err != nil {
+	if err = p.sctx.PrepareTSFuture(p.ctx, sessiontxn.ConstantFuture(p.ts)); err != nil {
 		return err
 	}
 
@@ -109,7 +103,6 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	sessVars := p.sctx.GetSessionVars()
 	txn.SetVars(sessVars.KVVars)
 	txn.SetOption(kv.IsStalenessReadOnly, true)
-	txn.SetOption(kv.TxnScope, txnScope)
 	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
 	is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
 	if err != nil {
@@ -122,7 +115,6 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			CreateTime:  time.Now(),
 			StartTS:     txn.StartTS(),
 			IsStaleness: true,
-			TxnScope:    txnScope,
 		},
 	}
 	sessVars.GetRowIDShardGenerator().SetShardStep(int(sessVars.ShardAllocateStep))
@@ -148,7 +140,6 @@ func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() erro
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	txnCtx.TxnScope = kv.GlobalTxnScope
 	txnCtx.IsStaleness = true
 	txnCtx.InfoSchema = p.is
 	return nil

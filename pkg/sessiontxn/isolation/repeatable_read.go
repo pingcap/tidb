@@ -86,7 +86,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	futureTS := newOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
+	futureTS := newOracleFuture(p.ctx, p.sctx)
 
 	start := time.Now()
 	if ts, err = futureTS.Wait(); err != nil {
@@ -121,7 +121,7 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 
 	// Because the ForUpdateTS is used for the snapshot for reading data in DML.
 	// We can avoid allocating a global TSO here to speed it up by using the local TSO.
-	version, err := sctx.GetStore().CurrentVersion(sctx.GetSessionVars().TxnCtx.TxnScope)
+	version, err := sctx.GetStore().CurrentVersion()
 	if err != nil {
 		return err
 	}

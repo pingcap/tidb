@@ -47,7 +47,6 @@ func CommitBeforeEnterNewTxn(ctx context.Context, sctx sessionctx.Context) error
 	}
 	if txn.Valid() {
 		txnStartTS := txn.StartTS()
-		txnScope := sctx.GetSessionVars().TxnCtx.TxnScope
 		err = sctx.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -55,7 +54,7 @@ func CommitBeforeEnterNewTxn(ctx context.Context, sctx sessionctx.Context) error
 		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
 			zap.Int64("schemaVersion", sctx.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", txnStartTS),
-			zap.String("txnScope", txnScope))
+		)
 	}
 	return nil
 }

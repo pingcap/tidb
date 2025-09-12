@@ -108,7 +108,7 @@ func createStaleReadProvider(t *testing.T, tk *testkit.TestKit, explicitTxn bool
 }
 
 func getOracleTS(t testing.TB, sctx sessionctx.Context) uint64 {
-	ts, err := sctx.GetStore().GetOracle().GetTimestamp(context.TODO(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err := sctx.GetStore().GetOracle().GetTimestamp(context.TODO(), &oracle.Option{})
 	require.NoError(t, err)
 	return ts
 }

@@ -262,8 +262,6 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.SetEnable1PC(val.(bool))
 	case kv.GuaranteeLinearizability:
 		txn.SetCausalConsistency(!val.(bool))
-	case kv.TxnScope:
-		txn.SetScope(val.(string))
 	case kv.IsStalenessReadOnly:
 		txn.KVTxn.GetSnapshot().SetIsStalenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
@@ -321,8 +319,6 @@ func (txn *tikvTxn) GetOption(opt int) any {
 	switch opt {
 	case kv.GuaranteeLinearizability:
 		return !txn.KVTxn.IsCasualConsistency()
-	case kv.TxnScope:
-		return txn.KVTxn.GetScope()
 	case kv.TableToColumnMaps:
 		return txn.columnMapsCache
 	case kv.RequestSourceInternal:

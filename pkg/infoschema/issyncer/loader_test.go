@@ -34,7 +34,7 @@ func TestLoadFromTS(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	l := newLoader(store, infoschema.NewCache(nil, 1), nil)
-	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
+	ver, err := store.CurrentVersion()
 	require.NoError(t, err)
 	is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestLoadFromTS(t *testing.T) {
 		}))
 		return nil
 	}))
-	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
+	ver, err = store.CurrentVersion()
 	require.NoError(t, err)
 	l = newLoader(store, infoschema.NewCache(nil, 1), nil)
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
@@ -101,7 +101,7 @@ func TestLoadFromTS(t *testing.T) {
 		}))
 		return nil
 	}))
-	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
+	ver, err = store.CurrentVersion()
 	require.NoError(t, err)
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	l := NewLoaderForCrossKS(store, infoschema.NewCache(nil, 1))
-	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
+	ver, err := store.CurrentVersion()
 	require.NoError(t, err)
 	_, _, _, _, err = l.LoadWithTS(ver.Ver, false)
 	require.ErrorContains(t, err, "system database not found")
@@ -147,7 +147,7 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 		}))
 		return nil
 	}))
-	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
+	ver, err = store.CurrentVersion()
 	require.NoError(t, err)
 	is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 		}))
 		return nil
 	}))
-	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
+	ver, err = store.CurrentVersion()
 	require.NoError(t, err)
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)

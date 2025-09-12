@@ -61,8 +61,6 @@ const (
 	Enable1PC
 	// GuaranteeLinearizability indicates whether to guarantee linearizability at the cost of an extra tso request before prewrite
 	GuaranteeLinearizability
-	// TxnScope indicates which @@txn_scope this transaction will work with.
-	TxnScope
 	// ReadReplicaScope
 	ReadReplicaScope
 	// IsStalenessReadOnly indicates whether the transaction is staleness read only transaction

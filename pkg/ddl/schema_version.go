@@ -425,7 +425,7 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 		return nil
 	}
 
-	ver, err := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := jobCtx.store.CurrentVersion()
 	failpoint.Inject("mockGetCurrentVersionFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			// ref: https://github.com/tikv/client-go/blob/master/tikv/kv.go#L505-L532

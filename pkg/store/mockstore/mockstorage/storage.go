@@ -112,14 +112,14 @@ func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
 	return driver.NewSnapshot(s.KVStore.GetSnapshot(ver.Ver))
 }
 
-// CurrentVersion returns current max committed version with the given txnScope (local or global).
-func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
-	ver, err := s.KVStore.CurrentTimestamp(txnScope)
+// CurrentVersion returns current max committed version.
+func (s *mockStorage) CurrentVersion() (kv.Version, error) {
+	ver, err := s.KVStore.CurrentTimestamp()
 	return kv.NewVersion(ver), err
 }
 
-// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
-func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+// GetMinSafeTS return the minimal SafeTS of the storage.
+func (s *mockStorage) GetMinSafeTS() uint64 {
 	return 0
 }
 

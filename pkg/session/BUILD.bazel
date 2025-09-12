@@ -23,7 +23,6 @@ go_library(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
-        "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/serverstate",
         "//pkg/distsql/context",

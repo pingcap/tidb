@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	tikv "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -585,7 +584,7 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 		}
 		// ErrWriteConflict contains a conflict-commit-ts in most case, but it cannot
 		// be used as forUpdateTs, see comments inside handleAfterPessimisticLockError
-		ver, err = ddlSe.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+		ver, err = ddlSe.GetStore().CurrentVersion()
 		if err != nil {
 			break
 		}

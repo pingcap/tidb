@@ -124,7 +124,6 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
 			InfoSchema: p.infoSchema,
-			TxnScope:   sessVars.CheckAndGetTxnScope(),
 		},
 	}
 	if p.onInitializeTxnCtx != nil {
@@ -163,18 +162,8 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.infoSchema
 }
 
-// GetTxnScope returns the current txn scope
-func (p *baseTxnContextProvider) GetTxnScope() string {
-	return p.sctx.GetSessionVars().TxnCtx.TxnScope
-}
-
 // GetReadReplicaScope returns the read replica scope
 func (p *baseTxnContextProvider) GetReadReplicaScope() string {
-	if txnScope := p.GetTxnScope(); txnScope != kv.GlobalTxnScope && txnScope != "" {
-		// In local txn, we should use txnScope as the readReplicaScope
-		return txnScope
-	}
-
 	if p.sctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
 		// If closest read is set, we should use the scope where instance located.
 		return config.GetTxnScopeFromConfig()
@@ -349,7 +338,7 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
 
-	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx)
 	return p.replaceTxnTsFuture(future)
 }
 
@@ -361,7 +350,7 @@ func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
 		return nil
 	}
 
-	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx)
 	return p.replaceTxnTsFuture(future)
 }
 
@@ -384,8 +373,7 @@ func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error 
 		return nil
 	}
 
-	txnScope := p.sctx.GetSessionVars().TxnCtx.TxnScope
-	if err = p.sctx.PrepareTSFuture(p.ctx, future, txnScope); err != nil {
+	if err = p.sctx.PrepareTSFuture(p.ctx, future); err != nil {
 		return err
 	}
 
@@ -667,7 +655,7 @@ func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 }
 
 // newOracleFuture creates new future according to the scope and the session context
-func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string) oracle.Future {
+func newOracleFuture(ctx context.Context, sctx sessionctx.Context) oracle.Future {
 	r, ctx := tracing.StartRegionEx(ctx, "isolation.newOracleFuture")
 	defer r.End()
 
@@ -676,7 +664,7 @@ func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 	})
 
 	oracleStore := sctx.GetStore().GetOracle()
-	option := &oracle.Option{TxnScope: scope}
+	option := &oracle.Option{}
 
 	if sctx.GetSessionVars().UseLowResolutionTSO() {
 		return oracleStore.GetLowResolutionTimestampAsync(ctx, option)

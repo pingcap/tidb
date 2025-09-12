@@ -29,7 +29,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -7141,9 +7140,8 @@ func (b *builtinTiDBBoundedStalenessSig) evalTime(ctx EvalContext, row chunk.Row
 // GetStmtMinSafeTime get minSafeTime
 func GetStmtMinSafeTime(sc *stmtctx.StatementContext, store kv.Storage, timeZone *time.Location) time.Time {
 	var minSafeTS uint64
-	txnScope := config.GetTxnScopeFromConfig()
 	if store != nil {
-		minSafeTS = store.GetMinSafeTS(txnScope)
+		minSafeTS = store.GetMinSafeTS()
 	}
 	// Inject mocked SafeTS for test.
 	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {

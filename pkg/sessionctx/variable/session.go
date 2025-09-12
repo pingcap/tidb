@@ -225,9 +225,6 @@ type TxnCtxNoNeedToRestore struct {
 	Isolation  string
 	LockExpire uint32
 	ForUpdate  uint32
-	// TxnScope indicates the value of txn_scope
-	TxnScope string
-
 	// Savepoints contains all definitions of the savepoint of a transaction at runtime, the order of the SavepointRecord is the same with the SAVEPOINT statements.
 	// It is used for a lookup when running `ROLLBACK TO` statement.
 	Savepoints []SavepointRecord
@@ -1366,9 +1363,6 @@ type SessionVars struct {
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
-	// TxnScope indicates the scope of the transactions. It should be `global` or equal to the value of key `zone` in config.Labels.
-	TxnScope kv.TxnScopeVar
-
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
 
@@ -1976,17 +1970,6 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 	}
 }
 
-// CheckAndGetTxnScope will return the transaction scope we should use in the current session.
-func (s *SessionVars) CheckAndGetTxnScope() string {
-	if s.InRestrictedSQL || !vardef.EnableLocalTxn.Load() {
-		return kv.GlobalTxnScope
-	}
-	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
-		return s.TxnScope.GetTxnScope()
-	}
-	return kv.GlobalTxnScope
-}
-
 // IsDynamicPartitionPruneEnabled indicates whether dynamic partition prune enabled
 // Note that: IsDynamicPartitionPruneEnabled only indicates whether dynamic partition prune mode is enabled according to
 // session variable, it isn't guaranteed to be used during query due to other conditions checking.
@@ -2294,7 +2277,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ShardAllocateStep:             vardef.DefTiDBShardAllocateStep,
 		EnablePointGetCache:           vardef.DefTiDBPointGetCache,
 		PartitionPruneMode:            *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
-		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        vardef.DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:             vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                     vardef.DefTiDBEnable1PC,
@@ -2394,9 +2376,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		case kv.TiDB.Name():
 			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
 		}
-	}
-	if !vardef.EnableLocalTxn.Load() {
-		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
 	if vardef.EnableRowLevelChecksum.Load() {
 		vars.EnableRowLevelChecksum = true

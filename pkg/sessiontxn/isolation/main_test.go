@@ -51,7 +51,7 @@ func TestMain(m *testing.M) {
 }
 
 func getOracleTS(t testing.TB, sctx sessionctx.Context) uint64 {
-	ts, err := sctx.GetStore().GetOracle().GetTimestamp(context.TODO(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	ts, err := sctx.GetStore().GetOracle().GetTimestamp(context.TODO(), &oracle.Option{})
 	require.NoError(t, err)
 	return ts
 }
@@ -80,15 +80,12 @@ func (a *txnAssert[T]) Check(t testing.TB) {
 	}
 	require.Equal(t, a.isolation, txnCtx.Isolation)
 	require.Equal(t, a.isolation != "", txnCtx.IsPessimistic)
-	require.Equal(t, sessVars.CheckAndGetTxnScope(), txnCtx.TxnScope)
 	require.Equal(t, sessVars.ShardAllocateStep, int64(sessVars.GetRowIDShardGenerator().GetShardStep()))
 	require.False(t, txnCtx.IsStaleness)
 	require.GreaterOrEqual(t, txnCtx.CreateTime.UnixNano(), a.minStartTime.UnixNano())
 	require.Equal(t, a.inTxn, sessVars.InTxn())
 	require.Equal(t, a.inTxn, txnCtx.IsExplicit)
 	require.Equal(t, a.couldRetry, txnCtx.CouldRetry)
-	require.Equal(t, assertTxnScope, txnCtx.TxnScope)
-	require.Equal(t, assertTxnScope, provider.GetTxnScope())
 	require.Equal(t, assertReplicaReadScope, provider.GetReadReplicaScope())
 
 	txn, err := a.sctx.Txn(false)
@@ -106,7 +103,6 @@ func (a *txnAssert[T]) Check(t testing.TB) {
 		}
 		require.Equal(t, txnCtx.StartTS, txn.StartTS())
 		require.Same(t, sessVars.KVVars, txn.GetVars())
-		require.Equal(t, txnCtx.TxnScope, txn.GetOption(kv.TxnScope))
 		require.Equal(t, a.causalConsistencyOnly, !txn.GetOption(kv.GuaranteeLinearizability).(bool))
 		require.Equal(t, txnCtx.IsPessimistic, txn.IsPessimistic())
 	}
