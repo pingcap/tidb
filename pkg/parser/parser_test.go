@@ -4735,6 +4735,21 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "ignore_plan_cache", hints[0].HintName.L)
 	require.Equal(t, "ignore_plan_cache", hints[1].HintName.L)
 
+	// Test WRITE_SLOW_LOG
+	stmt, _, err = p.Parse("select /*+ WRITE_SLOW_LOG(), write_slow_log() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 0)
+
+	stmt, _, err = p.Parse("select /*+ WRITE_SLOW_LOG, write_slow_log*/ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "write_slow_log", hints[0].HintName.L)
+	require.Equal(t, "write_slow_log", hints[1].HintName.L)
+
 	// Test USE_CASCADES
 	stmt, _, err = p.Parse("select /*+ USE_CASCADES(true), use_cascades(false) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)

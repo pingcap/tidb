@@ -84,6 +84,7 @@ import (
 	/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
+	hintWriteSlowLog          "WRITE_SLOW_LOG"
 	hintHashAgg               "HASH_AGG"
 	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
 	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
@@ -343,6 +344,12 @@ TableOptimizerHintOpt:
 		$$ = &ast.TableOptimizerHint{
 			HintName: ast.NewCIStr($1),
 			QBName:   ast.NewCIStr($3),
+		}
+	}
+|	"WRITE_SLOW_LOG"
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
 		}
 	}
 |	"QUERY_TYPE" '(' QueryBlockOpt HintQueryType ')'
@@ -739,6 +746,7 @@ Identifier:
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
 |	"IGNORE_PLAN_CACHE"
+|	"WRITE_SLOW_LOG"
 |	"HASH_AGG"
 |	"MPP_1PHASE_AGG"
 |	"MPP_2PHASE_AGG"
