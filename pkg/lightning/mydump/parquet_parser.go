@@ -72,7 +72,7 @@ type columnDumper interface {
 	Type() parquet.Type
 	SetReader(colReader file.ColumnChunkReader)
 
-	Next(*types.Datum) bool
+	Next() (types.Datum, bool)
 	ReadNextBatch() int
 
 	Close() error
@@ -92,24 +92,26 @@ type generalColumnDumper[T parquet.ColumnTypes, R innerReader[T]] struct {
 
 	closed bool
 
-	setter setter[T]
+	getter getter[T]
 }
 
 // newGeneralColumnDumper creates a new generic column dumper
 func newGeneralColumnDumper[T parquet.ColumnTypes, R innerReader[T]](
-	batchSize int, getter setter[T],
+	batchSize int, getter getter[T],
 ) *generalColumnDumper[T, R] {
 	return &generalColumnDumper[T, R]{
 		batchSize: int64(batchSize),
 		defLevels: make([]int16, batchSize),
 		repLevels: make([]int16, batchSize),
 		values:    make([]T, batchSize),
-		setter:    getter,
+		getter:    getter,
+		closed:    true,
 	}
 }
 
 func (dump *generalColumnDumper[T, R]) SetReader(colReader file.ColumnChunkReader) {
 	dump.reader, _ = colReader.(R)
+	dump.closed = false
 }
 
 func (dump *generalColumnDumper[T, R]) Type() parquet.Type {
@@ -143,14 +145,14 @@ func (dump *generalColumnDumper[T, R]) ReadNextBatch() int {
 }
 
 // Next reads the next value with proper level handling
-func (dump *generalColumnDumper[T, R]) Next(d *types.Datum) bool {
+func (dump *generalColumnDumper[T, R]) Next() (d types.Datum, got bool) {
 	if dump.levelOffset == dump.levelsBuffered {
 		if !dump.reader.HasNext() {
-			return false
+			return d, false
 		}
 		dump.ReadNextBatch()
 		if dump.levelsBuffered == 0 {
-			return false
+			return d, false
 		}
 	}
 
@@ -160,13 +162,12 @@ func (dump *generalColumnDumper[T, R]) Next(d *types.Datum) bool {
 
 	if defLevel < dump.reader.Descriptor().MaxDefinitionLevel() {
 		d.SetNull()
-		return true
+		return d, true
 	}
 
 	value := dump.values[dump.valueOffset]
 	dump.valueOffset++
-	dump.setter(value, d)
-	return true
+	return dump.getter(value), true
 }
 
 func createColumnDumper(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) columnDumper {
@@ -361,9 +362,11 @@ func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
 
 	// Read in this group
 	for col, dumper := range pp.dumpers {
-		if ok := dumper.Next(&row[col]); !ok {
+		d, ok := dumper.Next()
+		if !ok {
 			return errors.New("error get data")
 		}
+		row[col] = d
 	}
 
 	pp.totalBytesRead += estimateRowSize(row)
@@ -374,7 +377,7 @@ func (pp *ParquetParser) readSingleRows(row []types.Datum) error {
 
 // Pos returns the currently row number of the parquet file
 func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
-	return int64(pp.totalRowsRead), pp.lastRow.RowID
+	return pp.totalRowsRead, pp.lastRow.RowID
 }
 
 // SetPos implements the Parser interface.
