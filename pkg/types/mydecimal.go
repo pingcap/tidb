@@ -1333,12 +1333,14 @@ func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 // Two Decimals dec0 and dec1 with different fraction will generate the same hash keys if dec0.Compare(dec1) == 0.
 func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	_, digitsInt := d.removeLeadingZeros()
-	_, digitsFrac := d.removeTrailingZeros()
 
 	// Use resultFrac if it differs from digitsFrac, otherwise use digitsFrac
-	fracToUse := digitsFrac
+	var fracToUse int
 	if d.resultFrac != d.digitsFrac {
 		fracToUse = int(d.resultFrac)
+	} else {
+		_, digitsFrac := d.removeTrailingZeros()
+		fracToUse = digitsFrac
 	}
 
 	prec := digitsInt + fracToUse
