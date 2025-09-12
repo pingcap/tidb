@@ -651,6 +651,31 @@ func TestIndexLookUpRowsLimit(t *testing.T) {
 	})
 }
 
+func TestIssue63487(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t (a int, b int, c int, key abc(a, b, c), key cba(c, b, a))`)
+		vs := make([]string, 0, 5000)
+		for i := 0; i <= 10000; i++ {
+			if i%2 == 0 {
+				continue
+			}
+			vs = append(vs, fmt.Sprintf("%v", i))
+		}
+		whereClause := fmt.Sprintf("where a=1 and b in (%v)", strings.Join(vs, ","))
+		q1 := fmt.Sprintf("explain format='verbose' select /*+ USE_INDEX(t, abc) */ * from t %v", whereClause)
+		costStr := tk.MustQuery(q1).Rows()[0][2].(string)
+		cost1, err := strconv.ParseFloat(costStr, 64)
+		require.Nil(t, err)
+		q2 := fmt.Sprintf("explain format='verbose' select /*+ USE_INDEX(t, cba) */ * from t %v", whereClause)
+		costStr = tk.MustQuery(q2).Rows()[0][2].(string)
+		cost2, err := strconv.ParseFloat(costStr, 64)
+		require.Nil(t, err)
+		// full scan cost is less than range scan cost since this range scan has too many ranges and seek operations.
+		require.Less(t, cost2, cost1)
+	})
+}
+
 func TestMergeJoinCostWithOtherConds(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
