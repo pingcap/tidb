@@ -1492,11 +1492,13 @@ func TestSetVariable(t *testing.T) {
 		{"set session xx.xx = 666", "xx.xx", false, true},
 		{"set local xx.xx = 666", "xx.xx", false, true},
 		{"set global xx.xx = 666", "xx.xx", true, true},
+		{"set instance xx.xx = 666", "xx.xx", true, true},
 
 		{"set @@xx.xx = 666", "xx.xx", false, true},
 		{"set @@session.xx.xx = 666", "xx.xx", false, true},
 		{"set @@local.xx.xx = 666", "xx.xx", false, true},
 		{"set @@global.xx.xx = 666", "xx.xx", true, true},
+		{"set @@instance.xx.xx = 666", "xx.xx", true, true},
 
 		// Set user defined variable xx.xx
 		{"set @xx.xx = 666", "xx.xx", false, false},
@@ -6767,7 +6769,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 	p := parser.New()
 
 	st, err := p.ParseOneStmt(
-		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\";",
+		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\", @@instance.sql_mode;",
 		"",
 		"",
 	)
@@ -6810,6 +6812,13 @@ func TestQuotedSystemVariables(t *testing.T) {
 			IsSystem:      true,
 			ExplicitScope: true,
 		},
+		{
+			Name:          "sql_mode",
+			IsGlobal:      false,
+			IsSystem:      true,
+			IsInstance:    true,
+			ExplicitScope: true,
+		},
 	}
 
 	require.Len(t, ss.Fields.Fields, len(expected))
@@ -6818,6 +6827,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 		comment := fmt.Sprintf("field %d, ve = %v", i, ve)
 		require.Equal(t, expected[i].Name, ve.Name, comment)
 		require.Equal(t, expected[i].IsGlobal, ve.IsGlobal, comment)
+		require.Equal(t, expected[i].IsInstance, ve.IsInstance, comment)
 		require.Equal(t, expected[i].IsSystem, ve.IsSystem, comment)
 		require.Equal(t, expected[i].ExplicitScope, ve.ExplicitScope, comment)
 	}
