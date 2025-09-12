@@ -34,6 +34,11 @@ const (
 type gb18030ChineseCICollator struct {
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gb18030ChineseCICollator) ImmutableKey(str string) []byte {
+	return g.Key(str)
+}
+
 // Clone implements Collator interface.
 func (*gb18030ChineseCICollator) Clone() Collator {
 	return new(gb18030ChineseCICollator)

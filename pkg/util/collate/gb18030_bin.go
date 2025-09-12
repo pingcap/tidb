@@ -37,6 +37,11 @@ type gb18030BinCollator struct {
 	e *encoding.Encoder
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gb18030BinCollator) ImmutableKey(str string) []byte {
+	return g.Key(str)
+}
+
 // Clone implements Collator interface.
 func (*gb18030BinCollator) Clone() Collator {
 	return &gb18030BinCollator{charset.NewCustomGB18030Encoder()}

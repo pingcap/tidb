@@ -116,7 +116,7 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, buildFilter != nil, keepFilteredRows)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, buildFilter != nil, keepFilteredRows, meta.nullMapLength)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err, "processOneChunk returns error")
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
@@ -174,7 +174,7 @@ func TestLargeColumn(t *testing.T) {
 			RetType: tp,
 		})
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, true, false, false)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, true, false, false, meta.nullMapLength)
 	rows := 2048
 	chk := chunk.NewEmptyChunk(buildTypes)
 	// each string value is 256k
@@ -351,7 +351,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			break
 		}
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, hasNullableKey, buildFilter != nil, keepFilteredRows, meta.nullMapLength)
 	chk := testutil.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
@@ -598,7 +598,7 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, true, true)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, true, true, meta.nullMapLength)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)

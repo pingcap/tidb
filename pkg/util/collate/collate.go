@@ -66,6 +66,8 @@ type Collator interface {
 	Pattern() WildcardPattern
 	// Clone returns a copy of the collator.
 	Clone() Collator
+	// ImmutableKey returns an immutable key
+	ImmutableKey(str string) []byte
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.

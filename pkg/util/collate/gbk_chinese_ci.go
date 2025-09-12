@@ -24,6 +24,11 @@ import (
 type gbkChineseCICollator struct {
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gbkChineseCICollator) ImmutableKey(str string) []byte {
+	return g.Key(str)
+}
+
 // Compare implements Collator interface.
 func (*gbkChineseCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)

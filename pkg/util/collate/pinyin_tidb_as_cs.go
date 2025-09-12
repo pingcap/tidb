@@ -18,6 +18,11 @@ package collate
 type zhPinyinTiDBASCSCollator struct {
 }
 
+// ImmutableKey implement Collator interface.
+func (*zhPinyinTiDBASCSCollator) ImmutableKey(str string) []byte {
+	panic("implement me")
+}
+
 // Compare is not implemented.
 func (*zhPinyinTiDBASCSCollator) Compare(_, _ string) int {
 	panic("implement me")

@@ -246,6 +246,8 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType base.JoinType, leftData
 	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, param.memoryLimits[4])
 }
 
+// TODO prealloc memory for
+// TODO adjust spill test to pass them
 func TestInnerJoinSpillBasic(t *testing.T) {
 	testFuncName := util.GetFunctionName()
 
