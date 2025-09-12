@@ -152,7 +152,7 @@ func (r *MemReader) getInstanceAddr() string {
 	return r.instanceAddr
 }
 
-// getInstanceAddr implements columnInfo.
+// getTimeLocation implements columnInfo.
 func (r *MemReader) getTimeLocation() *time.Location {
 	return r.timeLocation
 }
@@ -828,7 +828,7 @@ func (w *stmtParseWorker) getInstanceAddr() string {
 	return w.instanceAddr
 }
 
-// getInstanceAddr implements columnInfo.
+// getTimeLocation implements columnInfo.
 func (w *stmtParseWorker) getTimeLocation() *time.Location {
 	return w.timeLocation
 }
