@@ -2452,16 +2452,6 @@ func (s *SessionVars) SetEnableIndexMerge(val bool) {
 	s.enableIndexMerge = val
 }
 
-// GetEnablePseudoForOutdatedStats get EnablePseudoForOutdatedStats from SessionVars.EnablePseudoForOutdatedStats.
-func (s *SessionVars) GetEnablePseudoForOutdatedStats() bool {
-	return s.EnablePseudoForOutdatedStats
-}
-
-// SetEnablePseudoForOutdatedStats set SessionVars.EnablePseudoForOutdatedStats.
-func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
-	s.EnablePseudoForOutdatedStats = val
-}
-
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {

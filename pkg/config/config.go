@@ -700,7 +700,9 @@ type Performance struct {
 	ServerMemoryQuota uint64 `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease        string `toml:"stats-lease" json:"stats-lease"`
 	// Deprecated: transaction auto retry is deprecated.
-	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	StmtCountLimit uint `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	// Deprecated: PseudoEstimateRatio is deprecated, setting it won't be effective anymore. Only keeping it here for
+	// compatibility
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 	TxnEntrySizeLimit   uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`

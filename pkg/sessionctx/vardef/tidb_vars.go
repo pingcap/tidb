@@ -820,9 +820,6 @@ const (
 	// TiDBRemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	TiDBRemoveOrderbyInSubquery = "tidb_remove_orderby_in_subquery"
 
-	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
-	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
-
 	// TiDBRegardNULLAsPoint indicates whether regard NULL as point when optimizing
 	TiDBRegardNULLAsPoint = "tidb_regard_null_as_point"
 
@@ -1523,9 +1520,7 @@ const (
 	DefPDEnableFollowerHandleRegion                   = true
 	DefTiDBEnableBatchQueryRegion                     = false
 	DefTiDBEnableOrderedResultMode                    = false
-	DefTiDBEnablePseudoForOutdatedStats               = false
 	DefTiDBRegardNULLAsPoint                          = true
-	DefEnablePlacementCheck                           = true
 	DefTimestamp                                      = "0"
 	DefTimestampFloat                                 = 0.0
 	DefTiDBEnableStmtSummary                          = true
