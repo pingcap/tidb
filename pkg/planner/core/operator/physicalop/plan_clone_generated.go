@@ -498,3 +498,16 @@ func (op *PhysicalUnionAll) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 	cloned.PhysicalSchemaProducer = *basePlan
 	return cloned, true
 }
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalTableDual) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalTableDual)
+	*cloned = *op
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.PhysicalSchemaProducer = *basePlan
+	cloned.names = util.CloneFieldNames(op.names)
+	return cloned, true
+}
