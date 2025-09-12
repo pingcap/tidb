@@ -942,7 +942,7 @@ func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, ski
 			}
 			args[i] = res
 		}
-		return NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		return NewFunction(ctx, x.FuncName.L, x.RetType.DeepClone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x, nil
@@ -1007,7 +1007,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			}
 		}
 
-		c, err := NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		c, err := NewFunction(ctx, x.FuncName.L, x.RetType.DeepClone(), args...)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1088,7 +1088,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  col.FieldType.Clone(),
+			RetType:  col.FieldType.DeepClone(),
 			ID:       col.ID,
 			UniqueID: ctx.AllocPlanColumnID(),
 			Index:    col.Offset,
@@ -1230,12 +1230,12 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 		if oldFlen != newFlen || oldDecimal != newDecimal {
 			if col, ok := args[0].(*Column); ok {
 				newCol := col.Clone()
-				newCol.(*Column).RetType = col.RetType.Clone()
+				newCol.(*Column).RetType = col.RetType.DeepClone()
 				args[0] = newCol
 			}
 			if col, ok := args[0].(*CorrelatedColumn); ok {
 				newCol := col.Clone()
-				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
+				newCol.(*CorrelatedColumn).RetType = col.RetType.DeepClone()
 				args[0] = newCol
 			}
 			if args[0].GetType(ctx).GetType() == mysql.TypeNewDecimal {
