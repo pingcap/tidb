@@ -641,7 +641,11 @@ func TestPruneTopN(t *testing.T) {
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
 	// case 1
+<<<<<<< HEAD
 	topnIn = []TopNMeta{{[]byte{1}, 100_000}}
+=======
+	topnIn := []TopNWithRange{{TopNMeta: TopNMeta{[]byte{1}, 100_000}}}
+>>>>>>> b75bdd1257e (stats: optimize build topn and histogram (#63285))
 	totalNDV = 2
 	nullCnt = 0
 	sampleRows = 100_010
@@ -650,11 +654,11 @@ func TestPruneTopN(t *testing.T) {
 	require.Equal(t, topnIn, topnOut)
 
 	// case 2
-	topnIn = []TopNMeta{
-		{[]byte{1}, 30_000},
-		{[]byte{2}, 30_000},
-		{[]byte{3}, 20_000},
-		{[]byte{4}, 20_000},
+	topnIn = []TopNWithRange{
+		{TopNMeta: TopNMeta{[]byte{1}, 30_000}},
+		{TopNMeta: TopNMeta{[]byte{2}, 30_000}},
+		{TopNMeta: TopNMeta{[]byte{3}, 20_000}},
+		{TopNMeta: TopNMeta{[]byte{4}, 20_000}},
 	}
 	totalNDV = 5
 	nullCnt = 0
@@ -665,8 +669,13 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 3
 	topnIn = nil
+<<<<<<< HEAD
 	for i := 0; i < 10; i++ {
 		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 10_000})
+=======
+	for i := range 10 {
+		topnIn = append(topnIn, TopNWithRange{TopNMeta: TopNMeta{[]byte{byte(i)}, 10_000}})
+>>>>>>> b75bdd1257e (stats: optimize build topn and histogram (#63285))
 	}
 	totalNDV = 100
 	nullCnt = 0
@@ -676,9 +685,9 @@ func TestPruneTopN(t *testing.T) {
 	require.Equal(t, topnIn, topnOut)
 
 	// case 4 - test TopN pruning for small table
-	topnIn = []TopNMeta{
-		{[]byte{1}, 3_000},
-		{[]byte{2}, 3_000},
+	topnIn = []TopNWithRange{
+		{TopNMeta: TopNMeta{[]byte{1}, 3_000}},
+		{TopNMeta: TopNMeta{[]byte{2}, 3_000}},
 	}
 	totalNDV = 4002
 	nullCnt = 0
@@ -689,12 +698,17 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 5 - test pruning of value=1
 	topnIn = nil
+<<<<<<< HEAD
 	for i := 0; i < 10; i++ {
 		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 90})
+=======
+	for i := range 10 {
+		topnIn = append(topnIn, TopNWithRange{TopNMeta: TopNMeta{[]byte{byte(i)}, 90}})
+>>>>>>> b75bdd1257e (stats: optimize build topn and histogram (#63285))
 	}
 	topnPruned := topnIn
 	for i := 90; i < 150; i++ {
-		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 1})
+		topnIn = append(topnIn, TopNWithRange{TopNMeta: TopNMeta{[]byte{byte(i)}, 1}})
 	}
 	totalNDV = 150
 	nullCnt = 0
