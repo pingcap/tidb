@@ -112,6 +112,8 @@ const (
 	SlowLogMemMax = "Mem_max"
 	// SlowLogDiskMax is the max number bytes of disk used in this statement.
 	SlowLogDiskMax = "Disk_max"
+	// SlowLogMemArbitration is the total wait time(ns) of mem arbitration
+	SlowLogMemArbitration = "Mem_arbitration"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
 	SlowLogPrepared = "Prepared"
 	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
@@ -276,6 +278,7 @@ type SlowQueryLogItems struct {
 	CPUUsages         ppcpuusage.CPUUsages
 	StorageKV         bool // query read from TiKV
 	StorageMPP        bool // query read from TiFlash
+	MemArbitration    time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -425,6 +428,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if logItems.MemMax > 0 {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
+	}
+	if logItems.MemArbitration > 0 {
+		writeSlowLogItem(&buf, SlowLogMemArbitration, strconv.FormatFloat(logItems.MemArbitration.Seconds(), 'f', -1, 64))
 	}
 	if logItems.DiskMax > 0 {
 		writeSlowLogItem(&buf, SlowLogDiskMax, strconv.FormatInt(logItems.DiskMax, 10))

@@ -2031,6 +2031,11 @@ error = '''
 Unknown background task name '%-.192s'
 '''
 
+["executor:8267"]
+error = '''
+Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
