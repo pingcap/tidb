@@ -57,7 +57,7 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Parti
 		return nil
 	}
 
-	bj, err := types.CreateBinaryJSONWithCheck(p.entries)
+	bj, err := types.CreateBinaryJSONWithCheck(p.entries.M)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -96,8 +96,6 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGro
 		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
 			if delta, _, insert := p.entries.SetExt(key, realVal); insert {
 				memDelta += int64(len(key)) + getValMemDelta(realVal) + delta
-			} else {
-				memDelta += delta
 			}
 		default:
 			return 0, types.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)

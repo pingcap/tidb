@@ -48,7 +48,7 @@ func TestMemVarpop(t *testing.T) {
 		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4VarPopFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+int64(hack.NewMemAwareMap[float64, struct{}](0).Bytes), distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 	}
 	for n, test := range tests {
 		t.Run(fmt.Sprintf("%s_%d", test.aggTest.funcName, n), func(t *testing.T) {
