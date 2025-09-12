@@ -92,6 +92,9 @@ const (
 
 	FlagResetSysUsers = "reset-sys-users"
 
+	FlagTikvPostRestoreConfigOverrideFile = "tikv-post-restore-config-overrides-file"
+	FlagTikvRestoreConfigOverrideFile     = "tikv-restore-config-overrides-file"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -272,6 +275,9 @@ type RestoreConfig struct {
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
+
+	TikvPostRestoreConfigOverridesFile string `json:"tikv-post-restore-config-overrides-file" toml:"tikv-post-restore-config-overrides-file"`
+	TikvRestoreConfigOverridesFile     string `json:"tikv-restore-config-overrides-file" toml:"tikv-restore-config-overrides-file"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -306,6 +312,8 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().String(FlagTikvPostRestoreConfigOverrideFile, "", "Configuration file containing TiKV configuration which should be applied after Stream Restore operation completes.")
+	command.Flags().String(FlagTikvRestoreConfigOverrideFile, "", "Configuration file containing TiKV configuration which should be applied during Stream Restore operation.")
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -341,6 +349,13 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.TikvPostRestoreConfigOverridesFile, err = flags.GetString(FlagTikvPostRestoreConfigOverrideFile); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.TikvRestoreConfigOverridesFile, err = flags.GetString(FlagTikvRestoreConfigOverrideFile); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
