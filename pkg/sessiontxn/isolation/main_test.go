@@ -89,7 +89,9 @@ func (a *txnAssert[T]) Check(t testing.TB) {
 	require.Equal(t, a.couldRetry, txnCtx.CouldRetry)
 	require.Equal(t, assertTxnScope, txnCtx.TxnScope)
 	require.Equal(t, assertTxnScope, provider.GetTxnScope())
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessionctx/variable/GetReplicaReadUnadjusted", "return(true)"))
 	require.Equal(t, assertReplicaReadScope, provider.GetReadReplicaScope())
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessionctx/variable/GetReplicaReadUnadjusted"))
 
 	txn, err := a.sctx.Txn(false)
 	require.NoError(t, err)

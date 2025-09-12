@@ -447,23 +447,18 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
+
+	var snapshot kv.Snapshot
 	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		return txn.GetSnapshot(), nil
+		snapshot = txn.GetSnapshot()
+	} else {
+		snapshot = internal.GetSnapshotWithTS(
+			p.sctx,
+			snapshotTS,
+			temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
+		)
 	}
-
-	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(
-		p.sctx,
-		snapshotTS,
-		temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
-	)
-
-	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() &&
-		!sessVars.StmtCtx.RCCheckTS &&
-		!sessVars.RcWriteCheckTS {
-		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
-	}
+	snapshot.SetOption(kv.ReplicaRead, p.sctx.GetSessionVars().GetReplicaRead())
 
 	return snapshot, nil
 }
