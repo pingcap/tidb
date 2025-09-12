@@ -19,12 +19,39 @@ import (
 	"slices"
 )
 
-// BoundedMinHeap implements a min-heap for maintaining the best N items efficiently.
+// internalHeap is an unexported heap implementation backing BoundedMinHeap.
+// it keeps the worst item at the root according to cmp.
+type internalHeap[T any] struct {
+	cmp   func(T, T) int
+	items []T
+}
+
+// Len implements heap.Interface.
+func (h *internalHeap[T]) Len() int { return len(h.items) }
+
+// Less implements heap.Interface; the min-heap keeps the worst item at the root.
+func (h *internalHeap[T]) Less(i, j int) bool { return h.cmp(h.items[i], h.items[j]) < 0 }
+
+// Swap implements heap.Interface.
+func (h *internalHeap[T]) Swap(i, j int) { h.items[i], h.items[j] = h.items[j], h.items[i] }
+
+// Push implements heap.Interface.
+func (h *internalHeap[T]) Push(x any) { h.items = append(h.items, x.(T)) }
+
+// Pop implements heap.Interface.
+func (h *internalHeap[T]) Pop() any {
+	old := h.items
+	n := len(old)
+	item := old[n-1]
+	h.items = old[0 : n-1]
+	return item
+}
+
+// BoundedMinHeap maintains the best N items efficiently using an internal min-heap.
 // It keeps the N best items according to the comparison function.
-// The root of the heap is always the worst item, making it easy to remove when a better item arrives.
+// The root of the internal heap is always the worst item, making it easy to remove when a better item arrives.
 type BoundedMinHeap[T any] struct {
-	cmpFunc func(T, T) int
-	items   []T
+	data    internalHeap[T]
 	maxSize int
 }
 
@@ -38,38 +65,16 @@ func NewBoundedMinHeap[T any](maxSize int, cmpFunc func(T, T) int) *BoundedMinHe
 	}
 
 	return &BoundedMinHeap[T]{
-		items:   make([]T, 0, maxSize),
+		data: internalHeap[T]{
+			items: make([]T, 0, maxSize),
+			cmp:   cmpFunc,
+		},
 		maxSize: maxSize,
-		cmpFunc: cmpFunc,
 	}
 }
 
 // Len returns the number of items in the heap.
-func (h *BoundedMinHeap[T]) Len() int { return len(h.items) }
-
-// Less compares two items; the min-heap keeps the worst item at the root.
-func (h *BoundedMinHeap[T]) Less(i, j int) bool {
-	return h.cmpFunc(h.items[i], h.items[j]) < 0
-}
-
-// Swap swaps two items in the heap.
-func (h *BoundedMinHeap[T]) Swap(i, j int) {
-	h.items[i], h.items[j] = h.items[j], h.items[i]
-}
-
-// Push adds an item to the heap.
-func (h *BoundedMinHeap[T]) Push(x any) {
-	h.items = append(h.items, x.(T))
-}
-
-// Pop removes and returns the worst item from the heap.
-func (h *BoundedMinHeap[T]) Pop() any {
-	old := h.items
-	n := len(old)
-	item := old[n-1]
-	h.items = old[0 : n-1]
-	return item
-}
+func (h *BoundedMinHeap[T]) Len() int { return h.data.Len() }
 
 // Add adds an item to the bounded min-heap. If the heap is full and the new item
 // is better than the worst item, it replaces the worst item.
@@ -79,32 +84,32 @@ func (h *BoundedMinHeap[T]) Add(item T) {
 		return
 	}
 
-	if len(h.items) < h.maxSize {
+	if len(h.data.items) < h.maxSize {
 		// heap not full, just add the item
-		heap.Push(h, item)
+		heap.Push(&h.data, item)
 		return
 	}
 
 	// heap is full, check if new item is better than the worst (root of min-heap)
-	if h.cmpFunc(item, h.items[0]) > 0 {
+	if h.data.cmp(item, h.data.items[0]) > 0 {
 		// new item is better, replace the worst
-		h.items[0] = item
-		heap.Fix(h, 0)
+		h.data.items[0] = item
+		heap.Fix(&h.data, 0)
 	}
 }
 
 // ToSortedSlice returns all items in the heap as a sorted slice (best to worst).
 func (h *BoundedMinHeap[T]) ToSortedSlice() []T {
-	if len(h.items) == 0 {
+	if len(h.data.items) == 0 {
 		return nil
 	}
 
 	// copy items to avoid modifying the original heap
-	result := make([]T, len(h.items))
-	copy(result, h.items)
+	result := make([]T, len(h.data.items))
+	copy(result, h.data.items)
 
 	// sort from best to worst using a negated comparator
-	slices.SortFunc(result, func(a, b T) int { return -h.cmpFunc(a, b) })
+	slices.SortFunc(result, func(a, b T) int { return -h.data.cmp(a, b) })
 
 	return result
 }
