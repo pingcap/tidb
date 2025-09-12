@@ -1580,7 +1580,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
-		writeBindingUsageTicker := time.NewTicker(bindinfo.Lease)
+		writeBindingUsageTicker := time.NewTicker(bindinfo.WriteIntervalAfterNoReadBinding)
 		startupTs := time.Now()
 		defer func() {
 			bindWorkerTicker.Stop()
@@ -1613,9 +1613,21 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				}
 				bindHandle := do.BindingHandle()
 				bindHandle.UpdateBindingUsageInfoToStorage()
+				writeBindingUsageTicker.Reset(
+					randomDuration(
+						bindinfo.MinCheckIntervalForUpdateBindingUsageInfo,
+						bindinfo.MaxCheckIntervalForUpdateBindingUsageInfo,
+					),
+				)
 			}
 		}
 	}, "globalBindHandleWorkerLoop")
+}
+
+func randomDuration(minSeconds, maxSeconds int) time.Duration {
+	randomIntervalSeconds := rand.Intn(maxSeconds-minSeconds+1) + minSeconds
+	newDuration := time.Duration(randomIntervalSeconds) * time.Second
+	return newDuration
 }
 
 // TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
