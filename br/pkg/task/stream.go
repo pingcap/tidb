@@ -1217,6 +1217,10 @@ func RunStreamRestore(
 		failpoint.Return(errors.New("failpoint: failed before full restore"))
 	})
 
+	if err = ensureTiKVConfigFromFile(ctx, g, mgr, cfg.TikvRestoreConfigOverridesFile); err != nil {
+		return errors.Trace(err)
+	}
+
 	recorder := tiflashrec.New()
 	cfg.tiflashRecorder = recorder
 	// restore full snapshot.
@@ -1241,6 +1245,9 @@ func RunStreamRestore(
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
 	if err := restoreStream(ctx, mgr, g, cfg, checkInfo.CheckpointInfo); err != nil {
+		return errors.Trace(err)
+	}
+	if err = ensureTiKVConfigFromFile(ctx, g, mgr, cfg.TikvPostRestoreConfigOverridesFile); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
