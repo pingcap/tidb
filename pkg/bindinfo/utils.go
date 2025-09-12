@@ -171,8 +171,14 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
 
 const updateBindingUsageInfoBatchSize = 10
 
-// WriteIntervalAfterNoReadBinding indicates the interval at which a write operation needs to be performed after a binding has not been read.
-var WriteIntervalAfterNoReadBinding = 2 * time.Hour
+var (
+	// WriteIntervalAfterNoReadBinding indicates the interval at which a write operation needs to be performed after a binding has not been read.
+	WriteIntervalAfterNoReadBinding = 1 * time.Hour
+	// MinCheckIntervalForUpdateBindingUsageInfo indicates the minimum interval to check whether to update binding usage info.
+	MinCheckIntervalForUpdateBindingUsageInfo = 5
+	// MaxCheckIntervalForUpdateBindingUsageInfo indicates the maximum interval to check whether to update binding usage info.
+	MaxCheckIntervalForUpdateBindingUsageInfo = 60
+)
 
 func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings []*Binding) error {
 	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) error {
