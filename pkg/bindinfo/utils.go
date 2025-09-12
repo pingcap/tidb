@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -165,6 +167,55 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
 		return nil
 	})
 	return
+}
+
+const updateBindingUsageInfoBatchSize = 10
+
+var (
+	// WriteIntervalAfterNoReadBinding indicates the interval at which a write operation needs to be performed after a binding has not been read.
+	WriteIntervalAfterNoReadBinding = 1 * time.Hour
+	// MinCheckIntervalForUpdateBindingUsageInfo indicates the minimum interval to check whether to update binding usage info.
+	MinCheckIntervalForUpdateBindingUsageInfo = 5
+	// MaxCheckIntervalForUpdateBindingUsageInfo indicates the maximum interval to check whether to update binding usage info.
+	MaxCheckIntervalForUpdateBindingUsageInfo = 60
+)
+
+func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings []*Binding) error {
+	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) error {
+		cnt := 0
+		for _, binding := range bindings {
+			createAt := binding.UsageInfo.CreateAt.Load()
+			if createAt == nil {
+				continue
+			}
+			lastUsedAt := binding.UsageInfo.LastUsedAt.Load()
+			if lastUsedAt == nil {
+				continue
+			}
+			if time.Since(*lastUsedAt) > WriteIntervalAfterNoReadBinding || lastUsedAt.Sub(*createAt) > 12*time.Hour {
+				err := saveBindUsage(sctx, binding.SQLDigest, *lastUsedAt)
+				if err != nil {
+					return err
+				}
+				binding.ResetUsageInfo()
+			}
+			if cnt > updateBindingUsageInfoBatchSize {
+				break
+			}
+		}
+		return nil
+	})
+	return err
+}
+
+func saveBindUsage(sctx sessionctx.Context, sqldigest string, ts time.Time) error {
+	lastUsedTime := ts.UTC().Format(types.TimeFormat)
+	_, _, err := execRows(
+		sctx,
+		"UPDATE mysql.bind_info SET last_used_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?",
+		lastUsedTime, sqldigest,
+	)
+	return err
 }
 
 // newBindingFromStorage builds Bindings from a tuple in storage.
