@@ -338,7 +338,14 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 		}
 		// take the union of the two columnValues
 		columnValues = unionColumnValues(columnValues, res.ColumnValues)
-		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
+		if len(res.AccessConds) == 0 {
+			continue
+		}
+		isOrCondition := false
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			isOrCondition = true
+		}
+		if !isOrCondition && len(res.RemainedConds) > 0 {
 			continue
 		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
