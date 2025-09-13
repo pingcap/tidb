@@ -3734,7 +3734,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		if kv.IsTxnRetryableError(err) {
 			return false, ver, errors.Trace(err)
 		}
-		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+		if err1 := rh.RemoveDDLReorgHandle(job.ID, reorgInfo.elements); err1 != nil {
 			logutil.DDLLogger().Warn("reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.Stringer("job", job), zap.Error(err1))
 		}
