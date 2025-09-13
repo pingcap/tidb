@@ -1427,6 +1427,18 @@ func (s *session) GetTiDBTableValue(name string) (string, error) {
 
 var _ sqlexec.SQLParser = &session{}
 
+const (
+	coreSQLToken     = 1 << 0
+	bypassSQLToken   = 1 << 1
+	isSelectSQLToken = 1 << 2
+)
+
+var keySQLToken = map[string]int{
+	"select": isSelectSQLToken,
+	"from":   coreSQLToken, "insert": coreSQLToken, "update": coreSQLToken, "delete": coreSQLToken, "replace": coreSQLToken, "analyze": coreSQLToken,
+	"execute": coreSQLToken, // ignore `prepare` statement because its content will be parsed later
+	"explain": bypassSQLToken, "desc": bypassSQLToken}
+
 func approxSQLTokenCnt(sql string) (tokenCnt int64) {
 	f := false
 	buffer := struct {
@@ -1455,14 +1467,12 @@ func approxSQLTokenCnt(sql string) (tokenCnt int64) {
 			f = false
 			tokenCnt++
 			if !hitCoreToken {
-				switch string(buffer.d[:buffer.n]) {
-				case "select":
+				token := keySQLToken[string(buffer.d[:buffer.n])]
+				if token&isSelectSQLToken > 0 {
 					hasSelect = true
-				case "explain", "desc":
-					// check next token
-				case "from", "insert", "update", "delete", "replace", "analyze", "execute":
+				} else if token&coreSQLToken > 0 {
 					hitCoreToken = true
-				default:
+				} else if token&bypassSQLToken == 0 {
 					if !hasSelect {
 						return 0
 					}
@@ -1501,9 +1511,6 @@ func approxSQLTokenCnt(sql string) (tokenCnt int64) {
 				}
 				i++
 			}
-			if i < len(sql) {
-				i++ // skip closing quote
-			}
 			tokenCnt++
 			continue
 		}
@@ -1514,9 +1521,6 @@ func approxSQLTokenCnt(sql string) (tokenCnt int64) {
 					i++ // skip escape character
 				}
 				i++
-			}
-			if i < len(sql) {
-				i++ // skip closing "`"
 			}
 			tokenCnt++
 			continue
@@ -1529,13 +1533,13 @@ func approxSQLTokenCnt(sql string) (tokenCnt int64) {
 	if f {
 		tokenCnt++
 	}
-	if hasSelect && !hitCoreToken {
+	if hasSelect && !hitCoreToken { // expect `select ... from ...`
 		return -1
 	}
 	return
 }
 
-func approxNormalizedSQLTokenCnt(sql string) (tokenCnt int64) {
+func approxNormalizedSQLTokenCnt(sql string) (tokenCnt int64) { // only for normalized SQL
 	f := false
 	for _, c := range sql {
 		if 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '_' {

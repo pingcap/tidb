@@ -63,3 +63,21 @@ func testTableBasicInfoSlice(t *testing.T, allTables []TableBasicInfo) {
 			"table SQL should contain table name and follow the format 'mysql.<table_name> ('")
 	}
 }
+
+func TestMemArbitratorSession(t *testing.T) {
+	require.Equal(t, int64(15), approxSQLTokenCnt("/*select * from **/SELECT x FROM `t\\`` # abc \nwhere a = 1.23 and b = 'abc\"d\\'e' -- abc \nand c_1_2 in \"abc'd\\\"e\" # (1,2,3)\n"))
+	require.Equal(t, int64(-1), approxSQLTokenCnt("select @@version @a")) // not select ... from ...
+	require.Equal(t, int64(0), approxSQLTokenCnt("set @a=1"))
+	require.Equal(t, int64(4), approxSQLTokenCnt("desc analyze table t"))
+	require.Equal(t, int64(3), approxSQLTokenCnt("analyze table t"))
+	require.Equal(t, int64(0), approxSQLTokenCnt("/*select * from **/explain show warnings"))
+	require.Equal(t, int64(0), approxSQLTokenCnt("/*select * from **/desc show columns from t"))
+	require.Equal(t, int64(5), approxSQLTokenCnt("insert into t values 1"))
+	require.Equal(t, int64(5), approxSQLTokenCnt("update t set a=1"))
+	require.Equal(t, int64(6), approxSQLTokenCnt("delete from t where a=1"))
+	require.Equal(t, int64(5), approxSQLTokenCnt("replace into t values 1"))
+	require.Equal(t, int64(6), approxSQLTokenCnt("execute stmt1 using @a,@b,@c"))
+	require.Equal(t, int64(6), approxSQLTokenCnt("execute stmt1 using @a,@b,@c"))
+
+	require.Equal(t, int64(10), approxSQLTokenCnt("select * from a_1.b_2 where c1 = ? and c2 = ?"))
+}

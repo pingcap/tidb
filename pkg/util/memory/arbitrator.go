@@ -90,6 +90,7 @@ const (
 	defDigestProfileMemTimeoutSec             = 60 * 60 * 24 * 7 // 1 week
 	baseQuotaUnit                             = 4 * byteSizeKB   // 4KB
 	defMaxMagnif                              = kilo * 10
+	defMaxDigestProfileCacheLimit             = 4e4
 )
 
 // ArbitratorWorkMode represents the work mode of the arbitrator: Standard, Priority, Disable
@@ -739,7 +740,7 @@ func (m *MemArbitrator) shrinkDigestProfile(utimeSec int64, limit, shrinkTo int6
 		return
 	}
 
-	atomic.AddInt64(&m.execMetrics.ShrinkDigest, 1)
+	m.execMetrics.ShrinkDigest++
 
 	var valMap [defPoolQuotaShards]int
 
@@ -1602,7 +1603,7 @@ func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainByte
 					continue
 				}
 				if ctx := entry.ctx.Load(); ctx.available() {
-					atomic.AddInt64(&m.execMetrics.Cancel.PriorityMode[prio], 1)
+					m.execMetrics.Cancel.PriorityMode[prio]++
 					ctx.stop(ArbitratorPriorityCancel)
 
 					if m.removeTask(entry) {
@@ -1745,7 +1746,6 @@ func NewMemArbitrator(limit int64, shardNum uint64, maxQuotaShardNum int, minQuo
 		m.heapController.memStateRecorder.Unlock()
 	}
 	m.resetDigestProfileCache(shardNum)
-	m.digestProfileCache.limit = 2e5 // 200K
 	return m
 }
 
@@ -1753,6 +1753,7 @@ func (m *MemArbitrator) resetDigestProfileCache(shardNum uint64) {
 	m.digestProfileCache.shards = make([]digestProfileShard, shardNum)
 	m.digestProfileCache.shardsMask = shardNum - 1
 	m.digestProfileCache.num.Store(0)
+	m.digestProfileCache.limit = defMaxDigestProfileCacheLimit
 }
 
 // SetDigestProfileCacheLimit sets the limit of the digest profile cache
@@ -1836,7 +1837,7 @@ func (m *MemArbitrator) doExecuteFirstTask() (exec bool) {
 
 			if m.removeTask(entry) {
 				if m.execMu.mode == ArbitratorModePriority {
-					atomic.AddInt64(&m.execMetrics.Task.SuccByPriority[entry.taskMu.fifoByPriority.priority], 1)
+					m.execMetrics.Task.SuccByPriority[entry.taskMu.fifoByPriority.priority]++
 				}
 				m.entryMap.addQuota(entry, reclaimedBytes)
 				// wind up & publish the result
@@ -1859,11 +1860,11 @@ func (m *MemArbitrator) doReclaimNonBlockingTasks() {
 	if m.execMu.mode == ArbitratorModeStandard {
 		for prio := minArbitrationPriority; prio < maxArbitrationPriority; prio++ {
 			if m.taskNumByPriority(prio) != 0 {
-				atomic.AddInt64(&m.execMetrics.Cancel.StandardMode, m.doCancelPendingTasks(prio, false))
+				m.execMetrics.Cancel.StandardMode += m.doCancelPendingTasks(prio, false)
 			}
 		}
 	} else if m.taskNumOfWaitAverse() != 0 {
-		atomic.AddInt64(&m.execMetrics.Cancel.WaitAverse, m.doCancelPendingTasks(maxArbitrationPriority, true))
+		m.execMetrics.Cancel.WaitAverse += m.doCancelPendingTasks(maxArbitrationPriority, true)
 	}
 }
 
@@ -2134,7 +2135,7 @@ func (b *ConcurrentBudget) Clear() int64 {
 func (b *ConcurrentBudget) Reserve(newCap int64) (err error) {
 	b.Lock()
 
-	extra := max(newCap, b.Used.Add(0), b.Capacity.Load()) - b.Capacity.Load()
+	extra := max(newCap, b.Used.Load(), b.Capacity.Load()) - b.Capacity.Load()
 	if err = b.Pool.allocate(extra); err == nil {
 		b.Capacity.Add(extra)
 	}
@@ -2148,11 +2149,11 @@ func (b *ConcurrentBudget) Reserve(newCap int64) (err error) {
 func (b *ConcurrentBudget) PullFromUpstream() (err error) {
 	b.Lock()
 
-	x := b.Used.Add(0) - b.Capacity.Load()
-	if x > 0 {
-		extra := b.Pool.roundSize(x)
-		if err = b.Pool.allocate(extra); err == nil {
-			b.Capacity.Add(extra)
+	delta := b.Used.Load() - b.Capacity.Load()
+	if delta > 0 {
+		delta = b.Pool.roundSize(delta)
+		if err = b.Pool.allocate(delta); err == nil {
+			b.Capacity.Add(delta)
 		}
 	}
 
@@ -2304,11 +2305,11 @@ func (m *MemArbitrator) updatePoolMediumCapacity(utimeMilli int64) {
 		total := uint32(0)
 		if tar1 != nil {
 			tar1.RLock()
-			total += tar1.num.Add(0)
+			total += tar1.num.Load()
 		}
 		if tar2 != nil {
 			tar2.RLock()
-			total += tar2.num.Add(0)
+			total += tar2.num.Load()
 		}
 
 		if total != 0 {
@@ -2818,7 +2819,7 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 					// force kill
 					if ctx := entry.ctx.Load(); ctx.available() {
 						ctx.stop(ArbitratorOOMRiskKill)
-						atomic.AddInt64(&m.execMetrics.Risk.OOMKill[entry.ctx.memPriority], 1)
+						m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
 						forceKill++
 						if m.removeTask(entry) {
 							entry.windUp(0, ArbitrateFail)
@@ -2919,7 +2920,7 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 					reclaimed += memoryUsed
 					ctx.stop(ArbitratorOOMRiskKill)
 					newKillNum++
-					atomic.AddInt64(&m.execMetrics.Risk.OOMKill[prio], 1)
+					m.execMetrics.Risk.OOMKill[prio]++
 
 					{ // warning
 						m.actions.Warn("Start to `KILL` root pool",
@@ -2973,10 +2974,10 @@ func (m *MemArbitrator) recordMemState(s *RuntimeMemStateV1, reason string) erro
 	m.heapController.memStateRecorder.lastMemState.Store(s)
 
 	if err := m.heapController.memStateRecorder.Store(s); err != nil {
-		atomic.AddInt64(&m.execMetrics.Action.RecordMemState.Fail, 1)
+		m.execMetrics.Action.RecordMemState.Fail++
 		return err
 	}
-	atomic.AddInt64(&m.execMetrics.Action.RecordMemState.Succ, 1)
+	m.execMetrics.Action.RecordMemState.Succ++
 	m.actions.Info("Record mem state",
 		zap.String("reason", reason),
 		zap.String("data", fmt.Sprintf("%+v", s)),
@@ -3008,13 +3009,13 @@ func (m *MemArbitrator) initAwaitFreePool(allocAlignSize, shardNum int64) {
 		if m.heapController.heapAlloc.Load() > m.oomRisk()-s.Request ||
 			m.allocated() > m.limit()-m.avoidance.size.Load()-s.Request {
 			m.updateBlockedAt()
-			atomic.AddInt64(&m.execMetrics.AwaitFree.Fail, 1)
+			m.execMetrics.AwaitFree.Fail++
 			return errArbitrateFailError
 		}
 
 		m.alloc(s.Request)
 		p.forceAddCap(s.Request)
-		atomic.AddInt64(&m.execMetrics.AwaitFree.Succ, 1)
+		m.execMetrics.AwaitFree.Succ++
 
 		return nil
 	})
@@ -3194,7 +3195,7 @@ func (m *MemArbitrator) atMemRisk() bool {
 
 func (m *MemArbitrator) intoOOMRisk() {
 	m.heapController.memRisk.oomRisk = true
-	atomic.AddInt64(&m.execMetrics.Risk.OOM, 1)
+	m.execMetrics.Risk.OOM++
 }
 
 //go:norace
@@ -3213,7 +3214,7 @@ func (m *MemArbitrator) intoMemRisk() {
 	m.heapController.memRisk.startTime.nano.Store(now.UnixNano())
 	m.heapController.memRisk.lastMemStats.heapTotalFree = m.heapController.heapTotalFree.Load()
 	m.heapController.memRisk.lastMemStats.startTime = now
-	atomic.AddInt64(&m.execMetrics.Risk.Mem, 1)
+	m.execMetrics.Risk.Mem++
 
 	{
 		profile := m.recordDebugProfile()

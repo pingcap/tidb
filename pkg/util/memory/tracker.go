@@ -460,19 +460,19 @@ func (t *Tracker) Consume(bs int64) {
 				{ // fast path for small budget
 					if m.addSmallBudget(bs) > m.budget.smallLimit {
 						m.addSmallBudget(-bs)
-						m.initBigBudget()
-						goto useBigBudget
+						goto initBigBudget
 					}
 					b := m.smallBudget()
 					if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
 						b.setLastUsedTimeSec(t)
 					}
 					if b.Used.Load() > b.Capacity.Load() && b.PullFromUpstream() != nil {
-						m.initBigBudget()
-						goto useBigBudget
+						goto initBigBudget
 					}
 					goto endUseBudget
 				}
+			initBigBudget:
+				m.initBigBudget()
 			useBigBudget:
 				if m.addBigBudgetUsed(bs) > m.bigBudgetGrowThreshold() {
 					m.growBigBudget()

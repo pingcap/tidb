@@ -965,6 +965,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if err != nil {
 			return err
 		}
+		sc.MemSensitive = true
 		_, isAnalyze = prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
 	} else if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		isAnalyze = true
