@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -52,6 +53,7 @@ type encodeAndSortOperator struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	collector execute.Collector
+	pool      *mydump.Pool
 
 	taskID, subtaskID int64
 	tableImporter     *importer.TableImporter
@@ -71,12 +73,14 @@ func newEncodeAndSortOperator(
 	collector execute.Collector,
 	subtaskID int64,
 	concurrency int,
+	memPool *mydump.Pool,
 ) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
 		cancel:        cancel,
 		collector:     collector,
+		pool:          memPool,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
 		tableImporter: executor.tableImporter,
@@ -197,7 +201,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector); err != nil {
+	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector, w.op.pool); err != nil {
 		w.op.onError(err)
 	}
 }
@@ -228,12 +232,17 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 	return path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
 }
 
-func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
+func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan, encodeStep bool) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
-	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
-	// we use half of the total available memory for data writer, and the other half
-	// for encoding and other stuffs, it's an experience value, might not optimal.
+
+	// We use a portion of the total available memory for data writer, which is depended
+	// on the data format, and the other half for encoding and other stuffs, it's an
+	// experience value, might not optimal.
+	memForWriter := mydump.GetMemoryForWriter(
+		encodeStep, plan.ParquetFileMemoryUsage,
+		plan.ThreadCnt, int(resource.Mem.Capacity()))
+
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer
 	// takes 3 shares, and each index KV writer takes 1 share.
 	// suppose we have memPerCon = 2G
@@ -243,7 +252,7 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	// 	| 1               | 768/256 MiB           |
 	// 	| 5               | 384/128 MiB           |
 	// 	| 13              | 192/64 MiB            |
-	memPerShare := float64(memPerCon) / 2 / float64(indexKVGroupCnt+3)
+	memPerShare := float64(memForWriter) / float64(indexKVGroupCnt+3)
 	return uint64(memPerShare * 3), uint64(memPerShare)
 }
 

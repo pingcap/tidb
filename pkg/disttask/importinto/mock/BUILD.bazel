@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/lightning/backend",
+        "//pkg/lightning/mydump",
         "@org_uber_go_mock//gomock",
     ],
 )
