@@ -186,13 +186,13 @@ func (t *ManagerCtx) checkMetaClient() error {
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	tableInfoJson, err := json.Marshal(tblInfo)
+	tableInfoJSON, err := json.Marshal(tblInfo)
 	if err != nil {
 		return err
 	}
 	req := &CreateIndexRequest{
 		DatabaseName: schemaName,
-		TableInfo:    tableInfoJson,
+		TableInfo:    tableInfoJSON,
 		IndexId:      indexInfo.ID,
 	}
 	t.mu.RLock()
