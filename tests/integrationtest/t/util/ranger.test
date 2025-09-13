@@ -116,6 +116,33 @@ select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2
 explain format='plan_tree' select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2;
 select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2;
 
+# Test IN vs OR list
+drop table if exists t1;
+create table t1(a1 int, b1 int, c1 int, index idx(a1, b1));
+insert into t1 values (1,1,0), (2,2,1);
+insert into t1 select a1+1,b1+2, c1 from t1;
+insert into t1 select a1+1,b1+2, c1 from t1;
+explain format='plan_tree' select count(*) from t1 use index (idx) where a1 in (1,2);
+select count(*) from t1 use index (idx) where a1 in (1,2);
+explain format='plan_tree' select count(*) from t1 use index (idx) where a1 = 1 or a1 = 2;
+select count(*) from t1 use index (idx) where a1 = 1 or a1 = 2;
+explain format='plan_tree' select count(*) from t1 use index (idx) where a1 in (1,2) and b1 in (2,3);
+select count(*) from t1 use index (idx) where a1 in (1,2) and b1 in (2,3);
+explain format='plan_tree' select count(*) from t1 use index (idx) where (a1 = 1 or a1 = 2) and (b1 = 2 or b1 = 3);
+select count(*) from t1 use index (idx) where (a1 = 1 or a1 = 2) and (b1 = 2 or b1 = 3);
+explain format='plan_tree' select count(*) from t1 use index (idx) where a1 in (1,2,3) or a1 in (4,5,6);
+select count(*) from t1 use index (idx) where a1 in (1,2,3) or a1 in (4,5,6);
+
+# Test IN vs OR list -- point queries or range on unique index.
+drop table if exists t1;
+create table t1(a1 int, b1 int, c1 int, index idx(a1, b1));
+explain format='plan_tree' select 1 from t1 where a1 in (1,3,4);
+explain format='plan_tree' select 1 from t1 where a1 = 1 or a1 = 3 or a1 = 4;
+explain format='plan_tree' select 1 from t1 where a1 in (1,3);
+explain format='plan_tree' select 1 from t1 where a1=1 or a1=3;
+explain format='plan_tree' select 1 from t1 where a1 in (3,4);
+explain format='plan_tree' select 1 from t1 where a1=3 or a1=4;
+
 # TestCompIndexMultiColDNF2
 drop table if exists t;
 create table t(a int, b int, c int, primary key(a,b,c));
