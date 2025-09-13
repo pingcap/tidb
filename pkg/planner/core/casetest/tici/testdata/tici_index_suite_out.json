@@ -178,7 +178,9 @@
           "└─IndexReader 0.10 root  index:IndexRangeScan",
           "  └─IndexRangeScan 0.10 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
+        ]
       },
       {
         "SQL": "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
