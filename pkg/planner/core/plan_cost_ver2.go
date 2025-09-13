@@ -134,7 +134,7 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns) // consider all index columns
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
-	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+	p.PlanCostVer2 = costusage.SumCostVer2(scanCostVer2(option, rows, rowSize, scanFactor), seekCostVer2(option, float64(len(p.Ranges)), scanFactor))
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
@@ -176,7 +176,7 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 			}
 		}
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+		p.PlanCostVer2 = costusage.SumCostVer2(scanCostVer2(option, rows, rowSize, scanFactor), seekCostVer2(option, float64(len(p.Ranges)), scanFactor))
 		if ((len(isChildOfINL) > 0 && !isChildOfINL[0]) || len(isChildOfINL) <= 0) && hasFullRangeScan {
 			if newRowCount := getTableScanPenalty(p, rows); newRowCount > 0 {
 				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
@@ -941,6 +941,18 @@ func getPlanCostVer24PhysicalCTE(pp base.PhysicalPlan, taskType property.TaskTyp
 	p.PlanCostVer2 = projCost
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
+}
+
+// seekCostVer2 estimates the cost of seek operations on the storage layer.
+// See #63487 for why we need to introduce this.
+func seekCostVer2(option *optimizetrace.PlanCostOption, numRanges float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	if numRanges < 1 {
+		numRanges = 1
+	}
+	// the current seek-factor is 20 * scan-factor, which is based on experience and simple experiments from #63487.
+	return costusage.NewCostVer2(option, scanFactor,
+		numRanges*20*scanFactor.Value,
+		func() string { return fmt.Sprintf("seek(%v*20*%v)", numRanges, scanFactor) })
 }
 
 func scanCostVer2(option *optimizetrace.PlanCostOption, rows, rowSize float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
