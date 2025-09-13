@@ -1796,7 +1796,7 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 	if _, ok := p.Self().(*LogicalApply); ok {
 		return p.Self(), nil
 	}
-	// Gate by hint or session variable.
+	// Get by hint or session variable.
 	if (p.PreferJoinType&utilhint.PreferRewriteSemiJoin) == 0 && !p.SCtx().GetSessionVars().EnableSemiJoinRewrite {
 		return p.Self(), nil
 	}
