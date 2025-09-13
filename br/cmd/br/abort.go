@@ -30,6 +30,7 @@ func NewAbortCommand() *cobra.Command {
 			task.LogArguments(c)
 			// disable stats otherwise takes too much memory
 			session.DisableStats4Test()
+
 			return nil
 		},
 	}

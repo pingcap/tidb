@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -170,7 +171,7 @@ func SetTaskManager(is *TaskManager) {
 
 // GetDXFSvcTaskMgr returns the task manager to access DXF service.
 func GetDXFSvcTaskMgr() (*TaskManager, error) {
-	if keyspace.IsRunningOnUser() {
+	if kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() != keyspace.System {
 		v := dxfSvcTaskMgr.Load()
 		if v == nil {
 			return nil, errors.New("DXF service task manager is not initialized")
@@ -255,6 +256,7 @@ func (mgr *TaskManager) CreateTask(
 	ctx context.Context,
 	key string,
 	tp proto.TaskType,
+	keyspace string,
 	concurrency int,
 	targetScope string,
 	maxNodeCnt int,
@@ -263,7 +265,7 @@ func (mgr *TaskManager) CreateTask(
 ) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, maxNodeCnt, extraParams, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, keyspace, concurrency, targetScope, maxNodeCnt, extraParams, meta)
 		return err2
 	})
 	return
@@ -275,13 +277,14 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	se sessionctx.Context,
 	key string,
 	tp proto.TaskType,
+	keyspace string,
 	concurrency int,
 	targetScope string,
 	maxNodeCount int,
 	extraParams proto.ExtraParams,
 	meta []byte,
 ) (taskID int64, err error) {
-	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNodeByRole(ctx, se, "", true)
 	if err != nil {
 		return 0, err
 	}
@@ -292,7 +295,6 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	keyspace := config.GetGlobalKeyspaceName()
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
 			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?, %?, %?)`,
@@ -418,6 +420,29 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 
 	for _, r := range rs {
 		task = append(task, Row2Task(r))
+	}
+	return task, nil
+}
+
+// GetTaskBasesInStates gets the task bases in the states(order by priority asc, create_time acs, id asc).
+func (mgr *TaskManager) GetTaskBasesInStates(ctx context.Context, states ...any) (task []*proto.TaskBase, err error) {
+	if len(states) == 0 {
+		return task, nil
+	}
+
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"select "+basicTaskColumns+" from mysql.tidb_global_task t "+
+			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
+			" order by priority asc, create_time asc, id asc", states...)
+	if err != nil {
+		return task, err
+	}
+
+	for _, r := range rs {
+		task = append(task, row2TaskBasic(r))
 	}
 	return task, nil
 }
@@ -1024,7 +1049,7 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNodeByRole(ctx, se, "", true)
 	if err != nil {
 		return err
 	}

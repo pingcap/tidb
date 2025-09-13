@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -39,6 +40,9 @@ var (
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.
 func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	testenv.SetGOMAXPROCSForTest()
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	dom, err := BootstrapSession(store)

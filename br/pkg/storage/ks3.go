@@ -699,6 +699,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		}
 	} else {
 		up := s3manager.NewUploader(&s3manager.UploadOptions{
+			PartSize: option.PartSize,
 			Parallel: option.Concurrency,
 			S3:       rs.svc,
 		})

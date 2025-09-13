@@ -1,19 +1,95 @@
-set tidb_cost_model_version=1;
+set tidb_cost_model_version=2;
 
 create table t(a int, b int, c int);
 
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3);
+INSERT INTO t (a, b, c) VALUES
+(1, 1, 1),
+(1, 2, 2),
+(1, 3, 3),
+(2, 1, 4),
+(2, 2, 5),
+(2, 3, 6),
+(3, 1, 7),
+(3, 2, 8),
+(3, 3, 9),
+(NULL, 1, 10),
+(1, NULL, 11),
+(1, 1, NULL),
+(NULL, NULL, 12),
+(4, 1, 13),
+(4, 2, 14),
+(4, 3, 15);
 
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3);
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3) order by a, b, avgc;
 
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3);
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3) order by a, b, avgc;
 
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1 or avg(c) > 1) and (a < 3);
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3) order by a, b, avgc;
 
-desc format='brief' select a, b, avg(c) from t group by a, b, c having
-(a > 1 and avg(c) > 1) or (a < 3);
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3) order by a, b, avgc;
 
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3) order by a, b, avgc;
+
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3) order by a, b, avgc;
+
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 or avg(c) > 1) and (a < 3) order by a, b, avgc;
+
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 or avg(c) > 1) and (a < 3) order by a, b, avgc;
+
+select a, b, avg(c) as avgc from t group by a, b, c having
+(a > 1 and avg(c) > 1) or (a < 3) order by a, b, avgc;
+
+explain format='plan_tree' select a, b, avg(c) as avgc from t group by a, b, c having
+
+(a > 1 and avg(c) > 1) or (a < 3) order by a, b, avgc;
+
+drop table t;
+CREATE TABLE t (
+    id INT,
+    tran_id INT,
+    PRIMARY KEY (id)
+);
+
+INSERT INTO t (id, tran_id) VALUES
+(1, 1540776),
+(2, 1540776),
+(3, 1540776),
+(4, 1540777),
+(5, 1540777),
+(6, 1540778),
+(7, 1540778),
+(8, 1540779),
+(9, 1540779),
+(10, 1540780),
+(11, NULL),
+(12, NULL),
+(13, 1540776),
+(14, 1540777),
+(15, 1540778);
+
+
+SELECT *
+FROM t t1
+WHERE t1.tran_id = 1540776
+  AND t1.id = (
+    SELECT MAX(t0.id)
+    FROM t t0
+    WHERE t0.tran_id = t1.tran_id
+  );
+
+explain format='brief' SELECT *
+FROM t t1
+WHERE t1.tran_id = 1540776
+  AND t1.id = (
+    SELECT MAX(t0.id)
+    FROM t t0
+    WHERE t0.tran_id = t1.tran_id
+  );
