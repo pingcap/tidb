@@ -360,7 +360,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 	require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query")
 
 	tryInterval := time.Millisecond * 100
-	maxWaitDuration := time.Second * 5
+	maxWaitDuration := time.Second * 10
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg1 select /*+ resource_group(rg1) */ * from t identify"), maxWaitDuration, tryInterval)
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, start_time from mysql.tidb_runaway_queries", nil,
@@ -451,6 +451,20 @@ func TestResourceGroupRunawayExceedTiDBSide(t *testing.T) {
 	maxWaitDuration := time.Second * 5
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg1 select /*+ resource_group(rg1) */ sleep(0.5) from t identify"), maxWaitDuration, tryInterval)
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, start_time from mysql.tidb_runaway_queries", nil,
+		nil, maxWaitDuration, tryInterval)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/deleteExpiredRows", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/deleteExpiredRows"))
+	}()
+	for i := range 20 {
+		err := tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.5) from t")
+		require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query", i)
+	}
+	// just wait 1s to flush the sqls to the table
+	time.Sleep(time.Second)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/deleteExpiredRows", `return(false)`))
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, start_time from mysql.tidb_runaway_queries", nil,
 		nil, maxWaitDuration, tryInterval)
 }

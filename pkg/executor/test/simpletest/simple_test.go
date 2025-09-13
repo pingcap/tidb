@@ -647,13 +647,13 @@ func TestDropStats(t *testing.T) {
 	h := dom.StatsHandle()
 	h.Clear()
 	testKit.MustExec("analyze table t")
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
 	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -668,13 +668,13 @@ func TestDropStats(t *testing.T) {
 	})
 
 	testKit.MustExec("analyze table t")
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
 	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -709,16 +709,16 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	h := dom.StatsHandle()
 	h.Clear()
 	testKit.MustExec("analyze table t1, t2")
-	statsTbl1 := h.GetTableStats(tableInfo1)
+	statsTbl1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
-	statsTbl2 := h.GetTableStats(tableInfo2)
+	statsTbl2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -726,7 +726,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
 		return false
 	})
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -736,17 +736,17 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	})
 
 	testKit.MustExec("analyze table t1, t2")
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -754,7 +754,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
 		return false
 	})
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {

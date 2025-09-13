@@ -45,12 +45,6 @@ import (
 // Also, we cannot use the functions in `session/session.go` (to avoid cyclic dependency), so
 // registering function here is really needed.
 
-var allIsolationReadEngines = map[kv.StoreType]struct{}{
-	kv.TiKV:    {},
-	kv.TiFlash: {},
-	kv.TiDB:    {},
-}
-
 func withSession(pool syssession.Pool, fn func(session.Session) error) error {
 	return pool.WithSession(func(s *syssession.Session) error {
 		return s.WithSessionContext(func(sctx sessionctx.Context) error {
@@ -205,8 +199,9 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time) (*ttlTableSession, func() error, error) {
 	origConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
 	origPaging := se.GetSessionVars().EnablePaging
-
+	se.GetSessionVars().InternalSQLScanUserTable = true
 	restore := func() error {
+		se.GetSessionVars().InternalSQLScanUserTable = false
 		_, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=%?", origConcurrency)
 		terror.Log(err)
 		if err != nil {

@@ -30,6 +30,7 @@ import (
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -79,6 +80,14 @@ func (c *tikvClient) CloseAddr(addr string) error {
 func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	res, err := c.c.SendRequest(ctx, addr, req, timeout)
 	return res, derr.ToTiDBErr(err)
+}
+
+// SendRequestAsync sends Request asynchronously.
+func (c *tikvClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	cb.Inject(func(res *tikvrpc.Response, err error) (*tikvrpc.Response, error) {
+		return res, derr.ToTiDBErr(err)
+	})
+	c.c.SendRequestAsync(ctx, addr, req, cb)
 }
 
 func (c *tikvClient) SetEventListener(listener tikv.ClientEventListener) {

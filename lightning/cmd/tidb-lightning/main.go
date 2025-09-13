@@ -39,7 +39,10 @@ func main() {
 	}
 
 	app := server.New(globalCfg)
-	memory.InitMemoryHook()
+	err := memory.InitMemoryHook()
+	if err != nil {
+		log.L().Error("failed to initialize memory usage hook", zap.Error(err))
+	}
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc,
@@ -75,7 +78,7 @@ func main() {
 		}
 	}
 
-	err := app.GoServe()
+	err = app.GoServe()
 	if err != nil {
 		logger.Error("failed to start HTTP server", zap.Error(err))
 		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)

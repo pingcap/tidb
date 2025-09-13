@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	rpprof "runtime/pprof"
 	"slices"
 	"strings"
@@ -402,14 +403,40 @@ type item struct {
 func (*memoryUsageAlarm) recordProfile(recordDir string) error {
 	items := []item{
 		{Name: "heap"},
-		{Name: "goroutine", Debug: 2},
+		// `goroutine` profile is not recorded, but they'll retry multiple times to extend the profile buffer size,
+		// which may cause long STW pauses. We'll use `recordGoroutineProfile` instead to allocate a large buffer
+		// at the beginning.
+		// {Name: "goroutine", Debug: 2},
 	}
 	for _, item := range items {
 		if err := write(item, recordDir); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	return recordGoroutineProfile(recordDir)
+}
+
+func recordGoroutineProfile(recordDir string) error {
+	itemName := "goroutine"
+	fileName := filepath.Join(recordDir, itemName)
+	f, err := os.Create(fileName)
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", itemName), zap.Error(err))
+		return err
+	}
+
+	buf := make([]byte, 1<<26) // 64MB buffer
+	n := runtime.Stack(buf, true)
+	if n >= len(buf) {
+		logutil.BgLogger().Warn("goroutine stack trace is too large, truncating", zap.Int("size", n))
+	}
+
+	_, err = f.Write(buf[:n])
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", itemName), zap.Error(err))
+	}
+	return err
 }
 
 func write(item item, recordDir string) error {

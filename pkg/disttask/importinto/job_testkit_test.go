@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -40,8 +41,12 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/atomic"
 )
 
@@ -59,6 +64,27 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		t.Skip("This test is only for nextgen")
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 10})
+	defer cluster.Terminate(t)
+	keyspaceIDs := map[string]uint32{
+		keyspace.System: 1,
+		"ks":            2,
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
+		func(cliP **clientv3.Client, ks string) {
+			id, ok := keyspaceIDs[ks]
+			require.True(t, ok)
+			// one client per ks
+			*cliP = cluster.Client(int(id - 1))
+			// we will close the client.
+			cluster.TakeClient(int(id - 1))
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: id, Name: ks})
+			require.NoError(t, err)
+			etcd.SetEtcdCliByNamespace(*cliP, keyspace.MakeKeyspaceEtcdNamespace(codec))
+		},
+	)
 	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
 	sysKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
 	sysKSTK := testkit.NewTestKit(t, sysKSStore)
@@ -96,7 +122,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		taskMgr := storage.NewTaskManager(getPoolFn(currKSStore))
 		storage.SetTaskManager(taskMgr)
 		sysKSTaskMgr := taskMgr
-		if keyspace.IsRunningOnUser() {
+		if kv.IsUserKS(currKSStore) {
 			sysKSTaskMgr = storage.NewTaskManager(getPoolFn(sysKSStore))
 			storage.SetDXFSvcTaskMgr(sysKSTaskMgr)
 		}
@@ -161,24 +187,21 @@ func TestGetTaskImportedRows(t *testing.T) {
 	// local sort
 	taskMeta := importinto.TaskMeta{
 		Plan: importer.Plan{},
-	}
-	taskSummary := &importer.Summary{
-		EncodeSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
+		Summary: importer.Summary{
+			EncodeSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
+			IngestSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
 		},
-		IngestSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
-		},
 	}
-	var err error
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
@@ -209,20 +232,17 @@ func TestGetTaskImportedRows(t *testing.T) {
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
-	}
-
-	taskSummary = &importer.Summary{
-		IngestSummary: importer.StepSummary{
-			Bytes:  10000,
-			RowCnt: 1000,
+		Summary: importer.Summary{
+			IngestSummary: importer.StepSummary{
+				Bytes:  10000,
+				RowCnt: 1000,
+			},
 		},
 	}
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
@@ -269,27 +289,23 @@ func TestShowImportProgress(t *testing.T) {
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
+		Summary: importer.Summary{
+			EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
+			IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			ImportedRows:  100,
+		},
 	}
 
-	taskSummary := &importer.Summary{
-		EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-		MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
-		IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-		ImportedRows:  100,
-	}
-
-	var err error
-	taskMeta.TaskResult, err = json.Marshal(taskSummary)
-	require.NoError(t, err)
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
 
 	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 1000)
+		"root", "", &importer.ImportParameters{}, 1000)
 	require.NoError(t, err)
 
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 
 	subtasks := []struct {
@@ -297,11 +313,33 @@ func TestShowImportProgress(t *testing.T) {
 		state   proto.SubtaskState
 	}{
 		{
-			execute.SubtaskSummary{RowCnt: *atomic.NewInt64(20), Bytes: *atomic.NewInt64(200)},
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(20),
+				Bytes:  *atomic.NewInt64(200),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 20, Bytes: 200, UpdateTime: time.Unix(1002, 0)},
+				},
+			},
 			proto.SubtaskStateRunning,
 		},
 		{
-			execute.SubtaskSummary{RowCnt: *atomic.NewInt64(30), Bytes: *atomic.NewInt64(300)},
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(30),
+				Bytes:  *atomic.NewInt64(300),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1000, 0)},
+					{RowCnt: 15, Bytes: 150, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 30, Bytes: 300, UpdateTime: time.Unix(1002, 0)},
+				},
+			},
+			proto.SubtaskStateSucceed,
+		},
+		{
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(0),
+				Bytes:  *atomic.NewInt64(0),
+			},
 			proto.SubtaskStateSucceed,
 		},
 	}
@@ -324,7 +362,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepGlobalSorting))
 	checkShowInfo("init", "0B", "0B", "N/A", "0B/s", "N/A", 0)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(5)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockSpeedDuration", "return(5000)")
 
 	// Encode step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
@@ -339,7 +377,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1000, runInfo.Total)
 	require.EqualValues(t, 500, runInfo.Processed)
-	checkShowInfo("encode", "500B", "1kB", "50", "100B/s", "00:00:05", 0)
+	checkShowInfo("encode", "500B", "1000B", "50", "100B/s", "00:00:05", 0)
 
 	// Merge step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
@@ -356,13 +394,78 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(500)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockSpeedDuration", "return(10000)")
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
-	checkShowInfo("ingest", "500B", "1kB", "50", "1B/s", "00:08:20", 50)
+	checkShowInfo("ingest", "500B", "1000B", "50", "50B/s", "00:00:10", 50)
 
 	// Post-process step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)
 	checkShowInfo("post-process", "0B", "0B", "N/A", "0B/s", "N/A", 100)
+}
+
+func TestShowImportGroup(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	conn := tk.Session().GetSQLExecutor()
+
+	// No groups at start
+	rs := tk.MustQuery(`show import group "group2"`).Rows()
+	require.Len(t, rs, 0)
+	rs = tk.MustQuery(`show import groups`).Rows()
+	require.Len(t, rs, 0)
+
+	importJobs := []struct {
+		SchemaName string
+		TableName  string
+		TableID    int64
+		GroupKey   string
+	}{
+		{"test", "t1", 1, "group1"},
+		{"test", "t2", 2, "group1"},
+		{"test", "t3", 3, "group2"},
+		{"test", "t4", 4, ""}, // not displayed in show import groups
+	}
+
+	for _, job := range importJobs {
+		jobID, err := importer.CreateJob(ctx, conn, job.SchemaName, job.TableName, job.TableID,
+			"root", job.GroupKey, &importer.ImportParameters{}, 1000)
+		require.NoError(t, err)
+
+		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+
+		switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepEncodeAndSort,
+			"", nil, proto.ImportInto, 11)
+	}
+
+	rs = tk.MustQuery("show import groups").Sort().Rows()
+	require.Len(t, rs, 2)
+	require.Equal(t, "group1", rs[0][0])
+	require.Equal(t, "2", rs[0][1])
+	require.Equal(t, "group2", rs[1][0])
+	require.Equal(t, "1", rs[1][1])
+
+	rs = tk.MustQuery(`show import group "nonexist"`).Rows()
+	require.Len(t, rs, 0)
+
+	rs = tk.MustQuery(`show import group "group2"`).Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "group2", rs[0][0])
+	require.Equal(t, "1", rs[0][1])
 }
 
 func TestFormatTime(t *testing.T) {

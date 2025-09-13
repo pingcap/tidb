@@ -48,7 +48,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 
 	// Pre-create data to be inserted
 	records := make([][]types.Datum, batchSize)
@@ -102,7 +102,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 
 	// Pre-create and add initial records
 	records := make([][]types.Datum, batchSize)
