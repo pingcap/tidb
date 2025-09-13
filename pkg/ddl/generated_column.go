@@ -199,8 +199,8 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  5. check if the new column is indexed or stored
 func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
-	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
-	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
+	oldColIsStored := !oldCol.IsVirtualGenerated()
+	newColIsStored := !newCol.IsVirtualGenerated()
 	if oldColIsStored != newColIsStored {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}

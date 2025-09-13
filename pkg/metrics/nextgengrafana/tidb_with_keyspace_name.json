@@ -24835,6 +24835,14 @@
               "legendFormat": "{{type}}-50",
               "range": true,
               "refId": "D"
+            },
+            {
+              "expr": "sum(rate(tidb_global_sort_merge_sort_write_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\"}[1m]))/1024.0/1024.0",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "merge-sort",
+              "range": true,
+              "refId": "E"
             }
           ],
           "thresholds": [],
@@ -25047,6 +25055,14 @@
               "legendFormat": "{{type}}-50",
               "range": true,
               "refId": "D"
+            },
+            {
+              "expr": "sum(rate(tidb_global_sort_merge_sort_read_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\"}[1m]))/1024.0/1024.0",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "merge-sort",
+              "range": true,
+              "refId": "E"
             }
           ],
           "thresholds": [],

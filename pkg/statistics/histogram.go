@@ -566,7 +566,7 @@ func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) f
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 // The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
-func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) float64 {
+func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) RowEstimate {
 	lessCountA, bktIndexA := hg.LessRowCountWithBktIdx(sctx, a)
 	lessCountB, bktIndexB := hg.LessRowCountWithBktIdx(sctx, b)
 	rangeEst := lessCountB - lessCountA
@@ -597,17 +597,71 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
 					skewEstimate -= hg.Buckets[bktIndexA].Repeat
 				}
-				// Add a scaled ratio of the worst case skewed estimate to our regular estimate
-				return rangeEst + max(0, (float64(skewEstimate)-rangeEst)*skewRatio)
+				return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
 			}
 		}
 	}
-	return rangeEst
+	return DefaultRowEst(rangeEst)
+}
+
+// CalculateSkewRatioCounts calculates the default, min, and max skew estimates given a skew ratio.
+func CalculateSkewRatioCounts(estimate, skewEstimate, skewRatio float64) RowEstimate {
+	skewDiff := skewEstimate - estimate
+	// Add a "ratio" of the skewEstimate to adjust the default row estimate.
+	skewAmt := max(0, skewDiff*skewRatio)
+	maxSkewAmt := min(skewDiff, 2*skewAmt)
+	return RowEstimate{estimate + skewAmt, estimate, estimate + maxSkewAmt}
+}
+
+// RowEstimate stores the min, default, and max row count estimates.
+type RowEstimate struct {
+	Est    float64
+	MinEst float64
+	MaxEst float64
+}
+
+// DefaultRowEst returns a RowEstimate with same value for all three fields
+func DefaultRowEst(est float64) RowEstimate {
+	return RowEstimate{est, est, est}
+}
+
+// Add adds two RowEstimates together, storing result in the first RowEstimate.
+func (r *RowEstimate) Add(r1 RowEstimate) {
+	r.Est += r1.Est
+	r.MinEst += r1.MinEst
+	r.MaxEst += r1.MaxEst
+}
+
+// AddAll adds a float64 value to all three fields of the RowEstimate and stores the result.
+func (r *RowEstimate) AddAll(f float64) {
+	r.Est += f
+	r.MinEst += f
+	r.MaxEst += f
+}
+
+// MultiplyAll multiplies all three fields of the RowEstimate by a float64 value and stores the result.
+func (r *RowEstimate) MultiplyAll(f float64) {
+	r.Est *= f
+	r.MinEst *= f
+	r.MaxEst *= f
+}
+
+// DivideAll divides all three fields of the RowEstimate by a float64 value and stores the result.
+func (r *RowEstimate) DivideAll(f float64) {
+	r.Est /= f
+	r.MinEst /= f
+	r.MaxEst /= f
 }
 
 // TotalRowCount returns the total count of this histogram.
 func (hg *Histogram) TotalRowCount() float64 {
 	return hg.NotNullCount() + float64(hg.NullCount)
+}
+
+// AbsRowCountDifference returns the absolute difference between the realtime row count
+// and the histogram's total row count, representing data changes since the last ANALYZE.
+func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64) float64 {
+	return math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
 }
 
 // NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
@@ -947,7 +1001,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
 	realtimeRowCount, modifyCount, histNDV int64,
-) (result float64) {
+) (result RowEstimate) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -958,12 +1012,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result.Est)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	if hg.Len() == 0 {
-		return 0
+		return DefaultRowEst(0)
 	}
 
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
@@ -975,14 +1029,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// We may have missed the true lowest/highest values due to sampling - and we are out of
 	// range without any modifications. So return oneValue to avoid underestimation.
 	if modifyCount == 0 {
-		return oneValue
+		return DefaultRowEst(oneValue)
 	}
 
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
 	if !allowUseModifyCount {
-		return oneValue
+		return DefaultRowEst(oneValue)
 	}
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
@@ -1023,7 +1077,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// make sure l < r
 	if l >= r {
-		return 0
+		return DefaultRowEst(0)
 	}
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
@@ -1094,7 +1148,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
-	addedRows := math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
+	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
@@ -1104,11 +1158,15 @@ func (hg *Histogram) OutOfRangeRowCount(
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 	if skewRatio > 0 {
 		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
-		avgRowCount = avgRowCount + (addedRows-avgRowCount)*skewRatio
+		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
+		result.Est = max(result.Est, oneValue)
+		result.MinEst = max(result.MinEst, oneValue)
+		result.MaxEst = max(result.MaxEst, oneValue)
+		return result
 	}
 
 	// Use oneValue as lower bound
-	return max(avgRowCount, oneValue)
+	return DefaultRowEst(max(avgRowCount, oneValue))
 }
 
 // Copy deep copies the histogram.
@@ -1178,7 +1236,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 				continue
 			}
 			dataSet[string(prefixColData)] = struct{}{}
-			res := hg.BetweenRowCount(nil, types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext()))
+			res := hg.BetweenRowCount(nil, types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext())).Est
 			if res >= limit {
 				dataCnts = append(dataCnts, dataCnt{prefixColData, uint64(res)})
 			}

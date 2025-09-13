@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build linux
+
 package cgroup
 
 import (
@@ -24,16 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-)
-
-// Version represents the cgroup version.
-type Version int
-
-// cgroup versions.
-const (
-	Unknown Version = 0
-	V1      Version = 1
-	V2      Version = 2
 )
 
 // GetMemoryLimit attempts to retrieve the cgroup memory limit for the current
