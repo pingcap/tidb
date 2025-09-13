@@ -361,6 +361,8 @@ const (
 	// used to read memory data from other instances to have a global view of the
 	// data, such as for information_schema.cluster_slow_query.
 	TiDB
+	// TiCI means the type of store engine is TiCI, the search engine.
+	TiCI
 	// UnSpecified means the store engine type is unknown
 	UnSpecified = 255
 )
@@ -373,6 +375,8 @@ func (t StoreType) Name() string {
 		return "tidb"
 	} else if t == TiKV {
 		return "tikv"
+	} else if t == TiCI {
+		return "tici"
 	}
 	return "unspecified"
 }

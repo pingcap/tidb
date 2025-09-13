@@ -347,7 +347,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 	case *physicalop.PhysicalIndexReader:
 		childCtx.isRoot = false
 		childCtx.reqType = physicalop.Cop
-		childCtx.storeType = kv.TiKV
+		childCtx.storeType = plan.StoreType
 		childCtx.label = Empty
 		childCtx.isLastChild = true
 		target, childIdx = f.flattenRecursively(plan.IndexPlan, childCtx, target)

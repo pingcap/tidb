@@ -343,6 +343,20 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetMemTracker(e.memTracker).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+	if e.index.IsFulltextIndexOnTiCI() {
+		builder.SetStoreType(kv.TiFlash).SetPaging(false).SetFullText(true).SetAllowBatchCop(true)
+		builder.FullTextInfo.TableID = e.table.Meta().ID
+		builder.FullTextInfo.IndexID = e.index.ID
+		builder.FullTextInfo.ExecutorID = e.plans[0].ExplainID().String()
+
+		id := e.Table().Meta().ID
+		startKey := tablecodec.EncodeTablePrefix(id)
+		endKey := tablecodec.EncodeTablePrefix(id + 1)
+		kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
+		kvRanges := make([]kv.KeyRange, 0, 1)
+		kvRanges = append(kvRanges, kvRange)
+		builder.SetKeyRanges(kvRanges)
+	}
 	kvReq, err := builder.Build()
 	return kvReq, err
 }
@@ -350,7 +364,13 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
+		if !e.index.IsFulltextIndexOnTiCI() {
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
+		} else {
+			var executors []*tipb.Executor
+			executors, err = builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.plans[len(e.plans)-1])
+			e.dagPB.RootExecutor = executors[0]
+		}
 		if err != nil {
 			return err
 		}
@@ -511,10 +531,6 @@ type IndexLookUpExecutor struct {
 	// If dummy flag is set, this is not a real IndexLookUpReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
-
-	storeType kv.StoreType
-	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
-	batchCop bool
 }
 
 type getHandleType int8
@@ -611,9 +627,6 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 }
 
 func (e *IndexLookUpExecutor) open(_ context.Context) error {
-	if e.storeType == kv.TiFlash {
-		e.batchCop = true
-	}
 	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
@@ -631,14 +644,12 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		if e.storeType == kv.TiKV {
+		if !e.index.IsFulltextIndexOnTiCI() {
 			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
-		} else if e.storeType == kv.TiFlash {
+		} else {
 			var executors []*tipb.Executor
 			executors, err = builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.idxPlans[len(e.idxPlans)-1])
 			e.dagPB.RootExecutor = executors[0]
-		} else {
-			err = errors.Errorf("unsupported store type %s", e.storeType.Name())
 		}
 		if err != nil {
 			return err
@@ -789,12 +800,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				SetFromInfoSchema(e.infoSchema).
 				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 				SetMemTracker(tracker).
-				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-				SetAllowBatchCop(e.batchCop).
-				SetStoreType(e.storeType)
+				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 			if e.index.IsFulltextIndexOnTiCI() {
-				builder.SetPaging(false)
-				builder.SetFullText(true)
+				builder.SetPaging(false).SetFullText(true).SetAllowBatchCop(true).SetStoreType(kv.TiFlash)
 				builder.FullTextInfo.TableID = e.table.Meta().ID
 				builder.FullTextInfo.IndexID = e.index.ID
 				builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()

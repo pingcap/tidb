@@ -2041,8 +2041,8 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 	if hintPrefer {
 		// if there is a user hint control, try to get the copTask as the prior.
 		// here we don't assert task itself, because when topN attach 2 cop task, it will become root type automatically.
-		if _, ok := childTasks[0].(*CopTask); ok {
-			return true
+		if cop, ok := childTasks[0].(*CopTask); ok {
+			return cop.getStoreType() != kv.TiCI
 		}
 		return false
 	}

@@ -16,6 +16,7 @@ package physicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -44,6 +45,8 @@ type PhysicalIndexReader struct {
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
+
+	StoreType kv.StoreType
 }
 
 // Init initializes PhysicalIndexReader.

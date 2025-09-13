@@ -2604,6 +2604,14 @@ func isSingleScan(lp base.LogicalPlan, indexColumns []*expression.Column, idxCol
 	return true
 }
 
+func isTiCISingleScan(lp *logicalop.DataSource) bool {
+	// No filter can be calculated in TiCI.
+	if len(lp.PushedDownConds) > 0 {
+		return false
+	}
+	return isHandleCoveringColumns(lp, lp.Schema().Columns)
+}
+
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (task base.Task, err error) {
