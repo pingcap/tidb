@@ -824,7 +824,7 @@ func applyCrossStorageQueryPenalty(p *physicalop.PhysicalIndexJoin, isSameStorag
 	}
 	for _, child := range p.Children() {
 		hc := child.StatsInfo().HistColl
-		if hc.Pseudo {
+		if hc == nil || hc.Pseudo {
 			return
 		}
 		if originalRows := int64(hc.GetAnalyzeRowCount()); originalRows < 10_000 {
