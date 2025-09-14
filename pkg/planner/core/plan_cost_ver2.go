@@ -845,12 +845,13 @@ func isLargeThanRowCount(pp base.PhysicalPlan, value int64) bool {
 			if isLargeThanRowCount(child, value) {
 				return true
 			}
-		}
-		if hc.RealtimeCount > value {
-			return true
-		}
-		if hc.Pseudo {
-			return false
+		} else {
+			if hc.RealtimeCount > value {
+				return true
+			}
+			if hc.Pseudo {
+				return false
+			}
 		}
 	}
 	return false
