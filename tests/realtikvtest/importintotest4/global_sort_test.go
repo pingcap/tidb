@@ -28,14 +28,17 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -191,6 +194,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	var allData []string
 	for i := range 10 {
 		var content []byte
@@ -213,8 +218,53 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
-	s.tk.MustQuery(importSQL)
+	result := s.tk.MustQuery(importSQL + ", detached").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	var task *proto.Task
+	s.Eventually(func() bool {
+		task, err = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		s.NoError(err)
+		return task.State == proto.TaskStateSucceed
+	}, 30*time.Second, 300*time.Millisecond)
+
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
+
+	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepEncodeAndSort)
+	s.NoError(err)
+	s.Len(subtasks, 1)
+	v := &execute.SubtaskSummary{}
+	err = json.Unmarshal([]byte(subtasks[0].Summary), &v)
+	s.NoError(err)
+	s.Equal(int64(10000), v.RowCnt.Load())
+	s.Equal(int64(147780), v.Bytes.Load())
+	s.Equal(uint64(8), v.PutReqCnt.Load())
+	s.Equal(uint64(0), v.GetReqCnt.Load())
+
+	subtasks, err = taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
+	s.NoError(err)
+	s.Len(subtasks, 4)
+	totalRows := int64(0)
+	totalBytes := int64(0)
+	totalPutReq := uint64(0)
+	totalGetReq := uint64(0)
+	for i, subtask := range subtasks {
+		v = &execute.SubtaskSummary{}
+		err = json.Unmarshal([]byte(subtask.Summary), &v)
+		s.NoError(err)
+		totalRows += v.RowCnt.Load()
+		totalBytes += v.Bytes.Load()
+		totalPutReq += v.PutReqCnt.Load()
+		totalGetReq += v.GetReqCnt.Load()
+		logutil.BgLogger().Info("subtasks", zap.Int("seq", i), zap.Any("subtasks", v))
+	}
+	s.Greater(totalRows, int64(0))  // Fixme: why not 10000?
+	s.Greater(totalBytes, int64(0)) // Fixme: unstable
+	s.Equal(uint64(0), totalPutReq)
+	s.Equal(uint64(4), totalGetReq)
 }
 
 func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {

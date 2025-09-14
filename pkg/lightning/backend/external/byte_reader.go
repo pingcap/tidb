@@ -112,6 +112,8 @@ func newByteReader(
 	}
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
+	// When the storage reader is open, a GET request has been made.
+	r.requestCnt.Add(1)
 	return r, r.reload()
 }
 
@@ -311,7 +313,6 @@ func (r *byteReader) reload() error {
 		return nil
 	}
 
-	defer r.requestCnt.Add(1)
 	return util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, r.readFromStorageReader)
 }
 

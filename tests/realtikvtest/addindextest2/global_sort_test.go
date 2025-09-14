@@ -657,59 +657,50 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 			jobID = job.ID
 		}
 	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
 	tk.MustExec("alter table t add index idx(c);")
 	sql := `with global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history)
 		select id from global_tasks where task_key like concat('%%/', '%d');`
 	taskIDRows := tk.MustQuery(fmt.Sprintf(sql, jobID)).Rows()
 	taskID := taskIDRows[0][0].(string)
 
-	{
+	getSummary := func(taskID string, step int64) (getReqCnt, putReqCnt, readBytes, bytes int) {
 		sql = `with subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history)
-		select 
+		select
 			json_extract(summary, '$.get_request_count'),
 			json_extract(summary, '$.put_request_count'),
 			json_extract(summary, '$.read_bytes'),
 			json_extract(summary, '$.bytes')
 		from subtasks where task_key = '%s' and step = %d;`
-		fmtSQL := fmt.Sprintf(sql, taskID, 1)
+		fmtSQL := fmt.Sprintf(sql, taskID, step)
 		rs := tk.MustQuery(fmtSQL).Rows()
 		require.Len(t, rs, 1)
-		getReqCnt, err := strconv.Atoi(rs[0][0].(string))
+		var err error
+		getReqCnt, err = strconv.Atoi(rs[0][0].(string))
 		require.NoError(t, err)
-		putReqCnt, err := strconv.Atoi(rs[0][1].(string))
+		putReqCnt, err = strconv.Atoi(rs[0][1].(string))
 		require.NoError(t, err)
-		readBytes, err := strconv.Atoi(rs[0][2].(string))
+		readBytes, err = strconv.Atoi(rs[0][2].(string))
 		require.NoError(t, err)
-		bytes, err := strconv.Atoi(rs[0][3].(string))
+		bytes, err = strconv.Atoi(rs[0][3].(string))
 		require.NoError(t, err)
-		require.Equal(t, getReqCnt, 0)   // 0, because step 1 doesn't read s3
-		require.Equal(t, putReqCnt, 2)   // 2 times (data + stats)
-		require.Greater(t, readBytes, 0) // 143 bytes for reading table records
-		require.Equal(t, bytes, 0)       // Fixme(tangenta): should be greater than 0 but the writers are not flushed when recorded.
+		return
 	}
+	getReqCnt, putReqCnt, readBytes, bytes := getSummary(taskID, 1)
+	require.Equal(t, getReqCnt, 0)   // 0, because step 1 doesn't read s3
+	require.Equal(t, putReqCnt, 2)   // 2 times (data + stats)
+	require.Greater(t, readBytes, 0) // 143 bytes for reading table records
+	require.Equal(t, bytes, 0)       // Fixme(tangenta): should be greater than 0 but the writers are not flushed when recorded.
 
-	{
-		sql = `with subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history)
-		select 
-			json_extract(summary, '$.get_request_count'),
-			json_extract(summary, '$.put_request_count'),
-			json_extract(summary, '$.read_bytes'),
-			json_extract(summary, '$.bytes')
-		from subtasks where task_key = '%s' and step = %d;`
-		fmtSQL := fmt.Sprintf(sql, taskID, 3)
-		rs := tk.MustQuery(fmtSQL).Rows()
-		require.Len(t, rs, 1)
-		getReqCnt, err := strconv.Atoi(rs[0][0].(string))
-		require.NoError(t, err)
-		putReqCnt, err := strconv.Atoi(rs[0][1].(string))
-		require.NoError(t, err)
-		readBytes, err := strconv.Atoi(rs[0][2].(string))
-		require.NoError(t, err)
-		bytes, err := strconv.Atoi(rs[0][3].(string))
-		require.NoError(t, err)
-		require.Equal(t, getReqCnt, 2) // 2, read s3
-		require.Equal(t, putReqCnt, 0) // 0, because step 3 doesn't write s3
-		require.Equal(t, readBytes, 0) // 0
-		require.Equal(t, bytes, 0)     // 0
-	}
+	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 2)
+	require.Equal(t, getReqCnt, 1) // 1, read s3
+	require.Equal(t, putReqCnt, 2) // 2 times (data + stats)
+	require.Equal(t, readBytes, 0) // 0, not suitable for merge sort
+	require.Equal(t, bytes, 0)     // 0, not suitable for merge sort
+
+	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 3)
+	require.Equal(t, getReqCnt, 1) // 2, read s3
+	require.Equal(t, putReqCnt, 0) // 0, because step 3 doesn't write s3
+	require.Equal(t, readBytes, 0) // 0
+	require.Equal(t, bytes, 0)     // 0
 }

@@ -85,5 +85,5 @@ func TestConcurrentRead(t *testing.T) {
 	}
 
 	require.Equal(t, data[offset:], got)
-	require.Equal(t, int64(fileSize/readBufferSize), reqCnt.Load())
+	require.Equal(t, int64((fileSize-offset)/readBufferSize+1), reqCnt.Load())
 }
