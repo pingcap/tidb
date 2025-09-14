@@ -17,13 +17,9 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
 // SemiJoinRewriter rewrites semi join to inner join with aggregation.
@@ -66,6 +62,7 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	}
 	p.SetChildren(newChildren...)
 	join, ok := p.(*logicalop.LogicalJoin)
+<<<<<<< HEAD
 	// If it's not a join, or not a (outer) semi join. We just return it since no optimization is needed.
 	// Actually the check of the preferRewriteSemiJoin is a superset of checking the join type. We remain them for a better understanding.
 	if !ok || !(join.JoinType == logicalop.SemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin) {
@@ -143,4 +140,10 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	proj.SetSchema(join.Children()[0].Schema())
 
 	return proj, nil
+=======
+	if !ok {
+		return p, nil
+	}
+	return join.SemiJoinRewrite()
+>>>>>>> afe11b6a285 (planner: rewrite semi join when to predicate push down (#63436))
 }
