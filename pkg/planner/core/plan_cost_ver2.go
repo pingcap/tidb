@@ -835,23 +835,17 @@ func applyCrossStorageQueryPenalty(p *physicalop.PhysicalIndexJoin, isSameStorag
 }
 
 func isLargeThanRowCount(pp base.PhysicalPlan, value int64) bool {
-	hc := pp.StatsInfo().HistColl
+	stats := pp.StatsInfo()
+	if int64(stats.RowCount) > value {
+		return true
+	}
+	hc := stats.HistColl
 	if hc != nil && hc.RealtimeCount > value {
 		return true
 	}
 	for _, child := range pp.Children() {
-		hc := child.StatsInfo().HistColl
-		if hc == nil {
-			if isLargeThanRowCount(child, value) {
-				return true
-			}
-		} else {
-			if hc.RealtimeCount > value {
-				return true
-			}
-			if hc.Pseudo {
-				return false
-			}
+		if isLargeThanRowCount(child, value) {
+			return true
 		}
 	}
 	return false
