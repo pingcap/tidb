@@ -431,27 +431,83 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
-	var maxTid = maxTidRecord.tid.Load()
+type loadStrategy interface {
+	calcuateTotalTaskCnt() uint64
+	generateTasks(worker *initstats.RangeWorker)
+}
+
+type maxTidStrategy struct {
+	maxTid int64
+}
+
+func newMaxTidStrategy() maxTidStrategy {
+	return maxTidStrategy{
+		maxTid: maxTidRecord.tid.Load(),
+	}
+}
+
+func (maxTidStrategy) calcuateTotalTaskCnt() uint64 {
+	maxTid := maxTidRecord.tid.Load()
+	totalTaskCnt := int64(1)
+	if maxTid > initStatsStep*2 {
+		totalTaskCnt = maxTid / initStatsStep
+	}
+	return uint64(totalTaskCnt)
+}
+
+func (m maxTidStrategy) generateTasks(worker *initstats.RangeWorker) {
 	tid := int64(0)
+	for tid <= m.maxTid {
+		worker.SendTask(initstats.Task{
+			StartTid: tid,
+			EndTid:   tid + initStatsStep,
+		})
+		tid += initStatsStep
+	}
+}
+
+type tableListStrategy struct {
+	tableIDs []int64
+}
+
+func newTableListStrategy(tableIDs []int64) tableListStrategy {
+	return tableListStrategy{
+		tableIDs: tableIDs,
+	}
+}
+
+func (t tableListStrategy) calcuateTotalTaskCnt() uint64 {
+	return uint64(len(t.tableIDs))
+}
+
+func (t tableListStrategy) generateTasks(worker *initstats.RangeWorker) {
+	for _, tableID := range t.tableIDs {
+		worker.SendTask(initstats.Task{
+			StartTid: tableID,
+			EndTid:   tableID + 1,
+		})
+	}
+}
+
+func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
+	var s loadStrategy
+	if len(tableIDs) == 0 {
+		s = newMaxTidStrategy()
+	} else {
+		s = newTableListStrategy(tableIDs)
+	}
+	totalTaskCnt := s.calcuateTotalTaskCnt()
 	ls := initstats.NewRangeWorker(
 		"histogram",
 		func(task initstats.Task) error {
 			return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
 		},
 		concurrency,
-		uint64(maxTid),
-		uint64(initStatsStep),
+		totalTaskCnt,
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	for tid <= maxTid {
-		ls.SendTask(initstats.Task{
-			StartTid: tid,
-			EndTid:   tid + initStatsStep,
-		})
-		tid += initStatsStep
-	}
+	s.generateTasks(ls)
 	ls.Wait()
 	return nil
 }
@@ -544,12 +600,17 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 	return nil
 }
 
-func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
+func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	var maxTid = maxTidRecord.tid.Load()
-	tid := int64(0)
+	var s loadStrategy
+	if len(tableIDs) == 0 {
+		s = newMaxTidStrategy()
+	} else {
+		s = newTableListStrategy(tableIDs)
+	}
+	totalTaskCnt := s.calcuateTotalTaskCnt()
 	ls := initstats.NewRangeWorker(
 		"TopN",
 		func(task initstats.Task) error {
@@ -559,21 +620,11 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 			return h.initStatsTopNByPaging(cache, task, totalMemory)
 		},
 		concurrency,
-		uint64(maxTid),
-		uint64(initStatsStep),
+		totalTaskCnt,
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	for tid <= maxTid {
-		if IsFullCacheFunc(cache, totalMemory) {
-			break
-		}
-		ls.SendTask(initstats.Task{
-			StartTid: tid,
-			EndTid:   tid + initStatsStep,
-		})
-		tid += initStatsStep
-	}
+	s.generateTasks(ls)
 	ls.Wait()
 	return nil
 }
@@ -611,6 +662,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(2) /*count*/, row.GetInt64(3) /*repeats*/, row.GetInt64(6) /*ndv*/)
 	}
 	if table != nil {
+		table.SetAllIndexFullLoadForBootstrap()
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 	if hasErr {
@@ -630,11 +682,11 @@ func genInitStatsBucketsSQLForIndexes(isPaging bool) string {
 	return selectPrefix + " and table_id >= %? and table_id < %?" + orderSuffix
 }
 
-func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint64) error {
+func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint64, tableIDs ...int64) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	err := h.initStatsBucketsConcurrently(cache, totalMemory, initstats.GetConcurrency())
+	err := h.initStatsBucketsConcurrently(cache, totalMemory, initstats.GetConcurrency(), tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -683,12 +735,17 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
+func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	var maxTid = maxTidRecord.tid.Load()
-	tid := int64(0)
+	var s loadStrategy
+	if len(tableIDs) == 0 {
+		s = newMaxTidStrategy()
+	} else {
+		s = newTableListStrategy(tableIDs)
+	}
+	totalTaskCnt := s.calcuateTotalTaskCnt()
 	ls := initstats.NewRangeWorker(
 		"bucket",
 		func(task initstats.Task) error {
@@ -698,21 +755,11 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 			return h.initStatsBucketsByPaging(cache, task)
 		},
 		concurrency,
-		uint64(maxTid),
-		uint64(initStatsStep),
+		totalTaskCnt,
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	for tid <= maxTid {
-		ls.SendTask(initstats.Task{
-			StartTid: tid,
-			EndTid:   tid + initStatsStep,
-		})
-		tid += initStatsStep
-		if IsFullCacheFunc(cache, totalMemory) {
-			break
-		}
-	}
+	s.generateTasks(ls)
 	ls.Wait()
 	return nil
 }
@@ -770,7 +817,7 @@ func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err erro
 // 2. Column stats are marked as existing or not by initializing the table.ColAndIdxExistenceMap, based on data from mysql.stats_histograms)
 // To work with auto-analyze's needs, we need to read all stats meta info into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
-func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err error) {
+func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) (err error) {
 	totalMemory, err := memory.MemTotal()
 	if err != nil {
 		return err
@@ -781,37 +828,44 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 			err = err1
 		}
 	}()
+
 	_, err = util.Exec(h.initStatsCtx, "begin")
 	if err != nil {
 		return err
 	}
 	failpoint.Inject("beforeInitStats", func() {})
+
 	start := time.Now()
-	cache, err := h.initStatsMeta(ctx)
+	cache, err := h.initStatsMeta(ctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
+
+	concurrency := initstats.GetConcurrency()
 	start = time.Now()
-	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, initstats.GetConcurrency())
+	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, concurrency, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
+
 	start = time.Now()
-	err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
+	err = h.initStatsTopNConcurrently(cache, totalMemory, concurrency, tableIDs...)
 	if err != nil {
 		return err
 	}
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
 	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
+
 	start = time.Now()
-	err = h.initStatsBuckets(cache, totalMemory)
-	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
+	err = h.initStatsBuckets(cache, totalMemory, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
+
 	h.Replace(cache)
 	return nil
 }
