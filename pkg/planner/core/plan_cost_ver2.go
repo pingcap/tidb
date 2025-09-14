@@ -830,6 +830,7 @@ func applyCrossStorageQueryPenalty(p *physicalop.PhysicalIndexJoin, isSameStorag
 		}
 		if isLargeThanRowCount(child, 10_000) {
 			find = true
+			break
 		}
 	}
 	if find {
