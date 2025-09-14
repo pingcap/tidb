@@ -827,9 +827,6 @@ func applyCrossStorageQueryPenalty(p *physicalop.PhysicalIndexJoin, isSameStorag
 		if hc == nil || hc.Pseudo {
 			return
 		}
-		if originalRows := int64(hc.GetAnalyzeRowCount()); originalRows < 10_000 {
-			return
-		}
 	}
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 100)
 }
