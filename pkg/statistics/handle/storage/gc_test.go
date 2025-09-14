@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -29,6 +30,9 @@ import (
 )
 
 func TestGCStats(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -62,6 +66,9 @@ func TestGCStats(t *testing.T) {
 }
 
 func TestGCPartition(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")

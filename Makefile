@@ -659,6 +659,9 @@ bazel_test: failpoint-enable bazel_prepare ## Run all tests using Bazel
 
 .PHONY: bazel_coverage_test
 bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS),nextgen \
+		-- //pkg/statistics/... //pkg/planner/...
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \

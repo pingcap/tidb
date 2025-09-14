@@ -530,16 +530,143 @@ var GetPossibleAccessPaths func(ctx base.PlanContext, tableHints *hint.PlanHints
 // **************************************** plan clone related ********************************************
 
 // CloneExpressionsForPlanCache is used to clone expressions for plan cache.
-var CloneExpressionsForPlanCache func(exprs, cloned []expression.Expression) []expression.Expression
+func CloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	allSafe := true
+	for _, e := range exprs {
+		if !e.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return exprs
+	}
+	if cloned == nil {
+		cloned = make([]expression.Expression, 0, len(exprs))
+	} else {
+		cloned = cloned[:0]
+	}
+	for _, e := range exprs {
+		if e.SafeToShareAcrossSession() {
+			cloned = append(cloned, e)
+		} else {
+			cloned = append(cloned, e.Clone())
+		}
+	}
+	return cloned
+}
 
 // CloneColumnsForPlanCache is used to clone columns for plan cache.
-var CloneColumnsForPlanCache func(cols, cloned []*expression.Column) []*expression.Column
+func CloneColumnsForPlanCache(cols, cloned []*expression.Column) []*expression.Column {
+	if cols == nil {
+		return nil
+	}
+	allSafe := true
+	for _, c := range cols {
+		if !c.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return cols
+	}
+	if cloned == nil {
+		cloned = make([]*expression.Column, 0, len(cols))
+	} else {
+		cloned = cloned[:0]
+	}
+	for _, c := range cols {
+		if c == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
+		} else {
+			cloned = append(cloned, c.Clone().(*expression.Column))
+		}
+	}
+	return cloned
+}
 
 // CloneConstantsForPlanCache is used to clone constants for plan cache.
-var CloneConstantsForPlanCache func(constants, cloned []*expression.Constant) []*expression.Constant
+func CloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*expression.Constant {
+	if constants == nil {
+		return nil
+	}
+	allSafe := true
+	for _, c := range constants {
+		if c == nil {
+			continue
+		}
+		if !c.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return constants
+	}
+	if cloned == nil {
+		cloned = make([]*expression.Constant, 0, len(constants))
+	} else {
+		cloned = cloned[:0]
+	}
+	for _, c := range constants {
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
+		} else {
+			cloned = append(cloned, c.Clone().(*expression.Constant))
+		}
+	}
+	return cloned
+}
 
 // CloneScalarFunctionsForPlanCache is used clone scalar functions for plan cache
-var CloneScalarFunctionsForPlanCache func(scalarFuncs, cloned []*expression.ScalarFunction) []*expression.ScalarFunction
+func CloneScalarFunctionsForPlanCache(scalarFuncs, cloned []*expression.ScalarFunction) []*expression.ScalarFunction {
+	if scalarFuncs == nil {
+		return nil
+	}
+	allSafe := true
+	for _, f := range scalarFuncs {
+		if !f.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return scalarFuncs
+	}
+	if cloned == nil {
+		cloned = make([]*expression.ScalarFunction, 0, len(scalarFuncs))
+	} else {
+		cloned = cloned[:0]
+	}
+	for _, f := range scalarFuncs {
+		if f.SafeToShareAcrossSession() {
+			cloned = append(cloned, f)
+		} else {
+			cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
+		}
+	}
+	return cloned
+}
+
+// CloneExpression2DForPlanCache is used to clone 2D expressions for plan cache.
+func CloneExpression2DForPlanCache(exprs [][]expression.Expression) [][]expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	cloned := make([][]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		cloned = append(cloned, CloneExpressionsForPlanCache(e, nil))
+	}
+	return cloned
+}
 
 // ****************************************** optimize portal *********************************************
 

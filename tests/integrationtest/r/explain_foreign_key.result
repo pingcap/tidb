@@ -119,7 +119,7 @@ create table t_4 (id int key, id2 int, foreign key fk_1(id) references t_2(id), 
 explain format = 'plan_tree' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t_2.id and t_1.id=1;
 id	task	access object	operator info
 Update	root		N/A
-├─HashJoin	root		CARTESIAN inner join
+├─MergeJoin	root		inner join, left key:explain_foreign_key.t_1.id, right key:explain_foreign_key.t_2.id
 │ ├─Point_Get(Build)	root	table:t_2	handle:1
 │ └─Point_Get(Probe)	root	table:t_1	handle:1
 ├─Foreign_Key_Check	root	table:t_3	foreign_key:fk_1, check_not_exist
@@ -146,7 +146,7 @@ set @@foreign_key_checks=0;
 explain format = 'plan_tree' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t_2.id and t_1.id=1;
 id	task	access object	operator info
 Update	root		N/A
-└─HashJoin	root		CARTESIAN inner join
+└─MergeJoin	root		inner join, left key:explain_foreign_key.t_1.id, right key:explain_foreign_key.t_2.id
   ├─Point_Get(Build)	root	table:t_2	handle:1
   └─Point_Get(Probe)	root	table:t_1	handle:1
 explain format = 'plan_tree' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
