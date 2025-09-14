@@ -827,8 +827,27 @@ func applyCrossStorageQueryPenalty(p *physicalop.PhysicalIndexJoin, isSameStorag
 		if hc == nil || hc.Pseudo {
 			return
 		}
+		if isLargeThanRowCount(child, 10_000) {
+			return
+		}
 	}
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 100)
+}
+
+func isLargeThanRowCount(pp base.PhysicalPlan, value float64) bool {
+	for _, child := range pp.Children() {
+		hc := child.StatsInfo().HistColl
+		if hc == nil || hc.Pseudo {
+			return false
+		}
+		if originalRows := hc.GetAnalyzeRowCount(); originalRows > value {
+			return true
+		}
+		if isLargeThanRowCount(child, value) {
+			return true
+		}
+	}
+	return false
 }
 
 // getPlanCostVer24PhysicalApply returns the plan-cost of this sub-plan, which is:
