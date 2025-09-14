@@ -813,11 +813,25 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
-	if !isSameStorageType {
-		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 100)
-	}
+	applyCrossStorageQueryPenalty(p, isSameStorageType)
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexJoinCostFactor)
 	return p.PlanCostVer2, nil
+}
+
+func applyCrossStorageQueryPenalty(p *physicalop.PhysicalIndexJoin, isSameStorageType bool) {
+	if isSameStorageType {
+		return
+	}
+	for _, child := range p.Children() {
+		hc := child.StatsInfo().HistColl
+		if hc.Pseudo {
+			return
+		}
+		if originalRows := int64(hc.GetAnalyzeRowCount()); originalRows < 10_000 {
+			return
+		}
+	}
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 100)
 }
 
 // getPlanCostVer24PhysicalApply returns the plan-cost of this sub-plan, which is:
