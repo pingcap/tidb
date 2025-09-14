@@ -1050,14 +1050,18 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	if noDecorrelate {
 		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
 		if !hasLimit(np) {
-			limitClause := &ast.Limit{
-				Count: ast.NewValueExpr(1, "", ""),
-			}
-			var err error
-			np, err = planCtx.builder.buildLimit(np, limitClause)
-			if err != nil {
-				er.err = err
-				return v, true
+			// Check if the correlated columns form a unique key in the outer table
+			// If they do, we don't need to add LIMIT 1 because the subquery will naturally return at most one row
+			if !areCorrelatedColumnsUniqueKey(corCols, planCtx.plan) {
+				limitClause := &ast.Limit{
+					Count: ast.NewValueExpr(1, "", ""),
+				}
+				var err error
+				np, err = planCtx.builder.buildLimit(np, limitClause)
+				if err != nil {
+					er.err = err
+					return v, true
+				}
 			}
 		}
 	}
@@ -2720,6 +2724,106 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 		return false
 	}
 	return strings.ToLower(x) == ast.CurrentTimestamp
+}
+
+// areCorrelatedColumnsUniqueKey checks if the correlated columns form a unique key in the outer table.
+// This is used to determine if we can skip adding LIMIT 1 to EXISTS subqueries.
+func areCorrelatedColumnsUniqueKey(corCols []*expression.CorrelatedColumn, outerPlan base.LogicalPlan) bool {
+	if len(corCols) == 0 || outerPlan == nil {
+		return false
+	}
+
+	// Get the DataSource from the outer plan to access table metadata
+	ds := findDataSourceInPlan(outerPlan)
+	if ds == nil {
+		return false
+	}
+
+	// Extract UniqueIDs of correlated columns
+	corColUniqueIDs := make(map[int64]bool)
+	for _, corCol := range corCols {
+		corColUniqueIDs[corCol.Column.UniqueID] = true
+	}
+
+	// Get the outer plan's schema to find the actual columns
+	outerSchema := outerPlan.Schema()
+	if outerSchema == nil {
+		return false
+	}
+
+	// Find the actual columns in the outer schema that correspond to the correlated columns
+	outerCols := make([]*expression.Column, 0, len(corCols))
+	for _, corCol := range corCols {
+		if idx := outerSchema.ColumnIndex(&corCol.Column); idx != -1 {
+			outerCols = append(outerCols, outerSchema.Columns[idx])
+		}
+	}
+
+	if len(outerCols) == 0 {
+		return false
+	}
+
+	// Extract column names from the outer columns
+	outerColNames := make(map[string]bool)
+	for _, col := range outerCols {
+		outerColNames[col.OrigName] = true
+	}
+
+	// Check primary key
+	if ds.TableInfo.PKIsHandle {
+		for _, col := range ds.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				// Match outer column name with the primary key column name
+				if outerColNames[col.Name.L] {
+					return true
+				}
+				break
+			}
+		}
+	}
+
+	// Check unique indices
+	for _, index := range ds.TableInfo.Indices {
+		if index.State != model.StatePublic || !index.Unique {
+			continue
+		}
+
+		// Check if all columns in this unique index are covered by outer columns
+		allCovered := true
+		for _, indexCol := range index.Columns {
+			colInfo := ds.TableInfo.Columns[indexCol.Offset]
+			if !outerColNames[colInfo.Name.L] {
+				allCovered = false
+				break
+			}
+		}
+		if allCovered {
+			return true
+		}
+	}
+
+	return false
+}
+
+// findDataSourceInPlan finds the first DataSource in the plan tree.
+func findDataSourceInPlan(plan base.LogicalPlan) *logicalop.DataSource {
+	if plan == nil {
+		return nil
+	}
+
+	// Check if this is a DataSource
+	if ds, ok := plan.(*logicalop.DataSource); ok {
+		return ds
+	}
+
+	// Recursively search children
+	for _, child := range plan.Children() {
+		if ds := findDataSourceInPlan(child); ds != nil {
+			return ds
+		}
+	}
+
+	return nil
 }
 
 // hasLimit checks if the plan already contains a LIMIT operator
