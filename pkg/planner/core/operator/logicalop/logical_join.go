@@ -734,14 +734,12 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	// ---- step 1. Convert OUTER→INNER only if there's an explicit NOT IS NULL
 	// on the nullable side (inner side of the outer join). ----
 	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
-		innerSch := innerTable.Schema() // schema of the nullable side
-		innerWhere := filterPredsBySchema(predicates, innerSch)
+		innerWhere := filterPredsBySchema(predicates, innerTable.Schema())
 
 		canBeSimplified := false
 		for _, expr := range innerWhere {
-			// Previous logic using util.IsNullRejected(...) was too aggressive (e.g., >=, <>
-			// might be considered). New logic recognizes only explicit NOT IS NULL.
-			if isNotNullOnSchemaCol(expr, innerSch) {
+			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
+			if isOk {
 				canBeSimplified = true
 				break
 			}
@@ -767,7 +765,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, combinedCond))
 	case base.AntiSemiJoin:
 		innerTable = innerTable.ConvertOuterToInnerJoin(passPredsSafely(innerTable, predicates))
-		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, combinedCond))
+		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, predicates))
 	default:
 		innerTable = innerTable.ConvertOuterToInnerJoin(passPredsSafely(innerTable, predicates))
 		outerTable = outerTable.ConvertOuterToInnerJoin(passPredsSafely(outerTable, predicates))
@@ -1347,12 +1345,12 @@ func (p *LogicalJoin) isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoi
 
 // This function is only used in LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, AntiSemiJoin
 func (p *LogicalJoin) isVaildConstantPropagationExpressionForLeftOuterJoinAndAntiSemiJoin(expr expression.Expression) bool {
-	return p.isVaildConstantPropagationExpression(expr, false, false, true, false)
+	return p.isVaildConstantPropagationExpression(expr, false, false, false, true)
 }
 
 // This function is only used in RightOuterJoin
 func (p *LogicalJoin) isVaildConstantPropagationExpressionForRightOuterJoin(expr expression.Expression) bool {
-	return p.isVaildConstantPropagationExpression(expr, false, false, false, true)
+	return p.isVaildConstantPropagationExpression(expr, false, false, true, false)
 }
 
 // isVaildConstantPropagationExpression is to judge whether the expression is created by PropagationContant is vaild.
@@ -1424,37 +1422,6 @@ func aggOutputAlwaysNotNull(agg *LogicalAggregation, col *expression.Column) boo
 	return false
 }
 
-// Given a join subtree child and a column col in its schema,
-// decide whether we should skip deriving NOT-NULL for it (aggregation outputs / MaxOneRow-wrapped aggregation outputs).
-func shouldSkipDeriveNotNull(child base.LogicalPlan, col *expression.Column) bool {
-	switch n := child.(type) {
-	case *LogicalAggregation:
-		return aggOutputAlwaysNotNull(n, col)
-	case *LogicalMaxOneRow:
-		if len(n.Children()) > 0 {
-			if agg, ok := n.Children()[0].(*LogicalAggregation); ok {
-				return aggOutputAlwaysNotNull(agg, col)
-			}
-		}
-	case *LogicalProjection:
-		// If col is produced by Projection and the corresponding expression is constant (or foldable to constant),
-		// prevent deriving NOT IS NULL for it (typical case: SELECT NULL AS col_2 ...)
-		idx := n.Schema().ColumnIndex(col)
-		if idx >= 0 && idx < len(n.Exprs) {
-			e := n.Exprs[idx]
-			if _, ok := e.(*expression.Constant); ok {
-				return true
-			}
-			folded := expression.FoldConstant(n.SCtx().GetExprCtx(), e)
-			if _, ok := folded.(*expression.Constant); ok {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
 // These conditions can be where conditions, join conditions, or collection of both.
 // If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
@@ -1491,18 +1458,14 @@ func (p *LogicalJoin) ExtractOnCondition(
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
 						if util.IsNullRejected(ctx, leftSchema, expr, true) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
-							if !shouldSkipDeriveNotNull(p.Children()[0], leftCol) {
-								notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), leftCol)
-								leftCond = append(leftCond, notNullExpr)
-							}
+							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), leftCol)
+							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
 						if util.IsNullRejected(ctx, rightSchema, expr, true) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
-							if !shouldSkipDeriveNotNull(p.Children()[1], rightCol) {
-								notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), rightCol)
-								rightCond = append(rightCond, notNullExpr)
-							}
+							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), rightCol)
+							rightCond = append(rightCond, notNullExpr)
 						}
 					}
 					switch binop.FuncName.L {
@@ -2203,8 +2166,7 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 		childCol = schema.RetrieveColumn(arg1)
 	}
 	if util.IsNullRejected(ctx, schema, expr, true) &&
-		!mysql.HasNotNullFlag(childCol.RetType.GetFlag()) &&
-		!shouldSkipDeriveNotNull(child, childCol) {
+		!mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
 	}
 	return nil
