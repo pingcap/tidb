@@ -781,6 +781,7 @@ predLoop:
 	return out
 }
 
+// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 // Guarded predicate passing:
 //   - If the child contains Apply/Aggregation, pass only predicates that are fully
 //     resolvable by the child's schema (schema filter).
