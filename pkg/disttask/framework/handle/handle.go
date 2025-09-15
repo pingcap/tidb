@@ -327,7 +327,7 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 	}
 	var factors *schstatus.TTLTuneFactors
 	if err = mgr.WithNewSession(func(se sessionctx.Context) error {
-		return kv.RunInNewTxn(ctx, se.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		return kv.RunInNewTxn(ctx, se.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 			mutator := meta.NewMutator(txn)
 			var err2 error
 			factors, err2 = mutator.GetDXFScheduleTuneFactors(keyspace)
