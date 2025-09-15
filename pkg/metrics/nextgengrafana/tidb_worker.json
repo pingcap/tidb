@@ -2259,7 +2259,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "count(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} == 1)",
+              "expr": "count(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} == 1)",
               "format": "time_series",
               "hide": false,
               "interval": "",
@@ -2270,7 +2270,7 @@
             },
             {
               "exemplar": true,
-              "expr": "count(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} == 0)",
+              "expr": "count(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} == 0)",
               "hide": false,
               "interval": "",
               "legendFormat": "Down",
@@ -2381,7 +2381,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(time() - process_start_time_seconds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"})",
+              "expr": "(time() - process_start_time_seconds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"})",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 2,
@@ -2497,7 +2497,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "irate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}[30s])",
+              "expr": "irate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}[30s])",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -2506,7 +2506,7 @@
               "step": 40
             },
             {
-              "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "legendFormat": "quota-{{instance}}",
               "refId": "B"
             }
@@ -2609,14 +2609,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "process_resident_memory_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "process_resident_memory_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "process-{{instance}}",
               "refId": "A"
             },
             {
-              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_unused_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_free_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} + go_memory_classes_heap_unused_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} + go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} + go_memory_classes_heap_free_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "format": "time_series",
               "hide": true,
               "intervalFactor": 1,
@@ -2624,14 +2624,14 @@
               "refId": "B"
             },
             {
-              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_unused_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} + go_memory_classes_heap_unused_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "HeapInuse-{{instance}}",
               "refId": "C"
             },
             {
-              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "format": "time_series",
               "hide": true,
               "intervalFactor": 1,
@@ -2639,7 +2639,7 @@
               "refId": "D"
             },
             {
-              "expr": "go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_free_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} + go_memory_classes_heap_free_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "format": "time_series",
               "hide": true,
               "intervalFactor": 1,
@@ -2647,21 +2647,21 @@
               "refId": "E"
             },
             {
-              "expr": "go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "hide": true,
               "interval": "",
               "legendFormat": "HeapReleased-{{instance}}",
               "refId": "F"
             },
             {
-              "expr": "go_gc_heap_goal_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+              "expr": "go_gc_heap_goal_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"worker-tidb\"}",
               "hide": true,
               "interval": "",
               "legendFormat": "GCTrigger-{{instance}}",
               "refId": "G"
             },
             {
-              "expr": "tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+              "expr": "tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"worker-tidb\"}",
               "format": "time_series",
               "hide": true,
               "intervalFactor": 1,
@@ -2669,14 +2669,14 @@
               "refId": "H"
             },
             {
-              "expr": "sum(tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}) by (module, instance)",
+              "expr": "sum(tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"worker-tidb\"}) by (module, instance)",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{module}}-{{instance}}",
               "refId": "I"
             },
             {
-              "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "quota-{{instance}}",
@@ -2816,14 +2816,14 @@
           "targets": [
             {
               "editorMode": "code",
-              "expr": "rate(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}[1m])",
+              "expr": "rate(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}[1m])",
               "legendFormat": "gc-rate - {{instance}}",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "go_gc_gomemlimit_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_gc_gomemlimit_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "hide": false,
               "legendFormat": "gomemlimit - {{instance}}",
               "range": true,
@@ -2883,7 +2883,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "process_open_fds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "process_open_fds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",
@@ -4330,7 +4330,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_server_internal_sessions{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\",  job=\"tidb\"}",
+              "expr": "tidb_server_internal_sessions{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\",  job=\"worker-tidb\"}",
               "format": "time_series",
               "hide": false,
               "interval": "",
@@ -4440,7 +4440,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_server_active_users{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\",  job=\"tidb\"}",
+              "expr": "tidb_server_active_users{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\",  job=\"worker-tidb\"}",
               "format": "time_series",
               "hide": false,
               "interval": "",
@@ -16669,7 +16669,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", status=~\"succeed|failed|canceled|reverted|revert_failed\"}) by (task_id, task_type)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"succeed|failed|canceled|reverted|revert_failed\"}) by (task_id, task_type)",
               "interval": "",
               "legendFormat": "{{task_type}}-task{{task_id}}-completed",
               "queryType": "randomWalk",
@@ -16677,7 +16677,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}) by (task_id, task_type)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (task_id, task_type)",
               "interval": "",
               "legendFormat": "{{task_type}}-task{{task_id}}-total",
               "queryType": "randomWalk",
@@ -16772,7 +16772,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", status=~\"pending\"}) by (exec_id)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending\"}) by (exec_id)",
               "interval": "",
               "legendFormat": "{{exec_id}}",
               "queryType": "randomWalk",
@@ -16867,7 +16867,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_disttask_subtask_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", status=~\"running\"}",
+              "expr": "tidb_disttask_subtask_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"running\"}",
               "interval": "",
               "legendFormat": "{{task_type}}-task{{task_id}}-subtask{{subtask_id}}",
               "queryType": "randomWalk",
@@ -17045,7 +17045,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_disttask_subtask_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", status=\"pending\"}",
+              "expr": "tidb_disttask_subtask_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"pending\"}",
               "format": "table",
               "instant": true,
               "interval": "",
@@ -17130,7 +17130,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", status=~\"pending|running|failed|canceled|paused\"}) by (exec_id)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|failed|canceled|paused\"}) by (exec_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",
@@ -17216,14 +17216,14 @@
           "targets": [
             {
               "editorMode": "code",
-              "expr": "tidb_disttask_used_slots{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}",
+              "expr": "tidb_disttask_used_slots{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "legendFormat": "Used-{{instance}} - {{service_scope}}",
               "range": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
-              "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "hide": false,
               "legendFormat": "Capacity - {{instance}}",
               "range": true,
@@ -21841,7 +21841,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "irate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}[30s])",
+              "expr": "irate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}[30s])",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -21850,7 +21850,7 @@
               "step": 40
             },
             {
-              "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}",
               "legendFormat": "quota-{{instance}}",
               "refId": "B"
             }
@@ -25524,7 +25524,7 @@
     ]
   },
   "timezone": "browser",
-  "title": "Test-Cluster-TiDB-KeyspaceName",
+  "title": "Test-Cluster-TiDB-Worker",
   "uid": "000000011",
   "version": 1
 }
