@@ -228,9 +228,9 @@ func NewTableImporter(
 // TableImporter is a table importer.
 type TableImporter struct {
 	*LoadDataController
-	// id is the Unique id for this importer.
+	// id is the unique id for this importer.
 	// it's the task id if we are running in distributed framework, else it's an
-	// uuid. we use this id to create a Unique directory for this importer.
+	// uuid. we use this id to create a unique directory for this importer.
 	id        string
 	backend   *local.Backend
 	tableInfo *checkpoints.TidbTableInfo
