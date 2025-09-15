@@ -4148,3 +4148,19 @@ func TestDeepCopyRetType(t *testing.T) {
 	tk.MustExec("create view v0(c0) as select cast((t1.c0 div t1.c0) as decimal) from t1;")
 	tk.MustQuery("select * from v0 inner join t0 on (v0.c0 like cast(v0.c0 as char) <= t0.c0) and (not atan2(t0.c0, v0.c0));").Check(testkit.Rows())
 }
+
+func TestIssue57608(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 ( c1 int primary key);")
+	tk.MustExec("insert into t1 (c1) values (1), (2), (3), (4), (5), (6), (7), (11), (12), (13), (14), (15), (16), (17), (21), (22), (23), (24), (25), (26), (27), (116), (127), (121), (122), (113), (214), (251), (261), (217), (91), (92), (39), (94), (95), (69), (79), (191), (129);")
+	tk.MustExec("create view v2 as select 0 as q2 from t1;")
+
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select distinct 1 between NULL and 1 as w0, truncate(1, (cast(ref_1.q2 as unsigned) % 0)) as w1, (1 between truncate(1, (cast(ref_1.q2 as unsigned) % 0)) and 1) as w2 from (v2 as ref_0 inner join v2 as ref_1 on (1=1));").Check(testkit.Rows(
+			"<nil> <nil> <nil>",
+		))
+	}
+}
