@@ -97,16 +97,8 @@ var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.
 var ExhaustPhysicalPlans4LogicalLock func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
-// ExhaustPhysicalPlans4LogicalUnionScan will be called by LogicalUnionScan in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalUnionScan func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
 // ExhaustPhysicalPlans4LogicalJoin will be called by LogicalJoin in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalAggregation will be called by LogicalAggregation in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalAggregation func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalApply will be called by LogicalApply in logicalOp pkg.

@@ -313,11 +313,11 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	case *logicalop.LogicalMaxOneRow:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
 		return physicalop.ExhaustPhysicalPlans4LogicalProjection(e, prop)
 	case *logicalop.LogicalAggregation:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	default:
