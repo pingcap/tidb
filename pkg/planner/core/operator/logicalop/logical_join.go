@@ -676,7 +676,6 @@ predLoop:
 	return out
 }
 
-// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 // Guarded predicate passing:
 //   - If the child contains Apply/Aggregation, pass only predicates that are fully
 //     resolvable by the child's schema (schema filter).
@@ -722,6 +721,8 @@ func isNotNullOnSchemaCol(e expression.Expression, sch *expression.Schema) bool 
 	}
 	return false
 }
+
+// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]

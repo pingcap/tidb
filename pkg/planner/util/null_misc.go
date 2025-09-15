@@ -71,7 +71,12 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 // IsNullRejected takes care of complex predicates like this:
 // IsNullRejected(A OR B) = IsNullRejected(A) AND IsNullRejected(B)
 // IsNullRejected(A AND B) = IsNullRejected(A) OR IsNullRejected(B)
-func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression, skipPlanCacheCheck bool) bool {
+func IsNullRejected(
+	ctx base.PlanContext,
+	innerSchema *expression.Schema,
+	predicate expression.Expression,
+	skipPlanCacheCheck bool,
+) bool {
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	if expression.ContainOuterNot(predicate) {
 		return false
@@ -314,7 +319,7 @@ func isNullPropagatingWRTInner(e expression.Expression, inner *expression.Schema
 //  3. IN/NOT IN                  → handled via fallback (NOT IN is UnaryNot(In(...)))
 //  4. Boolean composition        → AND/OR combine child decisions as in MySQL logic
 //  5. NOT (x IS NULL)            → NULL-rejecting if x comes from inner
-func isNullRejectingByStructure(p expression.Expression, inner *expression.Schema) (bool, bool) {
+func isNullRejectingByStructure(p expression.Expression, inner *expression.Schema) (ok bool, deterministic bool) {
 	sf, ok := p.(*expression.ScalarFunction)
 	if !ok {
 		// Non-scalar (pure column/constant) rarely decides anything structurally.
@@ -324,7 +329,6 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 	args := sf.GetArgs()
 
 	switch name {
-
 	// ---- 1) Comparisons / LIKE / REGEXP ------------------------------------
 	// They are NULL-rejecting only if at least one side *propagates* inner NULL.
 	// Examples:
