@@ -89,10 +89,6 @@ var ExhaustPhysicalPlans4LogicalSort func(lp base.LogicalPlan, prop *property.Ph
 var ExhaustPhysicalPlans4LogicalTopN func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
-// ExhaustPhysicalPlans4LogicalProjection will be called by LogicalLimit in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalProjection func(lp base.LogicalPlan,
-	prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error)
-
 // ExhaustPhysicalPlans4LogicalWindow will be called by LogicalWindow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
@@ -127,10 +123,6 @@ var ExhaustPhysicalPlans4LogicalUnionAll func(lp base.LogicalPlan, prop *propert
 
 // ExhaustPhysicalPlans4LogicalExpand will be called by LogicalExpand in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalExpand func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalCTE func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ****************************************** stats related **********************************************

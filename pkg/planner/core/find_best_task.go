@@ -96,29 +96,12 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalTableDual(super base.LogicalPlan) (ge *memo.GroupExpression, dual *logicalop.LogicalTableDual) {
-	switch x := super.(type) {
-	case *logicalop.LogicalTableDual:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		dual = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		dual = ge.GetWrappedLogicalPlan().(*logicalop.LogicalTableDual)
-	}
-	return ge, dual
-}
-
 func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalTableDual(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalTableDual](super)
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -136,29 +119,12 @@ func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.Physic
 	return rt, 1, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalShow(super base.LogicalPlan) (ge *memo.GroupExpression, show *logicalop.LogicalShow) {
-	switch x := super.(type) {
-	case *logicalop.LogicalShow:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		show = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		show = ge.GetWrappedLogicalPlan().(*logicalop.LogicalShow)
-	}
-	return ge, show
-}
-
 func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalShow(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalShow](super)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -170,29 +136,12 @@ func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalPro
 	return rt, 1, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalShowDDLJobs(super base.LogicalPlan) (ge *memo.GroupExpression, ddl *logicalop.LogicalShowDDLJobs) {
-	switch x := super.(type) {
-	case *logicalop.LogicalShowDDLJobs:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		ddl = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		ddl = ge.GetWrappedLogicalPlan().(*logicalop.LogicalShowDDLJobs)
-	}
-	return ge, ddl
-}
-
 func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalShowDDLJobs(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalShowDDLJobs](super)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -952,29 +901,12 @@ END:
 	return bestTask, cntPlan, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalMemTable(super base.LogicalPlan) (ge *memo.GroupExpression, mem *logicalop.LogicalMemTable) {
-	switch x := super.(type) {
-	case *logicalop.LogicalMemTable:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		mem = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		mem = ge.GetWrappedLogicalPlan().(*logicalop.LogicalMemTable)
-	}
-	return ge, mem
-}
-
 func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalMemTable(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalMemTable](super)
 	if prop.MPPPartitionTp != property.AnyType {
 		return base.InvalidTask, 0, nil
 	}
@@ -3227,31 +3159,18 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 	}
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalCTE(super base.LogicalPlan) (ge *memo.GroupExpression, cte *logicalop.LogicalCTE, childLength int) {
-	switch x := super.(type) {
-	case *logicalop.LogicalCTE:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		cte = x
-		childLength = x.ChildLen()
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		cte = ge.GetWrappedLogicalPlan().(*logicalop.LogicalCTE)
-		childLength = len(ge.Inputs)
-	}
-	return ge, cte, childLength
-}
-
 func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p, childLen := getGEAndLogicalCTE(super)
+	var childLen int
+	ge, p := base.GetGEAndLogical[*logicalop.LogicalCTE](super)
+	if ge != nil {
+		childLen = ge.InputsLen()
+	} else {
+		childLen = p.ChildLen()
+	}
 	if childLen > 0 {
 		// pass the super here to iterate among ge or logical plan both.
 		return utilfuncp.FindBestTask4BaseLogicalPlan(super, prop, counter, pop)
@@ -3288,29 +3207,12 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 	return t, 1, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalCTETable(super base.LogicalPlan) (ge *memo.GroupExpression, cteTable *logicalop.LogicalCTETable) {
-	switch x := super.(type) {
-	case *logicalop.LogicalCTETable:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		cteTable = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		cteTable = ge.GetWrappedLogicalPlan().(*logicalop.LogicalCTETable)
-	}
-	return ge, cteTable
-}
-
 func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalCTETable(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalCTETable](super)
 	if !prop.IsSortItemEmpty() {
 		return base.InvalidTask, 0, nil
 	}

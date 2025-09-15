@@ -295,6 +295,37 @@ type LogicalPlan interface {
 	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
 	// For logicalPlan implementation, it just returns itself as well.
 	GetWrappedLogicalPlan() LogicalPlan
+
+	// GetChildStatsAndSchema gets the stats and schema of the first child.
+	GetChildStatsAndSchema() (*property.StatsInfo, *expression.Schema)
+
+	// GetJoinChildStatsAndSchema gets the stats and schema of both children.
+	GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema)
+}
+
+type GroupExpressionInterface interface {
+	LogicalPlan
+	// IsExplored return whether this gE has explored rule i.
+	IsExplored(i uint) bool
+	// InputsLen returns the length of inputs.
+	InputsLen() int
+}
+
+// GetGEAndLogical is get the possible group expression and logical operator from common super pointer.
+func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpressionInterface, proj T) {
+	switch x := super.(type) {
+	case T:
+		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
+		// to downcast as the every specific logical operator.
+		proj = x
+	case GroupExpressionInterface:
+		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
+		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
+		// get the specific logical operator inside.
+		ge = x
+		proj = ge.GetWrappedLogicalPlan().(T)
+	}
+	return ge, proj
 }
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.

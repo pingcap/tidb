@@ -444,6 +444,16 @@ func (p *BaseLogicalPlan) GetWrappedLogicalPlan() base.LogicalPlan {
 	return p.self
 }
 
+// GetChildStatsAndSchema gets the stats and schema of the first child.
+func (p *BaseLogicalPlan) GetChildStatsAndSchema() (*property.StatsInfo, *expression.Schema) {
+	return p.Children()[0].StatsInfo(), p.Children()[0].Schema()
+}
+
+// GetJoinChildStatsAndSchema gets the stats and schema of both children.
+func (p *BaseLogicalPlan) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+	panic("baseLogicalPlan.GetJoinChildStatsAndSchema() should never be called.")
+}
+
 // NewBaseLogicalPlan is the basic constructor of BaseLogicalPlan.
 func NewBaseLogicalPlan(ctx base.PlanContext, tp string, self base.LogicalPlan, qbOffset int) BaseLogicalPlan {
 	return BaseLogicalPlan{

@@ -35,7 +35,6 @@ func init() {
 	utilfuncp.FindBestTask4LogicalTableDual = findBestTask4LogicalTableDual
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
 	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
-	utilfuncp.ExhaustPhysicalPlans4LogicalCTE = exhaustPhysicalPlans4LogicalCTE
 	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
 	utilfuncp.ExhaustPhysicalPlans4LogicalTopN = exhaustPhysicalPlans4LogicalTopN
 	utilfuncp.ExhaustPhysicalPlans4LogicalLock = exhaustPhysicalPlans4LogicalLock
@@ -47,7 +46,6 @@ func init() {
 	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
 	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
 	utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan = exhaustPhysicalPlans4LogicalUnionScan
-	utilfuncp.ExhaustPhysicalPlans4LogicalProjection = exhaustPhysicalPlans4LogicalProjection
 	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
 	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
 

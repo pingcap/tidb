@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -55,7 +54,7 @@ import (
 func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	switch x := lp.(type) {
 	case *logicalop.LogicalCTE:
-		return exhaustPhysicalPlans4LogicalCTE(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
 		return exhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
@@ -83,7 +82,7 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalUnionScan:
 		return exhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
-		return exhaustPhysicalPlans4LogicalProjection(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalProjection(x, prop)
 	case *logicalop.LogicalAggregation:
 		return exhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
@@ -120,7 +119,7 @@ func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.P
 }
 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
-	ge, p := getGEAndLogicalJoin(super)
+	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
 	}
@@ -203,8 +202,13 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	return
 }
 
-func getHashJoin(ge *memo.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *physicalop.PhysicalHashJoin {
-	stats0, stats1, _, _ := getJoinChildStatsAndSchema(ge, p)
+func getHashJoin(ge base.GroupExpressionInterface, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *physicalop.PhysicalHashJoin {
+	var stats0, stats1 *property.StatsInfo
+	if ge != nil {
+		stats0, stats1, _, _ = ge.GetJoinChildStatsAndSchema()
+	} else {
+		stats0, stats1, _, _ = p.GetJoinChildStatsAndSchema()
+	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
 	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
@@ -716,7 +720,7 @@ func constructIndexHashJoin(
 
 // enumerateIndexJoinByOuterIdx will enumerate temporary index joins by index join prop required for its inner child.
 func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
-	ge, p := getGEAndLogicalJoin(super)
+	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
 	stats0, stats1, schema0, schema1 := getJoinChildStatsAndSchema(ge, p)
 	var outerSchema *expression.Schema
 	var outerStats *property.StatsInfo
@@ -1817,7 +1821,7 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 // tryToEnumerateIndexJoin returns all available index join plans, which will require inner indexJoinProp downside
 // compared with original tryToGetIndexJoin.
 func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	_, p := getGEAndLogicalJoin(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
@@ -2404,10 +2408,11 @@ func getChildStatsAndSchema(ge *memo.GroupExpression, p base.LogicalPlan) (stats
 	return
 }
 
-func getJoinChildStatsAndSchema(ge *memo.GroupExpression, p base.LogicalPlan) (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+func getJoinChildStatsAndSchema(ge base.GroupExpressionInterface, p base.LogicalPlan) (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
 	if ge != nil {
-		stats0, schema0 = ge.Inputs[0].GetLogicalProperty().Stats, ge.Inputs[0].GetLogicalProperty().Schema
-		stats1, schema1 = ge.Inputs[1].GetLogicalProperty().Stats, ge.Inputs[1].GetLogicalProperty().Schema
+		g := ge.(*memo.GroupExpression)
+		stats0, schema0 = g.Inputs[0].GetLogicalProperty().Stats, g.Inputs[0].GetLogicalProperty().Schema
+		stats1, schema1 = g.Inputs[1].GetLogicalProperty().Stats, g.Inputs[1].GetLogicalProperty().Schema
 	} else {
 		stats1, schema1 = p.Children()[1].StatsInfo(), p.Children()[1].Schema()
 		stats0, schema0 = p.Children()[0].StatsInfo(), p.Children()[0].Schema()
@@ -2417,7 +2422,7 @@ func getJoinChildStatsAndSchema(ge *memo.GroupExpression, p base.LogicalPlan) (s
 
 // If we can use mpp broadcast join, that's our first choice.
 func preferMppBCJ(super base.LogicalPlan) bool {
-	ge, p := getGEAndLogicalJoin(super)
+	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
 	if len(p.EqualConditions) == 0 && p.SCtx().GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
@@ -2481,7 +2486,7 @@ func canExprsInJoinPushdown(p *logicalop.LogicalJoin, storeType kv.StoreType) bo
 }
 
 func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty, useBCJ bool) []base.PhysicalPlan {
-	ge, p := getGEAndLogicalJoin(super)
+	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -2689,29 +2694,12 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 	return newKeys
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalJoin(super base.LogicalPlan) (ge *memo.GroupExpression, join *logicalop.LogicalJoin) {
-	switch x := super.(type) {
-	case *logicalop.LogicalJoin:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		join = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		join = ge.GetWrappedLogicalPlan().(*logicalop.LogicalJoin)
-	}
-	return ge, join
-}
-
 // it can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	ge, p := getGEAndLogicalJoin(super)
+	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 			indexJoins, _ := tryToGetIndexJoin(p, prop)
@@ -2876,63 +2864,6 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 	return physicalExpands, true, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalProjection(super base.LogicalPlan) (ge *memo.GroupExpression, proj *logicalop.LogicalProjection) {
-	switch x := super.(type) {
-	case *logicalop.LogicalProjection:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		proj = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		proj = ge.GetWrappedLogicalPlan().(*logicalop.LogicalProjection)
-	}
-	return ge, proj
-}
-
-func exhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	ge, p := getGEAndLogicalProjection(super)
-	newProp, ok := p.TryToGetChildProp(prop)
-	if !ok {
-		return nil, true, nil
-	}
-	newProps := []*property.PhysicalProperty{newProp}
-	// generate a mpp task candidate if mpp mode is allowed
-	ctx := p.SCtx()
-	pushDownCtx := util.GetPushDownCtx(ctx)
-	_, childSchema := getChildStatsAndSchema(ge, p)
-	// lift the recursive check of canPushToCop(tiFlash)
-	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() &&
-		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
-		mppProp := newProp.CloneEssentialFields()
-		mppProp.TaskTp = property.MppTaskType
-		newProps = append(newProps, mppProp)
-	}
-	// lift the recursive check of canPushToCop(tikv)
-	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown &&
-		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) &&
-		expression.ProjectionBenefitsFromPushedDown(p.Exprs, childSchema.Len()) {
-		copProp := newProp.CloneEssentialFields()
-		copProp.TaskTp = property.CopSingleReadTaskType
-		newProps = append(newProps, copProp)
-	}
-
-	ret := make([]base.PhysicalPlan, 0, len(newProps))
-	newProps = admitIndexJoinProps(newProps, prop)
-	for _, newProp := range newProps {
-		proj := physicalop.PhysicalProjection{
-			Exprs:            p.Exprs,
-			CalculateNoDelay: p.CalculateNoDelay,
-		}.Init(ctx, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
-		proj.SetSchema(p.Schema())
-		ret = append(ret, proj)
-	}
-	return ret, true, nil
-}
-
 func pushLimitOrTopNForcibly(p base.LogicalPlan, pp base.PhysicalPlan) (preferPushDown bool, meetThreshold bool) {
 	switch lp := p.(type) {
 	case *logicalop.LogicalTopN:
@@ -3061,30 +2992,13 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func GetHashJoin(ge *memo.GroupExpression, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
+func GetHashJoin(ge base.GroupExpressionInterface, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
 	return getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
-}
-
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalApply(super base.LogicalPlan) (ge *memo.GroupExpression, apply *logicalop.LogicalApply) {
-	switch x := super.(type) {
-	case *logicalop.LogicalApply:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		apply = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		apply = ge.GetWrappedLogicalPlan().(*logicalop.LogicalApply)
-	}
-	return ge, apply
 }
 
 // exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
 func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	ge, la := getGEAndLogicalApply(super)
+	ge, la := base.GetGEAndLogical[*logicalop.LogicalApply](super)
 	_, _, schema0, _ := getJoinChildStatsAndSchema(ge, la)
 	if !prop.AllColsFromSchema(schema0) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -3690,27 +3604,6 @@ func admitIndexJoinTypes(types []property.TaskType, prop *property.PhysicalPrope
 	return types
 }
 
-func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.PhysicalProperty) []*property.PhysicalProperty {
-	if prop.TaskTp == property.MppTaskType {
-		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
-		// which is guaranteed by the parent physical plans enumeration.
-		return children
-	}
-	// only admit root & cop task type to push down indexJoinProp.
-	if prop.IndexJoinProp != nil {
-		newChildren := children[:0]
-		for _, child := range children {
-			if child.TaskTp != property.MppTaskType {
-				child.IndexJoinProp = prop.IndexJoinProp
-				// only admit non-mpp task prop.
-				newChildren = append(newChildren, child)
-			}
-		}
-		children = newChildren
-	}
-	return children
-}
-
 func admitIndexJoinProp(child, prop *property.PhysicalProperty) *property.PhysicalProperty {
 	if prop.TaskTp == property.MppTaskType {
 		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
@@ -3878,38 +3771,9 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 	return []base.PhysicalPlan{mor}, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalCTE)
-	pcte := physicalop.PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
-	if prop.IsFlashProp() {
-		pcte.StorageSender = physicalop.PhysicalExchangeSender{
-			ExchangeType: tipb.ExchangeType_Broadcast,
-		}.Init(p.SCtx(), p.StatsInfo())
-	}
-	pcte.SetSchema(p.Schema())
-	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})
-	return []base.PhysicalPlan{(*physicalop.PhysicalCTEStorage)(pcte)}, true, nil
-}
-
-// getGEAndLogicalSequence extracts the possible group expression and logical sequence operator from a common super pointer.
-// This function handles two cases:
-// 1. When super is already a LogicalSequence - directly return it
-// 2. When super is a GroupExpression - extract the wrapped LogicalSequence from it
-func getGEAndLogicalSequence(super base.LogicalPlan) (ge *memo.GroupExpression, seq *logicalop.LogicalSequence) {
-	switch x := super.(type) {
-	case *logicalop.LogicalSequence:
-		// Direct LogicalSequence case - no need for downcasting
-		seq = x
-	case *memo.GroupExpression:
-		// GroupExpression case - extract the wrapped LogicalSequence
-		ge = x
-		seq = ge.GetWrappedLogicalPlan().(*logicalop.LogicalSequence)
-	}
-	return ge, seq
-}
-
 func exhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	ge, ls := getGEAndLogicalSequence(super)
+	g, ls := base.GetGEAndLogical[*logicalop.LogicalSequence](super)
+	ge := g.(*memo.GroupExpression)
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
 	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true,
 		CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
