@@ -3429,6 +3429,6 @@ func (p *mockPhysicalPlan4Test) Attach2Task(tasks ...base.Task) base.Task {
 }
 
 // MemoryUsage of mockPhysicalPlan4Test is only for testing
-func (p *mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
+func (*mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
 	return
 }
