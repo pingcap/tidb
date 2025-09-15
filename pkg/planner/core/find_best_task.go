@@ -858,7 +858,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 		exhaustObj = ge
 	}
 	// make sure call ExhaustPhysicalPlans over GE or Self, rather than the BaseLogicalPlan.
-	plansFitsProp, hintWorksWithProp, err = exhaustObj.ExhaustPhysicalPlans(newProp)
+	plansFitsProp, hintWorksWithProp, err = exhaustPhysicalPlans(exhaustObj, newProp)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -880,7 +880,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 		newProp.MPPPartitionCols = nil
 		newProp.MPPPartitionTp = property.AnyType
 		var hintCanWork bool
-		plansNeedEnforce, hintCanWork, err = self.ExhaustPhysicalPlans(newProp)
+		plansNeedEnforce, hintCanWork, err = exhaustPhysicalPlans(self, newProp)
 		if err != nil {
 			return nil, 0, err
 		}

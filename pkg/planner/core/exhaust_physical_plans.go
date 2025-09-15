@@ -48,6 +48,52 @@ import (
 	"go.uber.org/zap"
 )
 
+func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	switch x := lp.(type) {
+	case *logicalop.LogicalCTE:
+		// we pass GE rather than logical plan, it's a super set of LogicalPlan interface, which enable cascades
+		// framework to iterate its children, and then get their logical property. Meanwhile, we can also get basic
+		// wrapped logical plan from GE, so we can use same function pointer to handle logic inside.
+		return exhaustPhysicalPlans4LogicalCTE(x, prop)
+	case *logicalop.LogicalSort:
+		return exhaustPhysicalPlans4LogicalSort(x, prop)
+	case *logicalop.LogicalTopN:
+		return exhaustPhysicalPlans4LogicalTopN(x, prop)
+	case *logicalop.LogicalLock:
+		return exhaustPhysicalPlans4LogicalLock(x, prop)
+	case *logicalop.LogicalJoin:
+		return exhaustPhysicalPlans4LogicalJoin(x, prop)
+	case *logicalop.LogicalApply:
+		return exhaustPhysicalPlans4LogicalApply(x, prop)
+	case *logicalop.LogicalLimit:
+		return physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
+	case *logicalop.LogicalWindow:
+		return exhaustPhysicalPlans4LogicalWindow(x, prop)
+	case *logicalop.LogicalExpand:
+		return exhaustPhysicalPlans4LogicalExpand(x, prop)
+	case *logicalop.LogicalUnionAll:
+		return exhaustPhysicalPlans4LogicalUnionAll(x, prop)
+	case *logicalop.LogicalSequence:
+		return exhaustPhysicalPlans4LogicalSequence(x, prop)
+	case *logicalop.LogicalSelection:
+		return exhaustPhysicalPlans4LogicalSelection(x, prop)
+	case *logicalop.LogicalMaxOneRow:
+		return exhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+	case *logicalop.LogicalUnionScan:
+		return exhaustPhysicalPlans4LogicalUnionScan(x, prop)
+	case *logicalop.LogicalProjection:
+		return exhaustPhysicalPlans4LogicalProjection(x, prop)
+	case *logicalop.LogicalAggregation:
+		return exhaustPhysicalPlans4LogicalAggregation(x, prop)
+	case *logicalop.LogicalPartitionUnionAll:
+		return exhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+	case *memo.GroupExpression:
+		return x.ExhaustPhysicalPlans(prop)
+	default:
+		panic("unreachable")
+	}
+}
+
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalUnionScan)
 	if prop.IsFlashProp() {
@@ -3710,32 +3756,7 @@ func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.P
 
 func exhaustPhysicalPlans4LogicalLimit(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalLimit)
-	return getLimitPhysicalPlans(p, prop)
-}
-
-func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if !prop.IsSortItemEmpty() {
-		return nil, true, nil
-	}
-
-	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
-	// lift the recursive check of canPushToCop(tiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
-		allTaskTypes = append(allTaskTypes, property.MppTaskType)
-	}
-	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
-	for _, tp := range allTaskTypes {
-		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset),
-			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-		limit := physicalop.PhysicalLimit{
-			Offset:      p.Offset,
-			Count:       p.Count,
-			PartitionBy: p.GetPartitionBy(),
-		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), resultProp)
-		limit.SetSchema(p.Schema())
-		ret = append(ret, limit)
-	}
-	return ret, true, nil
+	return physicalop.ExhaustPhysicalPlans4LogicalLimit(p, prop)
 }
 
 func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
