@@ -88,12 +88,14 @@ func NewRCCalc(dataSize int64, nodeCPU int, indexSizeRatio float64, factors *sch
 	}
 }
 
+// CalcMaxNodeCountForAddIndex calculates the maximum number of nodes to execute add-index.
 func (rc *ResourceCalc) CalcMaxNodeCountForAddIndex() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForAddIndex
 	return rc.calcMaxNodeCountBySize(size, limit)
 }
 
+// CalcMaxNodeCountForImportInto calculates the maximum number of nodes to execute import-into.
 func (rc *ResourceCalc) CalcMaxNodeCountForImportInto() int {
 	size := rc.getAmplifiedDataSize()
 	limit := rc.factors.AmplifyFactor * maxNodeCountLimitForImportInto

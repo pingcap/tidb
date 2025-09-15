@@ -1357,6 +1357,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context) error {
 		zap.String("total file size", units.BytesSize(float64(totalSize))),
 		zap.Int("file count", len(e.dataFiles)),
 		zap.Float64("index size ratio", indexSizeRatio),
+		zap.Float64("amplify factor", factors.AmplifyFactor),
 	)
 	return nil
 }

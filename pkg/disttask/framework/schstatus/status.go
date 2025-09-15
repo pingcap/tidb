@@ -16,6 +16,7 @@ package schstatus
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -109,6 +110,12 @@ type Status struct {
 
 // String implements fmt.Stringer interface for Status.
 func (s *Status) String() string {
-	bytes, _ := json.Marshal(s)
+	bak := *s
+	if len(bak.TiDBWorker.BusyNodes) > 5 {
+		bak.TiDBWorker.BusyNodes = bak.TiDBWorker.BusyNodes[:5]
+		bak.TiDBWorker.BusyNodes = append(bak.TiDBWorker.BusyNodes,
+			Node{ID: fmt.Sprintf("... too many nodes, total %d busy nodes ...", len(s.TiDBWorker.BusyNodes))})
+	}
+	bytes, _ := json.Marshal(&bak)
 	return string(bytes)
 }

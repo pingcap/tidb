@@ -14,6 +14,16 @@
 
 package schstatus
 
+import "encoding/json"
+
+const (
+	// MinAmplifyFactor is the minimum amplify factor.
+	MinAmplifyFactor = 1.0
+	// MaxAmplifyFactor is the maximum amplify factor.
+	MaxAmplifyFactor     = 10.0
+	defaultAmplifyFactor = MinAmplifyFactor
+)
+
 // TuneFactors represents the resource tuning factors.
 type TuneFactors struct {
 	// AmplifyFactor is used to amplify the input data size and node count limit,
@@ -28,9 +38,15 @@ type TTLTuneFactors struct {
 	TuneFactors
 }
 
+// String implements the fmt.Stringer interface.
+func (f *TTLTuneFactors) String() string {
+	bytes, _ := json.Marshal(f)
+	return string(bytes)
+}
+
 // GetDefaultTuneFactors get the default tuning factors.
 func GetDefaultTuneFactors() *TuneFactors {
 	return &TuneFactors{
-		AmplifyFactor: 1,
+		AmplifyFactor: defaultAmplifyFactor,
 	}
 }
