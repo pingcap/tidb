@@ -106,12 +106,12 @@ func (h *DXFScheduleHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	handler.WriteData(w, param)
 }
 
-func parsePauseScaleInFlag(req *http.Request) (schstatus.Flag, *schstatus.TTLFlag, error) {
+func parsePauseScaleInFlag(req *http.Request) (schstatus.Flag, *schstatus.TTLInfo, error) {
 	actionStr := req.FormValue("action")
 	if actionStr != pauseScaleInAction && actionStr != resumeScaleInAction {
 		return "", nil, errors.Errorf("invalid action %s", actionStr)
 	}
-	ttlFlag := &schstatus.TTLFlag{
+	ttlFlag := &schstatus.TTLInfo{
 		Enabled: actionStr == pauseScaleInAction,
 	}
 	if ttlFlag.Enabled {

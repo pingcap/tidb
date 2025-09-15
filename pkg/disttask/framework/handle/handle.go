@@ -297,7 +297,7 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 }
 
 // UpdatePauseScaleInFlag updates the pause scale-in flag.
-func UpdatePauseScaleInFlag(ctx context.Context, flag *schstatus.TTLFlag) error {
+func UpdatePauseScaleInFlag(ctx context.Context, flag *schstatus.TTLInfo) error {
 	manager, err := storage.GetTaskManager()
 	if err != nil {
 		return err

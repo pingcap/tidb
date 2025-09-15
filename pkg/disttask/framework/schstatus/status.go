@@ -69,16 +69,16 @@ const (
 	PauseScaleInFlag Flag = "pause_scale_in"
 )
 
-// TTLFlag represents the status of a flag in the scheduler.
-// currently, we only have one flag: 'pause_scale_in'
-type TTLFlag struct {
+// TTLInfo represents the ttl info of a flag or resource tune factors in the
+// scheduler.
+type TTLInfo struct {
 	Enabled    bool          `json:"enabled,omitempty"`
 	TTL        time.Duration `json:"ttl,omitempty"`
 	ExpireTime time.Time     `json:"expire_time,omitempty"`
 }
 
-// String implements fmt.Stringer interface for TTLFlag.
-func (a *TTLFlag) String() string {
+// String implements fmt.Stringer interface for TTLInfo.
+func (a *TTLInfo) String() string {
 	bytes, _ := json.Marshal(a)
 	return string(bytes)
 }
@@ -99,7 +99,7 @@ type Status struct {
 	// although this issue will disappear when there is no node to be scaled in,
 	// it might make the task take a long time to finish, so if we meet this issue
 	// we can use this flag to workaround.
-	Flags map[Flag]TTLFlag `json:"flags,omitempty"`
+	Flags map[Flag]TTLInfo `json:"flags,omitempty"`
 }
 
 // String implements fmt.Stringer interface for Status.

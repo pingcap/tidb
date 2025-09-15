@@ -51,7 +51,7 @@ func TestGetScheduleStatus(t *testing.T) {
 		TaskQueue:  schstatus.TaskQueue{},
 		TiDBWorker: schstatus.NodeGroup{CPUCount: 16, RequiredCount: 1, CurrentCount: 1, BusyNodes: []schstatus.Node{{ID: ":4000", IsOwner: true}}},
 		TiKVWorker: schstatus.NodeGroup{RequiredCount: 1},
-		Flags:      make(map[schstatus.Flag]schstatus.TTLFlag),
+		Flags:      make(map[schstatus.Flag]schstatus.TTLInfo),
 	}, status)
 }
 
@@ -116,7 +116,7 @@ func TestScheduleFlag(t *testing.T) {
 	// in CI, the stored and unmarshalled time might have different time zone,
 	// so unify to UTC.
 	expireTime := time.Unix(time.Now().Add(time.Hour).Unix(), 0).In(time.UTC)
-	flag := schstatus.TTLFlag{Enabled: true, TTL: time.Hour, ExpireTime: expireTime}
+	flag := schstatus.TTLInfo{Enabled: true, TTL: time.Hour, ExpireTime: expireTime}
 	require.NoError(t, handle.UpdatePauseScaleInFlag(ctx, &flag))
 	flags, err = handle.GetScheduleFlags(ctx, taskMgr)
 	require.NoError(t, err)
@@ -131,7 +131,7 @@ func TestScheduleFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, flags)
 	// disabled flag
-	flag = schstatus.TTLFlag{Enabled: false}
+	flag = schstatus.TTLInfo{Enabled: false}
 	require.NoError(t, handle.UpdatePauseScaleInFlag(ctx, &flag))
 	flags, err = handle.GetScheduleFlags(ctx, taskMgr)
 	require.NoError(t, err)

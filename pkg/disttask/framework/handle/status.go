@@ -164,8 +164,8 @@ func calculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 
 // GetScheduleFlags returns the schedule flags, such as pause-scale-in flag.
 // exported for test.
-func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[schstatus.Flag]schstatus.TTLFlag, error) {
-	flags := make(map[schstatus.Flag]schstatus.TTLFlag)
+func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[schstatus.Flag]schstatus.TTLInfo, error) {
+	flags := make(map[schstatus.Flag]schstatus.TTLInfo)
 	pauseScaleIn, err := getPauseScaleInFlag(ctx, manager)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -176,8 +176,8 @@ func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[sc
 	return flags, nil
 }
 
-func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*schstatus.TTLFlag, error) {
-	flag := &schstatus.TTLFlag{}
+func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*schstatus.TTLInfo, error) {
+	flag := &schstatus.TTLInfo{}
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		rs, err2 := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `SELECT VARIABLE_VALUE from mysql.tidb WHERE VARIABLE_NAME = %?`,
 			tidbvar.DXFSchedulePauseScaleIn)
@@ -200,7 +200,7 @@ func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*sc
 	// pause-scale-in flag is not cleaned up even if it is expired, reset it.
 	if flag.Enabled {
 		if flag.ExpireTime.Before(time.Now()) {
-			flag = &schstatus.TTLFlag{}
+			flag = &schstatus.TTLInfo{}
 		}
 	}
 	return flag, nil
