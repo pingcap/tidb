@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -54,6 +55,7 @@ type encodeAndSortOperator struct {
 	collector execute.Collector
 
 	taskID, subtaskID int64
+	taskKeyspace      string
 	tableImporter     *importer.TableImporter
 	sharedVars        *SharedVars
 	logger            *zap.Logger
@@ -79,6 +81,7 @@ func newEncodeAndSortOperator(
 		collector:     collector,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
+		taskKeyspace:  executor.taskMeta.Plan.Keyspace,
 		tableImporter: executor.tableImporter,
 		sharedVars:    sharedVars,
 		logger:        executor.logger,
@@ -163,6 +166,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 					op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
+					metering.RecordDXFS3PutRequests(op.tableImporter.GetKVStore(), summary.PutRequestCount)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
@@ -179,6 +183,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
 				op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
+				metering.RecordDXFS3PutRequests(op.tableImporter.GetKVStore(), summary.PutRequestCount)
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -403,6 +404,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		kvMeta.MergeSummary(summary)
 		r.summary.PutReqCnt.Add(summary.PutRequestCount)
+		metering.RecordDXFS3PutRequests(r.store, summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -455,10 +457,12 @@ func newDistTaskRowCntCollector(
 
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
+	metering.RecordDXFReadDataBytes(d.store, uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
+	metering.RecordDXFWriteDataBytes(d.store, uint64(bytes))
 }

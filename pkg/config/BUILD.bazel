@@ -22,6 +22,7 @@ go_library(
         "@com_github_burntsushi_toml//:toml",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
+        "@com_github_pingcap_metering_sdk//config:go_default_library",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_uber_jaeger_client_go//config",
         "@org_uber_go_atomic//:atomic",
@@ -41,7 +42,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 28,
+    shard_count = 29,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/testkit/testsetup",

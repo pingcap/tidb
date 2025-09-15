@@ -1445,3 +1445,17 @@ func TestKeyspaceName(t *testing.T) {
 	conf.KeyspaceName = "a18446744073709551615"
 	require.ErrorContains(t, conf.Valid(), "invalid keyspace name")
 }
+
+func TestMetering(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("skip metering test in classic kernel")
+	}
+	conf := NewConfig()
+	conf.Metering.Type = "s3"
+	conf.Metering.Bucket = "test-bucket"
+	conf.Metering.Prefix = "test-prefix"
+	conf.Metering.Region = "test-region"
+	require.NoError(t, conf.Valid())
+	conf.Metering.Bucket = ""
+	require.ErrorContains(t, conf.Valid(), "bucket is required")
+}

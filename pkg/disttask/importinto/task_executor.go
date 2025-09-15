@@ -30,6 +30,7 @@ import (
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -171,6 +172,7 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.Bytes.Add(bytes)
 	s.summary.RowCnt.Add(rowCnt)
+	metering.RecordDXFWriteDataBytes(s.store, uint64(bytes))
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
@@ -357,6 +359,7 @@ type mergeSortStepExecutor struct {
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
 	indexKVPartSize int64
+	store           tidbkv.Storage
 
 	summary execute.SubtaskSummary
 }
@@ -407,9 +410,11 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
+		metering.RecordDXFS3PutRequests(m.store, summary.PutRequestCount)
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
+		metering.RecordDXFS3GetRequests(m.store, summary.GetRequestCount)
 	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
@@ -566,6 +571,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			MemCapacity:   e.GetResource().Mem.Capacity(),
 			OnReaderClose: func(summary *external.ReaderSummary) {
 				e.summary.GetReqCnt.Add(summary.GetRequestCount)
+				metering.RecordDXFS3GetRequests(e.store, summary.GetRequestCount)
 			},
 		},
 		TS: sm.TS,
@@ -730,6 +736,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
+			store:    store,
 		}, nil
 	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{

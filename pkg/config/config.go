@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	metering "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -317,6 +318,8 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
+
+	Metering metering.MeteringConfig `toml:"metering" json:"metering"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -1446,6 +1449,21 @@ func (c *Config) Valid() error {
 		}
 		if c.TiFlashComputeAutoScalerAddr == "" {
 			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")
+		}
+	}
+	if kerneltype.IsNextGen() {
+		if len(c.Metering.Type) > 0 {
+			if c.Metering.Bucket == "" {
+				return fmt.Errorf("bucket is required for the metering config")
+			}
+			if c.Metering.Prefix == "" {
+				return fmt.Errorf("prefix is required for the metering config")
+			}
+			if c.Metering.Region == "" {
+				return fmt.Errorf("region is required for the metering config")
+			}
+		} else {
+			logutil.BgLogger().Warn("metering configuration is empty, metering is disabled")
 		}
 	}
 
