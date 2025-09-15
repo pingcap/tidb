@@ -53,24 +53,26 @@ create table t2(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL);
 create table t3(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL, UNIQUE KEY idx_abc (a, b, c));
 explain format = 'plan_tree' select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.a)], other cond:lt(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.a)
-├─IndexReader(Build)	root		index:Selection
-│ └─Selection	cop[tikv]		lt(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t1.a)
-│   └─IndexFullScan	cop[tikv]	table:t1, index:idx_a(a)	keep order:false, stats:pseudo
-└─TableReader(Probe)	root		data:Selection
-  └─Selection	cop[tikv]		lt(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t2.a), not(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.a))
-    └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.a
+└─Selection	root		lt(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.a)
+  └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.a)]
+    ├─IndexReader(Build)	root		index:Selection
+    │ └─Selection	cop[tikv]		lt(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t1.a)
+    │   └─IndexFullScan	cop[tikv]	table:t1, index:idx_a(a)	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.a))
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);
 a
 explain format = 'plan_tree' select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.a
-└─Apply	root		CARTESIAN inner join, other cond:lt(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.a)
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.a))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Selection(Probe)	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a))
-    └─MaxOneRow	root		
+└─Selection	root		lt(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.a)
+  └─Apply	root		CARTESIAN left outer join, left side:TableReader
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.a))
+    │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─MaxOneRow(Probe)	root		
       └─IndexLookUp	root		
         ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_a(a)	range:[NULL,NULL], keep order:false, stats:pseudo
         └─Selection(Probe)	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)
@@ -80,12 +82,12 @@ a
 explain format = 'plan_tree' select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.a
-└─Apply	root		CARTESIAN inner join, other cond:lt(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t3.a)
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.a))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Selection(Probe)	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t3.a))
-    └─MaxOneRow	root		
+└─Selection	root		lt(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t3.a)
+  └─Apply	root		CARTESIAN left outer join, left side:TableReader
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.a))
+    │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─MaxOneRow(Probe)	root		
       └─IndexReader	root		index:IndexRangeScan
         └─IndexRangeScan	cop[tikv]	table:t3, index:idx_abc(a, b, c)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t3.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)], keep order:false, stats:pseudo
 select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);
@@ -3743,14 +3745,15 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__
 explain format = 'plan_tree' select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, planner__core__casetest__physicalplantest__physical_plan.t.e, planner__core__casetest__physicalplantest__physical_plan.t.f, planner__core__casetest__physicalplantest__physical_plan.t.g, planner__core__casetest__physicalplantest__physical_plan.t.h
-└─Apply	root		CARTESIAN inner join, other cond:gt(planner__core__casetest__physicalplantest__physical_plan.t.a, Column#19)
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:outTable	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:count(Column#21)->Column#19
-    └─TableReader	root		data:StreamAgg
-      └─StreamAgg	cop[tikv]		funcs:count(1)->Column#21
-        └─Selection	cop[tikv]		eq(cast(planner__core__casetest__physicalplantest__physical_plan.t.a, double BINARY), cast(planner__core__casetest__physicalplantest__physical_plan.t.b, double BINARY))
-          └─TableFullScan	cop[tikv]	table:inn	keep order:false, stats:pseudo
+└─Selection	root		gt(planner__core__casetest__physicalplantest__physical_plan.t.a, Column#19)
+  └─Apply	root		CARTESIAN left outer join, left side:TableReader
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:outTable	keep order:false, stats:pseudo
+    └─StreamAgg(Probe)	root		funcs:count(Column#21)->Column#19
+      └─TableReader	root		data:StreamAgg
+        └─StreamAgg	cop[tikv]		funcs:count(1)->Column#21
+          └─Selection	cop[tikv]		eq(cast(planner__core__casetest__physicalplantest__physical_plan.t.a, double BINARY), cast(planner__core__casetest__physicalplantest__physical_plan.t.b, double BINARY))
+            └─TableFullScan	cop[tikv]	table:inn	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten;
 id	task	access object	operator info
 HashAgg	root		funcs:count(1)->Column#19

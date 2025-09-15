@@ -177,38 +177,38 @@ limit 100;
 id	task	access object	operator info
 Projection	root		tpch50.supplier.s_acctbal, tpch50.supplier.s_name, tpch50.nation.n_name, tpch50.part.p_partkey, tpch50.part.p_mfgr, tpch50.supplier.s_address, tpch50.supplier.s_phone, tpch50.supplier.s_comment
 └─TopN	root		tpch50.supplier.s_acctbal:desc, tpch50.nation.n_name, tpch50.supplier.s_name, tpch50.part.p_partkey, offset:0, count:100
-  └─Projection	root		tpch50.part.p_partkey, tpch50.part.p_mfgr, tpch50.supplier.s_name, tpch50.supplier.s_address, tpch50.supplier.s_phone, tpch50.supplier.s_acctbal, tpch50.supplier.s_comment, tpch50.nation.n_name
-    └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey) eq(tpch50.partsupp.ps_supplycost, Column#50)]
-      ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.part.p_partkey)]
-      │ ├─TableReader(Build)	root		data:Selection
-      │ │ └─Selection	cop[tikv]		eq(tpch50.part.p_size, 30), like(tpch50.part.p_type, "%STEEL", 92)
-      │ │   └─TableFullScan	cop[tikv]	table:part	keep order:false
-      │ └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
-      │   ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-      │   │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
-      │   │ │ ├─TableReader(Build)	root		data:Selection
-      │   │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
-      │   │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
-      │   │ │ └─TableReader(Probe)	root		data:TableFullScan
-      │   │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
-      │   │ └─TableReader(Probe)	root		data:TableFullScan
-      │   │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
-      │   └─TableReader(Probe)	root		data:TableFullScan
-      │     └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
-      └─Selection(Probe)	root		not(isnull(Column#50))
-        └─HashAgg	root		group by:tpch50.partsupp.ps_partkey, funcs:min(tpch50.partsupp.ps_supplycost)->Column#50, funcs:firstrow(tpch50.partsupp.ps_partkey)->tpch50.partsupp.ps_partkey
-          └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
-            ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-            │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
-            │ │ ├─TableReader(Build)	root		data:Selection
-            │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
-            │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
-            │ │ └─TableReader(Probe)	root		data:TableFullScan
-            │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
-            │ └─TableReader(Probe)	root		data:TableFullScan
-            │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
-            └─TableReader(Probe)	root		data:TableFullScan
-              └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
+  └─Selection	root		eq(tpch50.partsupp.ps_supplycost, Column#50)
+    └─HashJoin	root		left outer join, left side:Projection, equal:[eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey) eq(tpch50.partsupp.ps_partkey, tpch50.partsupp.ps_partkey)]
+      ├─Projection(Build)	root		tpch50.part.p_partkey, tpch50.part.p_mfgr, tpch50.supplier.s_name, tpch50.supplier.s_address, tpch50.supplier.s_phone, tpch50.supplier.s_acctbal, tpch50.supplier.s_comment, tpch50.partsupp.ps_partkey, tpch50.partsupp.ps_supplycost, tpch50.nation.n_name
+      │ └─HashJoin	root		inner join, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.part.p_partkey)]
+      │   ├─TableReader(Build)	root		data:Selection
+      │   │ └─Selection	cop[tikv]		eq(tpch50.part.p_size, 30), like(tpch50.part.p_type, "%STEEL", 92)
+      │   │   └─TableFullScan	cop[tikv]	table:part	keep order:false
+      │   └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
+      │     ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
+      │     │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
+      │     │ │ ├─TableReader(Build)	root		data:Selection
+      │     │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
+      │     │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+      │     │ │ └─TableReader(Probe)	root		data:TableFullScan
+      │     │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
+      │     │ └─TableReader(Probe)	root		data:TableFullScan
+      │     │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
+      │     └─TableReader(Probe)	root		data:TableFullScan
+      │       └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
+      └─HashAgg(Probe)	root		group by:tpch50.partsupp.ps_partkey, funcs:min(tpch50.partsupp.ps_supplycost)->Column#50, funcs:firstrow(tpch50.partsupp.ps_partkey)->tpch50.partsupp.ps_partkey
+        └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
+          ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
+          │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
+          │ │ ├─TableReader(Build)	root		data:Selection
+          │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
+          │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+          │ │ └─TableReader(Probe)	root		data:TableFullScan
+          │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
+          │ └─TableReader(Probe)	root		data:TableFullScan
+          │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
+          └─TableReader(Probe)	root		data:TableFullScan
+            └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
 /*
 Q3 Shipping Priority Query
 This query retrieves the 10 unshipped orders with the highest value.
@@ -1007,17 +1007,19 @@ l_partkey = p_partkey
 id	task	access object	operator info
 Projection	root		div(Column#46, 7.0)->Column#47
 └─HashAgg	root		funcs:sum(tpch50.lineitem.l_extendedprice)->Column#46
-  └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey)], other cond:lt(tpch50.lineitem.l_quantity, mul(0.2, Column#44))
-    ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey)]
-    │ ├─TableReader(Build)	root		data:Selection
-    │ │ └─Selection	cop[tikv]		eq(tpch50.part.p_brand, "Brand#44"), eq(tpch50.part.p_container, "WRAP PKG")
-    │ │   └─TableFullScan	cop[tikv]	table:part	keep order:false
-    │ └─TableReader(Probe)	root		data:TableFullScan
-    │   └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
-    └─HashAgg(Probe)	root		group by:tpch50.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch50.lineitem.l_partkey)->tpch50.lineitem.l_partkey
-      └─TableReader	root		data:HashAgg
-        └─HashAgg	cop[tikv]		group by:tpch50.lineitem.l_partkey, funcs:count(tpch50.lineitem.l_quantity)->Column#50, funcs:sum(tpch50.lineitem.l_quantity)->Column#51
-          └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
+  └─Selection	root		lt(tpch50.lineitem.l_quantity, mul(0.2, Column#44))
+    └─HashJoin	root		left outer join, left side:Projection, equal:[eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey) eq(tpch50.lineitem.l_partkey, tpch50.lineitem.l_partkey)]
+      ├─Projection(Build)	root		tpch50.lineitem.l_partkey, tpch50.lineitem.l_quantity, tpch50.lineitem.l_extendedprice, tpch50.part.p_partkey
+      │ └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey)]
+      │   ├─TableReader(Build)	root		data:Selection
+      │   │ └─Selection	cop[tikv]		eq(tpch50.part.p_brand, "Brand#44"), eq(tpch50.part.p_container, "WRAP PKG")
+      │   │   └─TableFullScan	cop[tikv]	table:part	keep order:false
+      │   └─TableReader(Probe)	root		data:TableFullScan
+      │     └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
+      └─HashAgg(Probe)	root		group by:tpch50.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch50.lineitem.l_partkey)->tpch50.lineitem.l_partkey
+        └─TableReader	root		data:HashAgg
+          └─HashAgg	cop[tikv]		group by:tpch50.lineitem.l_partkey, funcs:count(tpch50.lineitem.l_quantity)->Column#50, funcs:sum(tpch50.lineitem.l_quantity)->Column#51
+            └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
 /*
 Q18 Large Volume Customer Query
 The Large Volume Customer Query ranks customers based on their having placed a large quantity order. Large
