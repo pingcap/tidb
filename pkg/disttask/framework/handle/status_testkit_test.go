@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -43,7 +45,7 @@ func TestGetScheduleStatus(t *testing.T) {
 	}, 1, 1, time.Second)
 	defer pool.Close()
 	storage.SetTaskManager(storage.NewTaskManager(pool))
-	ctx := util.WithInternalSourceType(context.Background(), "handle_test")
+	ctx := context.Background()
 	status, err := handle.GetScheduleStatus(ctx)
 	require.NoError(t, err)
 	require.Equal(t, &schstatus.Status{
@@ -51,7 +53,7 @@ func TestGetScheduleStatus(t *testing.T) {
 		TaskQueue:  schstatus.TaskQueue{},
 		TiDBWorker: schstatus.NodeGroup{CPUCount: 16, RequiredCount: 1, CurrentCount: 1, BusyNodes: []schstatus.Node{{ID: ":4000", IsOwner: true}}},
 		TiKVWorker: schstatus.NodeGroup{RequiredCount: 1},
-		Flags:      make(map[schstatus.Flag]schstatus.TTLInfo),
+		Flags:      make(map[schstatus.Flag]schstatus.TTLFlag),
 	}, status)
 }
 
@@ -105,7 +107,7 @@ func TestNodeInfoAndBusyNodes(t *testing.T) {
 
 func TestScheduleFlag(t *testing.T) {
 	testkit.CreateMockStore(t)
-	ctx := util.WithInternalSourceType(context.Background(), "handle_test")
+	ctx := context.Background()
 	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	// not set
@@ -116,7 +118,7 @@ func TestScheduleFlag(t *testing.T) {
 	// in CI, the stored and unmarshalled time might have different time zone,
 	// so unify to UTC.
 	expireTime := time.Unix(time.Now().Add(time.Hour).Unix(), 0).In(time.UTC)
-	flag := schstatus.TTLInfo{Enabled: true, TTL: time.Hour, ExpireTime: expireTime}
+	flag := schstatus.TTLFlag{Enabled: true, TTLInfo: schstatus.TTLInfo{TTL: time.Hour, ExpireTime: expireTime}}
 	require.NoError(t, handle.UpdatePauseScaleInFlag(ctx, &flag))
 	flags, err = handle.GetScheduleFlags(ctx, taskMgr)
 	require.NoError(t, err)
@@ -131,9 +133,43 @@ func TestScheduleFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, flags)
 	// disabled flag
-	flag = schstatus.TTLInfo{Enabled: false}
+	flag = schstatus.TTLFlag{Enabled: false}
 	require.NoError(t, handle.UpdatePauseScaleInFlag(ctx, &flag))
 	flags, err = handle.GetScheduleFlags(ctx, taskMgr)
 	require.NoError(t, err)
 	require.Empty(t, flags)
+}
+
+func TestGetScheduleTuneFactors(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
+	// factors not set
+	factors, err := handle.GetScheduleTuneFactors(ctx, store.GetKeyspace())
+	require.NoError(t, err)
+	require.EqualValues(t, schstatus.GetDefaultTuneFactors(), factors)
+	// non expired factors
+	ctx2 := util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	// in CI, the stored and unmarshalled time might have different time zone,
+	// so unify to UTC.
+	expireTime := time.Unix(time.Now().Add(time.Hour).Unix(), 0).In(time.UTC)
+	ttlFactors := schstatus.TTLTuneFactors{
+		TTLInfo:     schstatus.TTLInfo{TTL: time.Hour, ExpireTime: expireTime},
+		TuneFactors: schstatus.TuneFactors{AmplifyFactor: 1.5},
+	}
+	require.NoError(t, kv.RunInNewTxn(ctx2, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		return m.SetDXFScheduleTuneFactors(store.GetKeyspace(), &ttlFactors)
+	}))
+	factors, err = handle.GetScheduleTuneFactors(ctx, store.GetKeyspace())
+	require.NoError(t, err)
+	require.EqualValues(t, &ttlFactors.TuneFactors, factors)
+	// expired factors
+	ttlFactors.ExpireTime = time.Now().Add(-time.Hour)
+	require.NoError(t, kv.RunInNewTxn(ctx2, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		return m.SetDXFScheduleTuneFactors(store.GetKeyspace(), &ttlFactors)
+	}))
+	factors, err = handle.GetScheduleTuneFactors(ctx, store.GetKeyspace())
+	require.NoError(t, err)
+	require.EqualValues(t, schstatus.GetDefaultTuneFactors(), factors)
 }

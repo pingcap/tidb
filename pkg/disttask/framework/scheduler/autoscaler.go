@@ -74,17 +74,17 @@ type ResourceCalc struct {
 }
 
 // NewRCCalcForAddIndex creates a new ResourceCalc for add-index task.
-func NewRCCalcForAddIndex(dataSize int64, nodeCPU int, factors schstatus.TuneFactors) *ResourceCalc {
+func NewRCCalcForAddIndex(dataSize int64, nodeCPU int, factors *schstatus.TuneFactors) *ResourceCalc {
 	return NewRCCalc(dataSize, nodeCPU, 0, factors)
 }
 
 // NewRCCalc creates a new ResourceCalc.
-func NewRCCalc(dataSize int64, nodeCPU int, indexSizeRatio float64, factors schstatus.TuneFactors) *ResourceCalc {
+func NewRCCalc(dataSize int64, nodeCPU int, indexSizeRatio float64, factors *schstatus.TuneFactors) *ResourceCalc {
 	return &ResourceCalc{
 		dataSize:       dataSize,
 		nodeCPU:        nodeCPU,
 		indexSizeRatio: indexSizeRatio,
-		factors:        factors,
+		factors:        *factors,
 	}
 }
 

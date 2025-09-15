@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -1336,13 +1335,17 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	factors, err := handle.GetScheduleTuneFactors(ctx, e.Keyspace)
+	if err != nil {
+		return err
+	}
 	totalSize := e.TotalFileSize
 	failpoint.InjectCall("mockImportDataSize", &totalSize)
 	// for row length = 4K, one simple index on bigint is about 1% of data KV size,
 	// we use 1% as default index size factor.
 	// TODO get the ratio by sampling the data files.
 	indexSizeRatio := float64(GetNumOfIndexGenKV(e.TableInfo)) * indexSizeRatioPerIndex
-	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, schstatus.GetDefaultTuneFactors())
+	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
 	e.ThreadCnt = cal.CalcConcurrency()
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)

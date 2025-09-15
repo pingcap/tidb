@@ -24,16 +24,19 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // GetScheduleStatus returns the schedule status.
 func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	manager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -164,8 +167,8 @@ func calculateRequiredNodes(tasks []*proto.TaskBase, cpuCount int) int {
 
 // GetScheduleFlags returns the schedule flags, such as pause-scale-in flag.
 // exported for test.
-func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[schstatus.Flag]schstatus.TTLInfo, error) {
-	flags := make(map[schstatus.Flag]schstatus.TTLInfo)
+func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[schstatus.Flag]schstatus.TTLFlag, error) {
+	flags := make(map[schstatus.Flag]schstatus.TTLFlag)
 	pauseScaleIn, err := getPauseScaleInFlag(ctx, manager)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -176,8 +179,8 @@ func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[sc
 	return flags, nil
 }
 
-func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*schstatus.TTLInfo, error) {
-	flag := &schstatus.TTLInfo{}
+func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*schstatus.TTLFlag, error) {
+	flag := &schstatus.TTLFlag{}
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		rs, err2 := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `SELECT VARIABLE_VALUE from mysql.tidb WHERE VARIABLE_NAME = %?`,
 			tidbvar.DXFSchedulePauseScaleIn)
@@ -200,7 +203,7 @@ func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*sc
 	// pause-scale-in flag is not cleaned up even if it is expired, reset it.
 	if flag.Enabled {
 		if flag.ExpireTime.Before(time.Now()) {
-			flag = &schstatus.TTLInfo{}
+			flag = &schstatus.TTLFlag{}
 		}
 	}
 	return flag, nil

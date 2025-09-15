@@ -78,7 +78,7 @@ func TestDXFScheduleAPI(t *testing.T) {
 			body, err = io.ReadAll(resp.Body)
 			require.NoError(t, err)
 			require.NoError(t, resp.Body.Close())
-			param := schstatus.TTLInfo{}
+			param := schstatus.TTLFlag{}
 			require.NoError(t, json.Unmarshal(body, &param))
 			require.Equal(t, c.enabled, param.Enabled)
 			if param.Enabled {

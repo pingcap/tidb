@@ -29,8 +29,8 @@ type TTLTuneFactors struct {
 }
 
 // GetDefaultTuneFactors get the default tuning factors.
-func GetDefaultTuneFactors() TuneFactors {
-	return TuneFactors{
+func GetDefaultTuneFactors() *TuneFactors {
+	return &TuneFactors{
 		AmplifyFactor: 1,
 	}
 }

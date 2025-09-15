@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -92,10 +91,18 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	})
 
-	cal := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, schstatus.GetDefaultTuneFactors())
+	var autoConc, autoMaxNode int
+	if kerneltype.IsNextGen() {
+		factors, err := dxfhandle.GetScheduleTuneFactors(ctx, sctx.GetStore().GetKeyspace())
+		if err != nil {
+			return err
+		}
+		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
+		autoConc = calc.CalcConcurrency()
+		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
+	}
 	if setReorgParam {
 		if kerneltype.IsNextGen() && setDistTaskParam {
-			autoConc := cal.CalcConcurrency()
 			m.SetConcurrency(autoConc)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
@@ -113,7 +120,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
 		if kerneltype.IsNextGen() {
-			m.MaxNodeCount = cal.CalcMaxNodeCountForAddIndex()
+			m.MaxNodeCount = autoMaxNode
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 				m.MaxNodeCount = variable.TidbOptInt(sv, 0)

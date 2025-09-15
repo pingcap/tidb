@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -57,8 +56,7 @@ func (h *DXFScheduleStatusHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 		return
 	}
 
-	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	ctx, cancel := context.WithTimeout(ctx, requestDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
 	defer cancel()
 	status, err := handle.GetScheduleStatus(ctx)
 	if err != nil {
@@ -95,8 +93,7 @@ func (h *DXFScheduleHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	logutil.BgLogger().Info("DXF schedule flag", zap.String("name", string(name)), zap.Stringer("param", param))
-	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	ctx, cancel := context.WithTimeout(ctx, requestDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
 	defer cancel()
 	if err := handle.UpdatePauseScaleInFlag(ctx, param); err != nil {
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError,
@@ -106,12 +103,12 @@ func (h *DXFScheduleHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	handler.WriteData(w, param)
 }
 
-func parsePauseScaleInFlag(req *http.Request) (schstatus.Flag, *schstatus.TTLInfo, error) {
+func parsePauseScaleInFlag(req *http.Request) (schstatus.Flag, *schstatus.TTLFlag, error) {
 	actionStr := req.FormValue("action")
 	if actionStr != pauseScaleInAction && actionStr != resumeScaleInAction {
 		return "", nil, errors.Errorf("invalid action %s", actionStr)
 	}
-	ttlFlag := &schstatus.TTLInfo{
+	ttlFlag := &schstatus.TTLFlag{
 		Enabled: actionStr == pauseScaleInAction,
 	}
 	if ttlFlag.Enabled {
