@@ -207,7 +207,7 @@ func (h *DXFScheduleTuneHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 			},
 		}
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		if err = kv.RunInNewTxn(ctx, h.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		if err = kv.RunInNewTxn(ctx, h.store, true, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMutator(txn)
 			return m.SetDXFScheduleTuneFactors(targetKeyspace, ttlTuneFactors)
 		}); err != nil {
