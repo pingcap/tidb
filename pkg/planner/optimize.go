@@ -161,6 +161,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
+<<<<<<< HEAD
 	if sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
@@ -175,6 +176,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}()
 	}
 
+=======
+>>>>>>> adb01c3bce8 (planner: fix `set_var` not working for write statements to read on TiFlash (#63380))
 	// handle the execute statement
 	if execAST, ok := node.(*ast.ExecuteStmt); ok {
 		p, names, err := OptimizeExecStmt(ctx, sctx, execAST, is)
@@ -217,7 +220,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("SET_VAR is used in the SQL"))
 	}
 
+<<<<<<< HEAD
 	txnManger := sessiontxn.GetTxnManager(sctx)
+=======
+	// This should be handled after `set_var`
+	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
+		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
+		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
+		if hasTiFlashAccess {
+			delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		}
+		defer func() {
+			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
+			if hasTiFlashAccess {
+				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			}
+		}()
+	}
+
+>>>>>>> adb01c3bce8 (planner: fix `set_var` not working for write statements to read on TiFlash (#63380))
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp core.Plan
 		if fpv, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok {
