@@ -153,6 +153,7 @@ type TableReaderExecutor struct {
 	ranges []*ranger.Range
 
 	// groupedRanges and groupByColIdxs are from AccessPath.groupedRanges, please see the comment there for more details
+	// In brief, it splits ranges into groups. We need to access them respectively and use a merge sort to combine them.
 
 	groupedRanges  [][]*ranger.Range
 	groupByColIdxs []int
@@ -457,13 +458,9 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 		return results[0], nil
 	}
 
-	intest.Assert(len(e.byItems) > 0, "if there are more than one result, len(e.byItems) must be > 0")
-	// Use sorted results if we have byItems to sort by
-	if len(e.byItems) > 0 {
-		return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
-	}
-	// If no sorting is needed, use serial results. Though it should be useless, we still handle it here.
-	return distsql.NewSerialSelectResults(results), nil
+	intest.Assert(len(e.byItems) > 0,
+		"In current logic, if there are more than one result, len(e.byItems) must be > 0")
+	return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
 }
 
 func (e *TableReaderExecutor) buildKVReqSeparatelyForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) ([]*kv.Request, error) {

@@ -205,8 +205,11 @@ type IndexReaderExecutor struct {
 	index           *model.IndexInfo
 	physicalTableID int64
 	ranges          []*ranger.Range
-	partitions      []table.PhysicalTable
-	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
+	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
+	// In brief, it splits ranges into groups. We need to access them respectively and use a merge sort to combine them.
+	groupedRanges [][]*ranger.Range
+	partitions    []table.PhysicalTable
+	partRangeMap  map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
@@ -245,9 +248,6 @@ type IndexReaderExecutor struct {
 	// If dummy flag is set, this is not a real IndexReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
-
-	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
-	groupedRanges [][]*ranger.Range
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -301,7 +301,8 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 
-	// Validate that partRangeMap and groupedRanges don't appear together
+	// partRangeMap comes from the index join code path, while groupedRanges will not be set in that case.
+	// They are two different sources of ranges, and should not appear together.
 	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
 
 	// Build kvRanges considering both partitions and groupedRanges
@@ -391,9 +392,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 
-	// Determine if we need merge sort
 	needMergeSort := shouldUseMergeSort(e.byItems, len(kvRanges))
-
 	if !needMergeSort {
 		// Use single SelectResult when no merge sort is needed
 		kvReq, err := e.buildKVReq(kvRanges)
@@ -463,6 +462,7 @@ type IndexLookUpExecutor struct {
 	index  *model.IndexInfo
 	ranges []*ranger.Range
 	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
+	// In brief, it splits ranges into groups. We need to access them respectively and use a merge sort to combine them.
 	groupedRanges [][]*ranger.Range
 	dagPB         *tipb.DAGRequest
 	startTS       uint64
@@ -501,7 +501,8 @@ type IndexLookUpExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
-	// groupedKVRanges is the kv ranges grouped for merge sort to match the byItems.
+	// groupedKVRanges is built from ranger.Range and needed to access tikv. It's a unified form that considers both
+	// ranges and groupedRanges, and also considers the partitioned table.
 	// The extra PhysicalTableID is needed by the memIndexLookUpReader because it can't get it from PartitionHandle like
 	// the IndexLookUpExecutor here.
 	groupedKVRanges []*kvRangesWithPhysicalTblID
@@ -584,7 +585,11 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
 	e.memTracker.AttachTo(e.stmtMemTracker)
-	intest.Assert(!(len(e.partitionRangeMap) > 0 && len(e.groupedRanges) > 0), "partitionRangeMap and groupedRanges should not appear together")
+
+	// partitionRangeMap comes from the index join code path, while groupedRanges will not be set in that case.
+	// They are two different sources of ranges, and should not appear together.
+	intest.Assert(!(len(e.partitionRangeMap) > 0 && len(e.groupedRanges) > 0),
+		"partitionRangeMap and groupedRanges should not appear together")
 
 	err = e.buildTableKeyRanges()
 	if err != nil {
@@ -787,8 +792,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	tracker.AttachTo(e.memTracker)
 
 	kvRanges := make([][]kv.KeyRange, 0, len(e.groupedKVRanges))
-	for _, partitionRange := range e.groupedKVRanges {
-		kvRanges = append(kvRanges, partitionRange.KeyRanges)
+	for _, ranges := range e.groupedKVRanges {
+		kvRanges = append(kvRanges, ranges.KeyRanges)
 	}
 
 	// When len(kvrange) = 1, no sorting is required,
