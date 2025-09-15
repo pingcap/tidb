@@ -81,12 +81,8 @@ type hashJoinSpillHelper struct {
 	spillTriggedInBuildingStageForTest           bool
 	spillTriggeredBeforeBuildingHashTableForTest bool
 	allPartitionsSpilledForTest                  bool
-<<<<<<< HEAD
-	skipProbeInRestoreForTest                    bool
-=======
 	skipProbeInRestoreForTest                    atomic.Bool
 	fileNamePrefixForTest                        string
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 }
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, probeFieldTypes []*types.FieldType, fileNamePrefixForTest string) *hashJoinSpillHelper {
@@ -560,7 +556,7 @@ func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 }
 
 func (h *hashJoinSpillHelper) isProbeSkippedInRestoreForTest() bool {
-	return h.skipProbeInRestoreForTest
+	return h.skipProbeInRestoreForTest.Load()
 }
 
 func (h *hashJoinSpillHelper) isRespillTriggeredForTest() bool {

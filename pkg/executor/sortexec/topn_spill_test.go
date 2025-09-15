@@ -384,12 +384,8 @@ func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
 
 	//nolint:constructor
 	topnExec := &sortexec.TopNExec{}
-<<<<<<< HEAD
 	topnExec.Limit = &plannercore.PhysicalLimit{}
-=======
-	topnExec.Limit = &physicalop.PhysicalLimit{}
 	topnExec.FileNamePrefixForTest = testFuncName
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 
 	oneChunkInDiskCase(t, topnExec)
 	severalChunksInDiskCase(t, topnExec)
@@ -418,12 +414,8 @@ func TestTopNSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-<<<<<<< HEAD
-	for i := 0; i < 20; i++ {
-=======
 	exe.FileNamePrefixForTest = testFuncName
 	for range 20 {
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
 		topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
 	}
@@ -479,12 +471,8 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-<<<<<<< HEAD
-	for i := 0; i < 10; i++ {
-=======
 	exe.FileNamePrefixForTest = testFuncName
 	for range 10 {
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}

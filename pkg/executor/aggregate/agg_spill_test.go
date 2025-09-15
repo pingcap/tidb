@@ -191,13 +191,8 @@ func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSource
 	}
 }
 
-<<<<<<< HEAD
-func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *aggregate.HashAggExec {
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
-=======
 func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor, fileNamePrefixForTest string) *aggregate.HashAggExec {
-	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
@@ -449,17 +444,10 @@ func TestGetCorrectResult(t *testing.T) {
 		wg.Done()
 	}()
 
-<<<<<<< HEAD
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	for i := 0; i < 5; i++ {
-		executeCorrecResultTest(t, ctx, nil, dataSource, result)
-		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
-=======
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
 	for range 5 {
 		executeCorrecResultTest(t, ctx, nil, dataSource, result, testFuncName)
 		executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 	}
 
 	finished.Store(true)
@@ -468,15 +456,10 @@ func TestGetCorrectResult(t *testing.T) {
 }
 
 func TestFallBackAction(t *testing.T) {
-<<<<<<< HEAD
-	for i := 0; i < 50; i++ {
-		fallBackActionTest(t)
-=======
 	testFuncName := util.GetFunctionName()
 
 	for range 50 {
 		fallBackActionTest(t, testFuncName)
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 	}
 	util.CheckNoLeakFiles(t, testFuncName)
 }
@@ -517,17 +500,10 @@ func TestRandomFail(t *testing.T) {
 	}()
 
 	// Test is successful when all sqls are not hung
-<<<<<<< HEAD
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	for i := 0; i < 30; i++ {
-		randomFailTest(t, ctx, nil, dataSource)
-		randomFailTest(t, ctx, aggExec, dataSource)
-=======
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
 	for range 30 {
 		randomFailTest(t, ctx, nil, dataSource, testFuncName)
 		randomFailTest(t, ctx, aggExec, dataSource, testFuncName)
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 	}
 
 	finishChan.Store(true)
