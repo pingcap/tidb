@@ -1730,6 +1730,7 @@ type ModifyColumnArgs struct {
 	ChangingColumn *ColumnInfo `json:"changing_column,omitempty"`
 	// ChangingIdxs is only used in test, so don't persist it
 	ChangingIdxs []*IndexInfo `json:"-"`
+	SkipRowReorg bool         `json:"skip_row_reorg,omitempty"`
 	// RedundantIdxs stores newly-created temp indexes which can be overwritten by other temp indexes.
 	// These idxs will be added to finished args after job done.
 	RedundantIdxs []int64 `json:"removed_idxs,omitempty"`
@@ -1749,14 +1750,14 @@ func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
 	}
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
-		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs, a.OldColumnID,
+		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs, a.OldColumnID, a.SkipRowReorg,
 	}
 }
 
 func (a *ModifyColumnArgs) decodeV1(job *Job) error {
 	return job.decodeArgs(
 		&a.Column, &a.OldColumnName, &a.Position, &a.ModifyColumnType,
-		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs, &a.OldColumnID,
+		&a.NewShardBits, &a.ChangingColumn, &a.ChangingIdxs, &a.RedundantIdxs, &a.OldColumnID, &a.SkipRowReorg,
 	)
 }
 

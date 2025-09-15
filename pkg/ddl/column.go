@@ -509,9 +509,11 @@ func LocateOffsetToMove(currentOffset int, pos *ast.ColumnPosition, tblInfo *mod
 }
 
 // BuildElements is exported for testing.
-func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
+func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, skipRowReorg bool) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
-	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	if !skipRowReorg {
+		elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	}
 	for _, idx := range changingIdxs {
 		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
 	}
@@ -950,10 +952,7 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
 	_, err := LocateOffsetToMove(oldCol.Offset, pos, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {

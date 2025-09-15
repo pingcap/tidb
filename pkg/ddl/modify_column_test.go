@@ -104,7 +104,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			job.Type == model.ActionModifyColumn {
 			currJob = job
 			a := args.(*model.ModifyColumnArgs)
-			elements = ddl.BuildElements(a.ChangingColumn, a.ChangingIdxs)
+			elements = ddl.BuildElements(a.ChangingColumn, a.ChangingIdxs, false)
 		}
 	})
 
@@ -606,4 +606,36 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 		"2 2 2 b",
 		"3 3 3 c",
 		"4 4 4 d"))
+}
+
+func TestXxx(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id bigint)")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeModifyColumnStateWriteReorg", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("insert into t1 values(12345678912)")
+	})
+
+	tk.MustExec("alter table t1 modify column id int")
+}
+
+func TestXxx2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id bigint, c1 bigint, index idx1(id, c1))")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeModifyColumnStateWriteReorg", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("insert into t1 values(123, 123)")
+	})
+
+	tk.MustExec("alter table t1 modify column id int, modify column c1 int")
 }

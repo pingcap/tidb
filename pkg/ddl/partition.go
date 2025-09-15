@@ -3701,7 +3701,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		}
 		indices = append(indices, index)
 	}
-	elements = BuildElements(tbl.Meta().Columns[0], indices)
+	elements = BuildElements(tbl.Meta().Columns[0], indices, false)
 	reorgTbl, err := getTable(jobCtx.getAutoIDRequirement(), job.SchemaID, reorgTblInfo)
 	if err != nil {
 		return false, ver, errors.Trace(err)
