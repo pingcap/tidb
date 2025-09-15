@@ -195,7 +195,7 @@ func TestTuneFactors(t *testing.T) {
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			calc := NewRCCalc(tc.dataSize, tc.cores, 0, schstatus.TuneFactors{AmplifyFactor: tc.amplifyFactor})
+			calc := NewRCCalc(tc.dataSize, tc.cores, 0, &schstatus.TuneFactors{AmplifyFactor: tc.amplifyFactor})
 			require.Equal(t, tc.expectedC, calc.CalcConcurrency())
 			require.Equal(t, tc.importN, calc.CalcMaxNodeCountForImportInto())
 			require.Equal(t, tc.addIndexN, calc.CalcMaxNodeCountForAddIndex())
