@@ -32,17 +32,16 @@ drop table if exists t;
 create table t(a int, b int, c int);
 explain format = 'plan_tree' select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
 id	task	access object	operator info
-Projection	root		subquery.t.a
-└─Selection	root		eq(subquery.t.a, Column#9)
-  └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(subquery.t.b, subquery.t.b) eq(subquery.t.c, subquery.t.b)]
-    ├─HashAgg(Build)	root		group by:subquery.t.b, funcs:max(Column#10)->Column#9, funcs:firstrow(subquery.t.b)->subquery.t.b
-    │ └─TableReader	root		data:HashAgg
-    │   └─HashAgg	cop[tikv]		group by:subquery.t.b, funcs:max(subquery.t.a)->Column#10
-    │     └─Selection	cop[tikv]		not(isnull(subquery.t.b))
-    │       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(subquery.t.a))
-        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(subquery.t.b, subquery.t.b) eq(subquery.t.c, subquery.t.b) eq(subquery.t.a, Column#9)]
+├─Selection(Build)	root		not(isnull(Column#9))
+│ └─HashAgg	root		group by:subquery.t.b, funcs:max(Column#10)->Column#9, funcs:firstrow(subquery.t.b)->subquery.t.b
+│   └─TableReader	root		data:HashAgg
+│     └─HashAgg	cop[tikv]		group by:subquery.t.b, funcs:max(subquery.t.a)->Column#10
+│       └─Selection	cop[tikv]		not(isnull(subquery.t.b))
+│         └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(subquery.t.a)), not(isnull(subquery.t.b)), not(isnull(subquery.t.c))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1(a int(11));
 create table t2(a decimal(40,20) unsigned, b decimal(40,20));

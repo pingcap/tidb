@@ -582,17 +582,14 @@ c1	c2	c1	c2	c1	c2
 3	3	3	4	3	10
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
 id	task	access object	operator info
-Projection	root		executor__merge_join.t1.c1, executor__merge_join.t1.c2, executor__merge_join.t2.c1, executor__merge_join.t2.c2, executor__merge_join.t3.c1, executor__merge_join.t3.c2
-└─MergeJoin	root		inner join, left key:executor__merge_join.t3.c1, right key:executor__merge_join.t1.c1
-  ├─Sort(Build)	root		executor__merge_join.t1.c1
-  │ └─Selection	root		not(isnull(executor__merge_join.t1.c1))
-  │   └─MergeJoin	root		right outer join, left side:TableReader, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
-  │     ├─TableReader(Build)	root		data:TableFullScan
-  │     │ └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-  │     └─TableReader(Probe)	root		data:TableFullScan
-  │       └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+MergeJoin	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t3.c1
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+└─MergeJoin(Probe)	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+    └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
 select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
 c1	c2	c1	c2	c1	c2
 2	2	2	3	2	4
@@ -639,17 +636,14 @@ c1	c2	c1	c2	c1	c2
 3	3	3	4	3	10
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
 id	task	access object	operator info
-Projection	root		executor__merge_join.t1.c1, executor__merge_join.t1.c2, executor__merge_join.t2.c1, executor__merge_join.t2.c2, executor__merge_join.t3.c1, executor__merge_join.t3.c2
-└─MergeJoin	root		inner join, left key:executor__merge_join.t3.c1, right key:executor__merge_join.t1.c1
-  ├─Sort(Build)	root		executor__merge_join.t1.c1
-  │ └─Selection	root		not(isnull(executor__merge_join.t1.c1))
-  │   └─MergeJoin	root		right outer join, left side:TableReader, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
-  │     ├─TableReader(Build)	root		data:TableFullScan
-  │     │ └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-  │     └─TableReader(Probe)	root		data:TableFullScan
-  │       └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+MergeJoin	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t3.c1
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+└─MergeJoin(Probe)	root		inner join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+    └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
 select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
 c1	c2	c1	c2	c1	c2
 2	2	2	3	2	4
