@@ -450,7 +450,7 @@ func (p *BaseLogicalPlan) GetChildStatsAndSchema() (*property.StatsInfo, *expres
 }
 
 // GetJoinChildStatsAndSchema gets the stats and schema of both children.
-func (p *BaseLogicalPlan) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+func (*BaseLogicalPlan) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
 	panic("baseLogicalPlan.GetJoinChildStatsAndSchema() should never be called.")
 }
 
