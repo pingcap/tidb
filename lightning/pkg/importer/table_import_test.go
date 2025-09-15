@@ -367,7 +367,7 @@ func (w errorLocalWriter) IsSynced() bool {
 	return true
 }
 
-func (w errorLocalWriter) Close(context.Context) (backend.ChunkFlushStatus, error) {
+func (w errorLocalWriter) Close(context.Context) (common.ChunkFlushStatus, error) {
 	return nil, nil
 }
 
