@@ -16,11 +16,16 @@ package tests
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 func TestBindUsageInfo(t *testing.T) {
+	bindinfo.WriteIntervalAfterNoReadBinding = 10 * time.Microsecond
+	bindinfo.MinCheckIntervalForUpdateBindingUsageInfo = 1
+	bindinfo.MaxCheckIntervalForUpdateBindingUsageInfo = 2
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -34,4 +39,5 @@ func TestBindUsageInfo(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
 
 	tk.MustExec(`admin reload bindings`)
+
 }
