@@ -758,39 +758,62 @@ func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 	}
 }
 
-// GetBaseLogicalPlan inherits the BaseLogicalPlan.LogicalPlan.<23th> implementation.
-// Keep only predicates that can be fully resolved by the given schema.
-// We drop constants and any predicate that references columns outside `sch`.
-// Motivation: when pushing predicates across Apply/Aggregation subtrees,
-// cross-scope captures can change semantics (e.g., wrongly eliminating an outer join).
-func filterPredsBySchema(preds []expression.Expression, sch *expression.Schema) []expression.Expression {
-	out := make([]expression.Expression, 0, len(preds))
-predLoop:
-	for _, e := range preds {
-		cols := expression.ExtractColumns(e)
-		if len(cols) == 0 { // constants don't help outer-join elimination
-			continue
-		}
-		for _, c := range cols {
-			if !sch.Contains(c) {
-				continue predLoop
-			}
-		}
-		out = append(out, e)
+// extractNotNullColumn returns the column in a predicate of the form NOT(ISNULL(col)).
+func extractNotNullColumn(e expression.Expression) (*expression.Column, bool) {
+	sf, ok := e.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.UnaryNot {
+		return nil, false
 	}
-	return out
+	inner, ok := sf.GetArgs()[0].(*expression.ScalarFunction)
+	if !ok || inner.FuncName.L != ast.IsNull {
+		return nil, false
+	}
+	if c, ok := inner.GetArgs()[0].(*expression.Column); ok {
+		return c, true
+	}
+	return nil, false
 }
 
-// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 // Guarded predicate passing:
-//   - If the child contains Apply/Aggregation, pass only predicates that are fully
-//     resolvable by the child's schema (schema filter).
-//   - Otherwise, pass the combined ON+WHERE unchanged so that historical derivations
-//     (like NOT-IS-NULL on join keys) continue to happen.
+//   - Always filter predicates by child's schema to avoid cross-scope captures.
+//   - If the child is an outer join, block pushing NOT IS NULL(col) onto the nullable side,
+//     except when `col` is the child-side column of a parent equality (EQ / NullEQ) that
+//     crosses into this child. This whitelist allows null-rejecting join-key predicates
+//     (e.g. ta.a1 = tc.a1 at parent) to keep pushing down across nested outer-joins and
+//     reach the base table (tc).
 func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) []expression.Expression {
-	// 1) Always filter predicates by the child's schema to avoid cross-scope captures.
-	filtered := filterPredsBySchema(combined, child.Schema())
-	// 2) If the child is an outer-join, block pushing NOT IS NULL(col) onto the nullable side.
+	sch := child.Schema()
+
+	// 1) split into inSchema and crossScopeEq (保持你的原逻辑)
+	inSchema := make([]expression.Expression, 0, len(combined))
+	crossScopeEq := make([]expression.Expression, 0, 4)
+	for _, e := range combined {
+		cols := expression.ExtractColumns(e)
+		if len(cols) == 0 {
+			continue
+		}
+		allIn := true
+		for _, c := range cols {
+			if !sch.Contains(c) {
+				allIn = false
+				break
+			}
+		}
+		if allIn {
+			inSchema = append(inSchema, e)
+			continue
+		}
+		if sf, ok := e.(*expression.ScalarFunction); ok &&
+			(sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.NullEQ) && len(sf.GetArgs()) == 2 {
+			lHas := expression.ExprFromSchema(sf.GetArgs()[0], sch)
+			rHas := expression.ExprFromSchema(sf.GetArgs()[1], sch)
+			if lHas != rHas { // exactly one side in child
+				crossScopeEq = append(crossScopeEq, e)
+			}
+		}
+	}
+
+	// 2) Outer-join child: gate NOT-NULL across the nullable side using whitelist (保持你的原逻辑)
 	if j, ok := child.(*LogicalJoin); ok && j.JoinType.IsOuterJoin() {
 		var nullSide *expression.Schema
 		switch j.JoinType {
@@ -799,16 +822,49 @@ func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) [
 		case base.RightOuterJoin:
 			nullSide = j.Children()[0].Schema()
 		}
-		keep := make([]expression.Expression, 0, len(filtered))
-		for _, p := range filtered {
+
+		// build whitelist of child-side columns that appear in parent EQ/NullEQ (保持你的原逻辑)
+		eqColsInChild := intset.NewFastIntSet()
+		for _, e := range crossScopeEq {
+			sf := e.(*expression.ScalarFunction)
+			if expression.ExprFromSchema(sf.GetArgs()[0], sch) && !expression.ExprFromSchema(sf.GetArgs()[1], sch) {
+				for _, c := range expression.ExtractColumns(sf.GetArgs()[0]) {
+					if sch.Contains(c) {
+						eqColsInChild.Insert(int(c.UniqueID))
+					}
+				}
+			} else if !expression.ExprFromSchema(sf.GetArgs()[0], sch) && expression.ExprFromSchema(sf.GetArgs()[1], sch) {
+				for _, c := range expression.ExtractColumns(sf.GetArgs()[1]) {
+					if sch.Contains(c) {
+						eqColsInChild.Insert(int(c.UniqueID))
+					}
+				}
+			}
+		}
+
+		keep := make([]expression.Expression, 0, len(inSchema))
+		for _, p := range inSchema {
 			if isNotNullOnSchemaCol(p, nullSide) {
-				continue
+				if c, ok := extractNotNullColumn(p); ok && eqColsInChild.Has(int(c.UniqueID)) {
+					keep = append(keep, p) // allowed by whitelist
+				}
+				continue // otherwise block
 			}
 			keep = append(keep, p)
 		}
-		return keep
+
+		// IMPORTANT:
+		// Forward cross-scope EQ only if `child` is itself a join (so deeper levels can build their whitelist).
+		// If `child` is a leaf, they are useless — drop them to avoid extra scanning.
+		return append(keep, crossScopeEq...) // child 在这个分支里必定是 *LogicalJoin
 	}
-	return filtered
+
+	// 3) Non-outer-join child:
+	// Only propagate cross-scope EQ when child is a join; otherwise drop them.
+	if _, isJoin := child.(*LogicalJoin); isJoin {
+		return append(inSchema, crossScopeEq...)
+	}
+	return inSchema
 }
 
 // isNotNullOnSchemaCol reports whether e is NOT(ISNULL(col)) for a column
@@ -827,6 +883,24 @@ func isNotNullOnSchemaCol(e expression.Expression, sch *expression.Schema) bool 
 	}
 	return false
 }
+
+// Keep predicates that *involve at least one column* from the given schema.
+// to belong to `sch`; it just checks “touches inner side or not”.
+func filterPredsInvolvingSchema(preds []expression.Expression, sch *expression.Schema) []expression.Expression {
+	out := make([]expression.Expression, 0, len(preds))
+	for _, e := range preds {
+		cols := expression.ExtractColumns(e)
+		for _, c := range cols {
+			if sch.Contains(c) {
+				out = append(out, e)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]
@@ -841,7 +915,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	// on the nullable side (inner side of the outer join). ----
 	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
 		innerSch := innerTable.Schema() // schema of the nullable side
-		innerWhere := filterPredsBySchema(predicates, innerSch)
+		innerWhere := filterPredsInvolvingSchema(predicates, innerSch)
 		canBeSimplified := false
 		for _, expr := range innerWhere {
 			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
