@@ -71,22 +71,6 @@ func (p *PhysicalUnionScan) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalUnionScan)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(p.Conditions, nil)
-	if p.HandleCols != nil {
-		cloned.HandleCols = p.HandleCols.Clone()
-	}
-	return cloned, true
-}
-
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalUnionScan(p, tasks...)

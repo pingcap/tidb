@@ -297,39 +297,6 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	return clonedScan, nil
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableScan)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(p.AccessCondition, nil)
-	cloned.FilterCondition = utilfuncp.CloneExpressionsForPlanCache(p.FilterCondition, nil)
-	cloned.LateMaterializationFilterCondition = utilfuncp.CloneExpressionsForPlanCache(p.LateMaterializationFilterCondition, nil)
-	cloned.HandleIdx = make([]int, len(p.HandleIdx))
-	copy(cloned.HandleIdx, p.HandleIdx)
-	if p.HandleCols != nil {
-		cloned.HandleCols = p.HandleCols.Clone()
-	}
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.SampleInfo != nil {
-		return nil, false
-	}
-	cloned.constColsByCond = make([]bool, len(p.constColsByCond))
-	copy(cloned.constColsByCond, p.constColsByCond)
-	if p.runtimeFilterList != nil {
-		return nil, false
-	}
-	if p.UsedColumnarIndexes != nil {
-		return nil, false
-	}
-	return cloned, true
-}
-
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition)+len(p.LateMaterializationFilterCondition))

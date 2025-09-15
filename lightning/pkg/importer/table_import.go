@@ -684,8 +684,8 @@ func (tr *TableImporter) preprocessEngine(
 	var chunkErr common.OnceError
 
 	type chunkFlushStatus struct {
-		dataStatus  backend.ChunkFlushStatus
-		indexStatus backend.ChunkFlushStatus
+		dataStatus  common.ChunkFlushStatus
+		indexStatus common.ChunkFlushStatus
 		chunkCp     *checkpoints.ChunkCheckpoint
 	}
 
@@ -808,7 +808,7 @@ ChunkLoop:
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
 			}
 			err := cr.process(ctx, tr, engineID, dataWriter, indexWriter, rc)
-			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
+			var dataFlushStatus, indexFlushStaus common.ChunkFlushStatus
 			if err == nil {
 				dataFlushStatus, err = dataWriter.Close(ctx)
 			}
