@@ -547,8 +547,8 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
 			}
 		} else {
+			collator := collate.GetCollator(tp.GetCollate())
 			for logicalRowIndex, physicalRowindex := range usedRows {
-				collator := collate.GetCollator(tp.GetCollate())
 				if canSkip(physicalRowindex) {
 					continue
 				}
