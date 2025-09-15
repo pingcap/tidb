@@ -29,7 +29,7 @@ func (*zhPinyinTiDBASCSCollator) Key(_ string) []byte {
 }
 
 // ImmutableKey implement Collator interface.
-func (*zhPinyinTiDBASCSCollator) ImmutableKey(str string) []byte {
+func (*zhPinyinTiDBASCSCollator) ImmutableKey(_ string) []byte {
 	panic("implement me")
 }
 
