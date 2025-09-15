@@ -55,9 +55,6 @@ import (
 func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	switch x := lp.(type) {
 	case *logicalop.LogicalCTE:
-		// we pass GE rather than logical plan, it's a super set of LogicalPlan interface, which enable cascades
-		// framework to iterate its children, and then get their logical property. Meanwhile, we can also get basic
-		// wrapped logical plan from GE, so we can use same function pointer to handle logic inside.
 		return exhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
 		return exhaustPhysicalPlans4LogicalSort(x, prop)
