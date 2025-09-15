@@ -303,6 +303,7 @@ type LogicalPlan interface {
 	GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema)
 }
 
+// GroupExpressionInterface is the interface for group expression.
 type GroupExpressionInterface interface {
 	LogicalPlan
 	// IsExplored return whether this gE has explored rule i.
