@@ -48,6 +48,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// exhaustPhysicalPlans generates all possible plans that can match the required property.
+// It will return:
+// 1. All possible plans that can match the required property.
+// 2. Whether the SQL hint can work. Return true if there is no hint.
 func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	switch x := lp.(type) {
 	case *logicalop.LogicalCTE:
@@ -3754,11 +3758,6 @@ func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.P
 		ret = append(ret, sel)
 	}
 	return ret, true, nil
-}
-
-func exhaustPhysicalPlans4LogicalLimit(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalLimit)
-	return physicalop.ExhaustPhysicalPlans4LogicalLimit(p, prop)
 }
 
 func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

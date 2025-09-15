@@ -255,12 +255,6 @@ type LogicalPlan interface {
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
 	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
 
-	// ExhaustPhysicalPlans generates all possible plans that can match the required property.
-	// It will return:
-	// 1. All possible plans that can match the required property.
-	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	ExhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
-
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
 

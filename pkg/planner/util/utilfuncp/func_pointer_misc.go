@@ -89,10 +89,6 @@ var ExhaustPhysicalPlans4LogicalSort func(lp base.LogicalPlan, prop *property.Ph
 var ExhaustPhysicalPlans4LogicalTopN func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
-// ExhaustPhysicalPlans4LogicalLimit will be called by LogicalLimit in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalLimit func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
 // ExhaustPhysicalPlans4LogicalProjection will be called by LogicalLimit in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalProjection func(lp base.LogicalPlan,
 	prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error)
