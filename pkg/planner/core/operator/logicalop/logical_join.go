@@ -1500,38 +1500,6 @@ func (p *LogicalJoin) isVaildConstantPropagationExpression(cond expression.Expre
 	return true
 }
 
-// Whether the column is an aggregation output that is always non-NULL for non-empty groups
-func aggOutputAlwaysNotNull(agg *LogicalAggregation, col *expression.Column) bool {
-	// 1) Must be a grouped aggregation (scalar aggregation over an empty group is not always non-NULL)
-	if len(agg.GroupByItems) == 0 {
-		return false
-	}
-	// 2) Find the index of col in the aggregation output
-	idx := agg.Schema().ColumnIndex(col)
-	if idx < 0 {
-		return false
-	}
-	// 3) GROUP BY columns must never be removed (this is the root cause of over-elimination)
-	if idx < len(agg.GroupByItems) {
-		return false
-	}
-	// 4) The corresponding aggregate function
-	af := agg.AggFuncs[idx-len(agg.GroupByItems)]
-	switch af.Name {
-	case ast.AggFuncCount: // COUNT(*) / COUNT(x) is always non-NULL
-		return true
-	case ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMin, ast.AggFuncMax:
-		// Only when the argument is a single NOT NULL column do we treat it as always non-NULL
-		// (conservative; covers typical scenarios such as TPCH/Q17)
-		if len(af.Args) == 1 {
-			if c, ok := af.Args[0].(*expression.Column); ok {
-				return mysql.HasNotNullFlag(c.RetType.GetFlag())
-			}
-		}
-	}
-	return false
-}
-
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
 // These conditions can be where conditions, join conditions, or collection of both.
 // If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
@@ -2185,7 +2153,7 @@ func DeriveOtherConditions(
 			if leftRelaxedCond != nil {
 				leftCond = append(leftCond, leftRelaxedCond)
 			}
-			notNullExpr := deriveNotNullExpr(ctx, expr, leftSchema, p.Children()[0])
+			notNullExpr := deriveNotNullExpr(ctx, expr, leftSchema)
 			if notNullExpr != nil {
 				leftCond = append(leftCond, notNullExpr)
 			}
@@ -2205,7 +2173,7 @@ func DeriveOtherConditions(
 			if isOuterSemi {
 				continue
 			}
-			notNullExpr := deriveNotNullExpr(ctx, expr, rightSchema, p.Children()[1])
+			notNullExpr := deriveNotNullExpr(ctx, expr, rightSchema)
 			if notNullExpr != nil {
 				rightCond = append(rightCond, notNullExpr)
 			}
@@ -2217,7 +2185,7 @@ func DeriveOtherConditions(
 // deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
 // in which `col` is in specified schema. Caller guarantees that only one of `col1` or
 // `col2` is in schema.
-func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema *expression.Schema, child base.LogicalPlan) expression.Expression {
+func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema *expression.Schema) expression.Expression {
 	binop, ok := expr.(*expression.ScalarFunction)
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
@@ -2231,8 +2199,7 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if util.IsNullRejected(ctx, schema, expr, true) &&
-		!mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
+	if util.IsNullRejected(ctx, schema, expr, true) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
 	}
 	return nil
