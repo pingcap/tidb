@@ -71,6 +71,11 @@ func (g *gb18030ChineseCICollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gb18030ChineseCICollator) ImmutableKey(str string) []byte {
+	return g.Key(str)
+}
+
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
