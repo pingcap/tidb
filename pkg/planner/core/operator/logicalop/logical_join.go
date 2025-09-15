@@ -688,9 +688,9 @@ func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) [
 	if j, ok := child.(*LogicalJoin); ok && j.JoinType.IsOuterJoin() {
 		var nullSide *expression.Schema
 		switch j.JoinType {
-		case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 			nullSide = j.Children()[1].Schema()
-		case RightOuterJoin:
+		case base.RightOuterJoin:
 			nullSide = j.Children()[0].Schema()
 		}
 		keep := make([]expression.Expression, 0, len(filtered))
