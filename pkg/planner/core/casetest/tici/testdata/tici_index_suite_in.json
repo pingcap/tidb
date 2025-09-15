@@ -19,5 +19,12 @@
       "explain format='brief' select id from t1 where (fts_match_prefix('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
       "explain format='brief' select /*+ inl_join(t1) */ * from t1, t2 where t2.col=t1.title"
     ]
+  },
+  {
+    "name": "TestTiCIWithIndexHintCases",
+    "cases": [
+      "explain format='brief' select * from t1 use index(idx_title)",
+      "explain format='brief' select * from t1 use index(idx_field) where fts_match_word('hello', title)"
+    ]
   }
 ]
