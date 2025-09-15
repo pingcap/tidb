@@ -106,7 +106,7 @@ type BuildContext interface {
 	// Builtins read it from the context instead of the process-global setting because a DXF worker can build
 	// expressions for a task submitted from a user keyspace with a different collation mode.
 	NewCollationEnabled() bool
-	// GetTiDBDefaultAutoIDCache returns the value of the 'tidb_auto_id_cache' system variable.
+	// GetTiDBDefaultAutoIDCache returns the value of the 'tidb_default_auto_id_cache' system variable.
 	GetTiDBDefaultAutoIDCache() int
 	// GetBlockEncryptionMode returns the variable `block_encryption_mode`.
 	GetBlockEncryptionMode() string
