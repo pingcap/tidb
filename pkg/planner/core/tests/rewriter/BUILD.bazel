@@ -4,8 +4,8 @@ go_test(
     name = "rewriter_test",
     timeout = "short",
     srcs = [
-        "rewriter_test.go",
         "main_test.go",
+        "rewriter_test.go",
     ],
     flaky = True,
     deps = [

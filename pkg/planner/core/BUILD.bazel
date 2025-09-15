@@ -262,7 +262,6 @@ go_test(
         "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
-        "//pkg/errno",
         "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",
