@@ -1429,7 +1429,7 @@ func RunStreamRestore(
 	log.Info("captured restore start timestamp for blocklist",
 		zap.Uint64("restoreStartTS", restoreStartTS))
 
-	if err = ensureTiKVConfigFromFile(ctx, g, mgr, cfg.TikvRestoreConfigOverridesFile); err != nil {
+	if err = ensureTiKVConfigFromFile(ctx, g, mgr.GetStorage(), cfg.TikvRestoreConfigOverridesFile); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1469,7 +1469,7 @@ func RunStreamRestore(
 	if err := restoreStream(ctx, mgr, g, logRestoreConfig); err != nil {
 		return errors.Trace(err)
 	}
-	if err = ensureTiKVConfigFromFile(ctx, g, mgr, cfg.TikvPostRestoreConfigOverridesFile); err != nil {
+	if err = ensureTiKVConfigFromFile(ctx, g, mgr.GetStorage(), cfg.TikvPostRestoreConfigOverridesFile); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

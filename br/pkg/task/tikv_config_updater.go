@@ -3,13 +3,10 @@ package task
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
@@ -38,13 +35,7 @@ func setConfig(ctx context.Context, g glue.Glue, storage kv.Storage, key string,
 	return nil
 }
 
-func setConfigs(ctx context.Context, g glue.Glue, mgr *conn.Mgr, values map[string]any) error {
-	httpClient := &http.Client{
-		Timeout:   1 * time.Minute,
-		Transport: &http.Transport{TLSClientConfig: mgr.GetTLSConfig(), DisableKeepAlives: true},
-	}
-	defer httpClient.CloseIdleConnections()
-	storage := mgr.GetStorage()
+func setConfigs(ctx context.Context, g glue.Glue, storage kv.Storage, values map[string]any) error {
 	var group errgroup.Group
 	for key, value := range values {
 		keySafe := key
@@ -56,7 +47,7 @@ func setConfigs(ctx context.Context, g glue.Glue, mgr *conn.Mgr, values map[stri
 	return group.Wait()
 }
 
-func ensureTiKVConfigFromFile(ctx context.Context, g glue.Glue, mgr *conn.Mgr, path string) error {
+func ensureTiKVConfigFromFile(ctx context.Context, g glue.Glue, storage kv.Storage, path string) error {
 	if len(path) <= 0 {
 		return nil
 	}
@@ -65,8 +56,7 @@ func ensureTiKVConfigFromFile(ctx context.Context, g glue.Glue, mgr *conn.Mgr, p
 	if _, err := toml.DecodeFile(path, &configValues); err != nil {
 		return errors.Trace(err)
 	}
-	//pdClient := mgr.PDClient()
-	return setConfigs(ctx, g, mgr, convertToPlainKeys(configValues))
+	return setConfigs(ctx, g, storage, convertToPlainKeys(configValues))
 }
 
 func convertToPlainKeys(values map[string]any) map[string]any {
