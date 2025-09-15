@@ -515,11 +515,11 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
 	var pp base.PhysicalPlan
 	switch x := p.(type) {
-	case *Insert:
+	case *physicalop.Insert:
 		pp = x.SelectPlan
-	case *Update:
+	case *physicalop.Update:
 		pp = x.SelectPlan
-	case *Delete:
+	case *physicalop.Delete:
 		pp = x.SelectPlan
 	case base.PhysicalPlan:
 		pp = x

@@ -425,11 +425,12 @@
         "SQL": "explain format = 'brief' select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
         "Plan": [
           "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#7",
-          "└─TopN 1.00 root  test.t.e:desc, offset:0, count:1",
-          "  └─IndexLookUp 1.00 root  ",
-          "    ├─IndexRangeScan(Build) 1.25 cop[tikv] table:t, index:idx1(d, a) range:[\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\",\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\"], keep order:false",
-          "    └─Selection(Probe) 1.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.c, \"TOPIC\"), not(isnull(test.t.e))",
-          "      └─TableRowIDScan 1.25 cop[tikv] table:t keep order:false"
+          "└─Limit 1.00 root  offset:0, count:1",
+          "  └─Projection 1.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e",
+          "    └─IndexLookUp 1.00 root  ",
+          "      ├─IndexFullScan(Build) 8540341.00 cop[tikv] table:t, index:idx4(e) keep order:true, desc",
+          "      └─Selection(Probe) 1.00 cop[tikv]  eq(test.t.a, \"T3382\"), eq(test.t.b, \"ECO\"), eq(test.t.c, \"TOPIC\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\")",
+          "        └─TableRowIDScan 8540341.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]
@@ -621,11 +622,12 @@
       {
         "SQL": "explain format = 'cost_trace' \nSELECT\n  /*+ QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;",
         "Plan": [
-          "Limit_15 5001.00 9906310.79 ((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00)) root  offset:0, count:5001",
-          "└─Projection_32 5001.00 9906310.79 (((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms, test.objects.metastore_uuid, test.objects.securable_id",
-          "  └─IndexLookUp_31 5001.00 9902317.99 ((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00 root  ",
-          "    ├─IndexRangeScan_29(Build) 5001.00 1253699.35 (scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects, index:idx_metastore_securable_seq(metastore_uuid, securable_id, seq) range:(\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 17299834,\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 +inf], keep order:true",
-          "    └─TableRowIDScan_30(Probe) 5001.00 1688011.54 (scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects keep order:false"
+          "Projection_28 5001.00 9909305.39 (((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00)) + ((cpu(5001*filters(0.060000000000000005)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms",
+          "└─Projection_27 5001.00 9906310.79 ((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms, test.objects.metastore_uuid, test.objects.securable_id",
+          "  └─IndexLookUp_26 5001.00 9902317.99 (((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00 root  limit embedded(offset:0, count:5001)",
+          "    ├─Limit_25(Build) 5001.00 1253699.35 ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00) cop[tikv]  offset:0, count:5001",
+          "    │ └─IndexRangeScan_23 5001.00 1253699.35 (scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects, index:idx_metastore_securable_seq(metastore_uuid, securable_id, seq) range:(\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 17299834,\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 +inf], keep order:true",
+          "    └─TableRowIDScan_24(Probe) 5001.00 1688011.54 (scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects keep order:false"
         ]
       },
       {

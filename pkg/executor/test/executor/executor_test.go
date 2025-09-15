@@ -2964,6 +2964,9 @@ func TestIssue50043(t *testing.T) {
 }
 
 func TestIssue50043WithPipelinedDML(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("pipelined dml is not supported in next-gen kv mode")
+	}
 	testIssue50043WithInitSQL(t, "set @@tidb_dml_type=bulk")
 }
 

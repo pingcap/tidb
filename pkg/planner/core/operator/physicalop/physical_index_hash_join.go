@@ -62,19 +62,6 @@ func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPla
 	return cloned, nil
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexHashJoin)
-	*cloned = *p
-	inlj, ok := p.PhysicalIndexJoin.CloneForPlanCache(newCtx)
-	if !ok {
-		return nil, false
-	}
-	cloned.PhysicalIndexJoin = *inlj.(*PhysicalIndexJoin)
-	cloned.Self = cloned
-	return cloned, true
-}
-
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalIndexHashJoin(p, tasks...)

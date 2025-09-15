@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"go.uber.org/zap"
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -162,6 +163,7 @@ type importStepMinimalTask struct {
 	Chunk      importer.Chunk
 	SharedVars *SharedVars
 	panicked   *atomic.Bool
+	logger     *zap.Logger
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.

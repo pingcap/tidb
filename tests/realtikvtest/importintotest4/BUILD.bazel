@@ -4,6 +4,7 @@ go_test(
     name = "importintotest4_test",
     timeout = "moderate",
     srcs = [
+        "cloud_sdk_test.go",
         "global_sort_test.go",
         "import_summary_test.go",
         "main_test.go",
@@ -20,6 +21,7 @@ go_test(
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
         "//pkg/executor/importer",
+        "//pkg/importsdk",
         "//pkg/kv",
         "//pkg/lightning/config",
         "//pkg/planner/core",
@@ -27,6 +29,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "//tests/realtikvtest/testutils",
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",

@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -142,6 +143,9 @@ func TestAnalyzeRestrict(t *testing.T) {
 }
 
 func TestAnalyzeParameters(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -223,6 +227,9 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 }
 
 func TestFailedAnalyzeRequest(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -600,8 +607,10 @@ func TestIssue20874(t *testing.T) {
 }
 
 func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -945,7 +954,10 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
-
+	if kerneltype.IsNextGen() {
+		t.Log("analyze V1 cannot support in the next gen")
+		return
+	}
 	// set analyze version back to 1, will not use persisted
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t partition p2")
@@ -1829,6 +1841,9 @@ func TestAnalyzeSampleRateReason(t *testing.T) {
 }
 
 func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1983,6 +1998,9 @@ func TestKillAutoAnalyze(t *testing.T) {
 }
 
 func TestKillAutoAnalyzeIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
@@ -2566,6 +2584,9 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
@@ -2619,6 +2640,9 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestIssue35056(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

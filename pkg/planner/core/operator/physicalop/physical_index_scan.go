@@ -533,35 +533,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Ranges[0].IsPointNonNullable(tc)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexScan)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(p.AccessCondition, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	if p.GenExprs != nil {
-		return nil, false
-	}
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	if p.PkIsHandleCol != nil {
-		if p.PkIsHandleCol.SafeToShareAcrossSession() {
-			cloned.PkIsHandleCol = p.PkIsHandleCol
-		} else {
-			cloned.PkIsHandleCol = p.PkIsHandleCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.ConstColsByCond = make([]bool, len(p.ConstColsByCond))
-	copy(cloned.ConstColsByCond, p.ConstColsByCond)
-	return cloned, true
-}
-
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.Schema().Len())

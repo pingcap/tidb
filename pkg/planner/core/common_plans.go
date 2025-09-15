@@ -370,198 +370,6 @@ func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
 	return
 }
 
-// InsertGeneratedColumns is for completing generated columns in Insert.
-// We resolve generation expressions in plan, and eval those in executor.
-type InsertGeneratedColumns struct {
-	Exprs        []expression.Expression
-	OnDuplicates []*expression.Assignment
-}
-
-func (i InsertGeneratedColumns) cloneForPlanCache() InsertGeneratedColumns {
-	return InsertGeneratedColumns{
-		Exprs:        cloneExpressionsForPlanCache(i.Exprs, nil),
-		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
-	}
-}
-
-// MemoryUsage return the memory usage of InsertGeneratedColumns
-func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
-	if i == nil {
-		return
-	}
-	sum = size.SizeOfSlice*3 + int64(cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
-
-	for _, expr := range i.Exprs {
-		sum += expr.MemoryUsage()
-	}
-	for _, as := range i.OnDuplicates {
-		sum += as.MemoryUsage()
-	}
-	return
-}
-
-// Insert represents an insert plan.
-type Insert struct {
-	physicalop.SimpleSchemaProducer
-
-	Table         table.Table        `plan-cache-clone:"shallow"`
-	tableSchema   *expression.Schema `plan-cache-clone:"shallow"`
-	tableColNames types.NameSlice    `plan-cache-clone:"shallow"`
-	Columns       []*ast.ColumnName  `plan-cache-clone:"shallow"`
-	Lists         [][]expression.Expression
-
-	OnDuplicate        []*expression.Assignment
-	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
-	names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
-
-	GenCols InsertGeneratedColumns
-
-	SelectPlan base.PhysicalPlan
-
-	IsReplace bool
-	IgnoreErr bool
-
-	// NeedFillDefaultValue is true when expr in value list reference other column.
-	NeedFillDefaultValue bool
-
-	AllAssignmentsAreConstant bool
-
-	RowLen int
-
-	FKChecks   []*FKCheck   `plan-cache-clone:"must-nil"`
-	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
-}
-
-// MemoryUsage return the memory usage of Insert
-func (p *Insert) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
-		cap(p.Columns)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
-		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*4 + size.SizeOfInt
-	if p.tableSchema != nil {
-		sum += p.tableSchema.MemoryUsage()
-	}
-	if p.Schema4OnDuplicate != nil {
-		sum += p.Schema4OnDuplicate.MemoryUsage()
-	}
-	if p.SelectPlan != nil {
-		sum += p.SelectPlan.MemoryUsage()
-	}
-
-	for _, name := range p.tableColNames {
-		sum += name.MemoryUsage()
-	}
-	for _, exprs := range p.Lists {
-		sum += size.SizeOfSlice + int64(cap(exprs))*size.SizeOfInterface
-		for _, expr := range exprs {
-			sum += expr.MemoryUsage()
-		}
-	}
-	for _, as := range p.OnDuplicate {
-		sum += as.MemoryUsage()
-	}
-	for _, name := range p.names4OnDuplicate {
-		sum += name.MemoryUsage()
-	}
-	for _, fkC := range p.FKChecks {
-		sum += fkC.MemoryUsage()
-	}
-
-	return
-}
-
-// Update represents Update plan.
-type Update struct {
-	physicalop.SimpleSchemaProducer
-
-	OrderedList []*expression.Assignment
-
-	AllAssignmentsAreConstant bool
-
-	IgnoreError bool
-
-	VirtualAssignmentsOffset int
-
-	SelectPlan base.PhysicalPlan
-
-	// TblColPosInfos is for multi-table update statement.
-	// It records the column position of each related table.
-	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
-
-	// Used when partition sets are given.
-	// e.g. update t partition(p0) set a = 1;
-	PartitionedTable []table.PartitionedTable `plan-cache-clone:"shallow"`
-
-	// tblID2Table stores related tables' info of this Update statement.
-	tblID2Table map[int64]table.Table `plan-cache-clone:"shallow"`
-
-	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
-	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
-}
-
-// MemoryUsage return the memory usage of Update
-func (p *Update) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.OrderedList))*size.SizeOfPointer +
-		size.SizeOfBool + size.SizeOfInt + size.SizeOfInterface + int64(cap(p.PartitionedTable))*size.SizeOfInterface +
-		int64(len(p.tblID2Table))*(size.SizeOfInt64+size.SizeOfInterface)
-	if p.SelectPlan != nil {
-		sum += p.SelectPlan.MemoryUsage()
-	}
-
-	for _, as := range p.OrderedList {
-		sum += as.MemoryUsage()
-	}
-	for _, colInfo := range p.TblColPosInfos {
-		sum += colInfo.MemoryUsage()
-	}
-	for _, v := range p.FKChecks {
-		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(v))*size.SizeOfPointer
-		for _, fkc := range v {
-			sum += fkc.MemoryUsage()
-		}
-	}
-	return
-}
-
-// Delete represents a delete plan.
-type Delete struct {
-	physicalop.SimpleSchemaProducer
-
-	IsMultiTable bool
-
-	SelectPlan base.PhysicalPlan
-
-	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
-
-	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
-	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
-
-	IgnoreErr bool
-}
-
-// MemoryUsage return the memory usage of Delete
-func (p *Delete) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfBool + size.SizeOfInterface + size.SizeOfSlice
-	if p.SelectPlan != nil {
-		sum += p.SelectPlan.MemoryUsage()
-	}
-	for _, colInfo := range p.TblColPosInfos {
-		sum += colInfo.MemoryUsage()
-	}
-	return
-}
-
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
 type AnalyzeInfo struct {
 	DBName        string
@@ -630,7 +438,7 @@ type LoadData struct {
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Options            []*LoadDataOpt
 
-	GenCols InsertGeneratedColumns
+	GenCols physicalop.InsertGeneratedColumns
 }
 
 // LoadDataOpt represents load data option.
@@ -651,7 +459,7 @@ type ImportInto struct {
 	Format             *string
 	Options            []*LoadDataOpt
 
-	GenCols InsertGeneratedColumns
+	GenCols physicalop.InsertGeneratedColumns
 	Stmt    string
 
 	SelectPlan base.PhysicalPlan
@@ -1344,6 +1152,9 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan,
 	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
 	for _, explainedCTE := range flat.CTEs {
 		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan))
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		res.Subqueries = append(res.Subqueries, binaryOpTreeFromFlatOps(explainCtx, subQ, briefBinaryPlan))
 	}
 	return res
 }

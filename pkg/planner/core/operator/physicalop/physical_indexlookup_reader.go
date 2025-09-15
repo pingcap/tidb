@@ -218,44 +218,6 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 	return utilfuncp.ResolveIndices4PhysicalIndexLookUpReader(p)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexLookUpReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if p.IndexPlan != nil {
-		indexPlan, ok := p.IndexPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.IndexPlan = indexPlan.(base.PhysicalPlan)
-	}
-	if p.TablePlan != nil {
-		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
-	if p.ExtraHandleCol != nil {
-		if p.ExtraHandleCol.SafeToShareAcrossSession() {
-			cloned.ExtraHandleCol = p.ExtraHandleCol
-		} else {
-			cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.PushedLimit = p.PushedLimit.Clone()
-	cloned.CommonHandleCols = utilfuncp.CloneColumnsForPlanCache(p.CommonHandleCols, nil)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	return cloned, true
-}
-
 // GetCost computes the cost of apply operator.
 func (p *PhysicalIndexLookUpReader) GetCost(costFlag uint64) float64 {
 	return utilfuncp.GetCost4PhysicalIndexLookUpReader(p, costFlag)

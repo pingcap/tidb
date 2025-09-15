@@ -153,6 +153,9 @@ type Constant struct {
 	ParamMarker *ParamMarker
 	hashcode    []byte
 
+	// SubqueryRefID holds the ID of the original subquery column for display purposes
+	SubqueryRefID int64
+
 	collationInfo
 }
 
@@ -187,12 +190,23 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
-	if redact == perrors.RedactLogDisable {
-		return v.TruncatedStringify()
-	} else if redact == perrors.RedactLogMarker {
-		return fmt.Sprintf("‹%s›", v.TruncatedStringify())
+
+	var valueStr string
+	switch redact {
+	case perrors.RedactLogDisable:
+		valueStr = v.TruncatedStringify()
+	case perrors.RedactLogMarker:
+		valueStr = fmt.Sprintf("‹%s›", v.TruncatedStringify())
+	default:
+		valueStr = "?"
 	}
-	return "?"
+
+	// Add subquery reference if available
+	if c.SubqueryRefID > 0 {
+		refStr := fmt.Sprintf("ScalarQueryCol#%d", c.SubqueryRefID)
+		return fmt.Sprintf("%s(%s)", refStr, valueStr)
+	}
+	return valueStr
 }
 
 // Clone implements Expression interface.

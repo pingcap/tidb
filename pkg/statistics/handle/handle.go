@@ -174,8 +174,8 @@ func NewHandle(
 // physicalTableID can be a table ID or partition ID.
 func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
 	tblStats, found := h.getStatsByPhysicalID(physicalTableID, tblInfo)
-	intest.Assert(tblStats != nil, "stats shoud not be nil")
-	intest.Assert(found, "stats shoud not be nil")
+	intest.Assert(tblStats != nil, "stats should not be nil")
+	intest.Assert(found, "stats should not be nil")
 	return tblStats
 }
 

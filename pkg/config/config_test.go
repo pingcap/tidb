@@ -730,7 +730,8 @@ txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
 plan-replayer-dump-worker-concurrency = 1
-lite-init-stats = false
+skip-init-stats = false
+lite-init-stats = true
 force-init-stats = false
 [tikv-client]
 commit-timeout="41s"
@@ -823,7 +824,8 @@ max_connections = 200
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 	require.True(t, conf.Performance.EnableLoadFMSketch)
-	require.False(t, conf.Performance.LiteInitStats)
+	require.False(t, conf.Performance.SkipInitStats)
+	require.True(t, conf.Performance.LiteInitStats)
 	require.False(t, conf.Performance.ForceInitStats)
 
 	err = f.Truncate(0)

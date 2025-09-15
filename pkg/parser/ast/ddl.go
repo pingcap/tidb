@@ -746,6 +746,7 @@ type IndexOption struct {
 	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 	SecondaryEngineAttr        string
 	AddColumnarReplicaOnDemand int
+	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
 }
 
 // IsEmpty is true if only default options are given
@@ -759,7 +760,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
 		n.SplitOpt != nil ||
-		len(n.SecondaryEngineAttr) > 0 {
+		len(n.SecondaryEngineAttr) > 0 ||
+		n.Condition != nil {
 		return false
 	}
 	return true
@@ -874,6 +876,16 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(n.SecondaryEngineAttr)
 		// If a new option is added after, please also uncomment:
 		//hasPrevOption = true
+	}
+
+	if n.Condition != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("WHERE ")
+		if err := n.Condition.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing IndexOption Condition")
+		}
 	}
 
 	return nil

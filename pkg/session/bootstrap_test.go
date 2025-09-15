@@ -2511,6 +2511,9 @@ func TestIssue61890(t *testing.T) {
 }
 
 func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

@@ -690,6 +690,11 @@ func (*BaseScheduler) isStepSucceed(cntByStates map[proto.SubtaskState]int64) bo
 	return len(cntByStates) == 0 || (len(cntByStates) == 1 && ok)
 }
 
+// GetLogger returns the logger.
+func (s *BaseScheduler) GetLogger() *zap.Logger {
+	return s.logger
+}
+
 // IsCancelledErr checks if the error is a cancelled error.
 func IsCancelledErr(err error) bool {
 	return strings.Contains(err.Error(), taskCancelMsg)

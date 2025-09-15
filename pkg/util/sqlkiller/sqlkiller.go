@@ -37,7 +37,7 @@ const (
 	QueryMemoryExceeded
 	ServerMemoryExceeded
 	RunawayQueryExceeded
-	// When you add a new signal, you should also modify store/driver/error/ToTidbErr,
+	// When you add a new signal, you should also modify store/driver/error/ToTiDBErr,
 	// so that errors in client can be correctly converted to tidb errors.
 )
 

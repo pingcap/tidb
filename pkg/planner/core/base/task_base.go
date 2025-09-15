@@ -14,6 +14,11 @@
 
 package base
 
+import (
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+)
+
 // Note: appending the new adding method to the last, for the convenience of easy
 // locating in other implementor from other package.
 
@@ -40,3 +45,14 @@ type Task interface {
 
 // InvalidTask is just a common invalid singleton instance initialized by core's empty RootTask.
 var InvalidTask Task
+
+// MPPSink is the operator to send data to its parent fragment.
+// e.g. ExchangeSender, etc.
+type MPPSink interface {
+	PhysicalPlan
+	GetCompressionMode() vardef.ExchangeCompressionMode
+	GetSelfTasks() []*kv.MPPTask
+	SetSelfTasks(tasks []*kv.MPPTask)
+	SetTargetTasks(tasks []*kv.MPPTask)
+	AppendTargetTasks(tasks []*kv.MPPTask)
+}

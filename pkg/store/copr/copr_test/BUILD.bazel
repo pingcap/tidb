@@ -11,6 +11,7 @@ go_test(
     shard_count = 5,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/resourcegroup/runaway",
         "//pkg/store/copr",

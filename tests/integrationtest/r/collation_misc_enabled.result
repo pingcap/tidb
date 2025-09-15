@@ -149,10 +149,10 @@ create table t2(code varchar(32)) CHARSET=utf8 COLLATE=utf8_bin;
 explain format='plan_tree' select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');
 id	task	access object	operator info
 Projection	root		cd_test_utf8mb4_0900_bin.t1.code, cd_test_utf8mb4_0900_bin.t2.code
-└─HashJoin	root		CARTESIAN inner join
+└─HashJoin	root		inner join, equal:[eq(cd_test_utf8mb4_0900_bin.t2.code, cd_test_utf8mb4_0900_bin.t1.code)]
   ├─TableReader(Build)	root		data:Selection
   │ └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t2.code, "1")
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1")
+    └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1"), not(isnull(cd_test_utf8mb4_0900_bin.t1.code))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo

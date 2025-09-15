@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -204,33 +203,6 @@ func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
 	return p.ExplainInfoInternal(false, false)
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexJoin)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalJoin = *basePlan
-	if p.InnerPlan != nil {
-		innerPlan, ok := p.InnerPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.InnerPlan = innerPlan.(base.PhysicalPlan)
-	}
-	cloned.Ranges = p.Ranges.CloneForPlanCache()
-	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = utilfuncp.CloneColumnsForPlanCache(p.OuterHashKeys, nil)
-	cloned.InnerHashKeys = utilfuncp.CloneColumnsForPlanCache(p.InnerHashKeys, nil)
-	return cloned, true
 }
 
 // GetCost computes the cost of index join operator and its children.
@@ -456,7 +428,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 
 	colsNeedResolving := p.Schema().Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.

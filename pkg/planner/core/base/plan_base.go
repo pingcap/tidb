@@ -302,3 +302,69 @@ type LogicalPlan interface {
 	// For logicalPlan implementation, it just returns itself as well.
 	GetWrappedLogicalPlan() LogicalPlan
 }
+
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
+type JoinType int
+
+const (
+	// InnerJoin means inner join.
+	InnerJoin JoinType = iota
+	// LeftOuterJoin means left join.
+	LeftOuterJoin
+	// RightOuterJoin means right join.
+	RightOuterJoin
+	// SemiJoin means if row a in table A matches some rows in B, just output a.
+	SemiJoin
+	// AntiSemiJoin means if row a in table A does not match any row in B, then output a.
+	AntiSemiJoin
+	// LeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
+	LeftOuterSemiJoin
+	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
+	AntiLeftOuterSemiJoin
+)
+
+// IsOuterJoin returns if this joiner is an outer joiner
+func (tp JoinType) IsOuterJoin() bool {
+	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsSemiJoin returns if this joiner is a semi/anti-semi joiner
+func (tp JoinType) IsSemiJoin() bool {
+	return tp == SemiJoin || tp == AntiSemiJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsInnerJoin returns if this joiner is a inner joiner
+func (tp JoinType) IsInnerJoin() bool {
+	return tp == InnerJoin
+}
+
+func (tp JoinType) String() string {
+	switch tp {
+	case InnerJoin:
+		return "inner join"
+	case LeftOuterJoin:
+		return "left outer join"
+	case RightOuterJoin:
+		return "right outer join"
+	case SemiJoin:
+		return "semi join"
+	case AntiSemiJoin:
+		return "anti semi join"
+	case LeftOuterSemiJoin:
+		return "left outer semi join"
+	case AntiLeftOuterSemiJoin:
+		return "anti left outer semi join"
+	}
+	return "unsupported join type"
+}
+
+// PhysicalJoin provides some common methods for join operators.
+// Note that PhysicalApply is deliberately excluded from this interface.
+type PhysicalJoin interface {
+	PhysicalPlan
+	PhysicalJoinImplement()
+	GetInnerChildIdx() int
+	GetJoinType() JoinType
+}

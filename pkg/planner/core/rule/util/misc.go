@@ -156,6 +156,11 @@ func CheckIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
 var SetPredicatePushDownFlag func(uint64) uint64
 
+// ApplyPredicateSimplificationForJoin is a hook for other packages to simplify the expression.
+var ApplyPredicateSimplificationForJoin func(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+
 // ApplyPredicateSimplification is a hook for other packages to simplify the expression.
 var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
 	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression

@@ -111,19 +111,6 @@ func (p PhysicalSelection) Init(ctx base.PlanContext, stats *property.StatsInfo,
 	return &p
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalSelection)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(p.Conditions, nil)
-	return cloned, true
-}
-
 // GetPlanCostVer2 implements the base.PhysicalPlan interface.
 func (p *PhysicalSelection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalSelection(p, taskType, option, isChildOfINL...)

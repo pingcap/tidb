@@ -197,28 +197,6 @@ func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 	return reader
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if p.IndexPlan != nil {
-		indexPlan, ok := p.IndexPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.IndexPlan = indexPlan.(base.PhysicalPlan)
-	}
-	cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)
-	cloned.OutputColumns = utilfuncp.CloneColumnsForPlanCache(p.OutputColumns, nil)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	return cloned, true
-}
-
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 	err = p.PhysicalSchemaProducer.ResolveIndices()

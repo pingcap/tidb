@@ -16,26 +16,13 @@ package driver
 
 import (
 	"context"
-	"flag"
-	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
-)
-
-var (
-	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
-	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 )
 
 func TestMain(m *testing.M) {
@@ -50,67 +37,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("syscall.Syscall"),
 	}
 	goleak.VerifyTestMain(m, opts...)
-}
-
-func createTestStore(t *testing.T) (kv.Storage, *domain.Domain) {
-	if *withTiKV {
-		return createTiKVStore(t)
-	}
-	return createUnistore(t)
-}
-
-func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
-	var d TiKVDriver
-	store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
-	require.NoError(t, err)
-	config.GetGlobalConfig().Store = config.StoreTypeTiKV
-	require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
-	// clear storage
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	iter, err := txn.Iter(nil, nil)
-	require.NoError(t, err)
-	for iter.Valid() {
-		require.NoError(t, txn.Delete(iter.Key()))
-		require.NoError(t, iter.Next())
-	}
-	require.NoError(t, txn.Commit(context.Background()))
-
-	session.ResetStoreForWithTiKVTest(store)
-
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		dom.Close()
-		ddl.CloseOwnerManager(store)
-		require.NoError(t, store.Close())
-	})
-
-	return store, dom
-}
-
-func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
-	client, pdClient, cluster, err := unistore.New("", nil, nil)
-	require.NoError(t, err)
-
-	unistore.BootstrapWithSingleStore(cluster)
-	kvStore, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
-	require.NoError(t, err)
-
-	coprStore, err := copr.NewStore(kvStore, nil)
-	require.NoError(t, err)
-
-	store := &tikvStore{KVStore: kvStore, coprStore: coprStore}
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		dom.Close()
-		require.NoError(t, store.Close())
-	})
-
-	return store, dom
 }
 
 func prepareSnapshot(t *testing.T, store kv.Storage, data [][]any) kv.Snapshot {

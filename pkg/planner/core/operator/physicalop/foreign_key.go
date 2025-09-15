@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package physicalop
 
 import (
 	"context"
@@ -26,15 +26,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // FKCheck indicates the foreign key constraint checker.
 type FKCheck struct {
-	physicalop.BasePhysicalPlan
+	BasePhysicalPlan
 	FK         *model.FKInfo
 	ReferredFK *model.ReferredFKInfo
 	Tbl        table.Table
@@ -48,9 +49,16 @@ type FKCheck struct {
 	FailedErr  error
 }
 
+// Init initializes FKCheck.
+func (f FKCheck) Init(ctx base.PlanContext) *FKCheck {
+	f.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &f, 0)
+	f.SetStats(&property.StatsInfo{})
+	return &f
+}
+
 // FKCascade indicates the foreign key constraint cascade behaviour.
 type FKCascade struct {
-	physicalop.BasePhysicalPlan
+	BasePhysicalPlan
 	Tp         FKCascadeType
 	ReferredFK *model.ReferredFKInfo
 	ChildTable table.Table
@@ -61,6 +69,13 @@ type FKCascade struct {
 	// CascadePlans will be filled during execution, so only `explain analyze` statement result contains the cascade plan,
 	// `explain` statement result doesn't contain the cascade plan.
 	CascadePlans []base.Plan
+}
+
+// Init initializes FKCascade
+func (f FKCascade) Init(ctx base.PlanContext) *FKCascade {
+	f.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &f, 0)
+	f.SetStats(&property.StatsInfo{})
+	return &f
 }
 
 // FKCascadeType indicates in which (delete/update) statements.
@@ -146,7 +161,8 @@ func (f *FKCascade) MemoryUsage() (sum int64) {
 	return
 }
 
-func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string) error {
+// BuildOnInsertFKTriggers builds the foreign key triggers for insert statement.
+func (p *Insert) BuildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -224,7 +240,8 @@ func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infosch
 	return fkChecks, fkCascades, nil
 }
 
-func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+// BuildOnUpdateFKTriggers builds the foreign key triggers for update statement.
+func (updt *Update) BuildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -267,7 +284,8 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 	return nil
 }
 
-func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+// BuildOnDeleteFKTriggers builds the foreign key triggers for delete statement.
+func (del *Delete) BuildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -343,8 +361,20 @@ func buildOnUpdateChildFKChecks(ctx base.PlanContext, is infoschema.InfoSchema, 
 	return fkChecks, nil
 }
 
+// GetUpdateColumnsInfo get the update columns info.
+func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
+	colsInfo := make([]*table.Column, size)
+	for _, content := range tblColPosInfos {
+		tbl := tblID2Table[content.TblID]
+		for i, c := range tbl.WritableCols() {
+			colsInfo[content.Start+i] = c
+		}
+	}
+	return colsInfo
+}
+
 func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
-	colsInfo := GetUpdateColumnsInfo(updt.tblID2Table, updt.TblColPosInfos, len(updt.SelectPlan.Schema().Columns))
+	colsInfo := GetUpdateColumnsInfo(updt.TblID2Table, updt.TblColPosInfos, len(updt.SelectPlan.Schema().Columns))
 	tblID2UpdateColumns := make(map[int64]map[string]struct{})
 	for _, assign := range updt.OrderedList {
 		col := colsInfo[assign.Col.Index]
@@ -358,7 +388,7 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 			}
 		}
 	}
-	for tid, tbl := range updt.tblID2Table {
+	for tid, tbl := range updt.TblID2Table {
 		updateCols := tblID2UpdateColumns[tid]
 		if len(updateCols) == 0 {
 			continue

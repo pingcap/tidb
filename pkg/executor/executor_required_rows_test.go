@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -699,8 +699,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 			panic("not support")
 		}
 	}
-	joinTypes := []logicalop.JoinType{logicalop.RightOuterJoin, logicalop.LeftOuterJoin,
-		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin}
+	joinTypes := []base.JoinType{base.RightOuterJoin, base.LeftOuterJoin,
+		base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin}
 	for _, joinType := range joinTypes {
 		ctx := defaultCtx()
 		required := make([]int, 100)
@@ -722,8 +722,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
-	if joinType == logicalop.RightOuterJoin {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType base.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
+	if joinType == base.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
 

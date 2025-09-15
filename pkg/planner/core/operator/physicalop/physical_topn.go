@@ -102,20 +102,6 @@ func (p *PhysicalTopN) MemoryUsage() (sum int64) {
 	return
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTopN)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	cloned.PartitionBy = util.CloneSortItems(p.PartitionBy)
-	return cloned, true
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()

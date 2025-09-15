@@ -105,18 +105,6 @@ func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *
 	return utilfuncp.GetPlanCostVer24PhysicalStreamAgg(p, taskType, option, isChildOfINL...)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalStreamAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalStreamAgg)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalAgg.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalAgg = *basePlan
-	return cloned, true
-}
-
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalStreamAgg(p, tasks...)

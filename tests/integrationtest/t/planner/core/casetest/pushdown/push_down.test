@@ -69,3 +69,15 @@ CREATE TABLE `tld47bc815` (
   KEY `idx_4` (`col_1`(4))
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
 explain format='plan_tree' select 1, r0 as col_754 from (     select format(t4a8656d1.col_74, 1) as r0     from t4a8656d1     join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1     where JSON_OVERLAPS(t4a8656d1.col_73, '[0.035131302371695955]')     group by t4a8656d1.col_74, t4a8656d1.col_73 ) as subquery where IsNull(subquery.r0);
+
+# Test for correctness of predicate pushdown through Aggregation on a non-key column (Issue #24853)
+DROP TABLE IF EXISTS final_test_v2;
+CREATE TABLE final_test_v2 (
+  id INT PRIMARY KEY,
+  val INT,
+  group_key INT
+);
+INSERT INTO final_test_v2 VALUES (1, 100, 10), (2, 200, 20), (3, 100, 10), (4, 300, 20);
+ANALYZE TABLE final_test_v2;
+SELECT group_key, ANY_VALUE(val) as val FROM final_test_v2 GROUP BY group_key HAVING val = 100 ORDER BY group_key;
+EXPLAIN FORMAT='BRIEF' SELECT group_key, ANY_VALUE(val) as val FROM final_test_v2 GROUP BY group_key HAVING val = 100 ORDER BY group_key;

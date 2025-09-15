@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -796,6 +797,9 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 }
 
 func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Setting tidb_ddl_reorg_max_write_speed is not supported in the next generation of TiDB")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.Equal(t, int64(vardef.DefTiDBDDLReorgMaxWriteSpeed), vardef.DDLReorgMaxWriteSpeed.Load())

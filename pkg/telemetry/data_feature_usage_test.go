@@ -78,13 +78,15 @@ func TestTxnUsageInfo(t *testing.T) {
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBPessimisticTransactionFairLocking))
-		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-		require.False(t, txnUsage.FairLocking)
+		if kerneltype.IsClassic() {
+			tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBPessimisticTransactionFairLocking))
+			txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+			require.False(t, txnUsage.FairLocking)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBPessimisticTransactionFairLocking))
-		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-		require.True(t, txnUsage.FairLocking)
+			tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBPessimisticTransactionFairLocking))
+			txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+			require.True(t, txnUsage.FairLocking)
+		}
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -855,6 +857,9 @@ func TestStoreBatchCopr(t *testing.T) {
 }
 
 func TestFairLockingUsage(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("fair locking is not supported for next-gen yet")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)

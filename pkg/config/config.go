@@ -735,7 +735,13 @@ type Performance struct {
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
+	// Deprecated: this config has been deprecated. It has no effect.
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
+
+	// SkipInitStats determines whether to skip initializing statistics when TiDB starts.
+	// It is primarily intended for internal use cases in TiDB Cloud and may cause issues if enabled on a standard cluster.
+	// See: https://github.com/pingcap/tidb/issues/63103
+	SkipInitStats bool `toml:"skip-init-stats" json:"skip-init-stats"`
 
 	// LiteInitStats indicates whether to use the lite version of stats.
 	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
@@ -1029,6 +1035,7 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          true,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
+		SkipInitStats:                     false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
 		// Deprecated: Stats are always initialized concurrently.

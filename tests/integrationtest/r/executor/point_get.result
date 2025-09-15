@@ -552,10 +552,10 @@ a	b
 111	1
 explain format = 'plan_tree' select * from t1 join t2 on t1.a = t2.b where t1.a = 1;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN inner join
+MergeJoin	root		inner join, left key:executor__point_get.t1.a, right key:executor__point_get.t2.b
 ├─Point_Get(Build)	root	table:t2, index:b(b)	
 └─TableReader(Probe)	root		data:TableRangeScan
-  └─TableRangeScan	cop[tikv]	table:t1	range:[1,1], keep order:false
+  └─TableRangeScan	cop[tikv]	table:t1	range:[1,1], keep order:true
 select * from t1 join t2 on t1.a = t2.b where t1.a = 1;
 a	b	c	a	b
 1	1	1	111	1

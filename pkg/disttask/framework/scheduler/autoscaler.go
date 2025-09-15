@@ -17,12 +17,14 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,7 +41,11 @@ const (
 	// To improve performance for small tasks, we assume that on an 8c machine,
 	// importing 200 GiB of data requires full utilization of a single node’s resources.
 	// Therefore, for every additional 25 GiB, add 1 concurrency unit as an estimate for task concurrency.
-	baseSizePerConc = 25 * units.GiB
+	baseSizePerConc                = 25 * units.GiB
+	maxNodeCountLimitForImportInto = 32
+	// this value is calculated by 256/8, we have test on a 8c machine with 256
+	// concurrency, it's fast enough for checksum. we can tune this later if needed.
+	maxDistSQLConcurrencyPerCore = 32
 )
 
 // CalcMaxNodeCountByTableSize calculates the maximum number of nodes to execute DXF based on the table size.
@@ -49,7 +55,7 @@ func CalcMaxNodeCountByTableSize(size int64, coresPerNode int) int {
 
 // CalcMaxNodeCountByDataSize calculates the maximum number of nodes to execute DXF based on the data size.
 func CalcMaxNodeCountByDataSize(size int64, coresPerNode int) int {
-	return calcMaxNodeCountBySize(size, coresPerNode, 32)
+	return calcMaxNodeCountBySize(size, coresPerNode, maxNodeCountLimitForImportInto)
 }
 
 func calcMaxNodeCountBySize(size int64, coresPerNode int, factor float64) int {
@@ -60,7 +66,7 @@ func calcMaxNodeCountBySize(size int64, coresPerNode int, factor float64) int {
 	nodeCnt := float64(size) * r / baseDataSize
 	nodeCnt = min(nodeCnt, factor*r)
 	nodeCnt = max(nodeCnt, 1)
-	return int(nodeCnt)
+	return int(math.Round(nodeCnt))
 }
 
 // CalcMaxNodeCountByStoresNum calculates the maximum number of nodes to execute DXF based on the number of stores.
@@ -90,10 +96,10 @@ func CalcConcurrencyByDataSize(size int64, coresPerNode int) int {
 	if size <= 0 {
 		return 4
 	}
-	concurrency := size / baseSizePerConc
-	concurrency = min(concurrency, int64(coresPerNode))
+	concurrency := float64(size) / baseSizePerConc
+	concurrency = min(concurrency, float64(coresPerNode))
 	concurrency = max(concurrency, 1)
-	return int(concurrency)
+	return int(math.Round(concurrency))
 }
 
 // GetExecCPUNode returns the number of CPU cores on the system keyspace node.
@@ -111,4 +117,21 @@ func GetExecCPUNode(ctx context.Context) (int, error) {
 		return 0, errors.Trace(err)
 	}
 	return cpuNode, nil
+}
+
+// CalcDistSQLConcurrency calculates the DistSQL concurrency based on the thread
+// count, max node count and CPU cores of each node.
+// when maxNodeCnt <= 1,we use task concurrency times DefDistSQLScanConcurrency,
+// else, we use a linear interpolation method to gradually increase the concurrency
+// to maxDistSQLConcurrencyPerCore*nodeCPU.
+func CalcDistSQLConcurrency(threadCnt, maxNodeCnt, nodeCPU int) int {
+	if maxNodeCnt <= 1 {
+		return threadCnt * vardef.DefDistSQLScanConcurrency
+	}
+
+	start := vardef.DefDistSQLScanConcurrency * nodeCPU
+	interval := nodeCPU * (maxDistSQLConcurrencyPerCore - vardef.DefDistSQLScanConcurrency)
+	totalStepCount := maxNodeCountLimitForImportInto - 1
+	stepCount := min(totalStepCount, maxNodeCnt-1)
+	return int(float64(start) + float64(interval)*float64(stepCount)/float64(totalStepCount))
 }

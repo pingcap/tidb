@@ -145,7 +145,7 @@ type stmtCtxMu struct {
 	foundRows uint64
 
 	/*
-		following variables are ported from 'COPY_INFO' struct of MySQL server source,
+		These variables serve a similar purpose to those in MySQL's `COPY_INFO`,
 		they are used to count rows for INSERT/REPLACE/UPDATE queries:
 		  If a row is inserted then the copied variable is incremented.
 		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the

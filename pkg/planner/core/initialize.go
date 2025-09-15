@@ -17,28 +17,8 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
-
-// Init initializes Update.
-func (p Update) Init(ctx base.PlanContext) *Update {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeUpdate, 0)
-	return &p
-}
-
-// Init initializes Delete.
-func (p Delete) Init(ctx base.PlanContext) *Delete {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeDelete, 0)
-	return &p
-}
-
-// Init initializes Insert.
-func (p Insert) Init(ctx base.PlanContext) *Insert {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeInsert, 0)
-	return &p
-}
 
 // Init initializes LoadData.
 func (p LoadData) Init(ctx base.PlanContext) *LoadData {
@@ -49,20 +29,6 @@ func (p LoadData) Init(ctx base.PlanContext) *LoadData {
 // Init initializes ImportInto.
 func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeImportInto, 0)
-	return &p
-}
-
-// Init initializes FKCheck.
-func (p FKCheck) Init(ctx base.PlanContext) *FKCheck {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &p, 0)
-	p.SetStats(&property.StatsInfo{})
-	return &p
-}
-
-// Init initializes FKCascade
-func (p FKCascade) Init(ctx base.PlanContext) *FKCascade {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &p, 0)
-	p.SetStats(&property.StatsInfo{})
 	return &p
 }
 

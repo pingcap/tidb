@@ -16,13 +16,14 @@ package handle
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -38,8 +39,10 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/slice"
 	"go.uber.org/zap"
 )
 
@@ -99,15 +102,26 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
-func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
+func genInitStatsMetaSQL(tableIDs ...int64) string {
+	selectPrefix := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta"
+	if len(tableIDs) == 0 {
+		return selectPrefix
+	}
+	whereClausePrefix := " where table_id in ("
+	inListStr := strings.Join(slice.Int64sToStrings(tableIDs), ",")
+	whereClauseSuffix := ")"
+	return selectPrefix + whereClausePrefix + inListStr + whereClauseSuffix
+}
+
+func (h *Handle) initStatsMeta(ctx context.Context, tableIDs ...int64) (statstypes.StatsCache, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta"
+	sql := genInitStatsMetaSQL(tableIDs...)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	tables, err := cache.NewStatsCacheImpl(h)
+	cache, err := cache.NewStatsCacheImpl(h)
 	if err != nil {
 		return nil, err
 	}
@@ -121,9 +135,9 @@ func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, erro
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsMeta4Chunk(tables, iter)
+		h.initStatsMeta4Chunk(cache, iter)
 	}
-	return tables, nil
+	return cache, nil
 }
 
 func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
@@ -287,19 +301,78 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
-// genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
-// We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
-func genInitStatsHistogramsSQL(isPaging bool) string {
-	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation from mysql.stats_histograms"
-	orderSuffix := " order by table_id"
-	if !isPaging {
-		return selectPrefix + orderSuffix
-	}
-	return selectPrefix + " where table_id >= %? and table_id < %?" + orderSuffix
+// nolint:fieldalignment
+type genHistSQLOptions struct {
+	// isPaging indicates whether to generate the SQL with paging.
+	isPaging bool
+	// tableRange only works when isPaging is true. It indicates the range of table IDs to load.
+	tableRange [2]int64
+
+	// tableIDs only works when isPaging is false. It indicates the list of table IDs to load.
+	tableIDs []int64
 }
 
-func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.StatsCache) error {
-	sql := genInitStatsHistogramsSQL(false)
+func newGenHistSQLOptionsForPaging(tableRange [2]int64) genHistSQLOptions {
+	return genHistSQLOptions{true, tableRange, nil}
+}
+
+func newGenHistSQLOptionsForTableIDs(tableIDs []int64) genHistSQLOptions {
+	return genHistSQLOptions{false, [2]int64{}, tableIDs}
+}
+
+func (o genHistSQLOptions) assert() {
+	if o.isPaging {
+		// Must have a valid range [start, end)
+		intest.Assert(o.tableRange[0] < o.tableRange[1],
+			"invalid genHistSQLOptions: paging requires a valid range [start, end), got [%d, %d)",
+			o.tableRange[0], o.tableRange[1])
+
+		// Must not provide tableIDs
+		intest.Assert(len(o.tableIDs) == 0,
+			"invalid genHistSQLOptions: paging requires empty tableIDs, got %d items",
+			len(o.tableIDs))
+		return
+	}
+
+	// Non-paging mode
+	// Range must be zero value
+	intest.Assert(o.tableRange == [2]int64{},
+		"invalid genHistSQLOptions: non-paging requires zero tableRange, got [%d, %d)",
+		o.tableRange[0], o.tableRange[1])
+
+	// tableIDs can be empty or not; optional: check non-negative IDs
+	for i, id := range o.tableIDs {
+		intest.Assert(id >= 0,
+			"invalid genHistSQLOptions: tableIDs[%d]=%d must be non-negative", i, id)
+	}
+}
+
+// genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
+// We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
+func genInitStatsHistogramsSQL(options genHistSQLOptions) string {
+	options.assert()
+	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation from mysql.stats_histograms"
+	orderSuffix := " order by table_id"
+
+	// Load all records (non-paging with no specific table IDs).
+	if !options.isPaging && len(options.tableIDs) == 0 {
+		return selectPrefix + orderSuffix
+	}
+
+	// Paging
+	if options.isPaging {
+		rangeStartClause := " where table_id >= " + strconv.FormatInt(options.tableRange[0], 10)
+		rangeEndClause := " and table_id < " + strconv.FormatInt(options.tableRange[1], 10)
+		return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
+	}
+
+	// Non-paging with specific table IDs
+	inListStr := strings.Join(slice.Int64sToStrings(options.tableIDs), ",")
+	return selectPrefix + " where table_id in (" + inListStr + ")" + orderSuffix
+}
+
+func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.StatsCache, tableIDs ...int64) error {
+	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForTableIDs(tableIDs))
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -336,8 +409,8 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	}()
 
 	sctx := se.(sessionctx.Context)
-	sql := genInitStatsHistogramsSQL(true)
-	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
+	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForPaging([2]int64{task.StartTid, task.EndTid}))
+	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -505,56 +578,6 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 	return nil
 }
 
-func (*Handle) initStatsFMSketch4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.Get(row.GetInt64(0))
-		if !ok {
-			continue
-		}
-		fms, err := statistics.DecodeFMSketch(row.GetBytes(3))
-		if err != nil {
-			fms = nil
-			terror.Log(errors.Trace(err))
-		}
-
-		isIndex := row.GetInt64(1)
-		id := row.GetInt64(2)
-		if isIndex == 1 {
-			if idxStats := table.GetIdx(id); idxStats != nil {
-				idxStats.FMSketch = fms
-			}
-		} else {
-			if colStats := table.GetCol(id); colStats != nil {
-				colStats.FMSketch = fms
-			}
-		}
-		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
-	}
-}
-
-func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value from mysql.stats_fm_sketch"
-	rc, err := util.Exec(h.initStatsCtx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer terror.Call(rc.Close)
-	req := rc.NewChunk(nil)
-	iter := chunk.NewIterator4Chunk(req)
-	for {
-		err := rc.Next(ctx, req)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if req.NumRows() == 0 {
-			break
-		}
-		h.initStatsFMSketch4Chunk(cache, iter)
-	}
-	return nil
-}
-
 func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	var (
@@ -700,7 +723,7 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 // 3. TopN, Bucket, FMSketch are not loaded.
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
-func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
+func (h *Handle) InitStatsLite(ctx context.Context, tableIDs ...int64) (err error) {
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
@@ -713,19 +736,31 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-	cache, err := h.initStatsMeta(ctx)
+	cache, err := h.initStatsMeta(ctx, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
-	err = h.initStatsHistogramsLite(ctx, cache)
+	err = h.initStatsHistogramsLite(ctx, cache, tableIDs...)
 	if err != nil {
 		cache.Close()
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram in the lite mode", zap.Duration("duration", time.Since(start)))
-	h.Replace(cache)
+	// If tableIDs is empty, it means we load all the tables' stats meta and histograms.
+	// So we can replace the global cache with the new cache.
+	if len(tableIDs) == 0 {
+		h.Replace(cache)
+	} else {
+		tables := cache.Values()
+		for _, table := range tables {
+			intest.Assert(table != nil, "table should not be nil")
+			h.Put(table.PhysicalID, table)
+		}
+		// Do not forget to close the new cache. Otherwise it would cause the goroutine leak issue.
+		cache.Close()
+	}
 	return nil
 }
 
@@ -740,7 +775,6 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return err
 	}
-	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
@@ -772,14 +806,6 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	}
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
 	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
-	if loadFMSketch {
-		start = time.Now()
-		err = h.initStatsFMSketch(cache)
-		if err != nil {
-			return err
-		}
-		statslogutil.StatsLogger().Info("Complete loading the FM Sketch", zap.Duration("duration", time.Since(start)))
-	}
 	start = time.Now()
 	err = h.initStatsBuckets(cache, totalMemory)
 	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))

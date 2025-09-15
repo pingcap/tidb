@@ -84,6 +84,7 @@ func getTableImporter(
 	taskID int64,
 	taskMeta *TaskMeta,
 	store tidbkv.Storage,
+	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
@@ -94,7 +95,7 @@ func getTableImporter(
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
+	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs, importer.WithLogger(logger))
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +110,7 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
 	var tableImporter *importer.TableImporter
 	var taskManager *dxfstorage.TaskManager
-	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
+	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store, s.logger)
 	if err != nil {
 		return err
 	}
@@ -241,6 +242,7 @@ outer:
 			Chunk:      chunk,
 			SharedVars: sharedVars,
 			panicked:   &panicked,
+			logger:     logger,
 		}:
 		case <-op.Done():
 			break outer
@@ -497,7 +499,7 @@ type writeAndIngestStepExecutor struct {
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
 
 func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
-	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store)
+	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store, e.logger)
 	if err != nil {
 		return err
 	}
