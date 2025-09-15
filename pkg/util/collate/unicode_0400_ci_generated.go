@@ -106,7 +106,7 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 
 // ImmutableKey implements Collator interface.
 func (uc *unicodeCICollator) ImmutableKey(str string) []byte {
-	return uc.Key(str)
+	return uc.KeyWithoutTrimRightSpace(uc.impl.Preprocess(str))
 }
 
 // KeyWithoutTrimRightSpace implements Collator interface.

@@ -57,7 +57,7 @@ func (gc *generalCICollator) Key(str string) []byte {
 
 // ImmutableKey implement Collator interface.
 func (g *generalCICollator) ImmutableKey(str string) []byte {
-	return g.Key(str)
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
 // KeyWithoutTrimRightSpace implements Collator interface.

@@ -69,7 +69,7 @@ func (g *gbkBinCollator) Key(str string) []byte {
 
 // ImmutableKey implement Collator interface.
 func (g *gbkBinCollator) ImmutableKey(str string) []byte {
-	return g.Key(str)
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
 // KeyWithoutTrimRightSpace implement Collator interface.

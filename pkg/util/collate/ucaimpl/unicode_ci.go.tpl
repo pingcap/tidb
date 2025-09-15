@@ -31,7 +31,7 @@ type {{.Name}} struct {
 
 // Clone implements Collator interface.
 func (uc *{{.Name}}) Clone() Collator {
-    return &{{.Name}}{impl: uc.impl.Clone()}
+	return &{{.Name}}{impl: uc.impl.Clone()}
 }
 
 // Compare implements Collator interface.
@@ -106,7 +106,7 @@ func (uc *{{.Name}}) Key(str string) []byte {
 
 // ImmutableKey implements Collator interface.
 func (uc *{{.Name}}) ImmutableKey(str string) []byte {
-	return uc.Key(str)
+	return uc.KeyWithoutTrimRightSpace(uc.impl.Preprocess(str))
 }
 
 // KeyWithoutTrimRightSpace implements Collator interface.
