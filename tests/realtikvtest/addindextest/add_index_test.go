@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -281,9 +280,6 @@ func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
 			tk.MustExec("alter table t1 add index idx(c1);")
 			tk.MustExec("insert into t1 values (3, default);")
 			tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
-			tk.MustExec("insert into t1 values (4, default);")
-			tk.MustGetErrCode("alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));", errno.ErrTruncatedWrongValue)
-			tk.MustExec("delete from t1 where c = 4;")
 			tk.MustExec("alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));")
 			tk.MustExec("insert into t1 values (5, default);")
 			tk.MustExec("alter table t1 drop index idx;")

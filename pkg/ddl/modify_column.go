@@ -471,8 +471,16 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, errors.Trace(err)
 			}
 		}
+
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
+
+		if len(changingIdxs) > 0 {
+			if err := setIndexBackfillStateIfNeed(w.workCtx, changingIdxs, jobCtx, job, dbInfo, tblInfo, w); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
@@ -533,6 +541,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
+		// new col's origin default value be the same as the new default value.
+		if err = changingCol.SetOriginDefaultValue(changingCol.GetDefaultValue()); err != nil {
+			return ver, errors.Trace(err)
+		}
 		updateObjectState(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
@@ -564,29 +576,12 @@ func (w *worker) doModifyColumnTypeWithData(
 			if !skip {
 				job.SnapshotVer = 0
 			}
-			if changingIdxs[0].BackfillState == model.BackfillStateInapplicable {
-				for _, indexInfo := range changingIdxs {
-					indexInfo.BackfillState = model.BackfillStateRunning
-				}
-			}
 
 			sctx, err1 := w.sessPool.Get()
 			if err1 != nil {
 				return ver, errors.Trace(err1)
 			}
 			rh := newReorgHandler(sess.NewSession(sctx))
-			resetReorgMeta := func(ctx context.Context, job *model.Job, t table.Table, rh *reorgHandler) (_ func(), err error) {
-				originReorgMeta := job.ReorgMeta
-				restoreReorgMeta := func() {
-					job.ReorgMeta = originReorgMeta
-				}
-				err = initJobReorgMetaFromVariables(ctx, job, t, rh.s.Context)
-				if err != nil {
-					restoreReorgMeta()
-					return nil, err
-				}
-				return restoreReorgMeta, nil
-			}
 			restoreReorgMeta, err := resetReorgMeta(w.workCtx, job, tbl, rh)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -664,6 +659,55 @@ func (w *worker) doModifyColumnTypeWithData(
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func resetReorgMeta(ctx context.Context, job *model.Job, t table.Table, rh *reorgHandler) (_ func(), err error) {
+	originReorgMeta := job.ReorgMeta
+	restoreReorgMeta := func() {
+		job.ReorgMeta = originReorgMeta
+	}
+	err = initJobReorgMetaFromVariables(ctx, job, t, rh.s.Context)
+	if err != nil {
+		restoreReorgMeta()
+		return nil, err
+	}
+	return restoreReorgMeta, nil
+}
+
+func setIndexBackfillStateIfNeed(ctx context.Context, changingIdxs []*model.IndexInfo, jobCtx *jobContext,
+	job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo, w *worker) error {
+	tbl, err := getTable(jobCtx.getAutoIDRequirement(), dbInfo.ID, tblInfo)
+	if err != nil {
+		return err
+	}
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		w.sessPool.Put(sctx)
+	}()
+
+	rh := newReorgHandler(sess.NewSession(sctx))
+	restoreReorgMeta, err := resetReorgMeta(ctx, job, tbl, rh)
+	defer func() {
+		if restoreReorgMeta != nil {
+			restoreReorgMeta()
+		}
+	}()
+	if err != nil {
+		return err
+	}
+	reorgTp, err := pickBackfillType(job.ReorgMeta)
+	if err != nil {
+		return err
+	}
+	if reorgTp.NeedMergeProcess() && changingIdxs[0].BackfillState == model.BackfillStateInapplicable {
+		for _, indexInfo := range changingIdxs {
+			indexInfo.BackfillState = model.BackfillStateRunning
+		}
+	}
+	return nil
 }
 
 func skipReorgColumn(se *sess.Session, job *model.Job) bool {
@@ -902,10 +946,6 @@ func GetModifiableColumnJob(
 		}
 		if hasColumnarIndexColumn(t.Meta(), col.ColumnInfo) {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column")
-		}
-		// new col's origin default value be the same as the new default value.
-		if err = newCol.ColumnInfo.SetOriginDefaultValue(newCol.ColumnInfo.GetDefaultValue()); err != nil {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column set origin default value failed")
 		}
 	}
 
