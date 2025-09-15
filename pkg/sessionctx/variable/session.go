@@ -1107,7 +1107,7 @@ type SessionVars struct {
 	// DefaultCollationForUTF8MB4 indicates the default collation of UTF8MB4.
 	DefaultCollationForUTF8MB4 string
 
-	// TiDBDefaultAutoIDCache indicates the default value of the 'tidb_auto_id_cache' system variable.
+	// TiDBDefaultAutoIDCache indicates the default value of the 'tidb_default_auto_id_cache' system variable.
 	TiDBDefaultAutoIDCache int
 
 	// BatchInsert indicates if we should split insert data into multiple batches.

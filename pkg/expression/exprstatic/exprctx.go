@@ -75,7 +75,7 @@ func WithDefaultCollationForUTF8MB4(collation string) ExprCtxOption {
 	}
 }
 
-// WithTiDBDefaultAutoIDCache sets the value of the 'tidb_auto_id_cache'.
+// WithTiDBDefaultAutoIDCache sets the value of the 'tidb_default_auto_id_cache'.
 func WithTiDBDefaultAutoIDCache(autoIDCache int) ExprCtxOption {
 	return func(s *exprCtxState) {
 		s.tidbDefaultAutoIDCache = autoIDCache
