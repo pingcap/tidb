@@ -365,7 +365,7 @@ func (svr *Server) KvPrewrite(ctx context.Context, req *kvrpcpb.PrewriteRequest)
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.PrewriteResponse{RegionError: reqCtx.regErr}, nil
 	}
-	err = svr.mvccStore.Prewrite(reqCtx, req)
+	result := svr.mvccStore.Prewrite(reqCtx, req)
 	resp := &kvrpcpb.PrewriteResponse{}
 	if reqCtx.asyncMinCommitTS > 0 {
 		resp.MinCommitTs = reqCtx.asyncMinCommitTS
@@ -373,7 +373,9 @@ func (svr *Server) KvPrewrite(ctx context.Context, req *kvrpcpb.PrewriteRequest)
 	if reqCtx.onePCCommitTS > 0 {
 		resp.OnePcCommitTs = reqCtx.onePCCommitTS
 	}
-	resp.Errors, resp.RegionError = convertToPBErrors(err)
+	if result != nil {
+		resp.Errors, resp.RegionError = result.ToPBErrors()
+	}
 	return resp, nil
 }
 

@@ -65,13 +65,14 @@ func NewIterator(txn *badger.Txn, reverse bool, startKey, endKey []byte) *badger
 
 // DBReader reads data from DB, for read-only requests, the locks must already be checked before DBReader is created.
 type DBReader struct {
-	StartKey  []byte
-	EndKey    []byte
-	txn       *badger.Txn
-	iter      *badger.Iterator
-	extraIter *badger.Iterator
-	revIter   *badger.Iterator
-	RcCheckTS bool
+	StartKey        []byte
+	EndKey          []byte
+	txn             *badger.Txn
+	iter            *badger.Iterator
+	extraIter       *badger.Iterator
+	revIter         *badger.Iterator
+	RcCheckTS       bool
+	SkipNewerChange bool
 }
 
 // GetMvccInfoByKey fills MvccInfo reading committed keys from db
@@ -214,7 +215,6 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 	if r.RcCheckTS {
 		r.txn.SetReadTS(math.MaxUint64)
 	}
-	skipValue := proc.SkipValue()
 	iter := r.GetIter()
 	var cnt int
 	var err error
@@ -224,6 +224,14 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 		if exceedEndKey(key, endKey) {
 			break
 		}
+		if r.SkipNewerChange {
+			// If the item has newer version, and skipNewerChange flag is set, skip this item.
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				continue
+			}
+		}
+
 		err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 		if err != nil {
 			return errors.Trace(err)
@@ -232,11 +240,9 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 			continue
 		}
 		var val []byte
-		if !skipValue {
-			val, err = item.Value()
-			if err != nil {
-				return errors.Trace(err)
-			}
+		val, err = item.Value()
+		if err != nil {
+			return errors.Trace(err)
 		}
 		err = proc.Process(key, val)
 		if err != nil {
@@ -288,6 +294,13 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 		}
 		if cnt == 0 && bytes.Equal(key, endKey) {
 			continue
+		}
+		if r.SkipNewerChange {
+			// If the item has newer version, and skipNewerChange flag is set, skip this item.
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				continue
+			}
 		}
 		var err error
 		err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
