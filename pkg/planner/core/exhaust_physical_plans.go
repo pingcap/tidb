@@ -77,7 +77,7 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 	case *logicalop.LogicalSequence:
 		return exhaustPhysicalPlans4LogicalSequence(x, prop)
 	case *logicalop.LogicalSelection:
-		return exhaustPhysicalPlans4LogicalSelection(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
 		return exhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
@@ -3727,34 +3727,6 @@ func admitIndexJoinProp(child, prop *property.PhysicalProperty) *property.Physic
 		}
 	}
 	return child
-}
-
-func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	p := lp.(*logicalop.LogicalSelection)
-	newProps := make([]*property.PhysicalProperty, 0, 2)
-	childProp := prop.CloneEssentialFields()
-	newProps = append(newProps, childProp)
-	// we lift the p.CanPushDown(kv.TiFlash) check here, which may depend on the children.
-	canPushDownToTiFlash := !expression.ContainVirtualColumn(p.Conditions) &&
-		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, kv.TiFlash)
-
-	if prop.TaskTp != property.MppTaskType &&
-		p.SCtx().GetSessionVars().IsMPPAllowed() &&
-		canPushDownToTiFlash {
-		childPropMpp := prop.CloneEssentialFields()
-		childPropMpp.TaskTp = property.MppTaskType
-		newProps = append(newProps, childPropMpp)
-	}
-
-	ret := make([]base.PhysicalPlan, 0, len(newProps))
-	newProps = admitIndexJoinProps(newProps, prop)
-	for _, newProp := range newProps {
-		sel := physicalop.PhysicalSelection{
-			Conditions: p.Conditions,
-		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
-		ret = append(ret, sel)
-	}
-	return ret, true, nil
 }
 
 func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
