@@ -3773,7 +3773,6 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 
 func exhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	g, ls := base.GetGEAndLogical[*logicalop.LogicalSequence](super)
-	ge := g.(*memo.GroupExpression)
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
 	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true,
 		CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
@@ -3794,7 +3793,8 @@ func exhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property
 		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType, anyType.CloneEssentialFields()})
 	}
 	var seqSchema *expression.Schema
-	if ge != nil {
+	if g != nil {
+		ge := g.(*memo.GroupExpression)
 		seqSchema = ge.Inputs[len(ge.Inputs)-1].GetLogicalProperty().Schema
 	} else {
 		seqSchema = ls.Children()[ls.ChildLen()-1].Schema()
