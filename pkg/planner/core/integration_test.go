@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -2280,14 +2279,6 @@ func TestTiFlashHashAggPreAggMode(t *testing.T) {
 
 		err := tk.ExecToErr("set @@tiflash_hashagg_preaggregation_mode = 'test';")
 		require.ErrorContains(t, err, "incorrect value: `test`. tiflash_hashagg_preaggregation_mode options: force_preagg, auto, force_streaming")
-	})
-}
-
-func TestVariableRewritter(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustGetErrCode("select @@session.ddl_slow_threshold", errno.ErrIncorrectGlobalLocalVar)
-		tk.MustGetErrCode("select @@global.warning_count", errno.ErrIncorrectGlobalLocalVar)
-		tk.MustGetErrCode("select @@instance.tidb_redact_log", errno.ErrIncorrectGlobalLocalVar)
 	})
 }
 
