@@ -179,8 +179,12 @@ func (e *GroupExpression) GetWrappedLogicalPlan() base.LogicalPlan {
 // GetChildStatsAndSchema overrides the logical plan interface implemented by BaseLogicalPlan.
 func (e *GroupExpression) GetChildStatsAndSchema() (stats0 *property.StatsInfo, schema0 *expression.Schema) {
 	intest.AssertFunc(func() bool {
-		_, ok := e.GetWrappedLogicalPlan().(*logicalop.LogicalJoin)
-		return !ok
+		switch e.GetWrappedLogicalPlan().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalApply:
+			return false
+		default:
+			return true
+		}
 	}, "GetChildStatsAndSchema should not be called on join GE, Please use getJoinChildStatsAndSchema.")
 	return e.Inputs[0].GetLogicalProperty().Stats, e.Inputs[0].GetLogicalProperty().Schema
 }
@@ -188,8 +192,12 @@ func (e *GroupExpression) GetChildStatsAndSchema() (stats0 *property.StatsInfo, 
 // GetJoinChildStatsAndSchema overrides the logical plan interface implemented by BaseLogicalPlan.
 func (e *GroupExpression) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
 	intest.AssertFunc(func() bool {
-		_, ok := e.GetWrappedLogicalPlan().(*logicalop.LogicalJoin)
-		return ok
+		switch e.GetWrappedLogicalPlan().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalApply:
+			return true
+		default:
+			return false
+		}
 	}, "GetJoinChildStatsAndSchema should not be called on non-join GE, Please use GetChildStatsAndSchema.")
 	stats0, schema0 = e.Inputs[0].GetLogicalProperty().Stats, e.Inputs[0].GetLogicalProperty().Schema
 	stats1, schema1 = e.Inputs[1].GetLogicalProperty().Stats, e.Inputs[1].GetLogicalProperty().Schema
