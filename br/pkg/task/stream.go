@@ -1783,7 +1783,7 @@ func restoreStream(
 		sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
 		log.Info("Generating SQLs for restoring TiFlash Replica",
 			zap.Strings("sqls", sqls))
-		if client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
+		if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
 			return errors.Annotate(err, "failed to reset tiflash replicas")
 		}
 	}
