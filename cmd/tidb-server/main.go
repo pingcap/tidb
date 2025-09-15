@@ -764,10 +764,38 @@ func setGlobalVars() {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
 
+<<<<<<< HEAD
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
+=======
+	// set instance variables
+	setInstanceVar := func(name string, value string) {
+		if value == "" || value == "0" {
+			return
+		}
+		old := variable.GetSysVar(name)
+		tmp := *old
+		tmp.Value = value
+		tmp.Scope |= vardef.ScopeInstance
+		variable.RegisterSysVar(&tmp)
+	}
+	{
+		setInstanceVar(vardef.TiDBStmtSummaryMaxStmtCount, strconv.FormatUint(cfg.Instance.StmtSummaryMaxStmtCount, 10))
+		setInstanceVar(vardef.TiDBServerMemoryLimit, cfg.Instance.ServerMemoryLimit)
+		setInstanceVar(vardef.TiDBServerMemoryLimitGCTrigger, cfg.Instance.ServerMemoryLimitGCTrigger)
+		setInstanceVar(vardef.TiDBInstancePlanCacheMaxMemSize, cfg.Instance.InstancePlanCacheMaxMemSize)
+		setInstanceVar(vardef.TiDBStatsCacheMemQuota, strconv.FormatUint(cfg.Instance.StatsCacheMemQuota, 10))
+		setInstanceVar(vardef.TiDBMemQuotaBindingCache, strconv.FormatUint(cfg.Instance.MemQuotaBindingCache, 10))
+		setInstanceVar(vardef.TiDBSchemaCacheSize, cfg.Instance.SchemaCacheSize)
+	}
+
+	variable.SetSysVar(vardef.TiDBForcePriority, mysql.Priority2Str[priority])
+	variable.SetSysVar(vardef.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
+	variable.SetSysVar(vardef.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
+	variable.SetSysVar(vardef.Port, fmt.Sprintf("%d", cfg.Port))
+>>>>>>> 8186440426d (config: add new instance variables (#63321))
 	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
