@@ -2377,15 +2377,6 @@ func isJoinChildFitMPPBCJ(p *logicalop.LogicalJoin, childIndexToBC int, mppStore
 	return rowBC*float64(mppStoreCnt) <= rowHash
 }
 
-func getChildStatsAndSchema(ge *memo.GroupExpression, p base.LogicalPlan) (stats0 *property.StatsInfo, schema0 *expression.Schema) {
-	if ge != nil {
-		stats0, schema0 = ge.Inputs[0].GetLogicalProperty().Stats, ge.Inputs[0].GetLogicalProperty().Schema
-	} else {
-		stats0, schema0 = p.Children()[0].StatsInfo(), p.Children()[0].Schema()
-	}
-	return
-}
-
 func getJoinChildStatsAndSchema(ge base.GroupExpressionInterface, p base.LogicalPlan) (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
 	if ge != nil {
 		g := ge.(*memo.GroupExpression)
