@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -188,15 +187,16 @@ type WriterSummary struct {
 	// TotalCnt is the total count of the KV written by this writer.
 	// depends on onDup setting, duplicates might not be included.
 	TotalCnt           uint64
+	PutRequestCount    uint64
 	MultipleFilesStats []MultipleFilesStat
 	ConflictInfo       engineapi.ConflictInfo
 }
 
-// OnCloseFunc is the callback function when a writer is closed.
-type OnCloseFunc func(summary *WriterSummary)
+// OnWriterCloseFunc is the callback function when a writer is closed.
+type OnWriterCloseFunc func(summary *WriterSummary)
 
-// dummyOnCloseFunc is a dummy OnCloseFunc.
-func dummyOnCloseFunc(*WriterSummary) {}
+// dummyOnWriterCloseFunc is a dummy OnWriterCloseFunc.
+func dummyOnWriterCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
@@ -205,7 +205,7 @@ type WriterBuilder struct {
 	blockSize    int
 	propSizeDist uint64
 	propKeysDist uint64
-	onClose      OnCloseFunc
+	onClose      OnWriterCloseFunc
 	tikvCodec    tikv.Codec
 	onDup        engineapi.OnDuplicateKey
 }
@@ -217,7 +217,7 @@ func NewWriterBuilder() *WriterBuilder {
 		blockSize:    DefaultBlockSize,
 		propSizeDist: defaultPropSizeDist,
 		propKeysDist: defaultPropKeysDist,
-		onClose:      dummyOnCloseFunc,
+		onClose:      dummyOnWriterCloseFunc,
 	}
 }
 
@@ -243,9 +243,9 @@ func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 }
 
 // SetOnCloseFunc sets the callback function when a writer is closed.
-func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
+func (b *WriterBuilder) SetOnCloseFunc(onClose OnWriterCloseFunc) *WriterBuilder {
 	if onClose == nil {
-		onClose = dummyOnCloseFunc
+		onClose = dummyOnWriterCloseFunc
 	}
 	b.onClose = onClose
 	return b
@@ -439,7 +439,7 @@ type Writer struct {
 	kvLocations []membuf.SliceLocation
 	kvSize      int64
 
-	onClose OnCloseFunc
+	onClose OnWriterCloseFunc
 	onDup   engineapi.OnDuplicateKey
 	closed  bool
 
@@ -456,6 +456,7 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+	putReqCnt uint64
 
 	tikvCodec tikv.Codec
 	// duplicate key's statistics.
@@ -500,6 +501,11 @@ func (w *Writer) LockForWrite() func() {
 	return func() {}
 }
 
+// WrittenBytes returns the number of bytes written by this writer.
+func (w *Writer) WrittenBytes() int64 {
+	return int64(w.totalSize)
+}
+
 // Close closes the writer.
 func (w *Writer) Close(ctx context.Context) error {
 	if w.closed {
@@ -527,6 +533,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		Max:                w.maxKey,
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
+		PutRequestCount:    w.putReqCnt,
 		MultipleFilesStats: w.multiFileStats,
 		ConflictInfo:       w.conflictInfo,
 	})
@@ -806,6 +813,9 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
+		OnUpload: func() {
+			w.putReqCnt++
+		},
 	})
 	if err != nil {
 		return "", "", nil, nil, err
@@ -814,6 +824,9 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
+		OnUpload: func() {
+			w.putReqCnt++
+		},
 	})
 	if err != nil {
 		_ = dataWriter.Close(ctx)
@@ -826,8 +839,7 @@ func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalF
 	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
 	writer, err := w.store.Create(ctx, path, &storage.WriterOption{
 		Concurrency: 20,
-		PartSize:    MinUploadPartSize,
-	})
+		PartSize:    MinUploadPartSize})
 	return path, writer, err
 }
 
@@ -896,6 +908,6 @@ func (e *EngineWriter) IsSynced() bool {
 }
 
 // Close implements backend.EngineWriter interface.
-func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (e *EngineWriter) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	return nil, e.w.Close(ctx)
 }

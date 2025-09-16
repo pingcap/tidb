@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -646,7 +647,7 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	// TODO we need clean it when version of JobStateRollbackDone is synced also.
 	if job.State == model.JobStateSynced && s.etcdCli != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
-		err = util.DeleteKeysWithPrefixFromEtcd(path, s.etcdCli, util.KeyOpDefaultRetryCnt, util.KeyOpDefaultTimeout)
+		err = util.DeleteKeysWithPrefixFromEtcd(path, s.etcdCli, etcd.KeyOpDefaultRetryCnt, etcd.KeyOpDefaultTimeout)
 		if err != nil {
 			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}

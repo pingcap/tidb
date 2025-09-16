@@ -235,9 +235,8 @@ var Attach2Task4PhysicalTopN func(pp base.PhysicalPlan, tasks ...base.Task) base
 // ResolveIndices4PhysicalTopN will be called by PhysicalTopN in physicalOp pkg.
 var ResolveIndices4PhysicalTopN func(pp base.PhysicalPlan) (err error)
 
-// GetPlanCostVer24PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
-var GetPlanCostVer24PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+// Attach2Task4PhysicalExpand will be called by PhysicalExpand in physicalOp pkg.
+var Attach2Task4PhysicalExpand func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // ResolveIndices4PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
 var ResolveIndices4PhysicalSelection func(pp base.PhysicalPlan) (err error)
@@ -245,12 +244,13 @@ var ResolveIndices4PhysicalSelection func(pp base.PhysicalPlan) (err error)
 // Attach2Task4PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
 var Attach2Task4PhysicalSelection func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
-// Attach2Task4PhysicalExpand will be called by PhysicalExpand in physicalOp pkg.
-var Attach2Task4PhysicalExpand func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
-
 // GetPlanCostVer14PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
 var GetPlanCostVer14PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
+var GetPlanCostVer24PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 // Attach2Task4PhysicalUnionScan will be called by PhysicalUnionScan in physicalOp pkg.
 var Attach2Task4PhysicalUnionScan func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
@@ -314,10 +314,32 @@ var GetPlanCostVer24PhysicalMergeJoin func(pp base.PhysicalPlan, taskType proper
 var GetPlanCostVer14PhysicalIndexScan func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
+// GetPlanCostVer24PhysicalIndexScan returns the plan-cost of this sub-plan, which is:
+// plan-cost = rows * log2(row-size) * scan-factor
+// log2(row-size) is from experiments.
+var GetPlanCostVer24PhysicalIndexScan func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
+
 // GetPlanCostVer14PhysicalTableScan calculates the cost of the plan if it has not been calculated yet
 // and returns the cost.
 var GetPlanCostVer14PhysicalTableScan func(pp base.PhysicalPlan,
 	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalTableScan returns the plan-cost of this sub-plan, which is:
+// plan-cost = rows * log2(row-size) * scan-factor
+// log2(row-size) is from experiments.
+var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// GetPlanCostVer14PhysicalIndexReader calculates the cost of the plan if it has not been calculated yet
+var GetPlanCostVer14PhysicalIndexReader func(pp base.PhysicalPlan, _ property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalIndexReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = (child-cost + net-cost) / concurrency
+// net-cost = rows * row-size * net-factor
+var GetPlanCostVer24PhysicalIndexReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
 // GetCost4PhysicalHashJoin computes cost of hash join operator itself.
 var GetCost4PhysicalHashJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64,
@@ -331,17 +353,17 @@ var GetPlanCostVer14PhysicalHashJoin func(pp base.PhysicalPlan, taskType propert
 // Attach2Task4PhysicalHashJoin implements PhysicalPlan interface for PhysicalHashJoin.
 var Attach2Task4PhysicalHashJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
-// GetPlanCostVer24PhysicalIndexScan returns the plan-cost of this sub-plan, which is:
-// plan-cost = rows * log2(row-size) * scan-factor
-// log2(row-size) is from experiments.
-var GetPlanCostVer24PhysicalIndexScan func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
+// GetPlanCostVer14PhysicalIndexMergeReader calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalIndexMergeReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
 
-// GetPlanCostVer24PhysicalTableScan returns the plan-cost of this sub-plan, which is:
-// plan-cost = rows * log2(row-size) * scan-factor
-// log2(row-size) is from experiments.
-var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+// GetPlanCostVer24PhysicalIndexMergeReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + probe-child-cost +
+// build-hash-cost + build-filter-cost +
+// (probe-filter-cost + probe-hash-cost) / concurrency
+var GetPlanCostVer24PhysicalIndexMergeReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
 // GetPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +
@@ -413,6 +435,23 @@ var GetPlanCostVer14PhysicalApply func(pp base.PhysicalPlan, taskType property.T
 var GetPlanCostVer24PhysicalApply func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
 
+// GetCost4PhysicalIndexLookUpReader computes the cost of index lookup reader operator.
+var GetCost4PhysicalIndexLookUpReader func(pp base.PhysicalPlan, costFlag uint64) float64
+
+// GetPlanCostVer14PhysicalIndexLookUpReader calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalIndexLookUpReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalIndexLookUpReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
+// probe-cost = probe-child-cost * build-rows
+var GetPlanCostVer24PhysicalIndexLookUpReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
+
+// ResolveIndices4PhysicalIndexLookUpReader is used to resolve indices for PhysicalIndexLookUpReader.
+var ResolveIndices4PhysicalIndexLookUpReader func(pp base.PhysicalPlan) (err error)
+
 // Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
@@ -431,8 +470,42 @@ var GetPlanCostVer24PhysicalTableReader func(pp base.PhysicalPlan, taskType prop
 var GetPlanCostVer14PhysicalTableReader func(pp base.PhysicalPlan,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
+// GetCost4PointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
+var GetCost4PointGetPlan func(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64
+
+// GetPlanCostVer14PointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
+var GetPlanCostVer14PointGetPlan func(pp base.PhysicalPlan, _ property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PointGetPlan returns the plan-cost of this sub-plan, which is:
+var GetPlanCostVer24PointGetPlan func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
+
+// GetCost4BatchPointGetPlan returns cost of the BatchPointGetPlan.
+var GetCost4BatchPointGetPlan func(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64
+
+// GetPlanCostVer14BatchPointGetPlan calculates the cost of the plan if it has not
+// been calculated yet and returns the cost.
+var GetPlanCostVer14BatchPointGetPlan func(pp base.PhysicalPlan, _ property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24BatchPointGetPlan returns the plan-cost of this sub-plan, which is:
+var GetPlanCostVer24BatchPointGetPlan func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
+
 // LoadTableStats will be called in physicalOp pkg.
 var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
+
+// GetCost4PhysicalIndexMergeJoin computes the cost of index merge join operator and its children.
+var GetCost4PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
+	outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64
+
+// GetPlanCostVer14PhysicalIndexMergeJoin computes the cost of index merge join operator and its children
+var GetPlanCostVer14PhysicalIndexMergeJoin func(pp base.PhysicalPlan,
+	taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
+
+// Attach2Task4PhysicalIndexMergeJoin implements PhysicalPlan interface.
+var Attach2Task4PhysicalIndexMergeJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // ****************************************** task related ***********************************************
 
@@ -457,16 +530,143 @@ var GetPossibleAccessPaths func(ctx base.PlanContext, tableHints *hint.PlanHints
 // **************************************** plan clone related ********************************************
 
 // CloneExpressionsForPlanCache is used to clone expressions for plan cache.
-var CloneExpressionsForPlanCache func(exprs, cloned []expression.Expression) []expression.Expression
+func CloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	allSafe := true
+	for _, e := range exprs {
+		if !e.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return exprs
+	}
+	if cloned == nil {
+		cloned = make([]expression.Expression, 0, len(exprs))
+	} else {
+		cloned = cloned[:0]
+	}
+	for _, e := range exprs {
+		if e.SafeToShareAcrossSession() {
+			cloned = append(cloned, e)
+		} else {
+			cloned = append(cloned, e.Clone())
+		}
+	}
+	return cloned
+}
 
 // CloneColumnsForPlanCache is used to clone columns for plan cache.
-var CloneColumnsForPlanCache func(cols, cloned []*expression.Column) []*expression.Column
+func CloneColumnsForPlanCache(cols, cloned []*expression.Column) []*expression.Column {
+	if cols == nil {
+		return nil
+	}
+	allSafe := true
+	for _, c := range cols {
+		if !c.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return cols
+	}
+	if cloned == nil {
+		cloned = make([]*expression.Column, 0, len(cols))
+	} else {
+		cloned = cloned[:0]
+	}
+	for _, c := range cols {
+		if c == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
+		} else {
+			cloned = append(cloned, c.Clone().(*expression.Column))
+		}
+	}
+	return cloned
+}
 
 // CloneConstantsForPlanCache is used to clone constants for plan cache.
-var CloneConstantsForPlanCache func(constants, cloned []*expression.Constant) []*expression.Constant
+func CloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*expression.Constant {
+	if constants == nil {
+		return nil
+	}
+	allSafe := true
+	for _, c := range constants {
+		if c == nil {
+			continue
+		}
+		if !c.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return constants
+	}
+	if cloned == nil {
+		cloned = make([]*expression.Constant, 0, len(constants))
+	} else {
+		cloned = cloned[:0]
+	}
+	for _, c := range constants {
+		if c.SafeToShareAcrossSession() {
+			cloned = append(cloned, c)
+		} else {
+			cloned = append(cloned, c.Clone().(*expression.Constant))
+		}
+	}
+	return cloned
+}
 
 // CloneScalarFunctionsForPlanCache is used clone scalar functions for plan cache
-var CloneScalarFunctionsForPlanCache func(scalarFuncs, cloned []*expression.ScalarFunction) []*expression.ScalarFunction
+func CloneScalarFunctionsForPlanCache(scalarFuncs, cloned []*expression.ScalarFunction) []*expression.ScalarFunction {
+	if scalarFuncs == nil {
+		return nil
+	}
+	allSafe := true
+	for _, f := range scalarFuncs {
+		if !f.SafeToShareAcrossSession() {
+			allSafe = false
+			break
+		}
+	}
+	if allSafe {
+		return scalarFuncs
+	}
+	if cloned == nil {
+		cloned = make([]*expression.ScalarFunction, 0, len(scalarFuncs))
+	} else {
+		cloned = cloned[:0]
+	}
+	for _, f := range scalarFuncs {
+		if f.SafeToShareAcrossSession() {
+			cloned = append(cloned, f)
+		} else {
+			cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
+		}
+	}
+	return cloned
+}
+
+// CloneExpression2DForPlanCache is used to clone 2D expressions for plan cache.
+func CloneExpression2DForPlanCache(exprs [][]expression.Expression) [][]expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	cloned := make([][]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		cloned = append(cloned, CloneExpressionsForPlanCache(e, nil))
+	}
+	return cloned
+}
 
 // ****************************************** optimize portal *********************************************
 

@@ -239,7 +239,7 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	if !reload && p.StatsInfo() != nil {
 		return p.StatsInfo(), false, nil
 	}
-	p.SetStats(childStats[0].Scale(cost.SelectionFactor))
+	p.SetStats(childStats[0].Scale(p.SCtx().GetSessionVars(), cost.SelectionFactor))
 	p.StatsInfo().GroupNDVs = nil
 	return p.StatsInfo(), true, nil
 }
