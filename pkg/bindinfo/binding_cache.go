@@ -38,8 +38,8 @@ type BindingCacheUpdater interface {
 	// LoadFromStorageToCache loads global bindings from storage to the memory cache.
 	LoadFromStorageToCache(fullLoad bool) (err error)
 
-	// updateBindingUsageInfoToStorage is to update the binding usage info into storage
-	UpdateBindingUsageInfoToStorage()
+	// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
+	UpdateBindingUsageInfoToStorage() error
 
 	// LastUpdateTime returns the last update time.
 	LastUpdateTime() types.Time
@@ -99,13 +99,15 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 	return nil
 }
 
-// updateBindingUsageInfoToStorage is to update the binding usage info into storage
-func (u *bindingCacheUpdater) UpdateBindingUsageInfoToStorage() {
+// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
+func (u *bindingCacheUpdater) UpdateBindingUsageInfoToStorage() error {
+	defer func() {
+		if r := recover(); r != nil {
+			bindingLogger().Warn("panic when update usage info for binding", zap.Any("recover", r))
+		}
+	}()
 	bindings := u.GetAllBindings()
-	err := updateBindingUsageInfoToStorage(u.sPool, bindings)
-	if err != nil {
-		bindingLogger().Warn("BindingHandle.UpdateBindingUsageInfoToStorage", zap.Error(err))
-	}
+	return updateBindingUsageInfoToStorage(u.sPool, bindings)
 }
 
 // LastUpdateTime returns the last update time.

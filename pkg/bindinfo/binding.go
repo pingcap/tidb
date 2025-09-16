@@ -80,7 +80,8 @@ type Binding struct {
 	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`
 
-	// usageInfo records the binding usage info
+	// UsageInfo is to track the usage information `last_used_time` of this binding
+	// and it will be updated when this binding is used.
 	UsageInfo bindingInfoUsageInfo
 }
 
@@ -100,21 +101,27 @@ func (b *Binding) UpdateUsageInfo() {
 	b.UsageInfo.Update()
 }
 
-// ResetUsageInfo is to reset the bindinfo usage info after writing into storage.
-func (b *Binding) ResetUsageInfo() {
-	b.UsageInfo.CreateAt.Store(nil)
-	b.UsageInfo.LastUsedAt.Store(nil)
+// UpdateSavedAt is to update the last saved time
+func (b *Binding) UpdateSavedAt(ts *time.Time) {
+	b.UsageInfo.LastSavedAt.Store(ts)
 }
 
 type bindingInfoUsageInfo struct {
+	// LastUsedAt records the last time when this binding is used.
+	// It is nil if this binding has never been used or has been reset after writing into storage.
+	// It is updated when this binding is used.
+	// It is used to update the `last_used_time` field in mysql.bind_info table.
 	LastUsedAt atomic.Pointer[time.Time]
-	CreateAt   atomic.Pointer[time.Time]
+	// LastSavedAt records the last time when this binding is saved into storage.
+	LastSavedAt atomic.Pointer[time.Time]
 }
 
 func (b *bindingInfoUsageInfo) Update() {
 	now := time.Now()
-	if b.CreateAt.Load() == nil {
-		b.CreateAt.Store(&now)
+	if b.LastSavedAt.Load() == nil {
+		// If `LastSavedAt`  is equal to `nil`, we can consider it as a record that has not been written.
+		// Thus, from the first read, we take this as its saved time. After that, it will be written after a while.
+		b.LastSavedAt.Store(&now)
 	}
 	b.LastUsedAt.Store(&now)
 }

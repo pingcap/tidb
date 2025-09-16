@@ -157,6 +157,12 @@ func TestBootstrap(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
 	se.Close()
+	r = MustExecToRecodeSet(t, se, "select * from mysql.bind_info where original_sql = 'builtin_pseudo_sql_for_bind_lock'")
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	se.Close()
 }
 
 func globalVarsCount() int64 {

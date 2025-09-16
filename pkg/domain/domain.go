@@ -1580,8 +1580,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
-		writeBindingUsageTicker := time.NewTicker(bindinfo.WriteIntervalAfterNoReadBinding)
-		startupTs := time.Now()
+		writeBindingUsageTicker := time.NewTicker(100 * bindinfo.Lease)
 		defer func() {
 			bindWorkerTicker.Stop()
 			gcBindTicker.Stop()
@@ -1608,15 +1607,17 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
 			case <-writeBindingUsageTicker.C:
-				if time.Since(startupTs) < bindinfo.WriteIntervalAfterNoReadBinding {
-					continue
-				}
 				bindHandle := do.BindingHandle()
-				bindHandle.UpdateBindingUsageInfoToStorage()
+				err := bindHandle.UpdateBindingUsageInfoToStorage()
+				if err != nil {
+					logutil.BgLogger().Warn("BindingHandle.UpdateBindingUsageInfoToStorage", zap.Error(err))
+				}
+				// randomize the next write interval to avoid thundering herd problem
+				// if there are many tidb servers. The next write interval is [3h, 6h].
 				writeBindingUsageTicker.Reset(
 					randomDuration(
-						bindinfo.MinCheckIntervalForUpdateBindingUsageInfo,
-						bindinfo.MaxCheckIntervalForUpdateBindingUsageInfo,
+						3*60*60, // 3h
+						6*60*60, // 6h
 					),
 				)
 			}
