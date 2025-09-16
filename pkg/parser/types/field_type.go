@@ -361,14 +361,6 @@ func (ft *FieldType) CleanElemIsBinaryLit() {
 	}
 }
 
-// Clone returns a copy of itself.
-// Deprecated: tp clone() should be a deep-cloned, otherwise the underlying
-// elems and elemsIsBinaryLit is commonly shared.
-func (ft *FieldType) Clone() *FieldType {
-	ret := *ft
-	return &ret
-}
-
 // Equal checks whether two FieldType objects are equal.
 func (ft *FieldType) Equal(other *FieldType) bool {
 	// We do not need to compare whole `ft.flag == other.flag` when wrapping cast upon an Expression.
