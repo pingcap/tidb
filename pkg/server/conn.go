@@ -1099,7 +1099,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
 		if err != nil {
-			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
+			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				server_metrics.DisconnectNormal.Inc()
@@ -1742,12 +1742,12 @@ func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.Pl
 	return e.DumpSQLsFromFile(ctx, data)
 }
 
-func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
+func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&cc.ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
+			ctx := context.WithValue(ctx, plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
 			audit.OnGeneralEvent(ctx, cc.ctx.GetSessionVars(), eventType, cmd)
 		}
 		return nil
@@ -2067,7 +2067,24 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
+<<<<<<< HEAD
 	cc.audit(plugin.Starting)
+=======
+	cc.audit(context.Background(), plugin.Starting)
+
+	// if stmt is load data stmt, store the channel that reads from the conn
+	// into the ctx for executor to use
+	if s, ok := stmt.(*ast.LoadDataStmt); ok {
+		if s.FileLocRef == ast.FileLocClient {
+			err := cc.preprocessLoadDataLocal(ctx)
+			defer cc.postprocessLoadDataLocal()
+			if err != nil {
+				return false, err
+			}
+		}
+	}
+
+>>>>>>> bbd963f9cb0 (executor, plugin: add statement id info to the plugin (#63526))
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
 	// - If rs is not nil, the statement tracker detachment from session tracker
