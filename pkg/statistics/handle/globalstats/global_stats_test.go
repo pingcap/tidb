@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -28,6 +29,7 @@ import (
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -760,8 +762,7 @@ func TestGlobalStatsIndexNDV(t *testing.T) {
 }
 
 func TestGlobalStats(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -866,11 +867,15 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("use test")
 
 	for i, version := range []string{"1", "2"} {
+		if i == 0 && kerneltype.IsNextGen() {
+			t.Log("the next-gen kernel does not support analyze version 1")
+			continue
+		}
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
 
 		// analyze table t
 		tk.MustExec("drop table if exists t")
-		if i != 0 {
+		if i != 0 && kerneltype.IsClassic() {
 			err := statstestutil.HandleNextDDLEventWithTxn(h)
 			require.NoError(t, err)
 		}

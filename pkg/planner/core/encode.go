@@ -59,6 +59,9 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	for _, cte := range flat.CTEs {
 		opCount += len(cte)
 	}
+	for _, subQ := range flat.ScalarSubQueries {
+		opCount += len(subQ)
+	}
 	// assume an operator costs around 80 bytes, preallocate space for them
 	buf.Grow(80 * opCount)
 	encodeFlatPlanTree(flat.Main, 0, &buf)
@@ -92,6 +95,9 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 		if len(cte) > 1 {
 			encodeFlatPlanTree(cte[1:], 1, &buf)
 		}
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		encodeFlatPlanTree(subQ, 0, &buf)
 	}
 	return plancodec.Compress(buf.Bytes())
 }
@@ -373,11 +379,11 @@ func getSelectPlan(p base.Plan) base.PhysicalPlan {
 		selectPlan = physicalPlan
 	} else {
 		switch x := p.(type) {
-		case *Delete:
+		case *physicalop.Delete:
 			selectPlan = x.SelectPlan
-		case *Update:
+		case *physicalop.Update:
 			selectPlan = x.SelectPlan
-		case *Insert:
+		case *physicalop.Insert:
 			selectPlan = x.SelectPlan
 		case *Explain:
 			selectPlan = getSelectPlan(x.TargetPlan)

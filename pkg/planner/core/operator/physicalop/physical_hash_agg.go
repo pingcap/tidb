@@ -66,18 +66,6 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 	return p.BasePhysicalAgg.MemoryUsage()
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalHashAgg)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalAgg.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalAgg = *basePlan
-	return cloned, true
-}
-
 // CPUCostDivisor computes the concurrency to which we would amortize CPU cost
 // for hash aggregation.
 func (p *PhysicalHashAgg) CPUCostDivisor(hasDistinct bool) (divisor, con float64) {

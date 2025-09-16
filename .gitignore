@@ -44,3 +44,4 @@ genkeyword
 test_coverage
 coverage.dat
 .specstory
+.golangci.bck.yml

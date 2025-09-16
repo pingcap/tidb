@@ -1233,7 +1233,17 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	var onFlush func()
+	if option != nil {
+		onFlush = option.OnUpload
+		if onFlush != nil {
+			// Total number of PUT operations for an multi-part uploaded file = total file size / part-size + 2. For details, see
+			// https://repost.aws/questions/QUXmwDga0VRvSOOjYWMfor-w/are-we-billed-a-put-request-for-each-part-with-s3-multipart-upload-or-only-once-for-the-final-merged-file
+			onFlush() // Initiate: PUT
+			onFlush() // Complete: PUT
+		}
+	}
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, onFlush)
 	return uploaderWriter, nil
 }
 
