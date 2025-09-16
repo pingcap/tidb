@@ -1063,7 +1063,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}()
 	}
 	if hg.Len() == 0 {
-		return DefaultRowEst(0)
+		return RowEstimate{Est: 0, MinEst: 0, MaxEst: 0}
 	}
 
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
@@ -1075,14 +1075,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// We may have missed the true lowest/highest values due to sampling - and we are out of
 	// range without any modifications. So return oneValue to avoid underestimation.
 	if modifyCount == 0 {
-		return DefaultRowEst(oneValue)
+		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
 	}
 
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
 	if !allowUseModifyCount {
-		return DefaultRowEst(oneValue)
+		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
 	}
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
@@ -1123,7 +1123,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// make sure l < r
 	if l >= r {
-		return DefaultRowEst(0)
+		return RowEstimate{Est: 0, MinEst: 0, MaxEst: 0}
 	}
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
@@ -1211,8 +1211,24 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return result
 	}
 
-	// Use oneValue as lower bound
-	return DefaultRowEst(max(avgRowCount, oneValue))
+	// Use oneValue as lower bound and provide meaningful min/max estimates
+	finalEst := max(avgRowCount, oneValue)
+
+	// Minimum could be as low as 1.
+	minEst := min(oneValue, 1)
+
+	// Maximum could be as high as all added rows.
+	maxEst := max(oneValue, addedRows)
+
+	// Ensure min <= est <= max
+	minEst = min(minEst, finalEst)
+	maxEst = max(maxEst, finalEst)
+
+	return RowEstimate{
+		Est:    finalEst,
+		MinEst: minEst,
+		MaxEst: maxEst,
+	}
 }
 
 // Copy deep copies the histogram.
@@ -1559,7 +1575,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
 	// This only occurs when there are no histogram records in the histogram system table.
-	// It happens only to tables whose DDL events haven’t been processed yet and that have no indexes or keys,
+	// It happens only to tables whose DDL events haven't been processed yet and that have no indexes or keys,
 	// with the predicate column feature enabled.
 	if len(hists) == 0 {
 		return nil, nil
