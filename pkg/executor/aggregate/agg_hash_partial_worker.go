@@ -244,8 +244,8 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 		delta := mapper[finalWorkerIdx].Set(string(groupKey[i]), w.partialResultsBuffer[lastIdx])
 		allMemDelta += int64(len(groupKey[i]))
 		if delta > 0 {
-			w.partialResultsMapMem.Add(int64(delta))
-			w.memTracker.Consume(int64(delta))
+			w.partialResultsMapMem.Add(delta)
+			w.memTracker.Consume(delta)
 		}
 	}
 	w.partialResultsMapMem.Add(allMemDelta)

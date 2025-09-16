@@ -153,8 +153,8 @@ func NewAggPartialResultMapper() AggPartialResultMapper {
 }
 
 // NewAggPartialResultMapperWithCap creates a new AggPartialResultMapper with specified capacity
-func NewAggPartialResultMapperWithCap(cap int) AggPartialResultMapper {
-	return hack.NewMemAwareMap[string, []PartialResult](cap)
+func NewAggPartialResultMapperWithCap(capacity int) AggPartialResultMapper {
+	return hack.NewMemAwareMap[string, []PartialResult](capacity)
 }
 
 type serializer interface {

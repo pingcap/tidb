@@ -620,17 +620,17 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, found bool) {
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
-			if p := m.partitionInts[idx]; p == nil {
+			p := m.partitionInts[idx]
+			if p == nil {
 				return
-			} else {
-				ints = p.M
 			}
+			ints = p.M
 		} else {
-			if p := m.partitionStrs[idx]; p == nil {
+			p := m.partitionStrs[idx]
+			if p == nil {
 				return
-			} else {
-				strs = p.M
 			}
+			strs = p.M
 		}
 	}
 	if h.IsInt() {

@@ -1,3 +1,17 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package hack
 
 import (
@@ -125,7 +139,7 @@ type swissMap struct {
 }
 
 func (m *swissMap) directory() []*swissMapTable {
-	directory := unsafe.Slice((**swissMapTable)(unsafe.Pointer(m.dirPtr)), m.dirLen)
+	directory := unsafe.Slice((**swissMapTable)(m.dirPtr), m.dirLen)
 	return directory
 }
 
@@ -138,7 +152,7 @@ func (m *swissMap) Size(groupSize uint64) (sz uint64) {
 	sz += swissMapSize
 	sz += sizeofPtr * uint64(m.dirLen)
 	if m.dirLen == 0 {
-		sz += uint64(groupSize)
+		sz += groupSize
 		return
 	}
 
@@ -150,7 +164,7 @@ func (m *swissMap) Size(groupSize uint64) (sz uint64) {
 		}
 		lastTab = t
 		sz += swissTableSize
-		sz += uint64(groupSize) * uint64(t.groups.lengthMask+1)
+		sz += groupSize * (t.groups.lengthMask + 1)
 	}
 	return
 }
@@ -160,7 +174,7 @@ func (m *swissMap) Cap() uint64 {
 	if m.dirLen == 0 {
 		return swissMapGroupSlots
 	}
-	var cap uint64
+	var capacity uint64
 	var lastTab *swissMapTable
 	for i := range m.dirLen {
 		t := m.directoryAt(uintptr(i))
@@ -168,9 +182,9 @@ func (m *swissMap) Cap() uint64 {
 			continue
 		}
 		lastTab = t
-		cap += uint64(t.capacity)
+		capacity += uint64(t.capacity)
 	}
-	return cap
+	return capacity
 }
 
 // Size returns the accurate memory size
@@ -219,21 +233,21 @@ func (g *groupsReference) group(typ *swissMapType, i uint64) groupReference {
 	}
 }
 
-type TFlag uint8
-type Kind uint8
-type NameOff int32
-type TypeOff int32
-type TextOff int32
+type abiTFlag uint8
+type abiKind uint8
+type abiNameOff int32
+type abiTypeOff int32
+type abiTextOff int32
 
 // src/internal/abi/type.go:Type
 type abiType struct {
-	Size_       uintptr
-	PtrBytes    uintptr // number of (prefix) bytes in the type that can contain pointers
-	Hash        uint32  // hash of type; avoids computation in hash tables
-	TFlag       TFlag   // extra type information flags
-	Align_      uint8   // alignment of variable with this type
-	FieldAlign_ uint8   // alignment of struct field with this type
-	Kind_       Kind    // enumeration for C
+	Size       uintptr
+	PtrBytes   uintptr  // number of (prefix) bytes in the type that can contain pointers
+	Hash       uint32   // hash of type; avoids computation in hash tables
+	TFlag      abiTFlag // extra type information flags
+	Align      uint8    // alignment of variable with this type
+	FieldAlign uint8    // alignment of struct field with this type
+	Kind       abiKind  // enumeration for C
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
 	Equal func(unsafe.Pointer, unsafe.Pointer) bool
@@ -249,8 +263,8 @@ type abiType struct {
 	// including when TFlagGCMaskOnDemand is set. The types will, of course,
 	// have the same pointer layout (but not necessarily the same size).
 	GCData    *byte
-	Str       NameOff // string form
-	PtrToThis TypeOff // type for pointer to this type, may be zero
+	Str       abiNameOff // string form
+	PtrToThis abiTypeOff // type for pointer to this type, may be zero
 }
 
 // src/internal/abi/map_swiss.go:SwissMapType
@@ -285,6 +299,7 @@ const (
 )
 
 func (g *groupReference) cap(typ *swissMapType) uint64 {
+	_ = g
 	return groupCap(uint64(typ.GroupSize), uint64(typ.SlotSize))
 }
 
@@ -386,9 +401,9 @@ func (m *MemAwareMap[K, V]) Init(v map[K]V) int64 {
 }
 
 // NewMemAwareMap creates a new MemAwareMap with the given initial capacity.
-func NewMemAwareMap[K comparable, V any](cap int) *MemAwareMap[K, V] {
+func NewMemAwareMap[K comparable, V any](capacity int) *MemAwareMap[K, V] {
 	m := new(MemAwareMap[K, V])
-	m.Init(make(map[K]V, cap))
+	m.Init(make(map[K]V, capacity))
 	return m
 }
 

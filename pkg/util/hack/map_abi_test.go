@@ -42,9 +42,9 @@ func TestSwissTable(t *testing.T) {
 			for i := range table.groups.lengthMask + 1 {
 				ref := table.groups.group(sm.Type, i)
 				require.True(t, (sm.Type.GroupSize-groupSlotsOffset)%sm.Type.SlotSize == 0)
-				cap := ref.cap(sm.Type)
-				require.True(t, cap == swissMapGroupSlots)
-				for j := range cap {
+				capacity := ref.cap(sm.Type)
+				require.True(t, capacity == swissMapGroupSlots)
+				for j := range capacity {
 					k, v := *(*uint64)(ref.key(sm.Type, uintptr(j))), *(*uint64)(ref.elem(sm.Type, uintptr(j)))
 					if k == 1234 && v == 5678 {
 						require.False(t, found)
@@ -52,7 +52,6 @@ func TestSwissTable(t *testing.T) {
 						break
 					}
 				}
-
 			}
 		}
 		require.True(t, found)
