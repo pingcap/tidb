@@ -55,7 +55,7 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
-	onClose OnCloseFunc,
+	onClose OnWriterCloseFunc,
 	checkHotspot bool,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
@@ -67,7 +67,7 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 1)
 	if err != nil {
 		return err
 	}

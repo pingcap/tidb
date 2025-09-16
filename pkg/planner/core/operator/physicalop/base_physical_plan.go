@@ -15,22 +15,107 @@
 package physicalop
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+//go:generate go run ../../generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
+var (
+	_ base.PhysicalPlan = &PhysicalSelection{}
+	_ base.PhysicalPlan = &PhysicalProjection{}
+	_ base.PhysicalPlan = &PhysicalTopN{}
+	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
+	_ base.PhysicalPlan = &PhysicalTableDual{}
+	_ base.PhysicalPlan = &PhysicalUnionAll{}
+	_ base.PhysicalPlan = &PhysicalSort{}
+	_ base.PhysicalPlan = &NominalSort{}
+	_ base.PhysicalPlan = &PhysicalLock{}
+	_ base.PhysicalPlan = &PhysicalLimit{}
+	_ base.PhysicalPlan = &PhysicalIndexScan{}
+	_ base.PhysicalPlan = &PhysicalTableScan{}
+	_ base.PhysicalPlan = &PhysicalTableReader{}
+	_ base.PhysicalPlan = &PhysicalIndexReader{}
+	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
+	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
+	_ base.PhysicalPlan = &PhysicalHashAgg{}
+	_ base.PhysicalPlan = &PhysicalStreamAgg{}
+	_ base.PhysicalPlan = &PhysicalApply{}
+	_ base.PhysicalPlan = &PhysicalIndexJoin{}
+	_ base.PhysicalPlan = &PhysicalHashJoin{}
+	_ base.PhysicalPlan = &PhysicalMergeJoin{}
+	_ base.PhysicalPlan = &PhysicalUnionScan{}
+	_ base.PhysicalPlan = &PhysicalWindow{}
+	_ base.PhysicalPlan = &PhysicalShuffle{}
+	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
+	_ base.PhysicalPlan = &BatchPointGetPlan{}
+	_ base.PhysicalPlan = &PhysicalTableSample{}
+	_ base.PhysicalPlan = &PhysicalSequence{}
+)
+
+// AddExtraPhysTblIDColumn for partition table.
+// For keepOrder with partition table,
+// we need use partitionHandle to distinct two handles,
+// the `_tidb_rowid` in different partitions can have the same value.
+func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+	// Not adding the ExtraPhysTblID if already exists
+	if model.FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
+		return columns, schema, false
+	}
+	columns = append(columns, model.NewExtraPhysTblIDColInfo())
+	schema.Append(&expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPhysTblID,
+	})
+	return columns, schema, true
+}
+
+// CollectPlanStatsVersion uses to collect the statistics version of the plan.
+func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
+	for _, child := range plan.Children() {
+		statsInfos = CollectPlanStatsVersion(child, statsInfos)
+	}
+	switch copPlan := plan.(type) {
+	case *PhysicalTableReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.TablePlan, statsInfos)
+	case *PhysicalIndexReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
+	case *PhysicalIndexLookUpReader:
+		// For index loop up, only the indexPlan is necessary,
+		// because they use the same stats and we do not set the stats info for tablePlan.
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
+	case *PhysicalIndexScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
+	case *PhysicalTableScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
+	}
+
+	return statsInfos
+}
+
+// SafeClone clones this op.PhysicalPlan and handles its panic.
+func SafeClone(sctx base.PlanContext, v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone(sctx)
+}
 
 // BasePhysicalPlan is the common structure that used in physical plan.
 type BasePhysicalPlan struct {
@@ -148,9 +233,6 @@ func (p *BasePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 
 // StatsCount implements the base.PhysicalPlan.<5th> interface.
 func (p *BasePhysicalPlan) StatsCount() float64 {
-	if p == nil || p.StatsInfo() == nil {
-		fmt.Println(1)
-	}
 	return p.StatsInfo().RowCount
 }
 

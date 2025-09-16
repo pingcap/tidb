@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -262,22 +261,23 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalIndexReader returns the plan-cost of this sub-plan, which is:
 // plan-cost = (child-cost + net-cost) / concurrency
 // net-cost = rows * row-size * net-factor
-func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalIndexReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
 
-	rows := getCardinality(p.indexPlan, option.CostFlag)
+	rows := getCardinality(p.IndexPlan, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
 
-	childCost, err := p.indexPlan.GetPlanCostVer2(property.CopSingleReadTaskType, option)
+	childCost, err := p.IndexPlan.GetPlanCostVer2(property.CopSingleReadTaskType, option)
 	if err != nil {
 		return costusage.ZeroCostVer2, err
 	}
@@ -406,11 +406,12 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// GetPlanCostVer24PhysicalIndexMergeReader returns the plan-cost of this sub-plan, which is:
 // plan-cost = table-side-cost + sum(index-side-cost)
 // index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
-func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalIndexMergeReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -419,7 +420,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 	distConcurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 
 	var tableSideCost costusage.CostVer2
-	if tablePath := p.tablePlan; tablePath != nil {
+	if tablePath := p.TablePlan; tablePath != nil {
 		rows := getCardinality(tablePath, option.CostFlag)
 		rowSize := getAvgRowSize(tablePath.StatsInfo(), tablePath.Schema().Columns)
 
@@ -431,8 +432,8 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 		tableSideCost = costusage.DivCostVer2(costusage.SumCostVer2(tableNetCost, tableChildCost), distConcurrency)
 	}
 
-	indexSideCost := make([]costusage.CostVer2, 0, len(p.partialPlans))
-	for _, indexPath := range p.partialPlans {
+	indexSideCost := make([]costusage.CostVer2, 0, len(p.PartialPlansRaw))
+	for _, indexPath := range p.PartialPlansRaw {
 		rows := getCardinality(indexPath, option.CostFlag)
 		rowSize := getAvgRowSize(indexPath.StatsInfo(), indexPath.Schema().Columns)
 
@@ -798,11 +799,6 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	return utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin(&p.PhysicalIndexJoin, taskType, option, 2)
-}
-
 // getPlanCostVer24PhysicalApply returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
 // probe-cost = probe-child-cost * build-rows
@@ -858,23 +854,24 @@ func getPlanCostVer24PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
-		return p.planCostVer2, nil
+// getPlanCostVer24PointGetPlan returns the plan-cost of this sub-plan, which is:
+func getPlanCostVer24PointGetPlan(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PointGetPlan)
+	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
 	}
 
-	if p.accessCols == nil { // from fast plan code path
-		p.planCostVer2 = costusage.ZeroCostVer2
-		p.planCostInit = true
+	if p.AccessCols() == nil { // from fast plan code path
+		p.PlanCostVer2 = costusage.ZeroCostVer2
+		p.PlanCostInit = true
 		return costusage.ZeroCostVer2, nil
 	}
-	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
-	p.planCostVer2 = netCostVer2(option, 1, rowSize, netFactor)
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	p.PlanCostVer2 = netCostVer2(option, 1, rowSize, netFactor)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // getPlanCostVer2PhysicalExchangeReceiver returns the plan-cost of this sub-plan, which is:
@@ -908,24 +905,25 @@ func getPlanCostVer2PhysicalExchangeReceiver(pp base.PhysicalPlan, taskType prop
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
-		return p.planCostVer2, nil
+// getPlanCostVer24BatchPointGetPlan returns the plan-cost of this sub-plan, which is:
+func getPlanCostVer24BatchPointGetPlan(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.BatchPointGetPlan)
+	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
 	}
 
-	if p.accessCols == nil { // from fast plan code path
-		p.planCostVer2 = costusage.ZeroCostVer2
-		p.planCostInit = true
+	if p.AccessCols() == nil { // from fast plan code path
+		p.PlanCostVer2 = costusage.ZeroCostVer2
+		p.PlanCostInit = true
 		return costusage.ZeroCostVer2, nil
 	}
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
-	p.planCostVer2 = netCostVer2(option, rows, rowSize, netFactor)
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	p.PlanCostVer2 = netCostVer2(option, rows, rowSize, netFactor)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
 }
 
 // getPlanCostVer24PhysicalCTE implements PhysicalPlan interface.
@@ -1219,17 +1217,17 @@ func isTemporaryTable(tbl *model.TableInfo) bool {
 
 func getTableInfo(p base.PhysicalPlan) *model.TableInfo {
 	switch x := p.(type) {
-	case *PhysicalIndexReader:
-		return getTableInfo(x.indexPlan)
+	case *physicalop.PhysicalIndexReader:
+		return getTableInfo(x.IndexPlan)
 	case *physicalop.PhysicalTableReader:
 		return getTableInfo(x.TablePlan)
 	case *physicalop.PhysicalIndexLookUpReader:
 		return getTableInfo(x.TablePlan)
-	case *PhysicalIndexMergeReader:
-		if x.tablePlan != nil {
-			return getTableInfo(x.tablePlan)
+	case *physicalop.PhysicalIndexMergeReader:
+		if x.TablePlan != nil {
+			return getTableInfo(x.TablePlan)
 		}
-		return getTableInfo(x.partialPlans[0])
+		return getTableInfo(x.PartialPlansRaw[0])
 	case *physicalop.PhysicalTableScan:
 		return x.Table
 	case *physicalop.PhysicalIndexScan:

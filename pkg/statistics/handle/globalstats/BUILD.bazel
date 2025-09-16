@@ -47,6 +47,7 @@ go_test(
     flaky = True,
     shard_count = 28,
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/parser/ast",
@@ -59,6 +60,7 @@ go_test(
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/chunk",

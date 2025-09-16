@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -209,8 +208,9 @@ func getPlanCostVer14PhysicalIndexLookUpReader(pp base.PhysicalPlan, _ property.
 	return p.PlanCost, nil
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexReader) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalIndexReader calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalIndexReader(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalIndexReader)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -219,20 +219,20 @@ func (p *PhysicalIndexReader) GetPlanCostVer1(_ property.TaskType, option *optim
 	var rowCount, rowSize, netFactor, indexPlanCost, netSeekCost float64
 	sqlScanConcurrency := p.SCtx().GetSessionVars().DistSQLScanConcurrency()
 	// child's cost
-	childCost, err := p.indexPlan.GetPlanCostVer1(property.CopSingleReadTaskType, option)
+	childCost, err := p.IndexPlan.GetPlanCostVer1(property.CopSingleReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
 	indexPlanCost = childCost
 	p.PlanCost = indexPlanCost
 	// net I/O cost: rows * row-size * net-factor
-	tblStats := physicalop.GetTblStats(p.indexPlan)
-	rowSize = cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.indexPlan.Schema().Columns, true, false)
-	rowCount = getCardinality(p.indexPlan, costFlag)
-	netFactor = getTableNetFactor(p.indexPlan)
+	tblStats := physicalop.GetTblStats(p.IndexPlan)
+	rowSize = cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.IndexPlan.Schema().Columns, true, false)
+	rowCount = getCardinality(p.IndexPlan, costFlag)
+	netFactor = getTableNetFactor(p.IndexPlan)
 	p.PlanCost += rowCount * rowSize * netFactor
 	// net seek cost
-	netSeekCost = estimateNetSeekCost(p.indexPlan)
+	netSeekCost = estimateNetSeekCost(p.IndexPlan)
 	p.PlanCost += netSeekCost
 	// consider concurrency
 	p.PlanCost /= float64(sqlScanConcurrency)
@@ -242,13 +242,6 @@ func (p *PhysicalIndexReader) GetPlanCostVer1(_ property.TaskType, option *optim
 	}
 	p.PlanCostInit = true
 	return p.PlanCost, nil
-}
-
-// GetNetDataSize calculates the cost of the plan in network data transfer.
-func (p *PhysicalIndexReader) GetNetDataSize() float64 {
-	tblStats := physicalop.GetTblStats(p.indexPlan)
-	rowSize := cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.indexPlan.Schema().Columns, true, false)
-	return p.indexPlan.StatsCount() * rowSize
 }
 
 // getPlanCostVer14PhysicalTableReader calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -329,15 +322,16 @@ func getPlanCostVer14PhysicalTableReader(pp base.PhysicalPlan, option *optimizet
 	return p.PlanCost, nil
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexMergeReader) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// GetPlanCostVer14PhysicalIndexMergeReader calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func GetPlanCostVer14PhysicalIndexMergeReader(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalIndexMergeReader)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
 	}
 
 	p.PlanCost = 0
-	if tblScan := p.tablePlan; tblScan != nil {
+	if tblScan := p.TablePlan; tblScan != nil {
 		childCost, err := tblScan.GetPlanCostVer1(property.CopSingleReadTaskType, option)
 		if err != nil {
 			return 0, err
@@ -348,7 +342,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer1(_ property.TaskType, option *
 		rowSize := cardinality.GetAvgRowSize(p.SCtx(), tblStats, tblScan.Schema().Columns, false, false)
 		p.PlanCost += getCardinality(tblScan, costFlag) * rowSize * netFactor // net I/O cost
 	}
-	for _, partialScan := range p.partialPlans {
+	for _, partialScan := range p.PartialPlansRaw {
 		childCost, err := partialScan.GetPlanCostVer1(property.CopSingleReadTaskType, option)
 		if err != nil {
 			return 0, err
@@ -390,12 +384,6 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer1(_ property.TaskType, option *
 	p.PlanCost /= copIterWorkers
 	p.PlanCostInit = true
 	return p.PlanCost, nil
-}
-
-// GetPartialReaderNetDataSize returns the estimated total response data size of a partial read.
-func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan base.PhysicalPlan) float64 {
-	_, isIdxScan := plan.(*physicalop.PhysicalIndexScan)
-	return plan.StatsCount() * cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(plan), plan.Schema().Columns, isIdxScan, false)
 }
 
 // getPlanCostVer14PhysicalTableScan calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -481,8 +469,8 @@ func getCost4PhysicalIndexJoin(pp base.PhysicalPlan, outerCnt, innerCnt, outerCo
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of probing hash table in main thread.
 	numPairs := outerCnt * innerCnt
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -570,8 +558,8 @@ func getCost4PhysicalIndexHashJoin(pp base.PhysicalPlan, outerCnt, innerCnt, out
 	cpuCost += outerCPUCost / concurrency
 	// Cost of probing hash table concurrently.
 	numPairs := outerCnt * innerCnt
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -629,8 +617,9 @@ func getPlanCostVer1PhysicalIndexHashJoin(pp base.PhysicalPlan, taskType propert
 	return p.PlanCost, nil
 }
 
-// GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
+// getCost4PhysicalIndexMergeJoin computes the cost of index merge join operator and its children.
+func getCost4PhysicalIndexMergeJoin(pp base.PhysicalPlan, outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
+	p := pp.(*physicalop.PhysicalIndexMergeJoin)
 	var cpuCost float64
 	sessVars := p.SCtx().GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
@@ -662,8 +651,8 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCos
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of merge join in inner worker.
 	numPairs := outerCnt * innerCnt
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -694,8 +683,9 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCos
 	return outerCost + innerPlanCost + cpuCost + memoryCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexMergeJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalIndexMergeJoin calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalIndexMergeJoin(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalIndexMergeJoin)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -734,8 +724,8 @@ func getCost4PhysicalApply(pp base.PhysicalPlan, lCount, rCount, lCost, rCost fl
 		rCount *= cost.SelectionFactor
 	}
 	if len(p.EqualConditions)+len(p.OtherConditions)+len(p.NAEqualConditions) > 0 {
-		if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-			p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+		if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+			p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 			cpuCost += lCount * rCount * sessVars.GetCPUFactor() * 0.5
 		} else {
 			cpuCost += lCount * rCount * sessVars.GetCPUFactor()
@@ -779,7 +769,7 @@ func getCost4PhysicalMergeJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFla
 	innerKeys := p.RightJoinKeys
 	innerSchema := p.Children()[1].Schema()
 	innerStats := p.Children()[1].StatsInfo()
-	if p.JoinType == logicalop.RightOuterJoin {
+	if p.JoinType == base.RightOuterJoin {
 		outerCnt = rCnt
 		innerCnt = lCnt
 		innerKeys = p.LeftJoinKeys
@@ -791,8 +781,8 @@ func getCost4PhysicalMergeJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFla
 		p.LeftJoinKeys, p.RightJoinKeys,
 		p.Children()[0].Schema(), p.Children()[1].Schema(),
 		p.LeftNAJoinKeys, p.RightNAJoinKeys)
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -813,7 +803,7 @@ func getCost4PhysicalMergeJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFla
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
 	// we compute average memory cost using estimated group size.
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(innerKeys, innerSchema, innerStats)
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(p.SCtx(), innerKeys, innerSchema, innerStats)
 	memoryCost := (innerCnt / ndv) * sessVars.GetMemoryFactor()
 	return cpuCost + memoryCost
 }
@@ -876,8 +866,8 @@ func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag
 	// to the end of those pairs; since we have no idea about when we can
 	// terminate the iteration, we assume that we need to iterate half of
 	// those pairs in average.
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+		p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		if len(p.OtherConditions) > 0 {
 			numPairs *= 0.5
 		} else {
@@ -1091,9 +1081,10 @@ func getPlanCostVer14PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 	return p.PlanCost, nil
 }
 
-// GetCost returns cost of the PointGetPlan.
-func (p *BatchPointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	cols := p.accessCols
+// getCost4BatchPointGetPlan returns cost of the BatchPointGetPlan.
+func getCost4BatchPointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64 {
+	p := pp.(*physicalop.BatchPointGetPlan)
+	cols := p.AccessCols()
 	if cols == nil {
 		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
 	}
@@ -1119,32 +1110,22 @@ func (p *BatchPointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float
 	return cost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BatchPointGetPlan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14BatchPointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14BatchPointGetPlan(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.BatchPointGetPlan)
 	costFlag := option.CostFlag
-	if p.planCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
-		return p.planCost, nil
+	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCost, nil
 	}
-	p.planCost = p.GetCost(option.GetTracer())
-	p.planCostInit = true
-	return p.planCost, nil
+	p.PlanCost = p.GetCost(option.GetTracer())
+	p.PlanCostInit = true
+	return p.PlanCost, nil
 }
 
-// GetAvgRowSize return the average row size.
-func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
-	cols := p.accessCols
-	if cols == nil {
-		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
-	}
-	if p.IndexInfo == nil {
-		return cardinality.GetTableAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, kv.TiKV, true)
-	}
-	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
-}
-
-// GetCost returns cost of the PointGetPlan.
-func (p *PointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	cols := p.accessCols
+// getCost4PointGetPlan returns cost of the PointGetPlan.
+func getCost4PointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64 {
+	p := pp.(*physicalop.PointGetPlan)
+	cols := p.AccessCols()
 	if cols == nil {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
 	}
@@ -1167,27 +1148,16 @@ func (p *PointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
 	return cost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PointGetPlan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PointGetPlan(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PointGetPlan)
 	costFlag := option.CostFlag
-	if p.planCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
-		return p.planCost, nil
+	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCost, nil
 	}
-	p.planCost = p.GetCost(option.GetTracer())
-	p.planCostInit = true
-	return p.planCost, nil
-}
-
-// GetAvgRowSize return the average row size.
-func (p *PointGetPlan) GetAvgRowSize() float64 {
-	cols := p.accessCols
-	if cols == nil {
-		return 0 // the cost of PointGet generated in fast plan optimization is always 0
-	}
-	if p.IndexInfo == nil {
-		return cardinality.GetTableAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, kv.TiKV, true)
-	}
-	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
+	p.PlanCost = p.GetCost(option.GetTracer())
+	p.PlanCostInit = true
+	return p.PlanCost, nil
 }
 
 // getPlanCostVer14PhysicalUnionAll calculates the cost of the plan if it has not been calculated yet and returns the cost.

@@ -16,7 +16,6 @@ package cardinality
 
 import (
 	"bytes"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -397,6 +396,77 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
+// StatsProvider defines the interface for statistics that can provide the necessary
+// information for row count estimation with uniform distribution.
+type StatsProvider interface {
+	// GetHistogram returns the histogram for this stats object
+	GetHistogram() *statistics.Histogram
+	// GetTopN returns the TopN for this stats object
+	GetTopN() *statistics.TopN
+	// TotalRowCount returns the total row count
+	TotalRowCount() float64
+	// GetIncreaseFactor returns the increase factor for the given realtime row count
+	GetIncreaseFactor(realtimeRowCount int64) float64
+}
+
+// estimateRowCountWithUniformDistribution estimates row count using uniform distribution assumption
+// for values not covered by TopN or histograms. This function handles the common logic used by
+// both equalRowCountOnIndex and equalRowCountOnColumn.
+func estimateRowCountWithUniformDistribution(
+	sctx planctx.PlanContext,
+	stats StatsProvider,
+	realtimeRowCount int64,
+	modifyCount int64,
+) statistics.RowEstimate {
+	if stats == nil {
+		// Return a default estimate when stats are nil
+		return statistics.DefaultRowEst(1)
+	}
+	histogram := stats.GetHistogram()
+	topN := stats.GetTopN()
+	// Calculate histNDV excluding TopN from NDV
+	histNDV := float64(histogram.NDV - int64(topN.Num()))
+	totalRowCount := stats.TotalRowCount()
+	increaseFactor := stats.GetIncreaseFactor(realtimeRowCount)
+	notNullCount := histogram.NotNullCount()
+
+	// Branch 1: all NDV's are in TopN, and no histograms.
+	if histNDV <= 0 || notNullCount == 0 {
+		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
+		// This can happen when sampling collects fewer than all NDV.
+		if histNDV > 0 && modifyCount == 0 {
+			return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
+		}
+		// All values are in TopN (and TopN NDV is accurate).
+		// We need to derive a RowCount because the histogram is empty.
+		if notNullCount <= 0 {
+			notNullCount = totalRowCount - float64(histogram.NullCount)
+		}
+		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		return statistics.DefaultRowEst(outOfRangeCnt)
+	}
+	// branch 2: some NDV's are in histograms
+	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+	avgRowEstimate := notNullCount / histNDV
+
+	// skewRatio determines how much of the potential skew should be considered
+	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+	if skewRatio > 0 {
+		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+		skewEstimate := notNullCount - (histNDV - 1)
+		minTopN := topN.MinCount()
+		if minTopN > 0 {
+			// The skewEstimate should not be larger than the minimum TopN value.
+			skewEstimate = min(skewEstimate, float64(minTopN))
+		}
+		return statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
+	}
+
+	return statistics.DefaultRowEst(avgRowEstimate)
+}
+
+// equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
 func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -445,40 +515,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	if histNDV <= 0 || (idx.IsFullLoad() && idx.Histogram.NotNullCount() == 0) {
-		// branch 1: all NDV's are in TopN, and no histograms
-		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
-		if histNDV > 0 && modifyCount == 0 {
-			return statistics.DefaultRowEst(max(float64(idx.TopN.MinCount()-1), 1))
-		}
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
-		// The histogram wont have a NotNullCount - so it needs to be derived.
-		notNullCount := idx.Histogram.NotNullCount()
-		if notNullCount <= 0 {
-			notNullCount = idx.TotalRowCount() - float64(idx.Histogram.NullCount)
-		}
-		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-		outOfRangeCnt := outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-		return statistics.DefaultRowEst(outOfRangeCnt)
-	}
-	// branch 2: some NDV's are in histograms
-	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
-	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
-	skewEstimate := float64(0)
-	// skewRatio determines how much of the potential skew should be considered
-	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
-	if skewRatio > 0 {
-		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate = idx.Histogram.NotNullCount() - (histNDV - 1)
-		minTopN := idx.TopN.MinCount()
-		if minTopN > 0 {
-			// The skewEstimate should not be larger than the minimum TopN value.
-			skewEstimate = min(skewEstimate, float64(minTopN))
-		}
-		return statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
-	}
-	return statistics.DefaultRowEst(avgRowEstimate)
+	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
@@ -556,7 +593,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
 		minSel *= selectivity
 	}
-	// Sort them.
+	// Sort selectivities ascending (most selective first) for exponential backoff
 	slices.Sort(singleColumnEstResults)
 	l := len(singleColumnEstResults)
 	failpoint.Inject("cleanEstResults", func() {
@@ -576,26 +613,26 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		histNDV = idx.NDV
 	}
 	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
+	minBound := idxLowBound
+	// Adjust idxLowBound upwards if we have not used all index columns.
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
 	// maxSel assumes correlation, so is the selectivity of the most filtering column
 	maxSel = max(idxLowBound, singleColumnEstResults[0])
 	// minSel assumes independence between columns, so is the product of all single column selectivities.
-	minSel = max(idxLowBound, minSel)
-	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
-	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
-	if l == 2 {
-		return max(minTwoCol, multTwoCol), minSel, maxSel, true, nil
+	minSel = max(minBound, minSel)
+
+	// Calculate minimum bound: take minimum of all selectivities (up to limit) and index bound
+	maxCols := min(MaxExponentialBackoffCols, l)
+	for i := range maxCols {
+		minBound = min(minBound, singleColumnEstResults[i])
 	}
-	minThreeCol := min(minTwoCol, singleColumnEstResults[2])
-	multThreeCol := multTwoCol * math.Sqrt(math.Sqrt(singleColumnEstResults[2]))
-	if l == 3 {
-		return max(minThreeCol, multThreeCol), minSel, maxSel, true, nil
-	}
-	minFourCol := min(minThreeCol, singleColumnEstResults[3])
-	multFourCol := multThreeCol * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3])))
-	return max(minFourCol, multFourCol), minSel, maxSel, true, nil
+
+	// Apply exponential backoff to pre-sorted selectivities
+	multResult := ApplyExponentialBackoff(singleColumnEstResults, minBound, 1.0)
+
+	return multResult, minSel, maxSel, true, nil
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.

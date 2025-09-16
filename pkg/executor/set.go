@@ -157,8 +157,12 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		v.IsGlobal = true
 		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
 	}
+	// TODO: this should be a standalone method of session, like SetGlobalSysVar
+	if v.IsInstance && !sysVar.HasInstanceScope() {
+		return variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL or SESSION")
+	}
 
-	if v.IsGlobal {
+	if v.IsGlobal || v.IsInstance {
 		valStr, err := e.getVarValue(ctx, v, sysVar)
 		if err != nil {
 			return err
@@ -192,7 +196,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			if err != nil {
 				return err
 			}
-			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
+			return taskMgr.WithNewSession(func(se sessionctx.Context) error {
+				return taskMgr.InitMetaSession(ctx, se, serverID, valStr)
+			})
 		}
 		return err
 	}

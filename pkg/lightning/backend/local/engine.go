@@ -1376,13 +1376,13 @@ type flushStatus struct {
 	seq   int32
 }
 
-// Flushed implements backend.ChunkFlushStatus.
+// Flushed implements common.ChunkFlushStatus.
 func (f flushStatus) Flushed() bool {
 	return f.seq <= f.local.finishedMetaSeq.Load()
 }
 
-// Close implements backend.ChunkFlushStatus.
-func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+// Close implements common.ChunkFlushStatus.
+func (w *Writer) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	defer w.kvBuffer.Destroy()
 	defer w.engine.localWriters.Delete(w)
 	err := w.flush(ctx)
@@ -1393,7 +1393,7 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	return flushStatus{local: w.engine, seq: w.lastMetaSeq}, err
 }
 
-// IsSynced implements backend.ChunkFlushStatus.
+// IsSynced implements common.ChunkFlushStatus.
 func (w *Writer) IsSynced() bool {
 	return w.batchCount == 0 && w.lastMetaSeq <= w.engine.finishedMetaSeq.Load()
 }

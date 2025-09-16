@@ -23,7 +23,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 )
 
 // GenPlanCloneForPlanCacheCode generates CloneForPlanCache for all physical plan nodes in plan_clone_generated.go.
@@ -36,18 +36,17 @@ import (
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{
-		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
-		core.PhysicalIndexMergeReader{},
-		core.Update{}, core.Delete{}, core.Insert{}}
-
-	// todo: add all back with physicalop.x
-	// var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
-	//		core.PhysicalProjection{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
-	//		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
-	//		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
-	//		physicalop.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{},
-	//      core.PhysicalIndexMergeReader{},
-	//		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
+		physicalop.Update{}, physicalop.Delete{}, physicalop.Insert{},
+		physicalop.PhysicalTableScan{}, physicalop.PhysicalIndexScan{},
+		physicalop.PhysicalSelection{}, physicalop.PhysicalProjection{}, physicalop.PhysicalTopN{}, physicalop.PhysicalLimit{},
+		physicalop.PhysicalStreamAgg{}, physicalop.PhysicalHashAgg{},
+		physicalop.PhysicalHashJoin{}, physicalop.PhysicalMergeJoin{}, physicalop.PhysicalIndexJoin{},
+		physicalop.PhysicalIndexHashJoin{},
+		physicalop.PhysicalIndexReader{}, physicalop.PhysicalTableReader{}, physicalop.PhysicalIndexMergeReader{},
+		physicalop.PhysicalIndexLookUpReader{},
+		physicalop.BatchPointGetPlan{}, physicalop.PointGetPlan{},
+		physicalop.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}, physicalop.PhysicalTableDual{},
+	}
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
@@ -79,21 +78,20 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 
 		fullFieldName := fmt.Sprintf("%v.%v", vType.String(), vType.Field(i).Name)
 		switch fullFieldName { // handle some fields specially
-		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
-			"core.PhysicalIndexMergeReader.TablePlans":
-			c.write("cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)")
+		case "physicalop.PhysicalTableReader.TablePlans", "physicalop.PhysicalIndexLookUpReader.TablePlans",
+			"physicalop.PhysicalIndexMergeReader.TablePlans":
+			c.write("cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)")
 			continue
-		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
-			c.write("cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)")
+		case "physicalop.PhysicalIndexReader.IndexPlans", "physicalop.PhysicalIndexLookUpReader.IndexPlans":
+			c.write("cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)")
 			continue
-		case "core.PhysicalIndexMergeReader.PartialPlans":
+		case "physicalop.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
-			c.write("for i, plan := range cloned.partialPlans {")
-			c.write("cloned.PartialPlans[i] = physicalop.FlattenPushDownPlan(plan)")
+			c.write("for i, plan := range cloned.PartialPlansRaw {")
+			c.write("cloned.PartialPlans[i] = FlattenPushDownPlan(plan)")
 			c.write("}")
 			continue
 		}
-
 		switch f.Type.String() {
 		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
@@ -120,10 +118,13 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]expression.Expression", "[]*expression.Column",
 			"[]*expression.Constant", "[]*expression.ScalarFunction":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
-			c.write("cloned.%v = clone%vForPlanCache(op.%v, nil)", f.Name, structureName, f.Name)
-		case "[][]*expression.Constant", "[][]expression.Expression":
+			c.write("cloned.%v = utilfuncp.Clone%vForPlanCache(op.%v, nil)", f.Name, structureName, f.Name)
+		case "[][]expression.Expression":
 			structureName := strings.Split(f.Type.String(), ".")[1]
-			c.write("cloned.%v = clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
+			c.write("cloned.%v = utilfuncp.Clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
+		case "[][]*expression.Constant":
+			structureName := strings.Split(f.Type.String(), ".")[1]
+			c.write("cloned.%v = Clone%v2DForPlanCache(op.%v)", f.Name, structureName, f.Name)
 		case "[]*ranger.Range", "[]*util.ByItems", "[]model.CIStr", "[]property.SortItem",
 			"[]types.Datum", "[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
@@ -131,6 +132,8 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[][]types.Datum":
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = util.Clone%v2D(op.%v)", f.Name, structureName, f.Name)
+		case "[]*types.FieldName":
+			c.write("cloned.%v = util.CloneFieldNames(op.%v)", f.Name, f.Name)
 		case "planctx.PlanContext":
 			c.write("cloned.%v = newCtx", f.Name)
 		case "util.HandleCols":
@@ -141,7 +144,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 		case "*physicalop.PhysPlanPartInfo":
 			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
-		case "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
+		case "*physicalop.ColWithCmpFuncManager", "physicalop.InsertGeneratedColumns":
 			c.write("cloned.%v = op.%v.cloneForPlanCache()", f.Name, f.Name)
 		case "kv.Handle":
 			c.write("if op.%v != nil {", f.Name)
@@ -158,7 +161,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "physicalop.PhysicalIndexJoin":
 			c.write("inlj, ok := op.%v.CloneForPlanCache(newCtx)", f.Name)
 			c.write("if !ok {return nil, false}")
-			c.write("cloned.%v = *inlj.(*physicalop.PhysicalIndexJoin)", f.Name)
+			c.write("cloned.%v = *inlj.(*PhysicalIndexJoin)", f.Name)
 			c.write("cloned.Self = cloned")
 		case "base.PhysicalPlan":
 			c.write("if op.%v != nil {", f.Name)
@@ -167,7 +170,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = %v.(base.PhysicalPlan)", f.Name, f.Name)
 			c.write("}")
 		case "[]base.PhysicalPlan":
-			c.write("%v, ok := clonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
+			c.write("%v, ok := ClonePhysicalPlansForPlanCache(newCtx, op.%v)", f.Name, f.Name)
 			c.write("if !ok {return nil, false}")
 			c.write("cloned.%v = %v", f.Name, f.Name)
 		case "*int":
@@ -246,13 +249,13 @@ const codeGenPlanCachePrefix = `// Copyright 2024 PingCAP, Inc.
 
 // Code generated by plan_clone_generator; DO NOT EDIT IT DIRECTLY.
 
-package core
+package physicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 `
 
