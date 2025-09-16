@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
-	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -134,123 +133,50 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	if err != nil {
 		return errors.Trace(err)
 	}
-	start := meta.StartKey
 	err = e.initializeByMeta(ctx, &meta)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.Reset()
 
-	for {
-		if ctx.Err() != nil {
-			return context.Cause(ctx)
-		}
-		rs, err := e.handleOneRange(ctx, start, meta.EndKey)
-		if err != nil {
-			return err
-		}
-		e.mergeCounter.Add(float64(rs.addCount))
-		e.RowCnt.Add(int64(rs.addCount))
-		e.totalRows += int64(rs.scanCount)
-		start = rs.nextKey
-		if rs.done {
-			break
-		}
+	opCtx, cancel := NewDistTaskOperatorCtx(ctx)
+	defer cancel()
+	collector := &mergeTempIndexCollector{}
+
+	srcOp := NewTempIndexScanTaskSource(opCtx, e.store, e.ptbl, meta.StartKey, meta.EndKey)
+	mergeOp := NewMergeTempIndexOperator(opCtx, e.store, e.ptbl, e.idxInfo, e.job.ID, subtask.Concurrency, e.batchCnt, e.job.ReorgMeta)
+	sinkOp := newTempIndexResultSink(opCtx, e.ptbl, collector)
+
+	operator.Compose[TempIndexScanTask](srcOp, mergeOp)
+	operator.Compose[MergeTempIndexResult](mergeOp, sinkOp)
+
+	pipe := operator.NewAsyncPipeline(srcOp, mergeOp, sinkOp)
+	err = pipe.Execute()
+	if err != nil {
+		logutil.Logger(ctx).Error("merge temp index operator meet error", zap.Error(err))
+		return err
 	}
+	err = pipe.Close()
+	if err != nil {
+		logutil.Logger(ctx).Error("merge temp index operator close meet error", zap.Error(err))
+		return err
+	}
+	e.mergeCounter.Add(float64(collector.addCount))
+	e.RowCnt.Add(int64(collector.addCount))
+	e.totalRows += int64(collector.scanCount)
+
 	return nil
 }
 
-func (e *mergeTempIndexExecutor) handleOneRange(
-	ctx context.Context,
-	start, end kv.Key,
-) (result tempIdxResult, err error) {
-	var currentTxnStartTS uint64
-	oprStartTime := time.Now()
-	ctx = kv.WithInternalSourceAndTaskType(ctx, "ddl_merge_temp_index", kvutil.ExplicitTypeDDL)
-	originBatchCnt := e.batchCnt
-	defer func() {
-		e.batchCnt = originBatchCnt
-	}()
-	jobCtx := NewReorgContext()
-	jobCtx.tp = "ddl_merge_temp_index"
-	jobCtx.getResourceGroupTaggerForTopSQL()
-	jobCtx.resourceGroupName = e.job.ReorgMeta.ResourceGroupName
+type mergeTempIndexCollector struct {
+	execute.NoopCollector
+	addCount  int
+	scanCount int
+}
 
-	attempts := 0
-	for {
-		attempts++
-		err := kv.RunInNewTxn(ctx, e.store, false, func(_ context.Context, txn kv.Transaction) error {
-			currentTxnStartTS = txn.StartTS()
-			updateTxnEntrySizeLimitIfNeeded(txn)
-			rs, err := fetchTempIndexVals(jobCtx, e.store, e.ptbl, e.idxInfo, txn, start, end, e.batchCnt, e.buffers)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			result = rs
-			err = batchCheckTemporaryUniqueKey(txn, e.ptbl, e.idxInfo, e.buffers.originIdxKeys, e.buffers.tmpIdxRecords)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			for i, idxRecord := range e.buffers.tmpIdxRecords {
-				// The index is already exists, we skip it, no needs to backfill it.
-				// The following update, delete, insert on these rows, TiDB can handle it correctly.
-				// If all batch are skipped, update first index key to make txn commit to release lock.
-				if idxRecord.skip {
-					continue
-				}
-
-				originIdxKey := e.buffers.originIdxKeys[i]
-				if idxRecord.delete {
-					err = txn.GetMemBuffer().Delete(originIdxKey)
-				} else {
-					err = txn.GetMemBuffer().Set(originIdxKey, idxRecord.vals)
-				}
-				if err != nil {
-					return err
-				}
-
-				err = txn.GetMemBuffer().Delete(e.buffers.tmpIdxKeys[i])
-				if err != nil {
-					return err
-				}
-
-				failpoint.InjectCall("mockDMLExecutionMergingInTxn")
-
-				result.addCount++
-			}
-			return nil
-		})
-		if err != nil {
-			if kv.IsTxnRetryableError(err) {
-				if e.batchCnt > 1 {
-					e.batchCnt /= 2
-				}
-				e.conflictCounter.Add(1)
-				backoff := kv.BackOff(uint(attempts))
-				logutil.Logger(ctx).Warn("temp index merge worker retry",
-					zap.Int64("jobID", e.job.ID),
-					zap.Int("batchCnt", e.batchCnt),
-					zap.Int("attempts", attempts),
-					zap.Duration("backoff", time.Duration(backoff)),
-					zap.Uint64("startTS", currentTxnStartTS),
-					zap.Error(err))
-				continue
-			}
-			return result, errors.Trace(err)
-		}
-		break
-	}
-
-	metrics.DDLSetTempIndexScanAndMerge(e.ptbl.GetPhysicalID(), uint64(result.scanCount), uint64(result.addCount))
-	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) && MockDMLExecutionMerging != nil {
-			MockDMLExecutionMerging()
-		}
-	})
-	logSlowOperations(time.Since(oprStartTime), "mergeTempIndexExecutorHandleOneRange", 3000)
-	return result, nil
+func (m *mergeTempIndexCollector) Processed(bytes, rows int64) {
+	m.addCount += int(rows)
+	m.scanCount += int(rows)
 }
 
 func (e *mergeTempIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {

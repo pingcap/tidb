@@ -296,14 +296,14 @@ func TestGetNextStep(t *testing.T) {
 	ext := &ddl.LitBackfillScheduler{}
 
 	// 1. local mode
-	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.StepDone} {
+	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeTempIndex, proto.StepDone} {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
 	// 2. global sort mode
 	ext = &ddl.LitBackfillScheduler{GlobalSort: true}
 	task.Step = proto.StepInit
-	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest} {
+	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest, proto.BackfillStepMergeTempIndex} {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}

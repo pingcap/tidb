@@ -158,7 +158,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return generateMergeTempIndexPlan(ctx, store, tbl, jobArgs)
+		return generateMergeTempIndexPlan(ctx, store, tbl, len(execIDs), jobArgs, logger)
 	default:
 		return nil, nil
 	}
@@ -767,7 +767,9 @@ func generateMergeTempIndexPlan(
 	ctx context.Context,
 	store kv.Storage,
 	tbl table.Table,
+	nodeCnt int,
 	jobArgs *model.ModifyIndexArgs,
+	logger *zap.Logger,
 ) ([][]byte, error) {
 	tblInfo := tbl.Meta()
 	idxInfos, err := findIndexInfoFromIndexArgs(tblInfo, jobArgs)
@@ -778,7 +780,7 @@ func generateMergeTempIndexPlan(
 	if tblInfo.Partition == nil {
 		allMeta := make([][]byte, 0, 16)
 		for _, idxInfo := range idxInfos {
-			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo)
+			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo, nodeCnt, logger)
 			if err != nil {
 				return nil, err
 			}
@@ -790,7 +792,7 @@ func generateMergeTempIndexPlan(
 	allMeta := make([][]byte, 0, 16)
 	for _, idxInfo := range idxInfos {
 		if idxInfo.Global {
-			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo)
+			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo, nodeCnt, logger)
 			if err != nil {
 				return nil, err
 			}
@@ -800,7 +802,7 @@ func generateMergeTempIndexPlan(
 		defs := tblInfo.Partition.Definitions
 		for _, def := range defs {
 			partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
-			partMeta, err := genMergeTempPlanForOneIndex(ctx, store, partTbl, idxInfo)
+			partMeta, err := genMergeTempPlanForOneIndex(ctx, store, partTbl, idxInfo, nodeCnt, logger)
 			if err != nil {
 				return nil, err
 			}
@@ -836,35 +838,80 @@ func genMergeTempPlanForOneIndex(
 	store kv.Storage,
 	tbl table.PhysicalTable,
 	idxInfo *model.IndexInfo,
+	nodeCnt int,
+	logger *zap.Logger,
 ) ([][]byte, error) {
 	pid := tbl.GetPhysicalID()
 	start, end := encodeTempIndexRange(pid, idxInfo.ID, idxInfo.ID)
-	subtaskMetas := make([][]byte, 0, 4)
-	for {
-		kvRanges, err := loadTableRanges(ctx, pid, store, start, end, nil, backfillTaskChanSize)
+
+	subTaskMetas := make([][]byte, 0, 4)
+	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+	err := handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
+		regionCache := store.(helper.Storage).GetRegionCache()
+		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), start, end)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return false, err
 		}
-		if len(kvRanges) == 0 {
-			break
+		sort.Slice(regionMetas, func(i, j int) bool {
+			return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
+		})
+
+		// Check if regions are continuous.
+		shouldRetry := false
+		cur := regionMetas[0]
+		for _, m := range regionMetas[1:] {
+			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
+				shouldRetry = true
+				break
+			}
+			cur = m
 		}
-		for _, r := range kvRanges {
+
+		if shouldRetry {
+			return true, nil
+		}
+
+		regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
+		logger.Info("calculate temp index region batch",
+			zap.Int("totalRegionCnt", len(regionMetas)),
+			zap.Int("regionBatch", regionBatch),
+			zap.Int("instanceCnt", nodeCnt),
+		)
+
+		for i := 0; i < len(regionMetas); i += regionBatch {
+			endIdx := min(i+regionBatch, len(regionMetas))
+			batch := regionMetas[i:endIdx]
 			subTaskMeta := &BackfillSubTaskMeta{
-				SortedKVMeta: external.SortedKVMeta{
-					StartKey: r.StartKey,
-					EndKey:   r.EndKey,
-				},
+				PhysicalTableID: tbl.GetPhysicalID(),
+				RowStart:        batch[0].StartKey(),
+				RowEnd:          batch[len(batch)-1].EndKey(),
+			}
+			if i == 0 {
+				subTaskMeta.RowStart = start
+			}
+			if endIdx == len(regionMetas) {
+				subTaskMeta.RowEnd = end
 			}
 			metaBytes, err := subTaskMeta.Marshal()
 			if err != nil {
-				return nil, err
+				return false, err
 			}
-			subtaskMetas = append(subtaskMetas, metaBytes)
+			subTaskMetas = append(subTaskMetas, metaBytes)
 		}
-		start = kvRanges[len(kvRanges)-1].EndKey
-		if start.Cmp(end) >= 0 {
-			break
-		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return subtaskMetas, nil
+	if len(subTaskMetas) == 0 {
+		return nil, errors.Errorf("regions are not continuous")
+	}
+	return subTaskMetas, nil
+}
+
+func calculateTempIndexRegionBatch(totalRegionCnt int, nodeCnt int) int {
+	var regionBatch int
+	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
+	regionBatch = max(avgTasksPerInstance, 1)
+	return regionBatch
 }
