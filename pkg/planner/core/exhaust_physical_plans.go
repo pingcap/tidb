@@ -180,7 +180,7 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 	return
 }
 
-func getHashJoin(ge base.GroupExpressionInterface, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *physicalop.PhysicalHashJoin {
+func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *physicalop.PhysicalHashJoin {
 	var stats0, stats1 *property.StatsInfo
 	if ge != nil {
 		stats0, stats1, _, _ = ge.GetJoinChildStatsAndSchema()
@@ -2377,7 +2377,7 @@ func isJoinChildFitMPPBCJ(p *logicalop.LogicalJoin, childIndexToBC int, mppStore
 	return rowBC*float64(mppStoreCnt) <= rowHash
 }
 
-func getJoinChildStatsAndSchema(ge base.GroupExpressionInterface, p base.LogicalPlan) (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+func getJoinChildStatsAndSchema(ge base.GroupExpression, p base.LogicalPlan) (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
 	if ge != nil {
 		g := ge.(*memo.GroupExpression)
 		stats0, schema0 = g.Inputs[0].GetLogicalProperty().Stats, g.Inputs[0].GetLogicalProperty().Schema
@@ -2953,7 +2953,7 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func GetHashJoin(ge base.GroupExpressionInterface, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
+func GetHashJoin(ge base.GroupExpression, la *logicalop.LogicalApply, prop *property.PhysicalProperty) *physicalop.PhysicalHashJoin {
 	return getHashJoin(ge, &la.LogicalJoin, prop, 1, false)
 }
 

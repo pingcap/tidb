@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-var _ base.GroupExpressionInterface = &GroupExpression{}
+var _ base.GroupExpression = &GroupExpression{}
 
 // GroupExpression is a single expression from the equivalent list classes inside a group.
 // it is a node in the expression tree, while it takes groups as inputs. This kind of loose

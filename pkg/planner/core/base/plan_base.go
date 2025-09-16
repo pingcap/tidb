@@ -303,8 +303,8 @@ type LogicalPlan interface {
 	GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema)
 }
 
-// GroupExpressionInterface is the interface for group expression.
-type GroupExpressionInterface interface {
+// GroupExpression is the interface for group expression.
+type GroupExpression interface {
 	LogicalPlan
 	// IsExplored return whether this gE has explored rule i.
 	IsExplored(i uint) bool
@@ -313,13 +313,13 @@ type GroupExpressionInterface interface {
 }
 
 // GetGEAndLogical is get the possible group expression and logical operator from common super pointer.
-func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpressionInterface, proj T) {
+func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpression, proj T) {
 	switch x := super.(type) {
 	case T:
 		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
 		// to downcast as the every specific logical operator.
 		proj = x
-	case GroupExpressionInterface:
+	case GroupExpression:
 		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
 		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
 		// get the specific logical operator inside.
