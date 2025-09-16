@@ -272,7 +272,7 @@ func expectedDefaultConfig() Config {
 		Checksum:                  false,
 		SendCreds:                 true,
 		CheckRequirements:         true,
-		FilterStr:                 []string(nil),
+		FilterStr:                 []string{"*.*"},
 		TableFilter:               filter.CaseInsensitive(must(filter.Parse([]string{"*.*"}))),
 		Schemas:                   map[string]struct{}{},
 		Tables:                    map[string]struct{}{},

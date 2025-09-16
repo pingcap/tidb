@@ -15,7 +15,12 @@
 package util
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -75,5 +80,90 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs *intset.F
 	return true
 }
 
+// IsColFromInnerTable check whether a column exists in the inner plan
+func IsColFromInnerTable(cols []*expression.Column, innerUniqueIDs *intset.FastIntSet) bool {
+	return slices.ContainsFunc(cols, func(col *expression.Column) bool {
+		return innerUniqueIDs.Has(int(col.UniqueID))
+	})
+}
+
+// CheckMaxOneRowCond check if a condition is the form of (uniqueKey = constant) or (uniqueKey =
+// Correlated column), it returns at most one row.
+func CheckMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+	if len(eqColIDs) == 0 {
+		return false
+	}
+	// We check `UniqueKeys` as well since the condition is `col = con | corr`, not `col <=> con | corr`.
+	keys := make([]expression.KeyInfo, 0, len(childSchema.PKOrUK)+len(childSchema.NullableUK))
+	keys = append(keys, childSchema.PKOrUK...)
+	keys = append(keys, childSchema.NullableUK...)
+	var maxOneRow bool
+	for _, cols := range keys {
+		maxOneRow = true
+		for _, c := range cols {
+			if _, ok := eqColIDs[c.UniqueID]; !ok {
+				maxOneRow = false
+				break
+			}
+		}
+		if maxOneRow {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckIndexCanBeKey checks whether an Index can be a Key in schema.
+func CheckIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) (uniqueKey, newKey expression.KeyInfo) {
+	if !idx.Unique {
+		return nil, nil
+	}
+	newKeyOK := true
+	uniqueKeyOK := true
+	for _, idxCol := range idx.Columns {
+		// The columns of this index should all occur in column schema.
+		// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
+		findUniqueKey := false
+		for i, col := range columns {
+			if idxCol.Name.L == col.Name.L {
+				uniqueKey = append(uniqueKey, schema.Columns[i])
+				findUniqueKey = true
+				if newKeyOK {
+					if !mysql.HasNotNullFlag(col.GetFlag()) {
+						newKeyOK = false
+						break
+					}
+					newKey = append(newKey, schema.Columns[i])
+					break
+				}
+			}
+		}
+		if !findUniqueKey {
+			newKeyOK = false
+			uniqueKeyOK = false
+			break
+		}
+	}
+	if newKeyOK {
+		return nil, newKey
+	} else if uniqueKeyOK {
+		return uniqueKey, nil
+	}
+
+	return nil, nil
+}
+
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
 var SetPredicatePushDownFlag func(uint64) uint64
+
+// ApplyPredicateSimplificationForJoin is a hook for other packages to simplify the expression.
+var ApplyPredicateSimplificationForJoin func(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+
+// ApplyPredicateSimplification is a hook for other packages to simplify the expression.
+var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+
+// BuildKeyInfoPortal is a hook for other packages to build key info for logical plan.
+var BuildKeyInfoPortal func(lp base.LogicalPlan)

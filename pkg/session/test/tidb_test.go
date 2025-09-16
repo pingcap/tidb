@@ -15,18 +15,19 @@
 package test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
 
 func TestParseErrorWarn(t *testing.T) {
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -71,5 +72,11 @@ func TestKeysNeedLock(t *testing.T) {
 		need = session.KeyNeedToLock(test.key, test.val, flag)
 		require.True(t, flag.HasPresumeKeyNotExists())
 		require.True(t, need)
+
+		if bytes.Equal(test.key, nonUniqueIndexKey) && bytes.Equal(test.val, nonUniqueVal) {
+			flag = kv.ApplyFlagsOps(kv.KeyFlags(0), kv.SetNeedLocked)
+			require.True(t, flag.HasNeedLocked())
+			require.True(t, session.KeyNeedToLock(test.key, test.val, flag))
+		}
 	}
 }

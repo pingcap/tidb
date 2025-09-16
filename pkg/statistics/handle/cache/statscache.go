@@ -28,7 +28,7 @@ import (
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -206,7 +206,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		// If the column/index stats has not been updated, we can reuse the old table stats.
 		// Only need to update the count and modify count.
 		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
-			tbl = oldTbl.Copy()
+			tbl = oldTbl.CopyAs(statistics.MetaOnly)
 			// count and modify count is updated in finalProcess
 			needLoadColAndIdxStats = false
 		}

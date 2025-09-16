@@ -16,7 +16,6 @@ package local
 
 import (
 	"context"
-	goerrors "errors"
 	"io"
 	"strings"
 	"sync"
@@ -27,13 +26,16 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -155,6 +157,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 			// an error, TiKV will take the responsibility to do so.
 			// TODO: let client-go provide a high-level write interface.
 			res, err := w.writeFn(ctx, job)
+			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
 					return err
@@ -169,7 +172,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 					job.convertStageTo(needRescan)
 				}
 				job.lastRetryableErr = err
-				log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
+				tidblogutil.Logger(ctx).Warn("meet retryable error when writing to TiKV",
 					log.ShortError(err), zap.Stringer("job stage", job.stage))
 				return nil
 			}
@@ -184,6 +187,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 		// if the job is empty, it might go to ingested stage directly.
 		if job.stage == wrote {
 			err := w.ingestFn(ctx, job)
+			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
 					return err
@@ -197,7 +201,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				}
 				job.lastRetryableErr = err
 
-				log.FromContext(ctx).Warn("meet retryable error when ingesting, will handle the job later",
+				tidblogutil.Logger(ctx).Warn("meet retryable error when ingesting, will handle the job later",
 					log.ShortError(err), zap.Stringer("job stage", job.stage),
 					job.region.ToZapFields(),
 					logutil.Key("start", job.keyRange.Start),
@@ -250,7 +254,7 @@ func (w *blkStoreRegionJobWorker) preRunJob(ctx context.Context, job *regionJob)
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := w.pdHTTPCli.GetStore(ctx, peer.StoreId)
 			if err != nil {
-				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
+				tidblogutil.Logger(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
 				continue
 			}
 			err = checkDiskAvail(ctx, store)
@@ -268,6 +272,7 @@ type objStoreRegionJobWorker struct {
 	ingestCli      ingestcli.Client
 	writeBatchSize int64
 	bufPool        *membuf.Pool
+	collector      execute.Collector
 }
 
 func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
@@ -331,6 +336,11 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 			if err := writeCli.Write(in); err != nil {
 				return nil, errors.Trace(err)
 			}
+
+			if w.collector != nil {
+				w.collector.Processed(size, int64(len(pairs)))
+			}
+
 			totalCount += int64(len(pairs))
 			totalSize += size
 			size = 0
@@ -375,11 +385,7 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
-		pbErr := &ingestcli.PBError{}
-		if goerrors.As(err, &pbErr) {
-			return convertPBError2Error(job, pbErr.Err)
-		}
-		return &ingestAPIError{err: err}
+		return err
 	}
 	return nil
 }

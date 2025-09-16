@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -589,7 +589,7 @@ func TestRemoveDuplicatedPseudoBinding(t *testing.T) {
 }
 
 type mockSessionPool struct {
-	se sessiontypes.Session
+	se sessionapi.Session
 }
 
 func (p *mockSessionPool) Get() (pools.Resource, error) {
@@ -642,17 +642,6 @@ func TestOptimizeOnlyOnce(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/checkOptimizeCountOne"))
 	}()
 	tk.MustQuery("select * from t").Check(testkit.Rows())
-}
-
-// for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Type, Sql_digest
-func showBinding(tk *testkit.TestKit, showStmt string) [][]any {
-	rows := tk.MustQuery(showStmt).Sort().Rows()
-	result := make([][]any, len(rows))
-	for i, r := range rows {
-		result[i] = append(result[i], r[:4]...)
-		result[i] = append(result[i], r[8:10]...)
-	}
-	return result
 }
 
 func TestNormalizeStmtForBinding(t *testing.T) {

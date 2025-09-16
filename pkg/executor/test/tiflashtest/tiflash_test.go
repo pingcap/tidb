@@ -32,11 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -94,7 +95,7 @@ func TestReadPartitionTable(t *testing.T) {
 	tk.MustExec("insert into t values(3,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -135,7 +136,7 @@ func TestAggPushDownApplyAll(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_mpp=1")
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	tk.MustQuery("select * from foo where a=all(select a from bar where bar.b=foo.b)").Check(testkit.Rows("0 <nil>"))
 }
@@ -171,7 +172,7 @@ func TestReadUnsigedPK(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -207,7 +208,7 @@ func TestJoinRace(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustExec("set @@tidb_opt_broadcast_cartesian_join=0")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustQuery("select count(*) from (select count(a) x from t group by b) t1 join (select count(a) x from t group by b) t2 on t1.x > t2.x").Check(testkit.Rows("6"))
 }
 
@@ -277,7 +278,7 @@ func TestMppExecution(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
-	taskID := plannercore.AllocMPPTaskID(tk.Session())
+	taskID := physicalop.AllocMPPTaskID(tk.Session())
 	require.Equal(t, int64(1), taskID)
 	tk.MustExec("commit")
 
@@ -368,7 +369,7 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
@@ -430,7 +431,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	vals := make([]string, 0, 500)
 	for range 500 {
@@ -464,8 +465,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -578,7 +578,7 @@ func TestMppEnum(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -599,7 +599,7 @@ func TestTiFlashPlanCacheable(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("insert into t values(1);")
 	tk.MustExec("prepare stmt from 'select /*+ read_from_storage(tiflash[t]) */ * from t;';")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
@@ -697,7 +697,7 @@ func TestCancelMppTasks(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -747,7 +747,7 @@ func TestMppGoroutinesExitFromErrors(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -837,7 +837,7 @@ func TestUnionWithEmptyDualTable(t *testing.T) {
 	tk.MustExec("insert into t1 values(1,2,3)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustQuery("select count(*) from (select a , b from t union all select a , c from t1 where false) tt").Check(testkit.Rows("1"))
 }
@@ -860,7 +860,7 @@ func TestAvgOverflow(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustQuery("select avg(a) from t group by a").Check(testkit.Rows("9.0000"))
 	tk.MustExec("drop table if exists t")
 
@@ -910,7 +910,7 @@ func TestMppApply(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
@@ -949,7 +949,7 @@ func TestTiFlashVirtualColumn(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
@@ -999,7 +999,7 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
@@ -1045,7 +1045,7 @@ func TestIssue57149(t *testing.T) {
 	tk.MustExec("analyze table test.t1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@tidb_enforce_mpp = 1")
 	result := tk.MustQuery("SELECT i, (j = (SELECT j FROM t1 WHERE j = CAST('null' AS JSON))) AS c11, (j = (SELECT j FROM t1 WHERE 1<>1)) AS c13 from t1 ORDER BY i limit 1")
 	require.Len(t, result.Rows(), 1)
@@ -1094,7 +1094,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
@@ -1170,7 +1170,6 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set tidb_partition_prune_mode=dynamic")
 	tk.MustExec("set tidb_enforce_mpp=1")
-	tk.MustExec("set tidb_cost_model_version=2")
 
 	rows := tk.MustQuery("explain select count(*) from t").Rows()
 	resBuff := bytes.NewBufferString("")
@@ -1225,7 +1224,7 @@ func TestTiflashPartitionTableScan(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	// MPP
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
@@ -1392,7 +1391,7 @@ func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	tk.MustExec("set @@session.tidb_enforce_mpp = on;")
 	tk.MustQuery("select /*+ read_from_storage(tiflash[t1]) */  * from IDT_RP24833 partition(p3, p4) t1 where t1. col1 between -8448770111093677011 and -8448770111093677011;").Check(testkit.Rows())
@@ -1423,7 +1422,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because TestAutoScaler return empty topo.
@@ -1462,7 +1461,7 @@ func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	err = tk.ExecToErr("select * from t;")
 	// This error message means we use PD instead of AutoScaler.
@@ -1587,7 +1586,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	err = tiflashcompute.InitGlobalTopoFetcher(config.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
@@ -1641,7 +1640,7 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("alter table t2 add index idx2((lower(c2)));")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	nthPlan := 100
 	test1 := func(forceTiFlash bool) {
@@ -1829,11 +1828,11 @@ func TestMPP47766(t *testing.T) {
 			"└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
 			"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4",
 			"    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time",
-			"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#14, funcs:sum(Column#15)->Column#4, funcs:firstrow(Column#16)->test.traces.test_time",
+			"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#4, funcs:firstrow(Column#15)->test.traces.test_time",
 			"        └─ExchangeReceiver_29 8000.00 mpp[tiflash]  ",
-			"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
-			"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#18, funcs:count(1)->Column#15, funcs:firstrow(Column#17)->Column#16",
-			"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#17, date(test.traces.test_time)->Column#18",
+			"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
+			"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15",
+			"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#16, date(test.traces.test_time)->Column#17",
 			"                └─TableFullScan_15 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo",
 		))
 }
@@ -1959,7 +1958,7 @@ func TestMPPRecovery(t *testing.T) {
 	tk.MustExec(insertStr)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	sql := "select * from t order by 1, 2"
 	const packagePath = "github.com/pingcap/tidb/pkg/executor/internal/mpp/"
 
@@ -2052,7 +2051,7 @@ func TestIssue50358(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	for range 20 {
 		// test if it is stable.
@@ -2081,7 +2080,7 @@ func TestMppAggShouldAlignFinalMode(t *testing.T) {
 	require.Nil(t, err)
 
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustQuery("explain format='brief' select 1 from (" +
 		"  select /*+ read_from_storage(tiflash[t]) */ sum(1)" +
@@ -2134,7 +2133,7 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 	tk.MustExec("insert into t2 values(5, 5)")
 
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
@@ -2181,8 +2180,8 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 	missFunc := func() {
 		missNum.Add(1)
 	}
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheHit", hitFunc)
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheMiss", missFunc)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/mppTaskGeneratorTableReaderCacheHit", hitFunc)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/mppTaskGeneratorTableReaderCacheMiss", missFunc)
 	for _, tc := range testCases {
 		hitNum.Store(0)
 		missNum.Store(0)
@@ -2238,7 +2237,7 @@ func TestIssue59703(t *testing.T) {
 	tk.MustExec("insert into t values(2,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err", "return()")
@@ -2272,7 +2271,7 @@ func TestIssue59877(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustExec("set tidb_broadcast_join_threshold_size=0")
@@ -2303,4 +2302,44 @@ func TestIssue59877(t *testing.T) {
 			"                  └─Projection 9990.00 mpp[tiflash]  test.t2.id, cast(test.t2.id, decimal(20,0) UNSIGNED)->Column#14",
 			"                    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.id))",
 			"                      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"))
+}
+
+func TestNoAliveTiFlashRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t,
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			//nolint:forcetypeassert
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			store := c.AllocID()
+			peer := c.AllocID()
+			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+			mockCluster.AddPeer(region1, store, peer)
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	dml := "insert into t values"
+	for i := range 50 {
+		dml += fmt.Sprintf("(%v, 0)", i)
+		if i != 49 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash"))
+	}()
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
 }

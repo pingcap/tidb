@@ -77,6 +77,8 @@ type SysVar struct {
 	GetGlobal func(context.Context, *SessionVars) (string, error)
 	// GetStateValue gets the value for session states, which is used for migrating sessions.
 	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
+	// The first return value must be a valid value for the variable, and the second return value must be
+	// true if and only if the variable has been changed from the default.
 	GetStateValue func(*SessionVars) (string, bool, error)
 	// Depended indicates whether other variables depend on this one. That is, if this one is not correctly set,
 	// another variable cannot be set either.
@@ -465,7 +467,7 @@ func (sv *SysVar) SkipInit() bool {
 }
 
 // SkipSysvarCache returns true if the sysvar should not re-execute on peers
-// This doesn't make sense for the GC variables because they are based in tikv
+// NOTE: This doesn't make sense for the GC variables because they are based in tikv
 // tables. We'd effectively be reading and writing to the same table, which
 // could be in an unsafe manner. In future these variables might be converted
 // to not use a different table internally, but to do that we need to first

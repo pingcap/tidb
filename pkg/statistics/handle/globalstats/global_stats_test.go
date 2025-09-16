@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -28,6 +29,7 @@ import (
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -551,14 +553,14 @@ partition by range (a) (
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	globalStats := h.GetTableStats(tableInfo)
+	globalStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(2)
 	// modify count is 2 because we didn't analyze p1 after the second insert
 	require.Equal(t, int64(9), globalStats.RealtimeCount)
 	require.Equal(t, int64(2), globalStats.ModifyCount)
 
 	tk.MustExec("analyze table t partition p1;")
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
 	// The value of modify count is 0 now.
 	require.Equal(t, int64(9), globalStats.RealtimeCount)
@@ -567,7 +569,7 @@ partition by range (a) (
 	tk.MustExec("alter table t drop partition p2;")
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
 	require.Equal(t, int64(7), globalStats.RealtimeCount)
 }
@@ -604,7 +606,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	globalStats := h.GetTableStats(tableInfo)
+	globalStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
@@ -613,7 +615,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	// We will update the global-stats after the truncate operation.
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("analyze table t;")
@@ -621,7 +623,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	// The truncate operation only delete the data from the partition p2 and p4. It will not delete the partition-stats.
 	require.Len(t, result, 7)
 	// The result for the globalStats.count will be right now
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
 }
 
@@ -760,8 +762,7 @@ func TestGlobalStatsIndexNDV(t *testing.T) {
 }
 
 func TestGlobalStats(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -866,11 +867,15 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("use test")
 
 	for i, version := range []string{"1", "2"} {
+		if i == 0 && kerneltype.IsNextGen() {
+			t.Log("the next-gen kernel does not support analyze version 1")
+			continue
+		}
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
 
 		// analyze table t
 		tk.MustExec("drop table if exists t")
-		if i != 0 {
+		if i != 0 && kerneltype.IsClassic() {
 			err := statstestutil.HandleNextDDLEventWithTxn(h)
 			require.NoError(t, err)
 		}
@@ -890,10 +895,13 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 			Check(testkit.Rows("1", "2", "3", "15"))
+		expectedRows := "4.06"
+		if i != 0 {
+			expectedRows = "4.00"
+		}
 		tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-			Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-				"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
-
+			Check(testkit.Rows("IndexReader "+expectedRows+" root partition:all index:IndexRangeScan",
+				"└─IndexRangeScan "+expectedRows+" cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 		// analyze table t index idx
 		tk.MustExec("drop table if exists t")
 		err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -913,7 +921,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		tk.MustExec("analyze table t index idx")
 		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 		rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
-		require.Equal(t, "4.00", rows[0][1])
+		require.Equal(t, expectedRows, rows[0][1])
 
 		// analyze table t index
 		tk.MustExec("drop table if exists t")
@@ -934,8 +942,8 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		tk.MustExec("analyze table t index")
 		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
-			Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-				"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+			Check(testkit.Rows("IndexReader "+expectedRows+" root partition:all index:IndexRangeScan",
+				"└─IndexRangeScan "+expectedRows+" cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	}
 }
 
@@ -994,9 +1002,9 @@ func TestMergeGlobalStatsForCMSketch(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select * from t where a = 1").Check(
-		testkit.Rows("TableReader_7 1.00 root partition:p0 data:Selection_6",
-			"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan_5 18.00 cop[tikv] table:t keep order:false"))
+		testkit.Rows("TableReader_8 1.00 root partition:p0 data:Selection_7",
+			"└─Selection_7 1.00 cop[tikv]  eq(test.t.a, 1)",
+			"  └─TableFullScan_6 18.00 cop[tikv] table:t keep order:false"))
 }
 
 func TestEmptyHists(t *testing.T) {

@@ -69,9 +69,9 @@ type BaseLogicalPlan struct {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
-	_, ok1 := p.self.(*LogicalSequence)
-	_, ok2 := p.self.(*LogicalMaxOneRow)
-	if !ok1 && !ok2 {
+	switch p.self.(type) {
+	case *LogicalSequence, *LogicalMaxOneRow, *LogicalLock:
+	default:
 		intest.Assert(false, "Hash64 should not be called directly")
 	}
 	h.HashInt(p.ID())
@@ -137,14 +137,17 @@ func (p *BaseLogicalPlan) HashCode() []byte {
 }
 
 // PredicatePushDown implements LogicalPlan.<1st> interface.
-func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	if len(p.children) == 0 {
-		return predicates, p.self
+		return predicates, p.self, nil
 	}
 	child := p.children[0]
-	rest, newChild := child.PredicatePushDown(predicates, opt)
-	addSelection(p.self, newChild, rest, 0, opt)
-	return nil, p.self
+	rest, newChild, err := child.PredicatePushDown(predicates, opt)
+	if err != nil {
+		return nil, p.self, err
+	}
+	AddSelection(p.self, newChild, rest, 0, opt)
+	return nil, p.self, nil
 }
 
 // PruneColumns implements LogicalPlan.<2nd> interface.
@@ -336,8 +339,9 @@ func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 // it checks if it can be pushed to some stores. For TiKV, it only checks datasource.
 // For TiFlash, it will check whether the operator is supported, but note that the check
 // might be inaccurate.
+// Deprecated: don't depend subtree based push check, see CanSelfBeingPushedToCopImpl based op-self push check.
 func (p *BaseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
-	return CanPushToCopImpl(p, storeTp, false)
+	return CanPushToCopImpl(p, storeTp)
 }
 
 // ExtractFD implements LogicalPlan.<22nd> interface.

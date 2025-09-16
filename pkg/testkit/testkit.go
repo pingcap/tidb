@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -43,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statisticsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
@@ -69,7 +68,7 @@ type TestKit struct {
 	assert  *assert.Assertions
 	t       testing.TB
 	store   kv.Storage
-	session sessiontypes.Session
+	session sessionapi.Session
 	alloc   chunk.Allocator
 }
 
@@ -97,7 +96,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		if ok {
 			mockSm.mu.Lock()
 			if mockSm.Conn == nil {
-				mockSm.Conn = make(map[uint64]sessiontypes.Session)
+				mockSm.Conn = make(map[uint64]sessionapi.Session)
 			}
 			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
 			mockSm.mu.Unlock()
@@ -109,7 +108,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 }
 
 // NewTestKitWithSession returns a new *TestKit.
-func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Session) *TestKit {
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessionapi.Session) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -123,28 +122,19 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
-	if intest.InTest {
-		seed := uint64(time.Now().UnixNano())
-		tk.t.Logf("RefreshSession rand seed: %d", seed)
-		rng := rand.New(rand.NewSource(int64(seed)))
-		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
-		}
-	}
-
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // SetSession set the session of testkit
-func (tk *TestKit) SetSession(session sessiontypes.Session) {
+func (tk *TestKit) SetSession(session sessionapi.Session) {
 	tk.session = session
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
-func (tk *TestKit) Session() sessiontypes.Session {
+func (tk *TestKit) Session() sessionapi.Session {
 	return tk.session
 }
 
@@ -157,6 +147,13 @@ func (tk *TestKit) MustExec(sql string, args ...any) {
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	tk.MustExecWithContext(ctx, sql, args...)
+}
+
+// PrepareDB prepares a database for test.
+func (tk *TestKit) PrepareDB(db string) {
+	tk.MustExec("drop schema if exists " + db)
+	tk.MustExec("create schema " + db)
+	tk.MustExec("use " + db)
 }
 
 // MustExecWithContext executes a sql statement and asserts nil error.
@@ -478,7 +475,7 @@ func (tk *TestKit) MustExecToErr(sql string, args ...any) {
 }
 
 // NewSession creates a new session environment for test.
-func NewSession(t testing.TB, store kv.Storage) sessiontypes.Session {
+func NewSession(t testing.TB, store kv.Storage) sessionapi.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())

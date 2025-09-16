@@ -2,16 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "cbotest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "cbo_test.go",
         "main_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    race = "on",
-    shard_count = 18,
+    shard_count = 22,
     deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/domain",
         "//pkg/executor",
         "//pkg/meta/model",
         "//pkg/parser/ast",

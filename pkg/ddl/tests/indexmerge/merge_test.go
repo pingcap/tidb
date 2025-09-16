@@ -16,10 +16,12 @@ package indexmergetest
 
 import (
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -88,7 +90,7 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	var checkErr error
 	var runDML, backfillDone bool
 	// only trigger reload when schema version changed
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/disableOnTickReload", "return(true)")
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
 		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "primary")
@@ -413,6 +415,9 @@ func TestAddIndexMergeDoubleDelete(t *testing.T) {
 }
 
 func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -505,18 +510,20 @@ func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 		}
 	})
 
-	ddl.MockDMLExecutionStateMerging = func() {
-		_, err := tk1.Exec("insert into t values (5, 8);")
-		assert.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
-		_, err = tk1.Exec("insert into t values (5, 8) on duplicate key update a = 6;")
-		assert.NoError(t, err) // The row should be normally updated to (6, 5).
-		ddl.MockDMLExecutionStateMerging = nil
-	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateMerging", "return(true)"))
+	insertOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunReorgJobAndHandleErr", func(allIndexInfos []*model.IndexInfo) {
+		if allIndexInfos[0].BackfillState == model.BackfillStateMerging {
+			insertOnce.Do(func() {
+				_, err := tk1.Exec("insert into t values (5, 8);")
+				assert.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
+				_, err = tk1.Exec("insert into t values (5, 8) on duplicate key update a = 6;")
+				assert.NoError(t, err) // The row should be normally updated to (6, 5).
+			})
+		}
+	})
 	tk.MustExec("alter table t add unique index idx(a);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("6 5"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateMerging"))
 }
 
 func TestAddIndexMergeReplaceOnMerging(t *testing.T) {
@@ -535,18 +542,21 @@ func TestAddIndexMergeReplaceOnMerging(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	ddl.MockDMLExecutionStateMerging = func() {
-		_, err := tk1.Exec("replace into t values (5, 8);")
-		assert.NoError(t, err)
-		ddl.MockDMLExecutionStateMerging = nil
-	}
+	insertOnce := sync.Once{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunReorgJobAndHandleErr", func(allIndexInfos []*model.IndexInfo) {
+		if allIndexInfos[0].BackfillState == model.BackfillStateMerging {
+			insertOnce.Do(func() {
+				_, err := tk1.Exec("replace into t values (5, 8);")
+				assert.NoError(t, err)
+			})
+		}
+	})
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateMerging", "return(true)"))
 	tk.MustExec("alter table t add unique index idx(a);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("5 8"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateMerging"))
 }
 
 func TestAddIndexMergeInsertToDeletedTempIndex(t *testing.T) {

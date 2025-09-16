@@ -207,6 +207,36 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	require.Equal(t, 0, cnt)
 }
 
+func TestAddIndexGetChunkCancel(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustExec("split table t between (0) and (1000000) regions 10;")
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	cancelled := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeGetChunk", func() {
+		if !cancelled {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobID))
+			cancelled = true
+		}
+	})
+	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
+	require.True(t, cancelled)
+	tk.MustExec("admin check table t;")
+}
+
 func TestIngestPartitionRowCount(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -540,4 +570,44 @@ func TestAddIndexValidateRangesFailed(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/validateAndFillRangesErr", "2*return")
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
+}
+
+func TestIndexChangeWithModifyColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (b int, c varchar(100) collate utf8mb4_unicode_ci)")
+	tk.MustExec("insert t values (1, 'aa'), (2, 'bb'), (3, 'cc');")
+
+	tkddl := testkit.NewTestKit(t, store)
+	tkddl.MustExec("use test")
+
+	var checkErr error
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	runModifyColumn := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateNone:
+			if runModifyColumn {
+				return
+			}
+			runModifyColumn = true
+			go func() {
+				_, checkErr = tkddl.Exec("alter table t modify column c varchar(120) default 'aaaaa' collate utf8mb4_general_ci first;")
+				wg.Done()
+			}()
+		default:
+			return
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(c);")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "when index is defined")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t;")
 }

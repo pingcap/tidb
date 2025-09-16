@@ -16,6 +16,7 @@ import (
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	sessionctx "github.com/pingcap/tidb/pkg/sessionctx"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -276,6 +277,20 @@ func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 context.Context, arg1 st
 func (mr *MockTaskTableMockRecorder) UpdateSubtaskStateAndError(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtaskStateAndError", reflect.TypeOf((*MockTaskTable)(nil).UpdateSubtaskStateAndError), arg0, arg1, arg2, arg3, arg4)
+}
+
+// WithNewSession mocks base method.
+func (m *MockTaskTable) WithNewSession(arg0 func(sessionctx.Context) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WithNewSession", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// WithNewSession indicates an expected call of WithNewSession.
+func (mr *MockTaskTableMockRecorder) WithNewSession(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithNewSession", reflect.TypeOf((*MockTaskTable)(nil).WithNewSession), arg0)
 }
 
 // MockTaskExecutor is a mock of TaskExecutor interface.

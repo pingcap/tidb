@@ -214,6 +214,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	getEngineFn := func(store storage.ExternalStorage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
 		return NewExternalEngine(
+			ctx,
 			store, inDataFiles, inStatFiles,
 			[]byte{1}, []byte{5},
 			[][]byte{{1}, {2}, {3}, {4}, {5}},
@@ -226,6 +227,7 @@ func TestEngineOnDup(t *testing.T) {
 			16*units.GiB,
 			onDup,
 			"/",
+			dummyOnReaderCloseFunc,
 		)
 	}
 

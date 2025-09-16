@@ -67,14 +67,14 @@ func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable
 // HashCode inherits BaseLogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	if p.Extractor != nil {
 		failpoint.Inject("skipExtractor", func(_ failpoint.Value) {
-			failpoint.Return(predicates, p.Self())
+			failpoint.Return(predicates, p.Self(), nil)
 		})
 		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
 	}
-	return predicates, p.Self()
+	return predicates, p.Self(), nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

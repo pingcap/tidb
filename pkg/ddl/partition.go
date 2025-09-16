@@ -217,7 +217,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
 		var scatterScope string
-		if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions, scatterScope)
@@ -2553,7 +2553,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			return ver, errors.Trace(err)
 		}
 		var scatterScope string
-		if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
@@ -3792,7 +3792,7 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 	}, nil
 }
 
-func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -4901,8 +4901,8 @@ func checkPartitionExprArgs(_ expression.BuildContext, tblInfo *model.TableInfo,
 			return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
 		}
 	case ast.DateDiff:
-		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(i int) bool {
-			return hasDateArgs(argsType[i])
+		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(arg byte) bool {
+			return hasDateArgs(arg)
 		})))
 
 	case ast.Abs, ast.Ceiling, ast.Floor, ast.Mod:
@@ -4932,26 +4932,24 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 }
 
 func hasDateArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDate || argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDate || t == mysql.TypeDatetime
 	})
 }
 
 func hasTimeArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDuration || argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDuration || t == mysql.TypeDatetime
 	})
 }
 
 func hasTimestampArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeTimestamp
-	})
+	return slices.Contains(argsType, mysql.TypeTimestamp)
 }
 
 func hasDatetimeArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDatetime
 	})
 }
 

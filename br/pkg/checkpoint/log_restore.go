@@ -191,7 +191,7 @@ func (t *TaskInfoForLogRestore) IdMapSaved() bool {
 	return t.Progress == InLogRestoreAndIdMapPersisted
 }
 
-func TryToGetCheckpointTaskInfo(
+func GetCheckpointTaskInfo(
 	ctx context.Context,
 	snapshotManager SnapshotMetaManagerT,
 	logManager LogMetaManagerT,
@@ -249,6 +249,19 @@ type CheckpointIngestIndexRepairSQL struct {
 	IndexRepaired   bool `json:"-"`
 }
 
+type CheckpointForeignKeyUpdateSQL struct {
+	FKID       int64  `json:"fk-id"`
+	SchemaName string `json:"schema-name"`
+	TableName  string `json:"table-name"`
+	FKName     string `json:"fk-name"`
+	AddSQL     string `json:"add-sql"`
+	AddArgs    []any  `json:"add-args"`
+
+	OldForeignKeyFound bool `json:"-"`
+	ForeignKeyUpdated  bool `json:"-"`
+}
+
 type CheckpointIngestIndexRepairSQLs struct {
-	SQLs []CheckpointIngestIndexRepairSQL
+	SQLs   []CheckpointIngestIndexRepairSQL
+	FKSQLs []CheckpointForeignKeyUpdateSQL
 }

@@ -21,14 +21,22 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
+)
+
+// Version constants for BackfillTaskMeta.
+const (
+	BackfillTaskMetaVersion0 = iota
+	BackfillTaskMetaVersion1
 )
 
 // BackfillTaskMeta is the dist task meta for backfilling index.
@@ -42,6 +50,8 @@ type BackfillTaskMeta struct {
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
+
+	Version int `json:"version,omitempty"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -137,9 +147,28 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
+	store := ddlObj.store
+	sessPool := ddlObj.sessPool
+	taskKS := s.task.Keyspace
+	if ddlObj.store.GetKeyspace() != taskKS {
+		var err error
+		err = s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
+			svr := se.GetSQLServer()
+			store, err = svr.GetKSStore(taskKS)
+			if err != nil {
+				return err
+			}
+			sp, err := svr.GetKSSessPool(taskKS)
+			sessPool = sess.NewSessionPool(sp)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
 	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := ddlObj.getTableByTxn(ddlObj.ddlCtx.getAutoIDRequirement(), jobMeta.SchemaID, jobMeta.TableID)
+	_, tblIface, err := getTableByTxn(ddlObj.ctx, store, jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -164,9 +193,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
+		return newMergeSortExecutor(store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
@@ -183,10 +212,13 @@ type backfillDistExecutor struct {
 	d        *ddl
 	task     *proto.Task
 	taskMeta *BackfillTaskMeta
-	jobID    int64
 }
 
-func newBackfillDistExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param, d *ddl) taskexecutor.TaskExecutor {
+func newBackfillDistExecutor(
+	ctx context.Context,
+	task *proto.Task,
+	param taskexecutor.Param,
+	d *ddl) taskexecutor.TaskExecutor {
 	s := &backfillDistExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, task, param),
 		d:                d,

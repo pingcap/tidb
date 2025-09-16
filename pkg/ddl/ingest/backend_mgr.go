@@ -27,11 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
@@ -141,7 +143,8 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 }
 
 // CreateLocalBackend creates a local backend for adding index.
-func CreateLocalBackend(ctx context.Context, pdCli pd.Client, job *model.Job, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
+	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
 	jobSortPath, err := genJobSortPath(job.ID, checkDup)
 	if err != nil {
 		return nil, nil, err
@@ -157,7 +160,7 @@ func CreateLocalBackend(ctx context.Context, pdCli pd.Client, job *model.Job, ch
 	if err != nil {
 		return nil, nil, err
 	}
-	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
+	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
 	if adjustedWorkerConcurrency > 0 {
 		cfg.WorkerConcurrency = adjustedWorkerConcurrency
 	}
@@ -183,6 +186,8 @@ func CreateLocalBackend(ctx context.Context, pdCli pd.Client, job *model.Job, ch
 		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
 		zap.Bool("has unique index", hasUnique))
 
+	//nolint: forcetypeassert
+	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
 	return cfg, be, err
 }

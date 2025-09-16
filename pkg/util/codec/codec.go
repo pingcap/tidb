@@ -214,7 +214,7 @@ func EncodeMySQLTime(loc *time.Location, t types.Time, tp byte, b []byte) (_ []b
 
 func encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
 	if collate.NewCollationEnabled() && comparable1 {
-		return encodeBytes(b, collate.GetCollator(val.Collation()).Key(val.GetString()), true)
+		return encodeBytes(b, collate.GetCollator(val.Collation()).ImmutableKey(val.GetString()), true)
 	}
 	return encodeBytes(b, val.GetBytes(), comparable1)
 }
@@ -481,11 +481,12 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&f)), sizeFloat64)...)
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		collator := collate.GetCollator(tp.GetCollate())
 		for logicalRowIndex, physicalRowIndex := range usedRows {
 			if canSkip(physicalRowIndex) {
 				continue
 			}
-			data := ConvertByCollation(column.GetBytes(physicalRowIndex), tp)
+			data := collator.ImmutableKey(string(hack.String(column.GetBytes(physicalRowIndex))))
 			size := uint32(len(data))
 			if serializeMode == KeepVarColumnLength {
 				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint32)...)
@@ -533,23 +534,30 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], b...)
 		}
 	case mysql.TypeEnum:
-		for logicalRowIndex, physicalRowindex := range usedRows {
-			if canSkip(physicalRowindex) {
-				continue
-			}
-			v := column.GetEnum(physicalRowindex).Value
-			if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
+		if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
+			for logicalRowIndex, physicalRowindex := range usedRows {
+				if canSkip(physicalRowindex) {
+					continue
+				}
+				v := column.GetEnum(physicalRowindex).Value
 				// check serializeMode here because enum maybe compare to integer type directly
 				if serializeMode == NeedSignFlag {
 					serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], uintFlag)
 				}
 				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
-			} else {
+			}
+		} else {
+			collator := collate.GetCollator(tp.GetCollate())
+			for logicalRowIndex, physicalRowindex := range usedRows {
+				if canSkip(physicalRowindex) {
+					continue
+				}
+				v := column.GetEnum(physicalRowindex).Value
 				str := ""
 				if enum, err := types.ParseEnumValue(tp.GetElems(), v); err == nil {
 					str = enum.Name
 				}
-				b := ConvertByCollation(hack.Slice(str), tp)
+				b := collator.ImmutableKey(str)
 				if serializeMode == KeepVarColumnLength {
 					// for enum, the size must be less than uint32.MAX, so use uint32 here
 					size := uint32(len(b))
@@ -559,6 +567,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			}
 		}
 	case mysql.TypeSet:
+		collator := collate.GetCollator(tp.GetCollate())
 		for logicalRowIndex, physicalRowindex := range usedRows {
 			if canSkip(physicalRowindex) {
 				continue
@@ -567,7 +576,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if err != nil {
 				return err
 			}
-			b := ConvertByCollation(hack.Slice(s.Name), tp)
+			b := collator.ImmutableKey(s.Name)
 			if serializeMode == KeepVarColumnLength {
 				// for enum, the size must be less than uint32.MAX, so use uint32 here
 				size := uint32(len(b))
@@ -699,6 +708,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		collator := collate.GetCollator(tp.GetCollate())
 		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
@@ -709,7 +719,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			} else {
 				buf[0] = compactBytesFlag
 				b = column.GetBytes(i)
-				b = ConvertByCollation(b, tp)
+				b = collator.ImmutableKey(string(hack.String(b)))
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -785,6 +795,10 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeEnum:
+		var collator collate.Collator
+		if !mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
+			collator = collate.GetCollator(tp.GetCollate())
+		}
 		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
@@ -804,7 +818,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 					// str will be empty string if v out of definition of enum.
 					str = enum.Name
 				}
-				b = ConvertByCollation(hack.Slice(str), tp)
+				b = collator.ImmutableKey(str)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -813,6 +827,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeSet:
+		collator := collate.GetCollator(tp.GetCollate())
 		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
@@ -826,7 +841,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 				if err != nil {
 					return err
 				}
-				b = ConvertByCollation(hack.Slice(s.Name), tp)
+				b = collator.ImmutableKey(s.Name)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -1517,7 +1532,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 				buf[i] = append(buf[i], decimalFlag)
 				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.GetFlen(), ft.GetDecimal())
 				if err != nil {
-					return nil, err
+					return buf, err
 				}
 			}
 		}
@@ -1530,7 +1545,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 				buf[i] = append(buf[i], uintFlag)
 				buf[i], err = EncodeMySQLTime(loc, ts[i], mysql.TypeUnspecified, buf[i])
 				if err != nil {
-					return nil, err
+					return buf, err
 				}
 			}
 		}
@@ -1554,11 +1569,12 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 			}
 		}
 	case types.ETString:
+		collator := collate.GetCollator(ft.GetCollate())
 		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
-				buf[i] = encodeBytes(buf[i], ConvertByCollation(col.GetBytes(i), ft), false)
+				buf[i] = encodeBytes(buf[i], collator.ImmutableKey(string(hack.String(col.GetBytes(i)))), false)
 			}
 		}
 	case types.ETVectorFloat32:

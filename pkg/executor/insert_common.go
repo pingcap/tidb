@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -325,7 +325,8 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if col != nil && col.GetType() == mysql.TypeTimestamp &&
 		types.ErrTimestampInDSTTransition.Equal(err) {
 		newErr := exeerrors.ErrTruncateWrongInsertValue.FastGenByArgs(types.TypeStr(col.GetType()), val.GetString(), col.Name.O, rowIdx+1)
-		if e.Ctx().GetSessionVars().SQLMode.HasStrictMode() {
+		// IGNORE takes precedence over STRICT mode.
+		if !e.ignoreErr && e.Ctx().GetSessionVars().SQLMode.HasStrictMode() {
 			return newErr
 		}
 		// timestamp already adjusted to end of DST transition, convert error to warning
@@ -805,7 +806,7 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	if err == nil && d.GetInt64() < id {
 		// Auto ID is out of range.
 		sc := ctx.GetSessionVars().StmtCtx
-		insertPlan, ok := sc.GetPlan().(*core.Insert)
+		insertPlan, ok := sc.GetPlan().(*physicalop.Insert)
 		if ok && sc.TypeFlags().TruncateAsWarning() && len(insertPlan.OnDuplicate) > 0 {
 			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
 			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.

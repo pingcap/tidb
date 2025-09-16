@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -52,8 +53,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -64,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -725,8 +730,8 @@ func TestPrevStmtDesensitization(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec(fmt.Sprintf("set @@session.%v=1", vardef.TiDBRedactLog))
-	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", vardef.TiDBRedactLog))
+	tk.MustExec(fmt.Sprintf("set @@global.%v=1", vardef.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@global.%v=0", vardef.TiDBRedactLog))
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
@@ -778,37 +783,37 @@ func TestOOMActionPriority(t *testing.T) {
 func TestUnreasonablyClose(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
 	var opsNeedsCovered = []base.PhysicalPlan{
-		&plannercore.PhysicalHashJoin{},
-		&plannercore.PhysicalMergeJoin{},
-		&plannercore.PhysicalIndexJoin{},
-		&plannercore.PhysicalIndexHashJoin{},
-		&plannercore.PhysicalTableReader{},
-		&plannercore.PhysicalIndexReader{},
-		&plannercore.PhysicalIndexLookUpReader{},
-		&plannercore.PhysicalIndexMergeReader{},
-		&plannercore.PhysicalApply{},
-		&plannercore.PhysicalHashAgg{},
-		&plannercore.PhysicalStreamAgg{},
-		&plannercore.PhysicalLimit{},
-		&plannercore.PhysicalSort{},
-		&plannercore.PhysicalTopN{},
-		&plannercore.PhysicalCTE{},
-		&plannercore.PhysicalCTETable{},
-		&plannercore.PhysicalMaxOneRow{},
-		&plannercore.PhysicalProjection{},
-		&plannercore.PhysicalSelection{},
-		&plannercore.PhysicalTableDual{},
-		&plannercore.PhysicalWindow{},
-		&plannercore.PhysicalShuffle{},
-		&plannercore.PhysicalUnionAll{},
+		&physicalop.PhysicalHashJoin{},
+		&physicalop.PhysicalMergeJoin{},
+		&physicalop.PhysicalIndexJoin{},
+		&physicalop.PhysicalIndexHashJoin{},
+		&physicalop.PhysicalTableReader{},
+		&physicalop.PhysicalIndexReader{},
+		&physicalop.PhysicalIndexLookUpReader{},
+		&physicalop.PhysicalIndexMergeReader{},
+		&physicalop.PhysicalApply{},
+		&physicalop.PhysicalHashAgg{},
+		&physicalop.PhysicalStreamAgg{},
+		&physicalop.PhysicalLimit{},
+		&physicalop.PhysicalSort{},
+		&physicalop.PhysicalTopN{},
+		&physicalop.PhysicalCTE{},
+		&physicalop.PhysicalCTETable{},
+		&physicalop.PhysicalMaxOneRow{},
+		&physicalop.PhysicalProjection{},
+		&physicalop.PhysicalSelection{},
+		&physicalop.PhysicalTableDual{},
+		&physicalop.PhysicalWindow{},
+		&physicalop.PhysicalShuffle{},
+		&physicalop.PhysicalUnionAll{},
 	}
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
@@ -846,7 +851,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
@@ -867,12 +872,12 @@ func TestUnreasonablyClose(t *testing.T) {
 				}
 				require.True(t, found, fmt.Sprintf("case: %v sql: %s operator %v is not registered in opsNeedsCoveredMask", i, tc, reflect.TypeOf(ch)))
 				switch x := ch.(type) {
-				case *plannercore.PhysicalCTE:
+				case *physicalop.PhysicalCTE:
 					newChild = append(newChild, x.RecurPlan)
 					newChild = append(newChild, x.SeedPlan)
 					hasCTE = true
 					continue
-				case *plannercore.PhysicalShuffle:
+				case *physicalop.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
 					newChild = append(newChild, x.Tails...)
 					continue
@@ -917,10 +922,10 @@ func TestUnreasonablyClose(t *testing.T) {
 func TestTwiceCloseUnionExec(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
@@ -937,7 +942,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		e := executorBuilder.Build(p)
@@ -1380,7 +1385,7 @@ func TestApplyCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test;")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, index idx(a));")
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
@@ -1566,9 +1571,7 @@ func TestGetResultRowsCount(t *testing.T) {
 		}
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(base.Plan)
-		require.True(t, ok)
-		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
+		cnt := tk.Session().GetSessionVars().StmtCtx.GetResultRowsCount()
 		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
@@ -2002,9 +2005,10 @@ func TestLowResolutionTSORead(t *testing.T) {
 	defer func() {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
 	}()
-	err = tk.ExecToErr("select * from low_resolution_tso where a = 1 for update")
-	require.Error(t, err)
-	err = tk.ExecToErr("select * from low_resolution_tso for update")
+	tk.MustQuery("select * from low_resolution_tso where a = 1 for update")
+	tk.MustQuery("select * from low_resolution_tso for update")
+
+	err = tk.ExecToErr("update low_resolution_tso set a = 3")
 	require.Error(t, err)
 }
 
@@ -2535,8 +2539,40 @@ func TestAdmin(t *testing.T) {
 	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
 	result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
 	result.Check(testkit.Rows())
-	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
-	result.Check(testkit.Rows())
+	if kerneltype.IsNextGen() {
+		result := tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+		job2Expected := `CREATE OR REPLACE SQL SECURITY INVOKER VIEW mysql.tidb_mdl_view as (
+		SELECT tidb_mdl_info.job_id,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query")) as query,
+			session_id,
+			cluster_tidb_trx.start_time,
+			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
+		FROM mysql.tidb_ddl_job,
+			mysql.tidb_mdl_info,
+			information_schema.cluster_tidb_trx
+		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), '),') != 0
+	);`
+		job4Expected := `CREATE OR REPLACE VIEW sys.schema_unused_indexes AS
+		SELECT
+			table_schema as object_schema,
+			table_name as object_name,
+			index_name
+		FROM information_schema.cluster_tidb_index_usage
+		WHERE
+			table_schema not in ('sys', 'mysql', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA') and
+			index_name != 'PRIMARY'
+		GROUP BY table_schema, table_name, index_name
+		HAVING
+			sum(last_access_time) is null;`
+		result.Check(testkit.Rows(job2Expected, job4Expected))
+	} else {
+		result := tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+		result.Check(testkit.Rows())
+	}
+
 	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
@@ -2632,9 +2668,8 @@ func TestAdmin(t *testing.T) {
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
-	r, err = tk.Exec("admin check table admin_test, admin_test1")
-	require.NoError(t, err)
-	require.Nil(t, r)
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check table admin_test1")
 	// error table name
 	require.Error(t, tk.ExecToErr("admin check table admin_test_error"))
 	// different index values
@@ -2695,6 +2730,10 @@ func TestAdmin(t *testing.T) {
 	m := meta.NewMutator(txn)
 	startKey := meta.DDLJobHistoryKey(m, 0)
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
+	if kerneltype.IsNextGen() {
+		startKey = store.GetCodec().EncodeKey(startKey)
+		endKey = store.GetCodec().EncodeKey(endKey)
+	}
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
 	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), 20)
@@ -2766,7 +2805,7 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk0.Session().ShowProcess()},
 	}
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
@@ -2925,6 +2964,9 @@ func TestIssue50043(t *testing.T) {
 }
 
 func TestIssue50043WithPipelinedDML(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("pipelined dml is not supported in next-gen kv mode")
+	}
 	testIssue50043WithInitSQL(t, "set @@tidb_dml_type=bulk")
 }
 
@@ -3055,21 +3097,39 @@ func TestDecimalDivPrecisionIncrement(t *testing.T) {
 }
 
 func TestIssue48756(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t (id INT, a VARBINARY(20), b BIGINT)")
-	tk.MustExec(`INSERT INTO t VALUES(1, _binary '2012-05-19 09:06:07', 20120519090607),
-(1, _binary '2012-05-19 09:06:07', 20120519090607),
-(2, _binary '12012-05-19 09:06:07', 120120519090607),
-(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
-	tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").Sort().Check(testkit.Rows(
-		"2012-05-18 08:05:05.999998",
-		"<nil>",
-	))
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1292 Incorrect time value: '120120519090607'",
-	))
+	for useCopLiteWorker := range 2 {
+		t.Run(fmt.Sprintf("TryCopLiteWorker=%d", useCopLiteWorker), func(t *testing.T) {
+			// Inject the TryCopLiteWorker value into the current session's DistSQL context
+			testfailpoint.Enable(t,
+				"github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker",
+				fmt.Sprintf("return(%d)", useCopLiteWorker),
+			)
+
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("CREATE TABLE t (id INT, a VARBINARY(20), b BIGINT)")
+			tk.MustExec(`INSERT INTO t VALUES
+				(1, _binary '2012-05-19 09:06:07', 20120519090607),
+				(1, _binary '2012-05-19 09:06:07', 20120519090607),
+				(2, _binary '12012-05-19 09:06:07', 120120519090607),
+				(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
+
+			tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").
+				Sort().
+				Check(testkit.Rows(
+					"2012-05-18 08:05:05.999998",
+					"<nil>",
+				))
+
+			warnings := tk.MustQuery("show warnings").Rows()
+			require.Len(t, warnings, 1)
+			require.Equal(t, "Warning", warnings[0][0], "generates a warning")
+			require.Equal(t, "1292", warnings[0][1], "expected error code")
+			require.Equal(t, "Incorrect time value: '120120519090607'", warnings[0][2],
+				"expected error message")
+		})
+	}
 }
 
 func TestIssue50308(t *testing.T) {

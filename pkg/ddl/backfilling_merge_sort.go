@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -35,27 +37,31 @@ import (
 
 type mergeSortExecutor struct {
 	taskexecutor.BaseStepExecutor
+	store         kv.Storage
 	jobID         int64
-	idxNum        int
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
 
 	mu                  sync.Mutex
 	subtaskSortedKVMeta *external.SortedKVMeta
+	summary             *execute.SubtaskSummary
 }
 
 func newMergeSortExecutor(
+	store kv.Storage,
 	jobID int64,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
+		store:         store,
 		jobID:         jobID,
 		indexes:       indexes,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
+		summary:       &execute.SubtaskSummary{},
 	}, nil
 }
 
@@ -67,16 +73,21 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
+	m.summary.Reset()
 	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
 
 	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
-	onClose := func(summary *external.WriterSummary) {
+	onWriterClose := func(summary *external.WriterSummary) {
 		m.mu.Lock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
+		m.summary.PutReqCnt.Add(summary.PutRequestCount)
+	}
+	onReaderClose := func(summary *external.ReaderSummary) {
+		m.summary.GetReqCnt.Add(summary.GetRequestCount)
 	}
 
 	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)
@@ -100,7 +111,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		partSize,
 		prefix,
 		external.DefaultBlockSize,
-		onClose,
+		onWriterClose,
+		onReaderClose,
+		external.NewMergeCollector(ctx, nil),
 		int(res.CPU.Capacity()),
 		true,
 		engineapi.OnDuplicateKeyError,
@@ -142,6 +155,10 @@ func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 	}
 	subtask.Meta = newMeta
 	return nil
+}
+
+func (m *mergeSortExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return m.summary
 }
 
 func (*mergeSortExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {

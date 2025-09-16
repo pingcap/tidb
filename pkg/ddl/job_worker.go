@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -309,7 +310,7 @@ func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		return nil
 	}
 	if ver == 0 {
@@ -325,7 +326,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	ownerID := w.ownerManager.ID()
 	ids := rows[0].GetString(0)
 	var sql string
-	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+	if metadef.IsSystemRelatedDB(strings.ToLower(job.SchemaName)) {
 		// DDLs that modify system tables could only happen in upgrade process,
 		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
 		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
@@ -703,7 +704,7 @@ func (w *ReorgContext) getResourceGroupTaggerForTopSQL() *kv.ResourceGroupTagBui
 	}
 
 	digest := w.cacheDigest
-	return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).SetSQLDigest(digest)
+	return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(digest)
 }
 
 func (w *ReorgContext) ddlJobSourceType() string {
@@ -729,7 +730,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 
 	logger := jobCtx.logger
 	// Load global DDL variables.
-	if err1 := loadDDLVars(w); err1 != nil {
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	errorCount := vardef.GetDDLErrorCountLimit()
@@ -756,7 +757,7 @@ func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) er
 	logger.Warn("run DDL job error", zap.Error(err))
 
 	// Load global DDL variables.
-	if err1 := loadDDLVars(w); err1 != nil {
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
 	// Check error limit to avoid falling into an infinite loop.
@@ -1054,6 +1055,7 @@ func (w *worker) runOneJobStep(
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
+	job.LastSchemaVersion = ver
 
 	// there are too many job types, instead let every job type output its own
 	// updateRawArgs, we try to use these rules as a generalization:
@@ -1073,7 +1075,9 @@ func (w *worker) runOneJobStep(
 	return ver, updateRawArgs, err
 }
 
-func loadDDLVars(w *worker) error {
+// loadGlobalVars loads global variables from system table
+// and store in vardef if possible.
+func (w *worker) loadGlobalVars(varName ...string) error {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.Get()
@@ -1081,7 +1085,7 @@ func loadDDLVars(w *worker) error {
 		return errors.Trace(err)
 	}
 	defer w.sessPool.Put(ctx)
-	return util.LoadDDLVars(ctx)
+	return util.LoadGlobalVars(ctx, varName...)
 }
 
 func toTError(err error) *terror.Error {
@@ -1122,7 +1126,7 @@ func updateGlobalVersionAndWaitSynced(
 	err = jobCtx.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if vardef.EnableMDL.Load() {
+		if vardef.IsMDLEnabled() {
 			return err
 		}
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {

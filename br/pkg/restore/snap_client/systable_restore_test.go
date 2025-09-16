@@ -121,7 +121,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(248), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(251), session.CurrentBootstrapVersion)
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {
@@ -360,10 +360,10 @@ func TestUpdateStatsTableSchema(t *testing.T) {
 
 	// match
 	expectedSQLs = []string{
-		"ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL",
-		"ALTER TABLE mysql.stats_meta DROP COLUMN last_stats_histograms_version",
-		"ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL",
-		"ALTER TABLE mysql.stats_meta DROP COLUMN last_stats_histograms_version",
+		"ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta ADD COLUMN IF NOT EXISTS last_stats_histograms_version bigint unsigned DEFAULT NULL",
+		"ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta DROP COLUMN IF EXISTS last_stats_histograms_version",
+		"ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta ADD COLUMN IF NOT EXISTS last_stats_histograms_version bigint unsigned DEFAULT NULL",
+		"ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta DROP COLUMN IF EXISTS last_stats_histograms_version",
 	}
 	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
 		"mysql": {"stats_meta": struct{}{}},

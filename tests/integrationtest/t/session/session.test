@@ -131,3 +131,14 @@ select c1 from t where c2 = 20;
 select last_insert_id(1);
 select last_insert_id(0);
 select last_insert_id();
+
+# TestIssue59132
+-- error 1064
+VALUES ( ('foo'), ROW('bar') );
+show warnings;
+-- error 1064
+VALUES ( ('foo'), ROW('bar') );
+show warnings;
+-- error 1064
+VALUES ( ('foo'), ROW('bar') );
+show warnings;

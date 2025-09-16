@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -75,13 +74,17 @@ func (s *mockGCSSuite) cleanupSysTables() {
 }
 
 func (s *mockGCSSuite) prepareAndUseDB(db string) {
-	s.tk.MustExec("drop database if exists " + db)
-	s.tk.MustExec("create database " + db)
-	s.tk.MustExec("use " + db)
+	prepareAndUseDB(db, s.tk)
+}
+
+func prepareAndUseDB(db string, tk *testkit.TestKit) {
+	tk.MustExec("drop database if exists " + db)
+	tk.MustExec("create database " + db)
+	tk.MustExec("use " + db)
 }
 
 func init() {
-	testutils.UpdateTiDBConfig()
+	realtikvtest.UpdateTiDBConfig()
 }
 
 func TestMain(m *testing.M) {

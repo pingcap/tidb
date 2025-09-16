@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	pd "github.com/tikv/pd/client"
 )
 
 // PlanCtx is the context for planning.
@@ -33,6 +33,7 @@ type PlanCtx struct {
 	TaskType   proto.TaskType
 	ThreadCnt  int
 	MaxNodeCnt int
+	Keyspace   string
 
 	// PreviousSubtaskMetas is subtask metas of previous steps.
 	// We can remove this field if we find a better way to pass the result between steps.
@@ -41,7 +42,7 @@ type PlanCtx struct {
 	NextTaskStep         proto.Step
 	ExecuteNodesCnt      int
 
-	PDCli pd.Client
+	Store kv.Storage
 }
 
 // LogicalPlan represents a logical plan in distribute framework.

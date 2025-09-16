@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -206,30 +207,30 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val any) (err e
 // inLockOrWriteStmt = true means one of the ancestor node is update/delete/physicalLock.
 func notNeedGetLatestTSFromPD(plan base.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
-	case *plannercore.PointGetPlan:
+	case *physicalop.PointGetPlan:
 		// We do not optimize the point get/ batch point get if plan.lock = false and inLockOrWriteStmt = true.
 		// Theoretically, the plan.lock should be true if the flag is true. But due to the bug describing in Issue35524,
 		// the plan.lock can be false in the case of inLockOrWriteStmt being true. In this case, optimization here can lead to different results
 		// which cannot be accepted as AdviseOptimizeWithPlan cannot change results.
 		return !inLockOrWriteStmt || v.Lock
-	case *plannercore.BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		return !inLockOrWriteStmt || v.Lock
 	case base.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
 		}
-		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
+		_, isPhysicalLock := v.(*physicalop.PhysicalLock)
 		for _, p := range v.Children() {
 			if !notNeedGetLatestTSFromPD(p, isPhysicalLock || inLockOrWriteStmt) {
 				return false
 			}
 		}
 		return true
-	case *plannercore.Update:
+	case *physicalop.Update:
 		return notNeedGetLatestTSFromPD(v.SelectPlan, true)
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		return notNeedGetLatestTSFromPD(v.SelectPlan, true)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		return v.SelectPlan == nil
 	}
 	return false

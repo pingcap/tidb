@@ -30,6 +30,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -729,7 +730,8 @@ txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
 plan-replayer-dump-worker-concurrency = 1
-lite-init-stats = false
+skip-init-stats = false
+lite-init-stats = true
 force-init-stats = false
 [tikv-client]
 commit-timeout="41s"
@@ -822,7 +824,8 @@ max_connections = 200
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 	require.True(t, conf.Performance.EnableLoadFMSketch)
-	require.False(t, conf.Performance.LiteInitStats)
+	require.False(t, conf.Performance.SkipInitStats)
+	require.True(t, conf.Performance.LiteInitStats)
 	require.False(t, conf.Performance.ForceInitStats)
 
 	err = f.Truncate(0)
@@ -915,10 +918,16 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
 
 	configFile = "config.toml.example"
+	if kerneltype.IsNextGen() {
+		configFile = "config.toml.nextgen.example"
+	}
 	require.NoError(t, conf.Load(configFile))
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
+	if kerneltype.IsNextGen() {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	}
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
@@ -1431,4 +1440,8 @@ func TestKeyspaceName(t *testing.T) {
 	require.ErrorContains(t, conf.Valid(), "is invalid")
 	conf.KeyspaceName = "abc"
 	require.NoError(t, conf.Valid())
+	conf.KeyspaceName = "18446744073709551615" // max uint64
+	require.NoError(t, conf.Valid())
+	conf.KeyspaceName = "a18446744073709551615"
+	require.ErrorContains(t, conf.Valid(), "invalid keyspace name")
 }

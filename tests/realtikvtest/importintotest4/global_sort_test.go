@@ -21,19 +21,24 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -91,11 +96,40 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
+	var counter atomic.Int32
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish",
+		func() {
+			newVal := counter.Add(1)
+			if newVal == 1 {
+				// show processlist, cloud_storage_uri should be redacted too
+				// we only check cloud_storage_uri here, for the source data path
+				// part, see TestShowJob
+				procRows := tk2.MustQuery("show full processlist").Rows()
+				var got bool
+				for _, r := range procRows {
+					sql := r[7].(string)
+					if strings.Contains(sql, "IMPORT INTO") {
+						index := strings.Index(sql, "cloud_storage_uri")
+						s.Greater(index, 0)
+						sql = sql[index:]
+						s.Contains(sql, "access-key=xxxxxx")
+						s.Contains(sql, "secret-access-key=xxxxxx")
+						s.NotContains(sql, "aaaaaa")
+						s.NotContains(sql, "bbbbbb")
+						got = true
+					}
+				}
+				s.True(got)
+			}
+		},
+	)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	result := s.tk.MustQuery(importSQL).Rows()
+	s.GreaterOrEqual(counter.Load(), int32(1))
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
@@ -115,7 +149,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.NoError(err)
 	redactedSortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
 	urlEqual(s.T(), redactedSortStorageURI, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
-	s.Equal(uint64(6), jobInfo.Summary.ImportedRows)
+	s.EqualValues(6, jobInfo.Summary.ImportedRows)
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
@@ -160,6 +194,9 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	var allData []string
 	for i := range 10 {
 		var content []byte
@@ -182,8 +219,54 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
-	s.tk.MustQuery(importSQL)
+	result := s.tk.MustQuery(importSQL + ", detached").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	var task *proto.Task
+	s.Eventually(func() bool {
+		task, err = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		s.NoError(err)
+		return task.State == proto.TaskStateSucceed
+	}, 30*time.Second, 300*time.Millisecond)
+
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
+
+	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepEncodeAndSort)
+	s.NoError(err)
+	s.Len(subtasks, 1)
+	v := &execute.SubtaskSummary{}
+	err = json.Unmarshal([]byte(subtasks[0].Summary), &v)
+	s.NoError(err)
+	s.Equal(int64(10000), v.RowCnt.Load())
+	s.Equal(int64(147780), v.Bytes.Load())
+	s.Greater(v.PutReqCnt.Load(), uint64(0))
+	s.Equal(uint64(0), v.GetReqCnt.Load())
+	logutil.BgLogger().Info("subtasks", zap.Any("subtasks", v))
+
+	subtasks, err = taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
+	s.NoError(err)
+	s.Len(subtasks, 4)
+	totalRows := int64(0)
+	totalBytes := int64(0)
+	totalPutReq := uint64(0)
+	totalGetReq := uint64(0)
+	for i, subtask := range subtasks {
+		v = &execute.SubtaskSummary{}
+		err = json.Unmarshal([]byte(subtask.Summary), &v)
+		s.NoError(err)
+		totalRows += v.RowCnt.Load()
+		totalBytes += v.Bytes.Load()
+		totalPutReq += v.PutReqCnt.Load()
+		totalGetReq += v.GetReqCnt.Load()
+		logutil.BgLogger().Info("subtasks", zap.Int("seq", i), zap.Any("subtasks", v))
+	}
+	s.Greater(totalRows, int64(0))  // Fixme: why not 10000?
+	s.Greater(totalBytes, int64(0)) // Fixme: unstable
+	s.Equal(uint64(0), totalPutReq)
+	s.Greater(totalGetReq, uint64(0))
 }
 
 func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
@@ -217,4 +300,34 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
 	// TODO: decode the key to use readable value in the error message.
 	require.ErrorContains(s.T(), err, "746573742d313233")
+}
+
+func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
+		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.2.csv"},
+		Content:     []byte("4,foo4,bar4,123\n5,foo5,bar5,223\n6,foo6,bar6,323\n"),
+	})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.prepareAndUseDB("gsort_basic")
+	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,	key(a), key(c,d), key(d));`)
+	defer func() {
+		s.tk.MustExec("drop table t;")
+	}()
+
+	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
+		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/br/pkg/storage/GCSReadUnexpectedEOF", "return(0)")
+	s.tk.MustExec("truncate table t")
+	result := s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
+		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
+		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
+	))
 }

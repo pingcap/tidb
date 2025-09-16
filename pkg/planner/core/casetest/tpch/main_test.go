@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
@@ -31,7 +32,7 @@ var testDataMap = make(testdata.BookKeeper)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "tpch_suite")
+	testDataMap.LoadTestSuiteData("testdata", "tpch_suite", true)
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
@@ -61,7 +62,7 @@ func GetTPCHSuiteData() testdata.TestData {
 	return testDataMap["tpch_suite"]
 }
 
-func createLineItem(tk *testkit.TestKit) {
+func createLineItem(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`
 CREATE TABLE lineitem (
     L_ORDERKEY bigint NOT NULL,
@@ -83,9 +84,10 @@ CREATE TABLE lineitem (
     PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 `)
+	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
 }
 
-func createCustomer(tk *testkit.TestKit) {
+func createCustomer(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE customer (
     C_CUSTKEY bigint NOT NULL,
     C_NAME varchar(25) NOT NULL,
@@ -97,9 +99,10 @@ func createCustomer(tk *testkit.TestKit) {
     C_COMMENT varchar(117) NOT NULL,
     PRIMARY KEY (C_CUSTKEY) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	testkit.SetTiFlashReplica(t, dom, "test", "customer")
 }
 
-func createOrders(tk *testkit.TestKit) {
+func createOrders(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`
 CREATE TABLE orders (
     O_ORDERKEY bigint NOT NULL,
@@ -113,9 +116,10 @@ CREATE TABLE orders (
     O_COMMENT varchar(79) NOT NULL,
     PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	testkit.SetTiFlashReplica(t, dom, "test", "orders")
 }
 
-func createSupplier(tk *testkit.TestKit) {
+func createSupplier(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE supplier (
   S_SUPPKEY bigint NOT NULL,
   S_NAME char(25) NOT NULL,
@@ -126,9 +130,10 @@ func createSupplier(tk *testkit.TestKit) {
   S_COMMENT varchar(101) NOT NULL,
   PRIMARY KEY (S_SUPPKEY) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	testkit.SetTiFlashReplica(t, dom, "test", "supplier")
 }
 
-func createNation(tk *testkit.TestKit) {
+func createNation(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE nation (
   N_NATIONKEY bigint NOT NULL,
   N_NAME char(25) NOT NULL,
@@ -136,9 +141,10 @@ func createNation(tk *testkit.TestKit) {
   N_COMMENT varchar(152) DEFAULT NULL,
   PRIMARY KEY (N_NATIONKEY) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	testkit.SetTiFlashReplica(t, dom, "test", "nation")
 }
 
-func createPart(tk *testkit.TestKit) {
+func createPart(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE part (
   P_PARTKEY bigint NOT NULL,
   P_NAME varchar(55) NOT NULL,
@@ -151,9 +157,10 @@ func createPart(tk *testkit.TestKit) {
   P_COMMENT varchar(23) NOT NULL,
   PRIMARY KEY (P_PARTKEY) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	testkit.SetTiFlashReplica(t, dom, "test", "part")
 }
 
-func createPartsupp(tk *testkit.TestKit) {
+func createPartsupp(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE partsupp (
   PS_PARTKEY bigint NOT NULL,
   PS_SUPPKEY bigint NOT NULL,
@@ -162,4 +169,15 @@ func createPartsupp(tk *testkit.TestKit) {
   PS_COMMENT varchar(199) NOT NULL,
   PRIMARY KEY (PS_PARTKEY,PS_SUPPKEY) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	testkit.SetTiFlashReplica(t, dom, "test", "partsupp")
+}
+
+func createRegion(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
+	tk.MustExec(`CREATE TABLE region (
+  R_REGIONKEY bigint NOT NULL,
+  R_NAME char(25) NOT NULL,
+  R_COMMENT varchar(152) DEFAULT NULL,
+  PRIMARY KEY (R_REGIONKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	testkit.SetTiFlashReplica(t, dom, "test", "region")
 }
