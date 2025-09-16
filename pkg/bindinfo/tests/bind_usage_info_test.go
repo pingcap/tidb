@@ -30,14 +30,12 @@ func TestBindUsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
-	tk.MustExec(`create database test1`)
-	tk.MustExec(`use test1`)
-	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
-	tk.MustExec(`create database test2`)
-	tk.MustExec(`use test2`)
-	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
+	tk.MustExec("create table t2(a int, b int, c int, key idx_b(b), key idx_c(c))")
+	tk.MustExec("prepare stmt1 from 'delete from t1 where b = 1 and c > 1';")
+	tk.MustExec("execute stmt1;")
+	tk.MustExec("create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1")
+	tk.MustExec("execute stmt1;")
 
-	tk.MustExec(`admin reload bindings`)
-
+	tk.MustQuery(`select last_use_time from mysql.bind_info where original_sql = 'delete from t1 where b = 1 and c > 1'`).Check(
 }
