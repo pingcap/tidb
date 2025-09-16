@@ -537,11 +537,10 @@ func (w *worker) updatePhysicalTableRow(
 				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
 				// Expected
+			case model.ActionModifyColumn:
+				workType = typeUpdateColumnWorker
 			default:
-				// workType = typeUpdateColumnWorker
-				// TODO: Support Modify Column on partitioned table
-				// https://github.com/pingcap/tidb/issues/38297
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Unsupported job Type.")
 			}
 			err := w.writePhysicalTableRecord(ctx, w.sessPool, p, workType, reorgInfo)
 			if err != nil {
@@ -576,27 +575,18 @@ func (w *worker) updateCurrentElement(
 		// Job is cancelled. So it can't be done.
 		failpoint.Return(dbterror.ErrCancelledDDLJob)
 	})
-	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(ctx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if pt, ok := t.(table.PartitionedTable); ok {
+			// Restart from first partition
+			reorgInfo.PhysicalTableID = pt.Meta().Partition.Definitions[0].ID
+		}
 	}
 
-	if _, ok := t.(table.PartitionedTable); ok {
-		// TODO: remove when modify column of partitioned table is supported
-		// https://github.com/pingcap/tidb/issues/38297
-		return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
-	}
-	// Get the original start handle and end handle.
 	currentVer, err := getValidCurrentVersion(reorgInfo.jobCtx.store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	//nolint:forcetypeassert
-	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.jobCtx.store, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -615,6 +605,17 @@ func (w *worker) updateCurrentElement(
 	}
 
 	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
+		var physTbl table.PhysicalTable
+		if tbl, ok := t.(table.PartitionedTable); ok {
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		} else if nonPartTbl, ok := t.(table.PhysicalTable); ok {
+			physTbl = nonPartTbl
+		}
+		// Get the original start handle and end handle.
+		originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.jobCtx.store, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
@@ -624,7 +625,7 @@ func (w *worker) updateCurrentElement(
 		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
+		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.DDLLogger().Info("update column and indexes",
 			zap.Int64("job ID", reorgInfo.Job.ID),
 			zap.Stringer("element", reorgInfo.currElement),
@@ -636,6 +637,10 @@ func (w *worker) updateCurrentElement(
 		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if pt, ok := t.(table.PartitionedTable); ok {
+			// Restart from first partition
+			reorgInfo.PhysicalTableID = pt.Meta().Partition.Definitions[0].ID
 		}
 	}
 	return nil
