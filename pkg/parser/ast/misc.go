@@ -567,8 +567,14 @@ type ExecuteStmt struct {
 
 	Name       string
 	UsingVars  []ExprNode
+<<<<<<< HEAD
 	BinaryArgs interface{}
 	PrepStmt   interface{} // the corresponding prepared statement
+=======
+	BinaryArgs any
+	PrepStmt   any // the corresponding prepared statement
+	PrepStmtId uint32
+>>>>>>> bbd963f9cb0 (executor, plugin: add statement id info to the plugin (#63526))
 	IdxInMulti int
 
 	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
