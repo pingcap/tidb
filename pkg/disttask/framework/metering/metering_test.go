@@ -81,7 +81,7 @@ func TestFlush(t *testing.T) {
 	ts := time.Now().Unix()/writeInterval*writeInterval + writeInterval
 	data := readMeteringData(t, reader, ts-writeInterval)
 	require.Len(t, data, 0)
-	meter.Record("ks1", &Data{putRequests: 10, getRequests: 20, scanDataTraffic: 300, writeDataSize: 400})
+	meter.Record("ks1", &Data{putRequests: 10, getRequests: 20, readDataBytes: 300, writeDataBytes: 400})
 	meter.flush(ts, 10*time.Minute)
 	data = readMeteringData(t, reader, ts-writeInterval)
 	require.Len(t, data, 0)
@@ -90,11 +90,10 @@ func TestFlush(t *testing.T) {
 	require.Equal(t, "1", data[0]["version"])
 	require.Equal(t, "ks1", data[0]["cluster_id"])
 	require.Equal(t, "disttask", data[0]["source_name"])
-	t.Log(data[0]["s3_put_requests"])
 	require.Equal(t, float64(10), data[0]["s3_put_requests"].(map[string]any)["value"])
 	require.Equal(t, float64(20), data[0]["s3_get_requests"].(map[string]any)["value"])
-	require.Equal(t, float64(300), data[0]["scan_data_traffic"].(map[string]any)["value"])
-	require.Equal(t, float64(400), data[0]["write_data_size"].(map[string]any)["value"])
+	require.Equal(t, float64(300), data[0]["read_data_bytes"].(map[string]any)["value"])
+	require.Equal(t, float64(400), data[0]["write_data_bytes"].(map[string]any)["value"])
 }
 
 func createLocalMeter(t *testing.T, dir string) (*Meter, *meteringreader.MeteringReader) {
