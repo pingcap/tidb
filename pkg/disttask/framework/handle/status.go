@@ -181,6 +181,7 @@ func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[sc
 
 func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*schstatus.TTLFlag, error) {
 	flag := &schstatus.TTLFlag{}
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		rs, err2 := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `SELECT VARIABLE_VALUE from mysql.tidb WHERE VARIABLE_NAME = %?`,
 			tidbvar.DXFSchedulePauseScaleIn)
