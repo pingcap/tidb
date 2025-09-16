@@ -1278,7 +1278,6 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 			// Only support scalar and exists subqueries
 			validSubqType := sCtx == handlingScalarSubquery || sCtx == handlingExistsSubquery
 			if validSubqType && planCtx.curClause == fieldList { // subquery is in the select list
-				planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
 				// If it isn't already enabled via hint, and variable is set, then enable it
 				if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelateInSelect {
 					noDecorrelate = true
