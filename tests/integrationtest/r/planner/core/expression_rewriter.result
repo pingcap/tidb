@@ -433,3 +433,8 @@ select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
 collation(_utf8mb4'@a' collate utf8mb4_general_ci)
 utf8mb4_general_ci
 set @@session.default_collation_for_utf8mb4=default;
+drop table if exists t;
+create table t(str varchar(40));
+insert into t values ('test');
+select * from t where match (t) against ('test');
+Error 1105 (HY000): "MATCH ... AGAINST ..." is not supported in TiDB

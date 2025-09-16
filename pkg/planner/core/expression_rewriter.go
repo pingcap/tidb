@@ -667,6 +667,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 	case *ast.SetCollationExpr:
 		// Do nothing
+	case *ast.MatchAgainst:
+		// TODO: support `MATCH ... AGAINST ...` in TiDB. It's already supported in `parser`.
+		er.err = errors.New("\"MATCH ... AGAINST ...\" is not supported in TiDB")
+		return inNode, false
 	default:
 		er.asScalar = true
 	}
