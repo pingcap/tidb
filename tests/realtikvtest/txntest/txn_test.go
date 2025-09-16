@@ -775,3 +775,47 @@ func TestIssue62775(t *testing.T) {
 		testkit.Rows("10", "20"),
 	)
 }
+
+
+func TestSkipNewerChange(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	txn.Set(kv.Key("key1"), []byte("val1"))
+	txn.Set(kv.Key("key2"), []byte("val2"))
+	txn.Set(kv.Key("key3"), []byte("val3"))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+
+	txn, err = store.Begin()
+	ts := txn.StartTS()
+	require.NoError(t, err)
+	txn.Set(kv.Key("key2"), []byte("val2-2"))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+
+	// txn1, err := store.Begin()
+	// snap := txn1.GetSnapshot()
+	snap := store.GetSnapshot(kv.Version{Ver: ts})
+	snap.SetOption(kv.SkipNewerChange, nil)
+
+	txn2, err := store.Begin()
+	txn2.Set(kv.Key("key1"), []byte("new-val"))
+	err = txn2.Commit(context.Background())
+	require.NoError(t, err)
+
+	key := kv.Key("key")
+	iter, err := snap.Iter(key, key.PrefixNext())
+	require.NoError(t, err)
+	defer iter.Close()
+
+	for iter.Valid() {
+		key := iter.Key()
+		val := iter.Value()
+		fmt.Println("key = ", key, "val = ", val)
+		iter.Next()
+	}
+}

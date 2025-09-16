@@ -29,6 +29,7 @@
 package dbreader
 
 import (
+	"fmt"
 	"bytes"
 	"math"
 	"slices"
@@ -212,7 +213,7 @@ func exceedEndKey(current, endKey []byte) bool {
 // Scan scans the key range with the given ScanProcessor.
 func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc ScanProcessor) error {
 	r.txn.SetReadTS(startTS)
-	if r.RcCheckTS {
+	if r.RcCheckTS || r.SkipNewerChange {
 		r.txn.SetReadTS(math.MaxUint64)
 	}
 	iter := r.GetIter()
@@ -227,6 +228,7 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 		if r.SkipNewerChange {
 			// If the item has newer version, and skipNewerChange flag is set, skip this item.
 			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			fmt.Println("key ==", key, "commitTS ==", userMeta.CommitTS(), "startTS ==", startTS)
 			if userMeta.CommitTS() > startTS {
 				continue
 			}

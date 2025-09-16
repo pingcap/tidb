@@ -894,6 +894,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		if val := txn.GetOption(kv.TxnSource); val != nil {
 			txnSource, _ = val.(uint64)
 		}
+		txn.SetOption(kv.SkipNewerChange, nil)
 		err := kv.SetLossyDDLReorgSource(&txnSource, kv.LossyDDLColumnReorgSource)
 		if err != nil {
 			return errors.Trace(err)

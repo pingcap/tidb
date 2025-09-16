@@ -149,6 +149,8 @@ func (s *tikvSnapshot) SetOption(opt int, val any) {
 		s.KVSnapshot.SetLoadBasedReplicaReadThreshold(val.(time.Duration))
 	case kv.TiKVClientReadTimeout:
 		s.KVSnapshot.SetKVReadTimeout(time.Duration(val.(uint64) * uint64(time.Millisecond)))
+	case kv.SkipNewerChange:
+		s.KVSnapshot.SetSkipNewerChange()
 	}
 }
 

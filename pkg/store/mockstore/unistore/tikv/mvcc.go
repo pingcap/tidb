@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -851,6 +852,7 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 	}
 
 	var conflicts []*kverrors.ErrConflict
+	newMutations := mutations[:0]
 	for i, m := range mutations {
 		item := items[i]
 		if item != nil {
@@ -867,11 +869,13 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 				if req.SkipNewerChange {
 					// Ignore the committed record directly, this is not taken as conflict.
 					conflicts = append(conflicts, conflict)
+					fmt.Println("skip conflict key ==", hex.EncodeToString(conflict.Key))
 					continue
 				}
 				return anyErr{conflict}
 			}
 		}
+		newMutations = append(newMutations, m)
 		// Op_CheckNotExists type requests should not add lock
 		if m.Op == kvrpcpb.Op_CheckNotExists {
 			if item != nil {
@@ -887,7 +891,7 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 		}
 		// TODO add memory lock for async commit protocol.
 	}
-	err = store.prewriteMutations(reqCtx, mutations, req, items)
+	err = store.prewriteMutations(reqCtx, newMutations, req, items)
 	if err != nil {
 		return anyErr{err}
 	}
@@ -1026,6 +1030,9 @@ func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpc
 		if m.Op == kvrpcpb.Op_CheckNotExists {
 			continue
 		}
+
+		fmt.Println("prewrite mutation ==", hex.EncodeToString(m.Key))
+
 		lock, err1 := store.buildPrewriteLock(reqCtx, m, items[i], req)
 		if err1 != nil {
 			return err1

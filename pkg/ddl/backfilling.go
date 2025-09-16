@@ -1142,6 +1142,7 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
 	snap.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
+	snap.SetOption(kv.SkipNewerChange, nil)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
 		snap.SetOption(kv.ResourceGroupTagger, tagger)
 	}
