@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -473,7 +472,7 @@ func generateGlobalSortIngestPlan(
 }
 
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
-	pdCli := store.GetPDClient().WithCallerComponent(caller.Ddl)
+	pdCli := store.GetPDClient()
 	p, l, err := pdCli.GetTS(ctx)
 	if err != nil {
 		return 0, err
@@ -688,7 +687,7 @@ func getRangeSplitter(
 	var regionSplitSize = int64(config.SplitRegionSize)
 	var regionSplitKeys = int64(config.SplitRegionKeys)
 	if store != nil {
-		pdCli := store.GetPDClient().WithCallerComponent(caller.Ddl)
+		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()
 		if err == nil {
 			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
