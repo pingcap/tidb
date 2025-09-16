@@ -2307,7 +2307,7 @@ func writeChunk(
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
 	tblInfo *model.TableInfo,
-) (int, kv.Handle, error) {
+) (rowCnt int, bytes int, err error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
 	ectx := c.ExprCtx.GetEvalCtx()
@@ -2317,7 +2317,7 @@ func writeChunk(
 	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
 	var restoreDataBuf []types.Datum
 	count := 0
-	var lastHandle kv.Handle
+	totalBytes := 0
 
 	unlockFns := make([]func(), 0, len(writers))
 	for _, w := range writers {
@@ -2352,7 +2352,7 @@ func writeChunk(
 		}
 		h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return 0, totalBytes, errors.Trace(err)
 		}
 		for i, index := range indexes {
 			idxID := index.Meta().ID
@@ -2363,16 +2363,16 @@ func writeChunk(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			kvBytes, err := writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
-				return 0, nil, errors.Trace(err)
+				return 0, totalBytes, errors.Trace(err)
 			}
+			totalBytes += int(kvBytes)
 		}
 		count++
-		lastHandle = h
 	}
-	return count, lastHandle, nil
+	return count, totalBytes, nil
 }
 
 func maxIndexColumnCount(indexes []table.Index) int {
@@ -2395,27 +2395,27 @@ func writeOneKV(
 	writeBufs *variable.WriteStmtBufs,
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
-) error {
+) (int64, error) {
 	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return writer.WrittenBytes(), errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
-			return errors.Trace(err)
+			return writer.WrittenBytes(), errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterError", func() {
-			failpoint.Return(errors.New("mock engine error"))
+			failpoint.Return(0, errors.New("mock engine error"))
 		})
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal
 	}
-	return nil
+	return writer.WrittenBytes(), nil
 }
 
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,

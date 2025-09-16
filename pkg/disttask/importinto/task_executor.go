@@ -59,6 +59,7 @@ import (
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
 	taskexecutor.BaseStepExecutor
+	execute.NoopCollector
 
 	taskID        int64
 	taskMeta      *TaskMeta
@@ -166,8 +167,8 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	return nil
 }
 
-// Add implements Collector.Add interface.
-func (s *importStepExecutor) Add(bytes, rowCnt int64) {
+// Processed implements Collector.Processed interface.
+func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.Bytes.Add(bytes)
 	s.summary.RowCnt.Add(rowCnt)
 }
@@ -220,6 +221,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetKeySpace()),
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
+		summary:          &s.summary,
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
@@ -401,10 +403,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	var mu sync.Mutex
 	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
-	onClose := func(summary *external.WriterSummary) {
+	onWriterClose := func(summary *external.WriterSummary) {
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
+	}
+	onReaderClose := func(summary *external.ReaderSummary) {
+		m.summary.GetReqCnt.Add(summary.GetRequestCount)
 	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
@@ -420,7 +425,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		partSize,
 		prefix,
 		external.DefaultOneWriterBlockSize,
-		onClose,
+		onWriterClose,
+		onReaderClose,
 		external.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),
 		false,
@@ -473,11 +479,12 @@ func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 }
 
 type ingestCollector struct {
+	execute.NoopCollector
 	summary *execute.SubtaskSummary
 	kvGroup string
 }
 
-func (c *ingestCollector) Add(bytes, rowCnt int64) {
+func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	c.summary.Bytes.Add(bytes)
 	if c.kvGroup == dataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)
@@ -557,6 +564,9 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalKVCount:  0,
 			CheckHotspot:  false,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
+			OnReaderClose: func(summary *external.ReaderSummary) {
+				e.summary.GetReqCnt.Add(summary.GetRequestCount)
+			},
 		},
 		TS: sm.TS,
 	}, engineUUID)

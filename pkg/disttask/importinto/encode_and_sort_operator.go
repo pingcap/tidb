@@ -161,6 +161,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
+					op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(indexBlockSize).
@@ -174,7 +175,10 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
-			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
+			SetOnCloseFunc(func(summary *external.WriterSummary) {
+				op.sharedVars.mergeDataSummary(summary)
+				op.sharedVars.summary.PutReqCnt.Add(summary.PutRequestCount)
+			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
