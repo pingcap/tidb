@@ -49,6 +49,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+<<<<<<< HEAD:pkg/server/tests/tidb_test.go
+=======
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/plugin"
+>>>>>>> bbd963f9cb0 (executor, plugin: add statement id info to the plugin (#63526)):pkg/server/tests/commontest/tidb_test.go
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -3218,3 +3223,296 @@ func TestAuthSocket(t *testing.T) {
 		ts.CheckRows(t, rows, "u2@%")
 	})
 }
+<<<<<<< HEAD:pkg/server/tests/tidb_test.go
+=======
+
+func TestWarningForParseError(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		assertWarningCount := func() {
+			rows, err := conn.QueryContext(context.Background(), "show warnings")
+			require.NoError(t, err)
+			defer rows.Close()
+
+			count := 0
+			for rows.Next() {
+				count++
+			}
+			require.Equal(t, 1, count)
+		}
+
+		for i := 0; i < 5; i++ {
+			stmt, err := conn.PrepareContext(context.Background(), "VALUES ( ('foo'), ROW('bar') )")
+			require.Error(t, err)
+			require.Nil(t, stmt)
+
+			assertWarningCount()
+		}
+	})
+}
+
+func TestBatchGetTypeForRowExpr(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// single columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t1 (id varchar(255) collate utf8mb4_general_ci, primary key (id));")
+		dbt.MustExec("insert into t1 values ('a'), ('c');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		_, err = conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		require.NoError(t, err)
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t1 where id in (?, ?)")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "C")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a\nc")
+	})
+
+	// multiple columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t2 (id1 varchar(255) collate utf8mb4_general_ci, id2 varchar(255) collate utf8mb4_general_ci, primary key (id1, id2));")
+		dbt.MustExec("insert into t2 values ('a', 'b'), ('c', 'd');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t2 where (id1, id2) in ((?, ?), (?, ?))")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "B", "C", "D")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a b\nc d")
+	})
+}
+
+func TestIssue57531(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	var rsCnt int
+	for i := range 2 {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			var conn *sql.Conn
+			var netConn net.Conn
+			conn, _ = dbt.GetDB().Conn(context.Background())
+
+			// get the TCP connection
+			conn.Raw(func(driverConn any) error {
+				v := reflect.ValueOf(driverConn)
+				if v.Kind() == reflect.Ptr {
+					v = v.Elem()
+				}
+				f := v.FieldByName("netConn")
+				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+				}
+				return nil
+			})
+
+			// execute `select sleep(300)`
+			go func() {
+				if i == 0 {
+					conn.QueryContext(context.Background(), "select sleep(300)")
+				} else {
+					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
+					require.NoError(t, err)
+					stmt.Exec(300)
+				}
+			}()
+			time.Sleep(200 * time.Millisecond)
+
+			// have two sessions
+			rsCnt = 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				rsCnt++
+			}
+			require.Equal(t, rsCnt, 2)
+
+			// close tcp connection
+			netConn.Close()
+		})
+
+		time.Sleep(10 * time.Millisecond)
+
+		// the `select sleep(300)` is killed
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			rsCnt = 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				rsCnt++
+			}
+			require.Equal(t, rsCnt, 1)
+		})
+	}
+}
+
+func TestCloseConnForUndeterminedError(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Host = "127.0.0.1" // No network interface listening for mysql traffic
+	cfg.Port = 2333
+	cfg.Status.ReportStatus = false
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	defer server.Close()
+
+	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:2333)/test")
+	require.NoError(t, err)
+	defer terror.Call(db.Close)
+
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("create table t(a int)")
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer terror.Call(conn.Close)
+
+	_, err = conn.ExecContext(context.Background(), "begin")
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(context.Background(), "insert into t values(1)")
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult", `return("undeterminedResult")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult"))
+	}()
+
+	_, err = conn.ExecContext(context.Background(), "commit")
+	// because TiKV responses UndeterminedResult, the connection should be disconnected without reporting mysql error.
+	require.EqualError(t, err, "invalid connection")
+}
+
+func TestAuditPluginInfoForStarting(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	type normalTest struct {
+		sql         string
+		rows        uint64
+		stmtType    string
+		dbs         string
+		tables      string
+		cmd         string
+		event       plugin.GeneralEvent
+		params      string
+		redactedSQL string
+		stmtID      uint32
+		currentDB   string
+	}
+
+	var dbNames, tableNames []string
+	var testResults []normalTest
+
+	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
+		dbNames = dbNames[:0]
+		tableNames = tableNames[:0]
+		for _, value := range sctx.StmtCtx.Tables {
+			dbNames = append(dbNames, value.DB)
+			tableNames = append(tableNames, value.Table)
+		}
+		redactedSQL, _ := sctx.StmtCtx.SQLDigest()
+		audit := normalTest{
+			sql:         sctx.StmtCtx.OriginalSQL,
+			rows:        sctx.StmtCtx.AffectedRows(),
+			stmtType:    sctx.StmtCtx.StmtType,
+			dbs:         strings.Join(dbNames, ","),
+			tables:      strings.Join(tableNames, ","),
+			cmd:         cmd,
+			event:       event,
+			params:      sctx.PlanCacheParams.String(),
+			redactedSQL: redactedSQL,
+			currentDB:   sctx.CurrentDB,
+		}
+		if stmtID := ctx.Value(plugin.PrepareStmtIDCtxKey); stmtID != nil {
+			audit.stmtID = stmtID.(uint32)
+		}
+		testResults = append(testResults, audit)
+	}
+	plugin.LoadPluginForTest(t, onGeneralEvent)
+	defer plugin.Shutdown(context.Background())
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(context.Background(), "use test")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "drop table if exists t")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "create table t(a int)")
+		require.NoError(t, err)
+
+		testResults = testResults[:0]
+		stmt, err := conn.PrepareContext(context.Background(), "insert into t values (?)")
+		require.NoError(t, err)
+
+		// Test execute audit log
+		testResults = testResults[:0]
+		for i := range 1000 {
+			_, err = stmt.ExecContext(context.Background(), i)
+			require.NoError(t, err)
+		}
+		require.Eventually(t, func() bool {
+			// EXECUTE statement doesn't have STARTING info
+			return len(testResults) == 1000
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[len(testResults)-1], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Execute",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+			stmtID:      1,
+			currentDB:   "test",
+		})
+
+		// Test close audit log
+		testResults = testResults[:0]
+		err = stmt.Close()
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			return len(testResults) == 1
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[0], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Close stmt",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+			stmtID:      1,
+			currentDB:   "test",
+		})
+
+		testResults = testResults[:0]
+	})
+}
+>>>>>>> bbd963f9cb0 (executor, plugin: add statement id info to the plugin (#63526)):pkg/server/tests/commontest/tidb_test.go
