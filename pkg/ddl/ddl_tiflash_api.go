@@ -511,7 +511,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 
 			err = infosync.UpdateTiFlashProgressCache(tb.ID, fullReplicasProgress)
 			if err != nil {
-				logutil.DDLLogger().Error("get tiflash sync progress from cache failed",
+				logutil.DDLLogger().Warn("get tiflash sync progress from cache failed",
 					zap.Error(err),
 					zap.Int64("tableID", tb.ID),
 					zap.Bool("IsPartition", tb.IsPartition),
