@@ -51,9 +51,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -217,6 +219,22 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	}
 
 	sessVars := cc.ctx.GetSessionVars()
+	// In this stage, the session variables are still about the previous statement, so the message in audit
+	// log is wrong. Fixing this requires to move the audit log after the optimization stage, which is risky.
+	// So, at least we can have a correct SQL for the audit log, which will make it easier for us to find
+	// other issues in audit log.
+	cc.ctx.GetSessionVars().StmtCtx.ResetForAuditPlugin()
+	cc.ctx.GetSessionVars().PlanCacheParams.Reset()
+	prepStmt, err := sessVars.GetPreparedStmtByID(stmtID)
+	if err == nil && prepStmt != nil {
+		stmt := prepStmt.(*plannercore.PlanCacheStmt)
+		if stmt != nil && stmt.PreparedAst != nil && stmt.PreparedAst.Stmt != nil {
+			cc.ctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.PreparedAst.Stmt.Text()
+			cc.ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), stmt.PreparedAst.Stmt)
+		}
+	}
+	cc.audit(plugin.Starting)
+
 	// expiredTaskID is the task ID of the previous statement. When executing a stmt,
 	// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
 	// with the previous one to determine whether StmtCtx has been inited for the current stmt.
@@ -226,7 +244,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	return err
 }
 
-func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args []param.BinaryParam, useCursor bool) (err error) {
+func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt PreparedStatement, args []param.BinaryParam, useCursor bool) (err error) {
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 
 	fn := func() bool {
