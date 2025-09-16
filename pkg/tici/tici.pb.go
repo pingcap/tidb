@@ -21,12 +21,11 @@
 package tici
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -1807,11 +1806,10 @@ func (x *AddShardResponse) GetStatus() int32 {
 
 // CreateIndexRequest is a request to create an index
 type CreateIndexRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Index information
-	IndexInfo *IndexInfo `protobuf:"bytes,1,opt,name=index_info,json=indexInfo,proto3" json:"index_info,omitempty"`
-	// Table information
-	TableInfo     *TableInfo `protobuf:"bytes,2,opt,name=table_info,json=tableInfo,proto3" json:"table_info,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DatabaseName  string                 `protobuf:"bytes,1,opt,name=database_name,json=databaseName,proto3" json:"database_name,omitempty"`
+	TableInfo     []byte                 `protobuf:"bytes,2,opt,name=table_info,json=tableInfo,proto3" json:"table_info,omitempty"`
+	IndexId       int64                  `protobuf:"varint,3,opt,name=index_id,json=indexId,proto3" json:"index_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1846,18 +1844,25 @@ func (*CreateIndexRequest) Descriptor() ([]byte, []int) {
 	return file_tici_proto_rawDescGZIP(), []int{26}
 }
 
-func (x *CreateIndexRequest) GetIndexInfo() *IndexInfo {
+func (x *CreateIndexRequest) GetDatabaseName() string {
 	if x != nil {
-		return x.IndexInfo
+		return x.DatabaseName
 	}
-	return nil
+	return ""
 }
 
-func (x *CreateIndexRequest) GetTableInfo() *TableInfo {
+func (x *CreateIndexRequest) GetTableInfo() []byte {
 	if x != nil {
 		return x.TableInfo
 	}
 	return nil
+}
+
+func (x *CreateIndexRequest) GetIndexId() int64 {
+	if x != nil {
+		return x.IndexId
+	}
+	return 0
 }
 
 // CreateIndexResponse is a response to the index creation request
@@ -2697,12 +2702,12 @@ const file_tici_proto_rawDesc = "" +
 	"\x10s3_upload_bucket\x18\a \x01(\tR\x0es3UploadBucket\x12(\n" +
 	"\x10s3_upload_prefix\x18\b \x01(\tR\x0es3UploadPrefix\"*\n" +
 	"\x10AddShardResponse\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"t\n" +
-	"\x12CreateIndexRequest\x12.\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"s\n" +
+	"\x12CreateIndexRequest\x12#\n" +
+	"\rdatabase_name\x18\x01 \x01(\tR\fdatabaseName\x12\x1d\n" +
 	"\n" +
-	"index_info\x18\x01 \x01(\v2\x0f.tici.IndexInfoR\tindexInfo\x12.\n" +
-	"\n" +
-	"table_info\x18\x02 \x01(\v2\x0f.tici.TableInfoR\ttableInfo\"m\n" +
+	"table_info\x18\x02 \x01(\fR\ttableInfo\x12\x19\n" +
+	"\bindex_id\x18\x03 \x01(\x03R\aindexId\"m\n" +
 	"\x13CreateIndexResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x19\n" +
@@ -2880,45 +2885,43 @@ var file_tici_proto_depIdxs = []int32{
 	26, // 13: tici.AddShardRequest.shard:type_name -> tici.ShardManifestHeader
 	35, // 14: tici.AddShardRequest.index_info:type_name -> tici.IndexInfo
 	33, // 15: tici.AddShardRequest.table_info:type_name -> tici.TableInfo
-	35, // 16: tici.CreateIndexRequest.index_info:type_name -> tici.IndexInfo
-	33, // 17: tici.CreateIndexRequest.table_info:type_name -> tici.TableInfo
-	34, // 18: tici.TableInfo.columns:type_name -> tici.ColumnInfo
-	0,  // 19: tici.IndexInfo.index_type:type_name -> tici.IndexType
-	34, // 20: tici.IndexInfo.columns:type_name -> tici.ColumnInfo
-	36, // 21: tici.IndexInfo.parser_info:type_name -> tici.ParserInfo
-	39, // 22: tici.IndexInfo.other_params:type_name -> tici.IndexInfo.OtherParamsEntry
-	1,  // 23: tici.ParserInfo.parser_type:type_name -> tici.ParserType
-	40, // 24: tici.ParserInfo.parser_params:type_name -> tici.ParserInfo.ParserParamsEntry
-	2,  // 25: tici.GetIndexProgressResponse.state:type_name -> tici.GetIndexProgressResponse.State
-	7,  // 26: tici.MetaService.WorkerNodeHeartbeat:input_type -> tici.WorkerNodeHeartbeatRequest
-	9,  // 27: tici.MetaService.ReaderNodeHeartbeat:input_type -> tici.ReaderNodeHeartbeatRequest
-	29, // 28: tici.MetaService.CreateIndex:input_type -> tici.CreateIndexRequest
-	31, // 29: tici.MetaService.DropIndex:input_type -> tici.DropIndexRequest
-	37, // 30: tici.MetaService.GetIndexProgress:input_type -> tici.GetIndexProgressRequest
-	12, // 31: tici.MetaService.AppendFragMeta:input_type -> tici.AppendFragMetaRequest
-	16, // 32: tici.MetaService.GetShardLocalCacheInfo:input_type -> tici.GetShardLocalCacheRequest
-	18, // 33: tici.MetaService.DebugGetShardManifest:input_type -> tici.DebugGetShardManifestRequest
-	20, // 34: tici.MetaService.GetCloudStoragePath:input_type -> tici.GetCloudStoragePathRequest
-	22, // 35: tici.MetaService.MarkPartitionUploadFinished:input_type -> tici.MarkPartitionUploadFinishedRequest
-	24, // 36: tici.MetaService.MarkTableUploadFinished:input_type -> tici.MarkTableUploadFinishedRequest
-	27, // 37: tici.IndexerService.AddShard:input_type -> tici.AddShardRequest
-	8,  // 38: tici.MetaService.WorkerNodeHeartbeat:output_type -> tici.WorkerNodeHeartbeatResponse
-	10, // 39: tici.MetaService.ReaderNodeHeartbeat:output_type -> tici.ReaderNodeHeartbeatResponse
-	30, // 40: tici.MetaService.CreateIndex:output_type -> tici.CreateIndexResponse
-	32, // 41: tici.MetaService.DropIndex:output_type -> tici.DropIndexResponse
-	38, // 42: tici.MetaService.GetIndexProgress:output_type -> tici.GetIndexProgressResponse
-	13, // 43: tici.MetaService.AppendFragMeta:output_type -> tici.AppendFragMetaResponse
-	17, // 44: tici.MetaService.GetShardLocalCacheInfo:output_type -> tici.GetShardLocalCacheResponse
-	19, // 45: tici.MetaService.DebugGetShardManifest:output_type -> tici.DebugGetShardManifestResponse
-	21, // 46: tici.MetaService.GetCloudStoragePath:output_type -> tici.GetCloudStoragePathResponse
-	23, // 47: tici.MetaService.MarkPartitionUploadFinished:output_type -> tici.MarkPartitionUploadFinishedResponse
-	25, // 48: tici.MetaService.MarkTableUploadFinished:output_type -> tici.MarkTableUploadFinishedResponse
-	28, // 49: tici.IndexerService.AddShard:output_type -> tici.AddShardResponse
-	38, // [38:50] is the sub-list for method output_type
-	26, // [26:38] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	34, // 16: tici.TableInfo.columns:type_name -> tici.ColumnInfo
+	0,  // 17: tici.IndexInfo.index_type:type_name -> tici.IndexType
+	34, // 18: tici.IndexInfo.columns:type_name -> tici.ColumnInfo
+	36, // 19: tici.IndexInfo.parser_info:type_name -> tici.ParserInfo
+	39, // 20: tici.IndexInfo.other_params:type_name -> tici.IndexInfo.OtherParamsEntry
+	1,  // 21: tici.ParserInfo.parser_type:type_name -> tici.ParserType
+	40, // 22: tici.ParserInfo.parser_params:type_name -> tici.ParserInfo.ParserParamsEntry
+	2,  // 23: tici.GetIndexProgressResponse.state:type_name -> tici.GetIndexProgressResponse.State
+	7,  // 24: tici.MetaService.WorkerNodeHeartbeat:input_type -> tici.WorkerNodeHeartbeatRequest
+	9,  // 25: tici.MetaService.ReaderNodeHeartbeat:input_type -> tici.ReaderNodeHeartbeatRequest
+	29, // 26: tici.MetaService.CreateIndex:input_type -> tici.CreateIndexRequest
+	31, // 27: tici.MetaService.DropIndex:input_type -> tici.DropIndexRequest
+	37, // 28: tici.MetaService.GetIndexProgress:input_type -> tici.GetIndexProgressRequest
+	12, // 29: tici.MetaService.AppendFragMeta:input_type -> tici.AppendFragMetaRequest
+	16, // 30: tici.MetaService.GetShardLocalCacheInfo:input_type -> tici.GetShardLocalCacheRequest
+	18, // 31: tici.MetaService.DebugGetShardManifest:input_type -> tici.DebugGetShardManifestRequest
+	20, // 32: tici.MetaService.GetCloudStoragePath:input_type -> tici.GetCloudStoragePathRequest
+	22, // 33: tici.MetaService.MarkPartitionUploadFinished:input_type -> tici.MarkPartitionUploadFinishedRequest
+	24, // 34: tici.MetaService.MarkTableUploadFinished:input_type -> tici.MarkTableUploadFinishedRequest
+	27, // 35: tici.IndexerService.AddShard:input_type -> tici.AddShardRequest
+	8,  // 36: tici.MetaService.WorkerNodeHeartbeat:output_type -> tici.WorkerNodeHeartbeatResponse
+	10, // 37: tici.MetaService.ReaderNodeHeartbeat:output_type -> tici.ReaderNodeHeartbeatResponse
+	30, // 38: tici.MetaService.CreateIndex:output_type -> tici.CreateIndexResponse
+	32, // 39: tici.MetaService.DropIndex:output_type -> tici.DropIndexResponse
+	38, // 40: tici.MetaService.GetIndexProgress:output_type -> tici.GetIndexProgressResponse
+	13, // 41: tici.MetaService.AppendFragMeta:output_type -> tici.AppendFragMetaResponse
+	17, // 42: tici.MetaService.GetShardLocalCacheInfo:output_type -> tici.GetShardLocalCacheResponse
+	19, // 43: tici.MetaService.DebugGetShardManifest:output_type -> tici.DebugGetShardManifestResponse
+	21, // 44: tici.MetaService.GetCloudStoragePath:output_type -> tici.GetCloudStoragePathResponse
+	23, // 45: tici.MetaService.MarkPartitionUploadFinished:output_type -> tici.MarkPartitionUploadFinishedResponse
+	25, // 46: tici.MetaService.MarkTableUploadFinished:output_type -> tici.MarkTableUploadFinishedResponse
+	28, // 47: tici.IndexerService.AddShard:output_type -> tici.AddShardResponse
+	36, // [36:48] is the sub-list for method output_type
+	24, // [24:36] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_tici_proto_init() }
