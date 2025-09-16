@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -462,11 +463,12 @@ func GetRangeStartAndEndKeyHex(rangeBundleID string) (startKey string, endKey st
 	startKey, endKey = "", ""
 	if rangeBundleID == TiDBBundleRangePrefixForMeta {
 		// Use codec.EncodeBytes to properly encode the meta prefix in table mode
-		startKey = hex.EncodeToString(codec.EncodeBytes(nil, metaPrefix))
-		// Use rawPrefix as endKey to ensure the meta range [metaPrefix, rawPrefix) only
+		startKeyBytes := codec.EncodeBytes(nil, metaPrefix)
+		startKey = hex.EncodeToString(startKeyBytes)
+		// Use PrefixNext to ensure the meta range [metaPrefix, PrefixNext(metaPrefix)) only
 		// contains meta keys and excludes RawKV keys. This prevents unintended placement
 		// policy application to raw keys that fall between meta ('m', 0x6d) and table ('t', 0x74) prefixes.
-		endKey = hex.EncodeToString(codec.EncodeBytes(nil, rawPrefix))
+		endKey = hex.EncodeToString(kv.Key(startKeyBytes).PrefixNext())
 	}
 	return startKey, endKey
 }

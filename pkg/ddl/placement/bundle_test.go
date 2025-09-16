@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1468,14 +1469,14 @@ func TestGetRangeStartAndEndKeyHex(t *testing.T) {
 	startKeyBytes, err := hex.DecodeString(startKey)
 	require.NoError(t, err)
 
-	// Both keys should be valid codec encoded bytes
+	// startKey should be valid codec encoded bytes
 	_, startKeyDecoded, err := codec.DecodeBytes(startKeyBytes, nil)
 	require.NoError(t, err)
 	require.True(t, bytes.Equal(metaPrefix, startKeyDecoded), "metaPrefix and startKeyDecoded should have the same content")
 
+	// endKey should be the PrefixNext of startKey
 	endKeyBytes, err := hex.DecodeString(endKey)
 	require.NoError(t, err)
-	_, endKeyDecoded, err := codec.DecodeBytes(endKeyBytes, nil)
-	require.NoError(t, err)
-	require.True(t, bytes.Equal(rawPrefix, endKeyDecoded), "rawPrefix and endKeyDecoded should have the same content")
+	expectedEndKey := kv.Key(startKeyBytes).PrefixNext()
+	require.True(t, bytes.Equal(expectedEndKey, endKeyBytes), "endKey should equal PrefixNext(startKey)")
 }
