@@ -20,6 +20,11 @@ go_library(
         "//util/dbterror",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
+<<<<<<< HEAD:plugin/BUILD.bazel
+=======
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+>>>>>>> bbd963f9cb0 (executor, plugin: add statement id info to the plugin (#63526)):pkg/plugin/BUILD.bazel
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_zap//:zap",
     ],
