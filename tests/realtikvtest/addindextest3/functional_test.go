@@ -85,7 +85,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 }
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, _ := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int);")
@@ -98,9 +98,9 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	require.NotNil(t, realJob)
 
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), dom.GetPDClient(), realJob, false, 0)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 	require.NoError(t, err)
-	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), dom.GetPDClient(), realJob).Build(cfg, bd)
+	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
 	uniques := make([]bool, 0, len(idxIDs))

@@ -774,13 +774,13 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.pdCli, job, false, 0)
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		defer bd.Close()
 	}
-	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.pdCli, job).
+	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
 		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
 		Build(cfg, bd)
 	if err != nil {

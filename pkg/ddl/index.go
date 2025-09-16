@@ -83,7 +83,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
 	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -2546,7 +2545,7 @@ func (w *worker) addTableIndex(
 				// A duplicate key must be detected before, so we can skip the check bellow.
 				return nil
 			}
-			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.pdCli)
+			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
 		}
 	}
 
@@ -2589,7 +2588,7 @@ func (w *worker) addTableIndex(
 	return errors.Trace(err)
 }
 
-func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, pdCli pd.Client) (err error) {
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
 	var (
 		backendCtx ingest.BackendCtx
 		cfg        *local.BackendConfig
@@ -2612,12 +2611,12 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if backendCtx == nil {
 				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-					cfg, backend, err = ingest.CreateLocalBackend(ctx, pdCli, reorgInfo.Job, true, 0)
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, 0)
 					if err != nil {
 						return errors.Trace(err)
 					}
 				}
-				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, pdCli, reorgInfo.Job).
+				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
 					ForDuplicateCheck().
 					Build(cfg, backend)
 				if err != nil {

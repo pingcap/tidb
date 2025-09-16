@@ -36,13 +36,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	pd "github.com/tikv/pd/client"
 )
 
 type cloudImportExecutor struct {
 	taskexecutor.BaseStepExecutor
 	job             *model.Job
-	pdCli           pd.Client
+	store           kv.Storage
 	indexes         []*model.IndexInfo
 	ptbl            table.PhysicalTable
 	cloudStoreURI   string
@@ -55,7 +54,7 @@ type cloudImportExecutor struct {
 
 func newCloudImportExecutor(
 	job *model.Job,
-	pdCli pd.Client,
+	store kv.Storage,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
@@ -63,7 +62,7 @@ func newCloudImportExecutor(
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
 		job:             job,
-		pdCli:           pdCli,
+		store:           store,
 		indexes:         indexes,
 		ptbl:            ptbl,
 		cloudStoreURI:   cloudStoreURI,
@@ -76,11 +75,11 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.pdCli, e.job, false, e.taskConcurrency)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, false, e.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, e.pdCli, e.job).Build(cfg, bd)
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, e.store, e.job).Build(cfg, bd)
 	if err != nil {
 		bd.Close()
 		return err

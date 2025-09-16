@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -44,10 +44,10 @@ import (
 var ResignOwnerForTest = atomic.NewBool(false)
 
 // NewBackendCtxBuilder creates a BackendCtxBuilder.
-func NewBackendCtxBuilder(ctx context.Context, pdCli pd.Client, job *model.Job) *BackendCtxBuilder {
+func NewBackendCtxBuilder(ctx context.Context, store kv.Storage, job *model.Job) *BackendCtxBuilder {
 	return &BackendCtxBuilder{
 		ctx:   ctx,
-		pdCli: pdCli,
+		store: store,
 		job:   job,
 	}
 }
@@ -55,7 +55,7 @@ func NewBackendCtxBuilder(ctx context.Context, pdCli pd.Client, job *model.Job) 
 // BackendCtxBuilder is the builder of BackendCtx.
 type BackendCtxBuilder struct {
 	ctx   context.Context
-	pdCli pd.Client
+	store kv.Storage
 	job   *model.Job
 
 	etcdClient *clientv3.Client
@@ -95,7 +95,7 @@ var BackendCounterForTest = atomic.Int64{}
 
 // Build builds a BackendCtx.
 func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (BackendCtx, error) {
-	ctx, pdCli, job := b.ctx, b.pdCli, b.job
+	ctx, store, job := b.ctx, b.store, b.job
 	jobSortPath, err := genJobSortPath(job.ID, b.checkDup)
 	if err != nil {
 		return nil, err
@@ -108,6 +108,8 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 		ResignOwnerForTest.Store(true)
 	})
 
+	//nolint: forcetypeassert
+	pdCli := store.(tikv.Storage).GetRegionCache().PDClient().WithCallerComponent(caller.Ddl)
 	var cpMgr *CheckpointManager
 	if b.sessPool != nil {
 		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
