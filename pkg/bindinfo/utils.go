@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -172,32 +173,32 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
 const updateBindingUsageInfoBatchSize = 10
 
 var (
-	// WriteIntervalAfterNoReadBinding indicates the interval at which a write operation needs to be performed after a binding has not been read.
-	WriteIntervalAfterNoReadBinding = 1 * time.Hour
-	// MinCheckIntervalForUpdateBindingUsageInfo indicates the minimum interval to check whether to update binding usage info.
-	MinCheckIntervalForUpdateBindingUsageInfo = 5
-	// MaxCheckIntervalForUpdateBindingUsageInfo indicates the maximum interval to check whether to update binding usage info.
-	MaxCheckIntervalForUpdateBindingUsageInfo = 60
+	// MaxWriteInterval indicates the interval at which a write operation needs to be performed after a binding has not been read.
+	MaxWriteInterval = 6 * time.Hour
 )
 
 func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings []*Binding) error {
 	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) error {
 		cnt := 0
 		for _, binding := range bindings {
-			createAt := binding.UsageInfo.CreateAt.Load()
-			if createAt == nil {
+			lastSaved := binding.UsageInfo.LastSavedAt.Load()
+			if lastSaved == nil {
 				continue
 			}
-			lastUsedAt := binding.UsageInfo.LastUsedAt.Load()
-			if lastUsedAt == nil {
+			lastUsed := binding.UsageInfo.LastUsedAt.Load()
+			if lastUsed == nil {
 				continue
 			}
-			if time.Since(*lastUsedAt) > WriteIntervalAfterNoReadBinding || lastUsedAt.Sub(*createAt) > 12*time.Hour {
-				err := saveBindUsage(sctx, binding.SQLDigest, *lastUsedAt)
+			intest.Assert(lastUsed.Compare(*lastSaved) >= 0, " lastUsed should be later than or equal to lastSaved")
+			if time.Since(*lastSaved) > MaxWriteInterval ||
+				// if the last used time is updated for more than 1 hour, we also write it back to storage.
+				time.Since(*lastUsed) > 1*time.Hour {
+				err := saveBindUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
 				if err != nil {
 					return err
 				}
 				binding.ResetUsageInfo()
+				cnt++
 			}
 			if cnt > updateBindingUsageInfoBatchSize {
 				break
@@ -208,11 +209,17 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 	return err
 }
 
-func saveBindUsage(sctx sessionctx.Context, sqldigest string, ts time.Time) error {
+func saveBindUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {
 	lastUsedTime := ts.UTC().Format(types.TimeFormat)
+	var sql = "UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?"
+	if planDigest == "" {
+		sql += " AND plan_digest IS NULL"
+	} else {
+		sql += fmt.Sprintf(" AND plan_digest = '%s'", planDigest)
+	}
 	_, _, err := execRows(
 		sctx,
-		"UPDATE mysql.bind_info SET last_used_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?",
+		sql,
 		lastUsedTime, sqldigest,
 	)
 	return err
