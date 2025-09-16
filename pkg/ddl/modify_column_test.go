@@ -633,9 +633,21 @@ func TestXxx2(t *testing.T) {
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeModifyColumnStateWriteReorg", func() {
 		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("set @session.sql_mode=''")
 		tk2.MustExec("use test")
-		tk2.MustExec("insert into t1 values(123, 123)")
+		// Although we use non-strict mode, we still can't insert a value out of range,
+		// since we are doing reorg with strict mode.
+		tk2.ExecToErr("insert into t1 values(10000000000, 123)")
 	})
 
-	tk.MustExec("alter table t1 modify column id int, modify column c1 int")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnStateDeleteOnly", func(_ int64) {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("set @session.sql_mode=''")
+		tk2.MustExec("use test")
+		// Although we use non-strict mode, we still can't insert a value out of range,
+		// since we are doing reorg with strict mode.
+		tk2.ExecToErr("delete from t1 where id = 10000000001")
+	})
+
+	tk.MustExec("alter table t1 modify column id int")
 }

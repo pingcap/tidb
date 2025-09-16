@@ -972,8 +972,10 @@ func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, chang
 }
 
 func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdxs []*model.IndexInfo) []int64 {
-	tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
-	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+	if oldCol != nil {
+		tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+	}
 	var removedIdxIDs []int64
 	if len(oldIdxs) > 0 {
 		removedIdxIDs = make([]int64, 0, len(oldIdxs))

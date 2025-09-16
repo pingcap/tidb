@@ -242,6 +242,7 @@ func rollbackModifyColumnJobWithData(
 		// Reset PreventNullInsertFlag flag.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.PreventNullInsertFlag)
 	}
+	tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventTruncateFlag)
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
 		changingIdxIDs = buildRelatedIndexIDs(tblInfo, args.ChangingColumn.ID)
@@ -255,7 +256,8 @@ func rollbackModifyColumnJobWithData(
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// Reconstruct the job args to add the temporary index ids into delete range table.
-	args.IndexIDs = changingIdxIDs
+	// For meta-only change, changingIdxIDs may has been stored in args.RedundantIdxs.
+	args.IndexIDs = append(args.RedundantIdxs, changingIdxIDs...)
 	args.PartitionIDs = getPartitionIDs(tblInfo)
 	job.FillFinishedArgs(args)
 	return ver, nil
@@ -428,12 +430,12 @@ func checkModifyColumn(
 	oldCol, changingCol *model.ColumnInfo,
 	sqlMode mysql.SQLMode,
 	isDataTruncated bool,
-) (err error, needRollback, checked bool) {
+) (needRollback, checked bool, err error) {
 	// Get sessionctx from context resource pool.
 	var sctx sessionctx.Context
 	sctx, err = w.sessPool.Get()
 	if err != nil {
-		return errors.Trace(err), false, false
+		return false, false, errors.Trace(err)
 	}
 	defer w.sessPool.Put(sctx)
 
@@ -445,25 +447,30 @@ func checkModifyColumn(
 		}
 	})
 
-	if sql != "" {
-		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
-		if err != nil {
-			return errors.Trace(err), false, true
-		}
-		if len(rows) != 0 {
-			if isDataTruncated {
-				return dbterror.ErrWarnDataTruncated.GenWithStackByArgs(changingCol.Name.L, 1), true, true
-			}
-			return dbterror.ErrInvalidUseOfNull, true, true
-		}
-	}
-
-	// Prevent this field from inserting null values.
-	// TODO(joechenrh): seems like we can remove this flag.
 	if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
 		oldCol.AddFlag(mysql.PreventNullInsertFlag)
 	}
-	return nil, false, sql != ""
+
+	if sql != "" {
+		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
+		if err != nil {
+			return false, false, errors.Trace(err)
+		}
+		if len(rows) != 0 {
+			if isDataTruncated {
+				return true, true, dbterror.ErrWarnDataTruncated.GenWithStackByArgs(changingCol.Name.L, 1)
+			}
+			return true, true, dbterror.ErrInvalidUseOfNull
+		}
+
+		// If reach here, it means we are modifying column under strict mode, and we are
+		// trying to do meta-only change. So we set the flag here to prevent invalid
+		// insert and update.
+		oldCol.AddFlag(mysql.PreventTruncateFlag)
+		return false, true, nil
+	}
+
+	return false, false, nil
 }
 
 // buildCheckSQLFromModifyColumn builds the SQL to check whether the data conversion is valid when modifying column type.
@@ -476,30 +483,32 @@ func buildCheckSQLFromModifyColumn(
 	oldTp := oldCol.GetType()
 	changingTp := changingCol.GetType()
 
+	// Only check the data conversion when strict mode is on
+	if !sqlMode.HasStrictMode() {
+		return ""
+	}
+
 	var conditions []string
 	template := "SELECT 1 FROM %s WHERE %s LIMIT 1"
 	checkColName := fmt.Sprintf("`%s`", oldCol.Name.O)
 	tableName := fmt.Sprintf("`%s`.`%s`", dbName.O, tblName.O)
 
-	// If strict mode is on, check the value of data too.
-	if sqlMode.HasStrictMode() {
-		if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
-			// Integer conversion
-			conditions = append(conditions, buildCheckRangeForIntegerTypes(oldCol, changingCol))
-		} else if oldCol.FieldType.GetCollate() == changingCol.FieldType.GetCollate() {
-			changingLen := changingCol.FieldType.GetFlen()
-			if changingLen == types.UnspecifiedLength {
-				return ""
-			}
+	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
+		// Integer conversion
+		conditions = append(conditions, buildCheckRangeForIntegerTypes(oldCol, changingCol))
+	} else if oldCol.FieldType.GetCollate() == changingCol.FieldType.GetCollate() {
+		changingLen := changingCol.FieldType.GetFlen()
+		if changingLen == types.UnspecifiedLength {
+			return ""
+		}
 
-			// String conversion with same collation
-			if oldTp == mysql.TypeString && (changingTp == mysql.TypeVarchar || changingTp == mysql.TypeString) {
-				// CHAR to VARCHAR/CHAR
-				conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingLen))
-				// } else if oldTp == mysql.TypeVarchar && changingTp == mysql.TypeString {
-				// 	// VARCHAR to CHAR
-				// 	conditions = append(conditions, fmt.Sprintf("(LENGTH(%s) > %d OR %s LIKE '%% ')", checkColName, changingLen, checkColName))
-			}
+		// String conversion with same collation
+		if oldTp == mysql.TypeString && (changingTp == mysql.TypeVarchar || changingTp == mysql.TypeString) {
+			// CHAR to VARCHAR/CHAR
+			conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingLen))
+			// } else if oldTp == mysql.TypeVarchar && changingTp == mysql.TypeString {
+			// 	// VARCHAR to CHAR
+			// 	conditions = append(conditions, fmt.Sprintf("(LENGTH(%s) > %d OR %s LIKE '%% ')", checkColName, changingLen, checkColName))
 		}
 	}
 
@@ -556,7 +565,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
-		if err, needRollback, _ := checkModifyColumn(
+		if needRollback, _, err := checkModifyColumn(
 			jobCtx.stepCtx,
 			w,
 			dbInfo.Name,
@@ -601,10 +610,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingColumn = changingCol
 		args.ChangingIdxs = changingIdxs
-		job.FillArgs(args)
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
+		job.FillArgs(args)
 	case model.StateDeleteOnly:
-		if err, needRollback, _ := checkModifyColumn(
+		if needRollback, _, err := checkModifyColumn(
 			jobCtx.stepCtx,
 			w,
 			dbInfo.Name,
@@ -628,12 +637,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SchemaState = model.StateWriteOnly
 		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
-		// There are two approaches to check if we can skip the row data reorg:
-		// 1. Similar to PreventNullInsertFlag, we can introduce a new flag to prevent users from
-		//    inserting non-convertible values. So if we reach here, it means that all the data is valid.
-		// 2. Check the validity of the data conversion again after new column state is write only.
-		// For the sake of simplicity, we use the second approach here.
-		_, violation, checked := checkModifyColumn(
+		violation, checked, _ := checkModifyColumn(
 			jobCtx.stepCtx,
 			w,
 			dbInfo.Name,
@@ -642,7 +646,6 @@ func (w *worker) doModifyColumnTypeWithData(
 			changingCol,
 			job.SQLMode,
 			oldCol.GetType() != changingCol.GetType())
-		// TODO(joechenrh): test multi schema change with skip reorg
 		skipReorg := !violation && checked
 
 		// write only -> reorganization
@@ -664,17 +667,22 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
-		// SkipRowReorg is a strong constraint that all the value after conversion is same as before.
-		// So the index entry must be same as well which means we can skip the index reorganization too.
-		// We mark the subjob as non-revertible here.
 		if args.SkipRowReorg {
-			job.MarkNonRevertible()
-			job.SchemaState = model.StatePublic
+			if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+				// Only remove changingIdxs to make the subsequent modify column works,
+				// otherwise, these indexes may rely on changingCol in this job.
+				// The changingCol is reserved to make the check in insert works.
+				args.RedundantIdxs = removeOldObjects(tblInfo, nil, changingIdxs)
+				job.FillArgs(args)
+				job.MarkNonRevertible()
+				return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
+			}
 
+			job.SchemaState = model.StatePublic
 			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		}
 
-		reorgElements := BuildElements(changingCol, args.ChangingIdxs, args.SkipRowReorg)
+		reorgElements := BuildElements(changingCol, changingIdxs, args.SkipRowReorg)
 
 		var done bool
 		if job.MultiSchemaInfo != nil {
@@ -710,15 +718,16 @@ func (w *worker) doModifyColumnTypeWithData(
 	case model.StatePublic:
 		if args.SkipRowReorg {
 			oldCol.FieldType = changingCol.FieldType
-			rmIdxs := removeOldObjects(tblInfo, changingCol, changingIdxs)
-			job.SchemaState = model.StatePublic
+			oldCol.DelFlag(mysql.PreventNullInsertFlag)
+			oldCol.DelFlag(mysql.PreventTruncateFlag)
+			removeOldObjects(tblInfo, changingCol, nil)
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
 
 			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-			args.IndexIDs = rmIdxs
+			args.IndexIDs = args.RedundantIdxs
 			args.PartitionIDs = getPartitionIDs(tblInfo)
 			job.FillFinishedArgs(args)
 
@@ -748,9 +757,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 			// Finish this job.
 			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-			// Refactor the job args to add the old index ids into delete range table.
-			rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
-			args.IndexIDs = rmIdxs
+			args.IndexIDs = removedIdxIDs
 			args.PartitionIDs = getPartitionIDs(tblInfo)
 			job.FillFinishedArgs(args)
 		default:
