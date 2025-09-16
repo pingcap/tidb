@@ -2438,7 +2438,18 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	// Replica read only works for read-only statements.
 	if !s.StmtCtx.IsReadOnly {
 		if s.StmtCtx.HasReplicaReadHint {
-			s.StmtCtx.AppendWarning(errors.New("Ignore replica read hint for non-read-only statement"))
+			const warnMsg = "Ignore replica read hint for non-read-only statement"
+			existWarnings := s.StmtCtx.GetWarnings()
+			hasWarning := false
+			for _, warn := range existWarnings {
+				if warn.Err.Error() == warnMsg {
+					hasWarning = true
+					break
+				}
+			}
+			if !hasWarning {
+				s.StmtCtx.AppendWarning(errors.New(warnMsg))
+			}
 		}
 		return kv.ReplicaReadLeader
 	}
