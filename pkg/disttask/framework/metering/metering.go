@@ -16,11 +16,12 @@ package metering
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/errors"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/metering_sdk/common"
@@ -170,8 +171,7 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	}
 	provider, err := storage.NewObjectStorageProvider(s3Config)
 	if err != nil {
-		logger.Error("failed to create storage provider", zap.Error(err))
-		return nil, err
+		return nil, errors.Wrap(err, "failed to create storage provider")
 	}
 	meteringConfig := mconfig.DefaultConfig().WithLogger(logger)
 	writer := meteringwriter.NewMeteringWriter(provider, meteringConfig)
@@ -246,7 +246,7 @@ func (m *Meter) flush(ts int64, timeout time.Duration) {
 	flushCtx, cancel := context.WithTimeout(m.ctx, timeout)
 	defer cancel()
 	if err := m.writer.Write(flushCtx, meteringData); err != nil {
-		m.logger.Error("failed to write metering data", zap.Error(err))
+		m.logger.Warn("failed to write metering data", zap.Error(err))
 	}
 }
 
@@ -255,7 +255,7 @@ func (m *Meter) Close() error {
 	if m.writer != nil {
 		err := m.writer.Close()
 		if err != nil {
-			m.logger.Error("failed to close metering writer", zap.Error(err))
+			m.logger.Warn("failed to close metering writer", zap.Error(err))
 		}
 		return err
 	}

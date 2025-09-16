@@ -6621,13 +6621,13 @@ def go_deps():
         name = "com_github_pingcap_metering_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/metering_sdk",
-        sha256 = "8fe8445e25e4845c9208733b82e07c79bc666876c3ad2522881b1c5a489dc2f7",
-        strip_prefix = "github.com/pingcap/metering_sdk@v0.0.0-20250910063513-219eaccb6f53",
+        sha256 = "e94c8971ca0ab35de255aefa419caf2f815e13b87ccb2201dfc1c9304219cd1e",
+        strip_prefix = "github.com/pingcap/metering_sdk@v0.0.0-20250916072917-67671f4fa7f9",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250910063513-219eaccb6f53.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250910063513-219eaccb6f53.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250910063513-219eaccb6f53.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250910063513-219eaccb6f53.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250916072917-67671f4fa7f9.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250916072917-67671f4fa7f9.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250916072917-67671f4fa7f9.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250916072917-67671f4fa7f9.zip",
         ],
     )
     go_repository(
