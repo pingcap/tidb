@@ -557,16 +557,7 @@ type PlanHints struct {
 	PreferLimitToCop bool // limit_to_cop
 	CTEMerge         bool // merge
 	TimeRangeHint    ast.HintTimeRange
-	LeadingOrder     *LeadingTableOrder
-}
-
-// LeadingTableOrder represents a node in the LEADING hint tree.
-type LeadingTableOrder struct {
-	// Tables is a list of tables if this is a leaf node, or nil for internal nodes.
-	Table *HintedTable
-	// Left and Right are children nodes for an internal join node.
-	Left  *LeadingTableOrder
-	Right *LeadingTableOrder
+	LeadingList      *ast.LeadingList
 }
 
 // HintedTable indicates which table this hint should take effect on.
@@ -891,32 +882,25 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintLeading:
 			leadingHintCnt++
 
-			// Check for multiple leading hints or conflict with straight_join
-			if leadingHintCnt > 1 || (leadingHintCnt > 0 && straightJoinOrder) {
-				if p.LeadingOrder != nil {
-					p.LeadingOrder = nil
-				}
+			if leadingHintCnt > 1 || straightJoinOrder {
 				if leadingHintCnt > 1 {
 					warnHandler.SetHintWarning("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
-				} else if straightJoinOrder {
+				} else {
 					warnHandler.SetHintWarning("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid")
 				}
-				continue
+				continue // Invalidate all leading hints and skip to next hint.
 			}
 
-			leadingExpr, ok := hint.HintData.(*ast.LeadingExpr)
+			// The parser now returns an `ast.LeadingList` for the LEADING hint.
+			leadingListExpr, ok := hint.HintData.(*ast.LeadingList)
 			if !ok {
 				warnHandler.SetHintWarning("Internal error: leading hint data format is incorrect.")
 				continue
 			}
 
-			// Parse the leading expression into a tree structure
-			leadingOrder, err := getLeadingTableOrder(leadingExpr, currentDB, hintProcessor, currentLevel, warnHandler)
-			if err != nil {
-				warnHandler.SetHintWarning(fmt.Sprintf("Invalid LEADING hint: %s", err.Error()))
-				continue
-			}
-			p.LeadingOrder = leadingOrder
+			// Call the new helper function to flatten the list.
+			leadingJoinOrder = flattenLeadingList(leadingListExpr, currentDB, hintProcessor, currentLevel, warnHandler)
+
 		case HintSemiJoinRewrite:
 			if !handlingExistsSubquery && !handlingInSubquery {
 				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause.")
@@ -960,45 +944,33 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		TimeRangeHint:      timeRangeHint,
 		PreferLimitToCop:   preferLimitToCop,
 		CTEMerge:           cteMerge,
-		LeadingOrder:       p.LeadingOrder,
+		LeadingJoinOrder:   leadingJoinOrder,
 		HJBuild:            hjBuildTables,
 		HJProbe:            hjProbeTables,
 	}, subQueryHintFlags, nil
 }
 
-// getLeadingTableOrder is a recursive helper function to transform the ast.LeadingExpr tree into a LeadingTableOrder tree.
-func getLeadingTableOrder(expr *ast.LeadingExpr, currentDB string, hintProcessor *QBHintHandler, currentLevel int, warnHandler hintWarnHandler) (*LeadingTableOrder, error) {
-	if expr == nil {
-		return nil, nil
+// flattenLeadingList is a recursive helper function to flatten a nested ast.LeadingList and convert all ast.HintTable nodes into a single slice of HintedTable.
+func flattenLeadingList(leadingList *ast.LeadingList, currentDB string, hintProcessor *QBHintHandler, currentLevel int, warnHandler hintWarnHandler) []HintedTable {
+	if leadingList == nil {
+		return nil
 	}
 
-	if expr.Table != nil {
-		// Leaf node: convert ast.HintTable to HintedTable
-		tables := tableNames2HintTableInfo(currentDB, "leading", []ast.HintTable{*expr.Table}, hintProcessor, currentLevel, warnHandler)
-		if len(tables) != 1 {
-			return nil, fmt.Errorf("invalid table in leading hint")
+	var tables []HintedTable
+	for _, item := range leadingList.Items {
+		switch t := item.(type) {
+		case *ast.HintTable:
+			// Found a leaf node (HintTable), convert it and append to the result.
+			hintTables := tableNames2HintTableInfo(currentDB, "leading", []ast.HintTable{*t}, hintProcessor, currentLevel, warnHandler)
+			tables = append(tables, hintTables...)
+		case *ast.LeadingList:
+			// Found an internal node (LeadingList), recursively flatten it.
+			subTables := flattenLeadingList(t, currentDB, hintProcessor, currentLevel, warnHandler)
+			tables = append(tables, subTables...)
 		}
-		return &LeadingTableOrder{Table: &tables[0]}, nil
 	}
 
-	// Internal node: recursively process left and right subtrees
-	leftOrder, err := getLeadingTableOrder(expr.Left, currentDB, hintProcessor, currentLevel, warnHandler)
-	if err != nil {
-		return nil, err
-	}
-	rightOrder, err := getLeadingTableOrder(expr.Right, currentDB, hintProcessor, currentLevel, warnHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	if leftOrder == nil || rightOrder == nil {
-		return nil, fmt.Errorf("invalid leading hint expression")
-	}
-
-	return &LeadingTableOrder{
-		Left:  leftOrder,
-		Right: rightOrder,
-	}, nil
+	return tables
 }
 
 // RemoveDuplicatedHints removes duplicated hints in this hit list.

@@ -3926,17 +3926,8 @@ type TableOptimizerHint struct {
 	Indexes []CIStr
 }
 
-// LeadingExpr represents a recursive LEADING hint expression.
-type LeadingExpr struct {
-	Table *HintTable
-	Left  *LeadingExpr
-	Right *LeadingExpr
-}
-
-// HintTimeRange is the payload of `TIME_RANGE` hint
-type HintTimeRange struct {
-	From string
-	To   string
+type LeadingList struct {
+	Items []interface{}
 }
 
 // HintSetVar is the payload of `SET_VAR` hint
@@ -3951,23 +3942,36 @@ type HintTable struct {
 	TableName     CIStr
 	QBName        CIStr
 	PartitionList []CIStr
+
+	FormatStyle int
 }
 
+const (
+	QBNameAfterTable  = iota // t1@sel1
+	QBNameBeforeTable        // @sel1 t1
+)
+
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
-	if !ctx.Flags.HasWithoutSchemaNameFlag() {
-		if ht.DBName.L != "" {
-			ctx.WriteName(ht.DBName.String())
-			ctx.WriteKeyWord(".")
-		}
+	if ht.FormatStyle == QBNameBeforeTable && ht.QBName.L != "" {
+		ctx.WriteKeyWord("@")
+		ctx.WriteName(ht.QBName.String())
+		ctx.WritePlain(" ")
 	}
+
+	if !ctx.Flags.HasWithoutSchemaNameFlag() && ht.DBName.L != "" {
+		ctx.WriteName(ht.DBName.String())
+		ctx.WriteKeyWord(".")
+	}
+
 	ctx.WriteName(ht.TableName.String())
-	if ht.QBName.L != "" {
+
+	if ht.FormatStyle == QBNameAfterTable && ht.QBName.L != "" {
 		ctx.WriteKeyWord("@")
 		ctx.WriteName(ht.QBName.String())
 	}
+
 	if len(ht.PartitionList) > 0 {
-		ctx.WriteKeyWord(" PARTITION")
-		ctx.WritePlain("(")
+		ctx.WriteKeyWord(" PARTITION(")
 		for i, p := range ht.PartitionList {
 			if i > 0 {
 				ctx.WritePlain(", ")
@@ -3978,33 +3982,36 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
-func (lt *LeadingExpr) Restore(ctx *format.RestoreCtx, needParen bool) error {
-	if lt == nil {
+// HintTimeRange is the payload of `TIME_RANGE` hint
+type HintTimeRange struct {
+	From string
+	To   string
+}
+
+// Restore restores a LeadingList hint expression.
+func (lt *LeadingList) Restore(ctx *format.RestoreCtx, needParen bool) error {
+	if lt == nil || len(lt.Items) == 0 {
 		return nil
 	}
 
-	// leave node: directly restore table name
-	if lt.Table != nil {
-		lt.Table.Restore(ctx)
-		return nil
-	}
-
-	// internal node
 	if needParen {
 		ctx.WritePlain("(")
 	}
 
-	if lt.Left != nil {
-		if err := lt.Left.Restore(ctx, true); err != nil {
-			return err
+	for i, item := range lt.Items {
+		if i > 0 {
+			ctx.WritePlain(", ")
 		}
-	}
 
-	ctx.WritePlain(", ")
-
-	if lt.Right != nil {
-		if err := lt.Right.Restore(ctx, true); err != nil {
-			return err
+		switch t := item.(type) {
+		case *HintTable:
+			t.Restore(ctx)
+		case *LeadingList:
+			if err := t.Restore(ctx, true); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unexpected type in LeadingList: %T", t)
 		}
 	}
 
@@ -4047,11 +4054,11 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
 	case "leading":
-		if order, ok := n.HintData.(*LeadingExpr); ok && order != nil {
-			if err := order.Restore(ctx, false); err != nil {
+		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
+			if err := list.Restore(ctx, false); err != nil {
 				return err
 			}
-		} else if len(n.Tables) > 0 {
+		} else {
 			for i, table := range n.Tables {
 				if i != 0 {
 					ctx.WritePlain(", ")

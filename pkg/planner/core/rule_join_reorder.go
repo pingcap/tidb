@@ -288,7 +288,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 		if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
 			if useGreedy {
-				ok, leadingPlan, leftJoinGroup := baseGroupSolver.generateLeadingPlan(curJoinGroup, leadingHintInfo, hasOuterJoin, tracer.opt)
+				ok, leadingPlan, leftJoinGroup := baseGroupSolver.generateLeadingPlan(curJoinGroup, leadingHintInfo.LeadingJoinOrder, hasOuterJoin, tracer.opt)
 				if !ok {
 					ctx.GetSessionVars().StmtCtx.SetHintWarning(
 						"leading hint is inapplicable, check if the leading hint table is valid")
@@ -412,79 +412,55 @@ type baseSingleGroupJoinOrderSolver struct {
 
 // generateLeadingPlan builds a join plan tree from the given LEADING hint expression.
 // It returns true if successful, the built plan, and the remaining join groups.
-func (s *baseSingleGroupJoinOrderSolver) generateLeadingPlan(curJoinGroup []base.LogicalPlan, hintInfo *hint.PlanHints, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (bool, base.LogicalPlan, []base.LogicalPlan) {
-	leadingPlan, remainingGroup, err := s.buildLeadingJoinTree(hintInfo.LeadingOrder, curJoinGroup, hasOuterJoin, opt)
-	if err != nil {
-		s.ctx.GetSessionVars().StmtCtx.SetHintWarning(err.Error())
-		return false, nil, nil
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingPlan(curJoinGroup []base.LogicalPlan, leadingHintTables []hint.HintedTable, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (bool, base.LogicalPlan, []base.LogicalPlan) {
+	var leadingPlans []base.LogicalPlan
+	remainingPlans := make([]base.LogicalPlan, len(curJoinGroup))
+	copy(remainingPlans, curJoinGroup)
+
+	for _, hintedTbl := range leadingHintTables {
+		plan, foundIdx := findPlanByHintedTable(remainingPlans, &hintedTbl)
+		if plan == nil {
+			s.ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("table %s in leading hint is not found in join group", hintedTbl.TblName.O))
+			return false, nil, nil
+		}
+		leadingPlans = append(leadingPlans, plan)
+		remainingPlans = slices.Delete(remainingPlans, foundIdx, foundIdx+1)
 	}
-	if leadingPlan == nil {
-		return false, nil, nil
+
+	var resultPlan base.LogicalPlan
+	if len(leadingPlans) > 0 {
+		resultPlan = leadingPlans[0]
 	}
-	return true, leadingPlan, remainingGroup
+
+	for i := 1; i < len(leadingPlans); i++ {
+		rightPlan := leadingPlans[i]
+		_, _, usedEdges, joinType := s.checkConnection(resultPlan, rightPlan)
+		if hasOuterJoin && usedEdges == nil {
+			s.ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("cartesian join for leading hint is not allowed with outer join"))
+			return false, nil, nil
+		}
+
+		resultPlan, s.otherConds = s.makeJoin(resultPlan, rightPlan, usedEdges, joinType, opt)
+	}
+
+	return true, resultPlan, remainingPlans
 }
 
-// buildLeadingJoinTree is a recursive helper to build the Join plan tree.
-func (s *baseSingleGroupJoinOrderSolver) buildLeadingJoinTree(order *hint.LeadingTableOrder, curJoinGroup []base.LogicalPlan, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []base.LogicalPlan, error) {
-	if order == nil {
-		return nil, curJoinGroup, nil
-	}
-
-	// Leaf node: single table
-	if order.Table != nil {
-		hintTbl := order.Table
-		var plan base.LogicalPlan
-		var remainingGroup []base.LogicalPlan
-		matchFound := false
-
-		// Find the matching table in current join group
-		for i, p := range curJoinGroup {
-			tableAlias := util.ExtractTableAlias(p, p.QueryBlockOffset())
-			if tableAlias == nil {
-				continue
-			}
-
-			// Match table name and consider query block
-			if (hintTbl.DBName.L == tableAlias.DBName.L || hintTbl.DBName.L == "*") &&
-				hintTbl.TblName.L == tableAlias.TblName.L &&
-				hintTbl.SelectOffset == tableAlias.SelectOffset {
-				plan = p
-				remainingGroup = make([]base.LogicalPlan, len(curJoinGroup)-1)
-				copy(remainingGroup, curJoinGroup[:i])
-				copy(remainingGroup[i:], curJoinGroup[i+1:])
-				matchFound = true
-				break
-			}
+// findPlanByHintedTable finds a logical plan that matches the given HintedTable.
+func findPlanByHintedTable(plans []base.LogicalPlan, hintedTbl *hint.HintedTable) (base.LogicalPlan, int) {
+	for i, p := range plans {
+		tableAlias := util.ExtractTableAlias(p, p.QueryBlockOffset())
+		if tableAlias == nil {
+			continue
 		}
 
-		if !matchFound {
-			return nil, nil, fmt.Errorf("table %s in leading hint is not found in join group", hintTbl.TblName.O)
+		if (hintedTbl.DBName.L == tableAlias.DBName.L || hintedTbl.DBName.L == "*") &&
+			hintedTbl.TblName.L == tableAlias.TblName.L &&
+			hintedTbl.SelectOffset == tableAlias.SelectOffset {
+			return p, i
 		}
-
-		return plan, remainingGroup, nil
 	}
-
-	// Internal node: recursively build left and right subtrees
-	leftPlan, leftRemaining, err := s.buildLeadingJoinTree(order.Left, curJoinGroup, hasOuterJoin, opt)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	rightPlan, rightRemaining, err := s.buildLeadingJoinTree(order.Right, leftRemaining, hasOuterJoin, opt)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Check connection between left and right plans
-	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
-	if hasOuterJoin && usedEdges == nil {
-		return nil, nil, fmt.Errorf("cartesian join is not allowed with outer join")
-	}
-
-	// Create the join
-	var joinPlan base.LogicalPlan
-	joinPlan, s.otherConds = s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
-	return joinPlan, rightRemaining, nil
+	return nil, -1
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
