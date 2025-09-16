@@ -77,6 +77,8 @@ const (
 	smallConcPerCore       = 20
 )
 
+var liteWorkerFallbackHook atomic.Pointer[func()]
+
 // CopClient is coprocessor client.
 type CopClient struct {
 	kv.RequestTypeSupportedChecker
@@ -838,6 +840,22 @@ func init() {
 	finCopResp = &copResponse{}
 }
 
+// SetLiteWorkerFallbackHookForTest installs a hook invoked when the lite worker falls back to the concurrent worker.
+// Production code should not rely on this hook.
+func SetLiteWorkerFallbackHookForTest(hook func()) {
+	if hook != nil {
+		liteWorkerFallbackHook.Store(&hook)
+		return
+	}
+	liteWorkerFallbackHook.Store(nil)
+}
+
+func triggerLiteWorkerFallbackHook() {
+	if hookPtr := liteWorkerFallbackHook.Load(); hookPtr != nil && *hookPtr != nil {
+		(*hookPtr)()
+	}
+}
+
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
@@ -1223,6 +1241,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 }
 
 func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
+	triggerLiteWorkerFallbackHook()
 	taskCh := make(chan *copTask, 1)
 	worker := w.worker
 	worker.taskCh = taskCh
