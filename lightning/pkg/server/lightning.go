@@ -567,7 +567,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}
 
 	var keyspaceName string
-	if taskCfg.TikvImporter.Backend == config.BackendLocal {
+	if taskCfg.TikvImporter.IsPhysicalBackend() {
 		keyspaceName = taskCfg.TikvImporter.KeyspaceName
 		if keyspaceName == "" {
 			keyspaceName, err = getKeyspaceName(db)
@@ -980,7 +980,7 @@ func handleLogLevel(w http.ResponseWriter, req *http.Request) {
 
 func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
 	// in local mode, we need to read&write a lot of L0 sst files, so we need to check system max open files limit
-	if cfg.TikvImporter.Backend == config.BackendLocal {
+	if cfg.TikvImporter.IsLocalBackend() {
 		// estimate max open files = {top N(TableConcurrency) table sizes} / {MemoryTableSize}
 		tableTotalSizes := make([]int64, 0)
 		for _, dbs := range dbsMeta {
