@@ -402,9 +402,6 @@ func (c *pdClient) GetGCInternalController(keyspaceID uint32) gc.InternalControl
 	panic("unimplemented")
 }
 
-func (c *pdClient) GetGCStatesClient(keyspaceID uint32) gc.GCStatesClient {
-	panic("unimplemented")
-}
 func (c *pdClient) WithCallerComponent(component caller.Component) pd.Client {
 	return c
 }
