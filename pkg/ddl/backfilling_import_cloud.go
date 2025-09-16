@@ -136,7 +136,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			OnDup:         engineapi.OnDuplicateKeyError,
 			OnReaderClose: func(summary *external.ReaderSummary) {
 				e.summary.GetReqCnt.Add(summary.GetRequestCount)
-				metering.RecordDXFS3GetRequests(e.store, summary.GetRequestCount)
+				metering.RecordDXFS3GetRequests(e.store, metering.TaskTypeAddIndex, subtask.TaskID, summary.GetRequestCount)
 			},
 		},
 		TS: sm.TS,

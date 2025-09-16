@@ -86,11 +86,11 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
 		m.summary.PutReqCnt.Add(summary.PutRequestCount)
-		metering.RecordDXFS3PutRequests(m.store, summary.PutRequestCount)
+		metering.RecordDXFS3PutRequests(m.store, metering.TaskTypeAddIndex, subtask.TaskID, summary.PutRequestCount)
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
-		metering.RecordDXFS3GetRequests(m.store, summary.GetRequestCount)
+		metering.RecordDXFS3GetRequests(m.store, metering.TaskTypeAddIndex, subtask.TaskID, summary.GetRequestCount)
 	}
 
 	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)

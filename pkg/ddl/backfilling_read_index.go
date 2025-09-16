@@ -157,7 +157,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 		return err
 	}
 	defer bCtx.Close()
-	pipe, err := r.buildLocalStorePipeline(opCtx, bCtx, sm, concurrency)
+	pipe, err := r.buildLocalStorePipeline(opCtx, bCtx, sm, concurrency, subtask.TaskID)
 	if err != nil {
 		return err
 	}
@@ -338,6 +338,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	backendCtx ingest.BackendCtx,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
+	taskID int64,
 ) (*operator.AsyncPipeline, error) {
 	start, end, tbl, err := r.getTableStartEndKey(sm)
 	if err != nil {
@@ -362,7 +363,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), taskID)
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		r.store,
@@ -404,7 +405,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		kvMeta.MergeSummary(summary)
 		r.summary.PutReqCnt.Add(summary.PutRequestCount)
-		metering.RecordDXFS3PutRequests(r.store, summary.PutRequestCount)
+		metering.RecordDXFS3PutRequests(r.store, metering.TaskTypeAddIndex, taskID, summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -414,7 +415,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+	rowCntCollector := newDistTaskRowCntCollector(r.store, r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), taskID)
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		r.store,
@@ -440,29 +441,32 @@ type distTaskRowCntCollector struct {
 	summary *execute.SubtaskSummary
 	counter prometheus.Counter
 	store   kv.Storage
+	taskID  int64
 }
 
 func newDistTaskRowCntCollector(
 	store kv.Storage,
 	summary *execute.SubtaskSummary,
 	dbName, tblName, idxName string,
+	taskID int64,
 ) *distTaskRowCntCollector {
 	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
 	return &distTaskRowCntCollector{
 		summary: summary,
 		counter: counter,
 		store:   store,
+		taskID:  taskID,
 	}
 }
 
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
-	metering.RecordDXFReadDataBytes(d.store, uint64(bytes))
+	metering.RecordDXFReadDataBytes(d.store, metering.TaskTypeAddIndex, d.taskID, uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.Bytes.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
-	metering.RecordDXFWriteDataBytes(d.store, uint64(bytes))
+	metering.RecordDXFWriteDataBytes(d.store, metering.TaskTypeAddIndex, d.taskID, uint64(bytes))
 }

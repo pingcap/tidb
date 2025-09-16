@@ -39,52 +39,68 @@ const (
 	category     = "disttask"
 )
 
-// MeteringType is the type of metering during DXF execution.
-type MeteringType string
+// TaskType is the type of metering during DXF execution.
+type TaskType string
 
 const (
-	// MeteringTypeAddIndex is the type of metering during add index.
-	MeteringTypeAddIndex = "add-index"
-	// MeteringTypeImportInto is the type of metering during import into.
-	MeteringTypeImportInto = "import-into"
+	// TaskTypeAddIndex is the type of metering during add index.
+	TaskTypeAddIndex = "add-index"
+	// TaskTypeImportInto is the type of metering during import into.
+	TaskTypeImportInto = "import-into"
 )
 
 var meteringInstance atomic.Pointer[Meter]
 
 // RecordDXFS3GetRequests records the S3 GET requests for DXF.
-func RecordDXFS3GetRequests(store kv.Storage, getReqCnt uint64) {
+func RecordDXFS3GetRequests(store kv.Storage, taskType TaskType, taskID int64, getReqCnt uint64) {
 	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
 		return
 	}
 	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &Data{getRequests: getReqCnt})
+	meteringInstance.Load().Record(userKS, &Data{
+		taskType:    string(taskType),
+		taskID:      taskID,
+		getRequests: getReqCnt,
+	})
 }
 
 // RecordDXFS3PutRequests records the S3 PUT requests for DXF.
-func RecordDXFS3PutRequests(store kv.Storage, putReqCnt uint64) {
+func RecordDXFS3PutRequests(store kv.Storage, taskType TaskType, taskID int64, putReqCnt uint64) {
 	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
 		return
 	}
 	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &Data{putRequests: putReqCnt})
+	meteringInstance.Load().Record(userKS, &Data{
+		taskType:    string(taskType),
+		taskID:      taskID,
+		putRequests: putReqCnt,
+	})
 }
 
 // RecordDXFReadDataBytes records the scan data bytes from user store for DXF.
-func RecordDXFReadDataBytes(store kv.Storage, size uint64) {
+func RecordDXFReadDataBytes(store kv.Storage, taskType TaskType, taskID int64, size uint64) {
 	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
 		return
 	}
 	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &Data{scanDataTraffic: size})
+	meteringInstance.Load().Record(userKS, &Data{
+		taskType:      string(taskType),
+		taskID:        taskID,
+		readDataBytes: size,
+	})
 }
 
 // RecordDXFWriteDataBytes records the write data size for DXF.
-func RecordDXFWriteDataBytes(store kv.Storage, size uint64) {
+func RecordDXFWriteDataBytes(store kv.Storage, taskType TaskType, taskID int64, size uint64) {
 	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
 		return
 	}
 	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &Data{writeDataSize: size})
+	meteringInstance.Load().Record(userKS, &Data{
+		taskType:       string(taskType),
+		taskID:         taskID,
+		writeDataBytes: size,
+	})
 }
 
 // GetMetering gets the metering instance.
@@ -103,17 +119,20 @@ func SetMetering(m *Meter) {
 
 // Data represents the metering data.
 type Data struct {
-	putRequests     uint64
-	getRequests     uint64
-	scanDataTraffic uint64
-	writeDataSize   uint64
+	putRequests    uint64
+	getRequests    uint64
+	readDataBytes  uint64
+	writeDataBytes uint64
+
+	taskType string
+	taskID   int64
 }
 
 func (m *Data) merge(other *Data) {
 	m.putRequests += other.putRequests
 	m.getRequests += other.getRequests
-	m.scanDataTraffic += other.scanDataTraffic
-	m.writeDataSize += other.writeDataSize
+	m.readDataBytes += other.readDataBytes
+	m.writeDataBytes += other.writeDataBytes
 }
 
 // Meter is responsible for recording and reporting metering data.
@@ -204,13 +223,15 @@ func (m *Meter) flush(ts int64, timeout time.Duration) {
 	array := make([]map[string]any, 0, len(data))
 	for keyspace, d := range data {
 		array = append(array, map[string]any{
-			"version":           "1",
-			"cluster_id":        keyspace,
-			"source_name":       category,
-			"s3_put_requests":   &common.MeteringValue{Value: d.putRequests, Unit: "count"},
-			"s3_get_requests":   &common.MeteringValue{Value: d.getRequests, Unit: "count"},
-			"scan_data_traffic": &common.MeteringValue{Value: d.scanDataTraffic, Unit: "bytes"},
-			"write_data_size":   &common.MeteringValue{Value: d.writeDataSize, Unit: "bytes"},
+			"version":          "1",
+			"cluster_id":       keyspace,
+			"source_name":      category,
+			"task_type":        d.taskType,
+			"task_id":          &common.MeteringValue{Value: uint64(d.taskID)},
+			"s3_put_requests":  &common.MeteringValue{Value: d.putRequests},
+			"s3_get_requests":  &common.MeteringValue{Value: d.getRequests},
+			"read_data_bytes":  &common.MeteringValue{Value: d.readDataBytes, Unit: "bytes"},
+			"write_data_bytes": &common.MeteringValue{Value: d.writeDataBytes, Unit: "bytes"},
 		})
 	}
 
