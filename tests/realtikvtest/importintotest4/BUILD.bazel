@@ -27,6 +27,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/util/logutil",
         "//tests/realtikvtest",
         "//tests/realtikvtest/testutils",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
@@ -35,5 +36,6 @@ go_test(
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
