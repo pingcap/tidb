@@ -790,6 +790,8 @@ github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e h1:8AZZRv1Ox9FVGATVZ
 github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/metering_sdk v0.0.0-20250910063513-219eaccb6f53 h1:tjmldDdCraD3Hc6uMTI4eMmpMwMXdCqfMhZAHwPfynU=
 github.com/pingcap/metering_sdk v0.0.0-20250910063513-219eaccb6f53/go.mod h1:Qj77xzm/Bscv47607+/BkP0ovAHnf4j7HWSLKQaKwBw=
+github.com/pingcap/metering_sdk v0.0.0-20250916072917-67671f4fa7f9 h1:tcDp2qEqWLL1eO9IhDFX3uEy/2Igjc0KP2D7WYAm9yA=
+github.com/pingcap/metering_sdk v0.0.0-20250916072917-67671f4fa7f9/go.mod h1:Qj77xzm/Bscv47607+/BkP0ovAHnf4j7HWSLKQaKwBw=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
 github.com/pingcap/tipb v0.0.0-20250829062436-85a019a5df23 h1:z8JRfys9ezO0wCqdrl1+Su99FI8JQY16NT2bBk1bT+4=
