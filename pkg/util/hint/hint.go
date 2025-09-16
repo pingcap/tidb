@@ -578,10 +578,11 @@ type HintedTable struct {
 
 // HintedIndex indicates which index this hint should take effect on.
 type HintedIndex struct {
-	DBName     ast.CIStr      // the database name
-	TblName    ast.CIStr      // the table name
-	Partitions []ast.CIStr    // partition information
-	IndexHint  *ast.IndexHint // the original parser index hint structure
+	DBName         ast.CIStr      // the database name
+	TblName        ast.CIStr      // the table name
+	Partitions     []ast.CIStr    // partition information
+	IndexHint      *ast.IndexHint // the original parser index hint structure
+	PushDownLookUp bool           // whether to push down the index lookup
 	// Matched indicates whether this index hint
 	// has been successfully applied to a DataSource.
 	// If an HintedIndex is not Matched after building
@@ -596,10 +597,18 @@ func (hint *HintedIndex) Match(dbName, tblName ast.CIStr) bool {
 			hint.DBName.L == "*") // for universal bindings, e.g. *.t
 }
 
+// SupportIndexLookUpPushDown returns whether the index lookup push down is supported.
+func (hint *HintedIndex) SupportIndexLookUpPushDown() bool {
+	return hint.IndexHint.HintType == ast.HintUse && hint.PushDownLookUp
+}
+
 // HintTypeString returns the string representation of the hint type.
 func (hint *HintedIndex) HintTypeString() string {
 	switch hint.IndexHint.HintType {
 	case ast.HintUse:
+		if hint.PushDownLookUp {
+			return HintIndexLookUpPushDown
+		}
 		return HintUseIndex
 	case ast.HintIgnore:
 		return HintIgnoreIndex
@@ -830,6 +839,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				dbName = ast.NewCIStr(currentDB)
 			}
 			var hintType ast.IndexHintType
+			var pushDownLookUp bool
 			switch hint.HintName.L {
 			case HintUseIndex:
 				hintType = ast.HintUse
@@ -846,6 +856,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					warnHandler.SetHintWarningFromError(parser.ErrWarnOptimizerHintUnsupportedHint.FastGenByArgs(hint.HintName.O))
 					continue
 				}
+				hintType = ast.HintUse
+				pushDownLookUp = true
 			}
 			indexHintList = append(indexHintList, HintedIndex{
 				DBName:     dbName,
@@ -856,6 +868,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintType:   hintType,
 					HintScope:  ast.HintForScan,
 				},
+				PushDownLookUp: pushDownLookUp,
 			})
 		case HintReadFromStorage:
 			switch hint.HintData.(ast.CIStr).L {

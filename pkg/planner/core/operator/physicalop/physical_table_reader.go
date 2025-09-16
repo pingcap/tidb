@@ -91,7 +91,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	if p.TablePlan == nil {
 		return &p
 	}
-	p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+	p.TablePlans = FlattenListOrTiFlashPushDownPlan(p.TablePlan)
 	p.SetSchema(p.TablePlan.Schema())
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
@@ -236,14 +236,14 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 		return nil, err
 	}
 	// TablePlans are actually the flattened plans in TablePlan, so can't copy them, just need to extract from TablePlan
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
+	cloned.TablePlans = FlattenListOrTiFlashPushDownPlan(cloned.TablePlan)
 	return cloned, nil
 }
 
 // SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 	p.TablePlan = children[0]
-	p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+	p.TablePlans = FlattenListOrTiFlashPushDownPlan(p.TablePlan)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.

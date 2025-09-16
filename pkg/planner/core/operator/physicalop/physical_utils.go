@@ -51,24 +51,72 @@ func ClonePhysicalPlan(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base
 	return cloned, nil
 }
 
-// FlattenTreePlan flattens a plan tree to a list.
-func FlattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
+// flattenPlanWithPreorderTraversal flattens a plan tree to a list with preorder traversal.
+func flattenPlanWithPreorderTraversal(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
 	plans = append(plans, plan)
 	for _, child := range plan.Children() {
-		plans = FlattenTreePlan(child, plans)
+		plans = flattenPlanWithPreorderTraversal(child, plans)
 	}
 	return plans
 }
 
-// FlattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func FlattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
+// FlattenListOrTiFlashPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+// It is used to flatten the plan tree for TiFlash or TiKV plan true that all parents have only one child.
+func FlattenListOrTiFlashPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = FlattenTreePlan(p, plans)
+	plans = flattenPlanWithPreorderTraversal(p, plans)
 	for i := range len(plans) / 2 {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]
 	}
 	return plans
+}
+
+// flattenPlanWithPostorderTraversal flattens a plan tree to a list with postorder traversal.
+// The unNatureOrdersMaps the childPlanIndex => parentPlanIndex for those plans whose parent's index
+// is not equal to the child's index + 1.
+func flattenPlanWithPostorderTraversal(plan base.PhysicalPlan, plans []base.PhysicalPlan, unNatureOrdersMap map[int]int) ([]base.PhysicalPlan, map[int]int) {
+	//nolint: prealloc
+	var unNatureOrderChildren []int
+	children := plan.Children()
+	if len(children) > 1 && unNatureOrdersMap == nil {
+		unNatureOrdersMap = make(map[int]int)
+		unNatureOrderChildren = make([]int, 0, len(children))
+	}
+	for _, child := range children {
+		plans, unNatureOrdersMap = flattenPlanWithPostorderTraversal(child, plans, unNatureOrdersMap)
+		unNatureOrderChildren = append(unNatureOrderChildren, len(plans)-1)
+	}
+	plans = append(plans, plan)
+	for _, childIndex := range unNatureOrderChildren {
+		if parentIndex := len(plans) - 1; parentIndex != childIndex+1 {
+			unNatureOrdersMap[childIndex] = parentIndex
+		}
+	}
+	return plans, unNatureOrdersMap
+}
+
+// FlattenTreePushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+// The returned list follows the order of depth-first search with post-order traversal.
+// That is: left child first, then right child, then parent.
+// For example, a DAG:
+//
+//	         A
+//	        /
+//	       B
+//	     /   \
+//	    C     D
+//	   /     / \
+//	  E     F   G
+//	 /
+//	H
+//
+// Its order should be: [H, E, C, F, G, D, B, A]
+// This function also returns a map which records the childPlanIndex => parentPlanIndex if
+// the child's index + 1 is not equal to the parent's index.
+// This function should NOT be used by TiFlash
+func FlattenTreePushDownPlan(p base.PhysicalPlan) ([]base.PhysicalPlan, map[int]int) {
+	return flattenPlanWithPostorderTraversal(p, make([]base.PhysicalPlan, 0, 5), nil)
 }
 
 // AppendChildCandidate appends child candidate to the optimizer trace.

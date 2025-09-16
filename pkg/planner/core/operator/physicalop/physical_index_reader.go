@@ -75,7 +75,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.IndexPlan != nil {
-		p.IndexPlans = FlattenPushDownPlan(p.IndexPlan)
+		p.IndexPlans = FlattenListOrTiFlashPushDownPlan(p.IndexPlan)
 		switch p.IndexPlan.(type) {
 		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.IndexPlan.Schema())
