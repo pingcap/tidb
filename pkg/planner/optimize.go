@@ -161,20 +161,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
-		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
-		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
-		if hasTiFlashAccess {
-			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-		}
-		defer func() {
-			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
-			if hasTiFlashAccess {
-				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-			}
-		}()
-	}
-
 	// handle the execute statement
 	if execAST, ok := node.(*ast.ExecuteStmt); ok {
 		p, names, err := OptimizeExecStmt(ctx, sctx, execAST, is)
