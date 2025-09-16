@@ -9,12 +9,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    race = "on",
-    shard_count = 39,
-=======
-    shard_count = 41,
->>>>>>> 63614029658 (server/handler: register missing http handlers related to ingest param (#63099))
+    shard_count = 40,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
