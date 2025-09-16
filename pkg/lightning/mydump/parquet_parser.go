@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/xitongsys/parquet-go/parquet"
 	preader "github.com/xitongsys/parquet-go/reader"
+	"github.com/xitongsys/parquet-go/schema"
 	"github.com/xitongsys/parquet-go/source"
 	"go.uber.org/zap"
 )
@@ -191,6 +192,62 @@ func ReadParquetFileRowCountByFile(
 	}
 
 	return res.Footer.NumRows, nil
+}
+
+// CheckParquetDataType check whether the data type of parquet file is supported by Lightning.
+func CheckParquetDataType(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	fileMeta SourceFileMeta,
+) (bool, error) {
+	r, err := store.Open(ctx, fileMeta.Path, nil)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	wrapper := &readerWrapper{
+		ReadSeekCloser: r,
+		store:          store,
+		ctx:            ctx,
+		path:           fileMeta.Path,
+	}
+
+	//nolint: errcheck
+	defer wrapper.Close()
+
+	res := new(preader.ParquetReader)
+	res.NP = 1
+	res.PFile = wrapper
+	if err = res.ReadFooter(); err != nil {
+		return false, err
+	}
+
+	sch := res.Footer.Schema
+	schemaHandler := schema.NewSchemaHandlerFromSchemaList(sch)
+
+	for _, c := range schemaHandler.SchemaElements {
+		if c.GetNumChildren() == 0 {
+			columnMeta := c
+			if c.ConvertedType != nil && c.LogicalType == nil {
+				newMeta := *c
+				columnMeta = &newMeta
+				if err := convertToLogicType(columnMeta); err != nil {
+					return false, err
+				}
+			}
+
+			// TODO(joechenrh): since we don't have the struct of table at this moment,
+			// we can't check if the logical type is compatible with the column type.
+			// For example, importing ConvertedType_DATE into a double column is quite strange.
+			// Maybe we can output some warning log here in the future.
+			switch *columnMeta.ConvertedType {
+			case parquet.ConvertedType_INTERVAL, parquet.ConvertedType_MAP, parquet.ConvertedType_MAP_KEY_VALUE, parquet.ConvertedType_LIST:
+				return false, errors.Errorf("unsupported type: '%s'", *columnMeta.ConvertedType)
+			}
+		}
+	}
+
+	return true, nil
 }
 
 // NewParquetParser generates a parquet parser.
