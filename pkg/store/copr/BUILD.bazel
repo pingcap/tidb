@@ -6,6 +6,7 @@ go_library(
         "batch_coprocessor.go",
         "batch_request_sender.go",
         "coprocessor.go",
+        "coprocessor_async.go",
         "coprocessor_cache.go",
         "key_ranges.go",
         "mpp.go",
