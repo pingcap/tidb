@@ -21,9 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
-
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/metering_sdk/common"
 	mconfig "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/metering_sdk/storage"
