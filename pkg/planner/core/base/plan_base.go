@@ -321,7 +321,7 @@ func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpressionInterf
 		proj = x
 	case GroupExpressionInterface:
 		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
+		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
 		// get the specific logical operator inside.
 		ge = x
 		proj = ge.GetWrappedLogicalPlan().(T)
