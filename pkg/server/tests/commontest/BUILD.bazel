@@ -19,6 +19,11 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
+<<<<<<< HEAD
+=======
+        "//pkg/parser/terror",
+        "//pkg/plugin",
+>>>>>>> bbd963f9cb0 (executor, plugin: add statement id info to the plugin (#63526))
         "//pkg/server",
         "//pkg/server/internal/column",
         "//pkg/server/internal/resultset",
