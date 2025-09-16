@@ -1106,15 +1106,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
-<<<<<<< HEAD
-=======
-	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
-	EnableNoDecorrelateInSelect bool
-
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
->>>>>>> 6ba98357b9b (planner: Exists subquery to join variable (#63416))
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
