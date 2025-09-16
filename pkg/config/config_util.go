@@ -87,10 +87,6 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 		}
 		return nil, []string{fieldPath}
 	}
-	// Nil fields are not mergable.
-	if dstConf.Kind() == reflect.Invalid {
-		return
-	}
 	for i := range t.NumField() {
 		fieldName := t.Field(i).Name
 		if fieldPath != "" {

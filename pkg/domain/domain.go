@@ -1100,9 +1100,10 @@ func (do *Domain) InitDistTaskLoop() error {
 			if err != nil {
 				return errors.Wrap(err, "failed to create metering")
 			}
+			metering.SetMetering(m)
 			do.wg.Run(func() {
 				m.StartFlushLoop(do.ctx)
-			}, "meteringFlushLoop")
+			}, "dxfMeteringFlushLoop")
 		}
 	}
 

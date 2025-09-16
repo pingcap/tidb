@@ -16,7 +16,6 @@ package metering
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,6 +26,7 @@ import (
 	mconfig "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/metering_sdk/storage"
 	meteringwriter "github.com/pingcap/metering_sdk/writer/metering"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -36,7 +36,7 @@ const (
 	writeInterval = 60
 	// The timeout can not be too long because the pod grace termination period is fixed.
 	writeTimeout = 10 * time.Second
-	category     = "disttask"
+	category     = "dxf"
 )
 
 // TaskType is the type of metering during DXF execution.
@@ -53,7 +53,7 @@ var meteringInstance atomic.Pointer[Meter]
 
 // RecordDXFS3GetRequests records the S3 GET requests for DXF.
 func RecordDXFS3GetRequests(store kv.Storage, taskType TaskType, taskID int64, getReqCnt uint64) {
-	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
+	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
 		return
 	}
 	userKS := store.GetKeyspace()
@@ -66,7 +66,7 @@ func RecordDXFS3GetRequests(store kv.Storage, taskType TaskType, taskID int64, g
 
 // RecordDXFS3PutRequests records the S3 PUT requests for DXF.
 func RecordDXFS3PutRequests(store kv.Storage, taskType TaskType, taskID int64, putReqCnt uint64) {
-	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
+	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
 		return
 	}
 	userKS := store.GetKeyspace()
@@ -79,7 +79,7 @@ func RecordDXFS3PutRequests(store kv.Storage, taskType TaskType, taskID int64, p
 
 // RecordDXFReadDataBytes records the scan data bytes from user store for DXF.
 func RecordDXFReadDataBytes(store kv.Storage, taskType TaskType, taskID int64, size uint64) {
-	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
+	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
 		return
 	}
 	userKS := store.GetKeyspace()
@@ -92,7 +92,7 @@ func RecordDXFReadDataBytes(store kv.Storage, taskType TaskType, taskID int64, s
 
 // RecordDXFWriteDataBytes records the write data size for DXF.
 func RecordDXFWriteDataBytes(store kv.Storage, taskType TaskType, taskID int64, size uint64) {
-	if !kv.IsUserKS(store) || meteringInstance.Load() == nil {
+	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
 		return
 	}
 	userKS := store.GetKeyspace()
@@ -178,7 +178,7 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 		logger: logger,
 		data:   make(map[string]Data),
 		writer: writer,
-		uuid:   strings.ReplaceAll(uuid.New().String(), "-", "_"), // no dash in the S3 path
+		uuid:   uuid.New().String(),
 	}, nil
 }
 
@@ -194,24 +194,25 @@ func (m *Meter) Record(userKeyspace string, other *Data) {
 // StartFlushLoop creates a flush loop.
 func (m *Meter) StartFlushLoop(ctx context.Context) {
 	// Control the writing timestamp accurately enough so that the previous round won't be overwritten by the next round.
-	curTime := time.Now().Unix()
-	nextTime := curTime/writeInterval*writeInterval + writeInterval
+	curTime := time.Now()
+	nextTime := curTime.Truncate(time.Minute).Add(time.Minute)
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
-		case <-time.After(time.Duration(nextTime-curTime) * time.Second):
-			m.flush(nextTime, writeTimeout)
-			nextTime += writeInterval
-			curTime = time.Now().Unix()
+		case <-time.After(nextTime.Sub(curTime)):
+			m.flush(nextTime.Unix())
+			nextTime = nextTime.Add(time.Minute)
+			curTime = time.Now()
 		}
 	}
 	// Try our best to flush the final data even after closing.
-	m.flush(nextTime, writeTimeout)
+	m.flush(nextTime.Unix())
 	err := m.writer.Close()
 	m.logger.Warn("metering writer closed", zap.Error(err))
 }
 
-func (m *Meter) flush(ts int64, timeout time.Duration) {
+func (m *Meter) flush(ts int64) {
+	startTime := time.Now()
 	var data map[string]Data
 	m.Lock()
 	data = m.data
@@ -224,15 +225,15 @@ func (m *Meter) flush(ts int64, timeout time.Duration) {
 	array := make([]map[string]any, 0, len(data))
 	for keyspace, d := range data {
 		array = append(array, map[string]any{
-			"version":          "1",
-			"cluster_id":       keyspace,
-			"source_name":      category,
-			"task_type":        d.taskType,
-			"task_id":          &common.MeteringValue{Value: uint64(d.taskID)},
-			"s3_put_requests":  &common.MeteringValue{Value: d.putRequests},
-			"s3_get_requests":  &common.MeteringValue{Value: d.getRequests},
-			"read_data_bytes":  &common.MeteringValue{Value: d.readDataBytes, Unit: "bytes"},
-			"write_data_bytes": &common.MeteringValue{Value: d.writeDataBytes, Unit: "bytes"},
+			"version":               "1",
+			"cluster_id":            keyspace,
+			"source_name":           category,
+			"task_type":             d.taskType,
+			"task_id":               &common.MeteringValue{Value: uint64(d.taskID)},
+			"put_external_requests": &common.MeteringValue{Value: d.putRequests},
+			"get_external_requests": &common.MeteringValue{Value: d.getRequests},
+			"read_data_bytes":       &common.MeteringValue{Value: d.readDataBytes, Unit: "bytes"},
+			"write_data_bytes":      &common.MeteringValue{Value: d.writeDataBytes, Unit: "bytes"},
 		})
 	}
 
@@ -242,11 +243,12 @@ func (m *Meter) flush(ts int64, timeout time.Duration) {
 		Category:  category,
 		Data:      array,
 	}
-	flushCtx, cancel := context.WithTimeout(m.ctx, timeout)
+	flushCtx, cancel := context.WithTimeout(m.ctx, writeTimeout)
 	defer cancel()
 	if err := m.writer.Write(flushCtx, meteringData); err != nil {
 		m.logger.Warn("failed to write metering data", zap.Error(err))
 	}
+	m.logger.Info("flush metering data succeed", zap.Duration("duration", time.Since(startTime)))
 }
 
 // Close closes the metering writer.
