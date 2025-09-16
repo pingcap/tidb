@@ -43,7 +43,7 @@ func isTableExpressionPlan(plan base.LogicalPlan) bool {
 	case *logicalop.LogicalTableDual:
 		return false // TableDual is a special case
 	case *logicalop.DataSource:
-		return false // Assume base table for now
+		return false // Base table
 	case *logicalop.LogicalSelection, *logicalop.LogicalProjection:
 		return true // These are typically table expressions
 	default:
@@ -150,7 +150,6 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			if !noExpand && len(join.EqualConditions) > 0 {
 				for _, lhs := range lhsGroup {
 					if isTableExpressionPlan(lhs) {
-						//fmt.Printf("DEBUG: Found table expression in left group, preventing reorder\n")
 						noExpand = true
 						break
 					}
