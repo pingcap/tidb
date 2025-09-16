@@ -68,7 +68,7 @@ func (smj *SemiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 	join, ok := p.(*logicalop.LogicalJoin)
 	// If it's not a join, or not a (outer) semi join. We just return it since no optimization is needed.
 	// Actually the check of the preferRewriteSemiJoin is a superset of checking the join type. We remain them for a better understanding.
-	if !ok || !(join.JoinType == base.SemiJoin || join.JoinType == base.LeftOuterSemiJoin) {
+	if !ok || !(join.JoinType == logicalop.SemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin) {
 		return p, nil
 	}
 	// Gate by hint or session variable.

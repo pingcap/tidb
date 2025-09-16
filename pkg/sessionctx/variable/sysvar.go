@@ -302,7 +302,7 @@ var defaultSysVars = []*SysVar{
 		s.OptimizerEnableNAAJ = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableSemiJoinRewrite, Value: BoolToOnOff(vardef.DefOptEnableSemiJoinRewrite), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableSemiJoinRewrite, Value: BoolToOnOff(DefOptEnableSemiJoinRewrite), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableSemiJoinRewrite = TiDBOptOn(val)
 		return nil
 	}},
