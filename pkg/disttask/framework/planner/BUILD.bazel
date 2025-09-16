@@ -12,8 +12,8 @@ go_library(
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
+        "//pkg/kv",
         "//pkg/sessionctx",
-        "@com_github_tikv_pd_client//:client",
     ],
 )
 
