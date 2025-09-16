@@ -337,3 +337,9 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+func TestIssue45956(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show databases WHERE TRUE IN (SELECT TRUE) < ALL (SELECT TRUE);").Check(testkit.Rows("INFORMATION_SCHEMA"))
+}
