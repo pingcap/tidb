@@ -598,30 +598,31 @@ IndexHashJoin	root		right outer join, inner:IndexLookUp, left side:IndexLookUp, 
   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t4, t3, t2, t1), no_hash_join(t2, t3) */ * from t1, t2, t3, t4;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN inner join
-├─MergeJoin(Build)	root		inner join
-│ ├─TableReader(Build)	root		data:TableFullScan
-│ │ └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-│ └─TableReader(Probe)	root		data:TableFullScan
-│   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─MergeJoin(Probe)	root		inner join
+Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
+└─HashJoin	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─MergeJoin(Probe)	root		inner join
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─MergeJoin(Probe)	root		inner join
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+      └─TableReader(Probe)	root		data:TableFullScan
+        └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1, t2, t3, t4), hash_join(t1, t2), no_hash_join(t3), hash_join(t4) */ * from t1, t2, t3, t4;
 id	task	access object	operator info
 HashJoin	root		CARTESIAN inner join
-├─HashJoin(Build)	root		CARTESIAN inner join
-│ ├─TableReader(Build)	root		data:TableFullScan
-│ │ └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-│ └─TableReader(Probe)	root		data:TableFullScan
-│   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		CARTESIAN inner join
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─MergeJoin(Probe)	root		inner join
   ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		CARTESIAN inner join
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence.
 drop table if exists t1, t2, t3, t4;
