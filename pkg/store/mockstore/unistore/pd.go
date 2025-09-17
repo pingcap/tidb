@@ -31,7 +31,6 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/clients/tso"
 	"github.com/tikv/pd/client/constants"
@@ -395,10 +394,6 @@ func (c *pdClient) UpdateServiceSafePointV2(ctx context.Context, keyspaceID uint
 }
 
 func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan []*pdpb.SafePointEvent, error) {
-	panic("unimplemented")
-}
-
-func (c *pdClient) GetGCInternalController(keyspaceID uint32) gc.InternalController {
 	panic("unimplemented")
 }
 
