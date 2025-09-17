@@ -2242,22 +2242,6 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
 					// the partial agg, and the schema will be broken.
 					cop.needExtraProj = false
-				} else if storeType == kv.TiCI {
-					idxScan := cop.indexPlan.(*PhysicalIndexScan)
-					switch x := partialAgg.(type) {
-					case *PhysicalStreamAgg:
-						aggPBExpr, err := aggregation.AggFuncToPBExpr(util.GetPushDownCtx(p.SCtx()), x.AggFuncs[0], kv.TiFlash)
-						if err != nil {
-							return base.InvalidTask
-						}
-						idxScan.FtsQueryInfo.AggExpr = aggPBExpr
-					case *PhysicalHashAgg:
-						aggPBExpr, err := aggregation.AggFuncToPBExpr(util.GetPushDownCtx(p.SCtx()), x.AggFuncs[0], kv.TiFlash)
-						if err != nil {
-							return base.InvalidTask
-						}
-						idxScan.FtsQueryInfo.AggExpr = aggPBExpr
-					}
 				} else {
 					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
 					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
