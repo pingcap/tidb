@@ -50,30 +50,40 @@ func TestNewMeterValidConfig(t *testing.T) {
 
 func TestRecord(t *testing.T) {
 	m := &Meter{
-		data: make(map[string]Data),
+		data: make(map[meteringEntry]Data),
+	}
+	entry := meteringEntry{
+		keyspace: "keyspace1",
+		taskID:   1,
+		taskType: TaskTypeAddIndex,
 	}
 	md := &Data{
 		putRequests: 5,
 	}
-	m.Record("keyspace1", md)
-	require.Equal(t, uint64(5), m.data["keyspace1"].putRequests)
-	m.Record("keyspace1", &Data{getRequests: 3})
-	require.Equal(t, uint64(5), m.data["keyspace1"].putRequests)
-	require.Equal(t, uint64(3), m.data["keyspace1"].getRequests)
+	m.Record("keyspace1", TaskTypeAddIndex, 1, md)
+	require.Equal(t, uint64(5), m.data[entry].putRequests)
+	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{getRequests: 3})
+	require.Equal(t, uint64(5), m.data[entry].putRequests)
+	require.Equal(t, uint64(3), m.data[entry].getRequests)
 }
 
 func TestConcurrentRecord(t *testing.T) {
-	m := &Meter{data: make(map[string]Data)}
+	m := &Meter{data: make(map[meteringEntry]Data)}
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Add(1)
 		go func() {
-			m.Record("ks1", &Data{putRequests: 1})
+			m.Record("ks1", TaskTypeAddIndex, 1, &Data{putRequests: 1})
 			wg.Done()
 		}()
 	}
 	wg.Wait()
-	require.Equal(t, uint64(100), m.data["ks1"].putRequests)
+	entry := meteringEntry{
+		keyspace: "ks1",
+		taskID:   1,
+		taskType: TaskTypeAddIndex,
+	}
+	require.Equal(t, uint64(100), m.data[entry].putRequests)
 }
 
 func TestFlush(t *testing.T) {
@@ -81,17 +91,17 @@ func TestFlush(t *testing.T) {
 	ts := time.Now().Unix()/writeInterval*writeInterval + writeInterval
 	data := readMeteringData(t, reader, ts-writeInterval)
 	require.Len(t, data, 0)
-	meter.Record("ks1", &Data{putRequests: 10, getRequests: 20, readDataBytes: 300, writeDataBytes: 400})
-	meter.flush(ts, 10*time.Minute)
+	meter.Record("ks1", TaskTypeAddIndex, 1, &Data{putRequests: 10, getRequests: 20, readDataBytes: 300, writeDataBytes: 400})
+	meter.flush(ts)
 	data = readMeteringData(t, reader, ts-writeInterval)
 	require.Len(t, data, 0)
 	data = readMeteringData(t, reader, ts)
 	require.Len(t, data, 1)
 	require.Equal(t, "1", data[0]["version"])
 	require.Equal(t, "ks1", data[0]["cluster_id"])
-	require.Equal(t, "disttask", data[0]["source_name"])
-	require.Equal(t, float64(10), data[0]["s3_put_requests"].(map[string]any)["value"])
-	require.Equal(t, float64(20), data[0]["s3_get_requests"].(map[string]any)["value"])
+	require.Equal(t, "dxf", data[0]["source_name"])
+	require.Equal(t, float64(10), data[0]["put_external_requests"].(map[string]any)["value"])
+	require.Equal(t, float64(20), data[0]["get_external_requests"].(map[string]any)["value"])
 	require.Equal(t, float64(300), data[0]["read_data_bytes"].(map[string]any)["value"])
 	require.Equal(t, float64(400), data[0]["write_data_bytes"].(map[string]any)["value"])
 }

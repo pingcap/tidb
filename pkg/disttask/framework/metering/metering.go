@@ -16,6 +16,7 @@ package metering
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,63 +45,60 @@ type TaskType string
 
 const (
 	// TaskTypeAddIndex is the type of metering during add index.
-	TaskTypeAddIndex = "add-index"
+	TaskTypeAddIndex TaskType = "add-index"
 	// TaskTypeImportInto is the type of metering during import into.
-	TaskTypeImportInto = "import-into"
+	TaskTypeImportInto TaskType = "import-into"
 )
 
 var meteringInstance atomic.Pointer[Meter]
 
-// RecordDXFS3GetRequests records the S3 GET requests for DXF.
-func RecordDXFS3GetRequests(store kv.Storage, taskType TaskType, taskID int64, getReqCnt uint64) {
-	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
-		return
-	}
-	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &Data{
-		taskType:    string(taskType),
-		taskID:      taskID,
-		getRequests: getReqCnt,
-	})
+// Recorder is used to record metering data.
+type Recorder struct {
+	m        *Meter
+	taskID   int64
+	taskType TaskType
+	keyspace string
 }
 
-// RecordDXFS3PutRequests records the S3 PUT requests for DXF.
-func RecordDXFS3PutRequests(store kv.Storage, taskType TaskType, taskID int64, putReqCnt uint64) {
+// NewRecorder creates a new recorder.
+func NewRecorder(store kv.Storage, taskType TaskType, taskID int64) *Recorder {
 	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
-		return
+		return &Recorder{}
 	}
-	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &Data{
-		taskType:    string(taskType),
-		taskID:      taskID,
-		putRequests: putReqCnt,
-	})
+	return &Recorder{
+		m:        meteringInstance.Load(),
+		taskID:   taskID,
+		taskType: taskType,
+		keyspace: store.GetKeyspace(),
+	}
 }
 
-// RecordDXFReadDataBytes records the scan data bytes from user store for DXF.
-func RecordDXFReadDataBytes(store kv.Storage, taskType TaskType, taskID int64, size uint64) {
-	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
-		return
-	}
-	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &Data{
-		taskType:      string(taskType),
-		taskID:        taskID,
-		readDataBytes: size,
-	})
+// GetRequestCount records the get request count.
+// get-return: function 'GetRequestCount' seems to be a getter but it does not return any result (all_revive)
+func (r *Recorder) GetRequestCount(v uint64) {
+	r.record(&Data{getRequests: v})
 }
 
-// RecordDXFWriteDataBytes records the write data size for DXF.
-func RecordDXFWriteDataBytes(store kv.Storage, taskType TaskType, taskID int64, size uint64) {
-	if kerneltype.IsClassic() || meteringInstance.Load() == nil {
+// PutRequestCount records the put request count.
+func (r *Recorder) PutRequestCount(v uint64) {
+	r.record(&Data{putRequests: v})
+}
+
+// ReadDataBytes records the read data bytes.
+func (r *Recorder) ReadDataBytes(v uint64) {
+	r.record(&Data{readDataBytes: v})
+}
+
+// WriteDataBytes records the write data bytes.
+func (r *Recorder) WriteDataBytes(v uint64) {
+	r.record(&Data{writeDataBytes: v})
+}
+
+func (r *Recorder) record(d *Data) {
+	if r.m == nil {
 		return
 	}
-	userKS := store.GetKeyspace()
-	meteringInstance.Load().Record(userKS, &Data{
-		taskType:       string(taskType),
-		taskID:         taskID,
-		writeDataBytes: size,
-	})
+	r.m.Record(r.keyspace, r.taskType, r.taskID, d)
 }
 
 // GetMetering gets the metering instance.
@@ -123,9 +121,6 @@ type Data struct {
 	getRequests    uint64
 	readDataBytes  uint64
 	writeDataBytes uint64
-
-	taskType string
-	taskID   int64
 }
 
 func (m *Data) merge(other *Data) {
@@ -135,11 +130,17 @@ func (m *Data) merge(other *Data) {
 	m.writeDataBytes += other.writeDataBytes
 }
 
+type meteringEntry struct {
+	keyspace string
+	taskID   int64
+	taskType TaskType
+}
+
 // Meter is responsible for recording and reporting metering data.
 type Meter struct {
 	sync.Mutex
 	ctx    context.Context
-	data   map[string]Data // keyspace -> meter data
+	data   map[meteringEntry]Data // keyspace -> meter data
 	uuid   string
 	writer *meteringwriter.MeteringWriter
 	logger *zap.Logger
@@ -176,19 +177,24 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	writer := meteringwriter.NewMeteringWriter(provider, meteringConfig)
 	return &Meter{
 		logger: logger,
-		data:   make(map[string]Data),
+		data:   make(map[meteringEntry]Data),
 		writer: writer,
-		uuid:   uuid.New().String(),
+		uuid:   strings.ReplaceAll(uuid.New().String(), "-", "_"), // no dash in the metering sdk
 	}, nil
 }
 
 // Record records a meter data.
-func (m *Meter) Record(userKeyspace string, other *Data) {
+func (m *Meter) Record(keyspace string, taskType TaskType, taskID int64, other *Data) {
 	m.Lock()
 	defer m.Unlock()
-	orig := m.data[userKeyspace]
+	entry := meteringEntry{
+		keyspace: keyspace,
+		taskID:   taskID,
+		taskType: taskType,
+	}
+	orig := m.data[entry]
 	orig.merge(other)
-	m.data[userKeyspace] = orig
+	m.data[entry] = orig
 }
 
 // StartFlushLoop creates a flush loop.
@@ -213,23 +219,23 @@ func (m *Meter) StartFlushLoop(ctx context.Context) {
 
 func (m *Meter) flush(ts int64) {
 	startTime := time.Now()
-	var data map[string]Data
+	var data map[meteringEntry]Data
 	m.Lock()
 	data = m.data
-	m.data = make(map[string]Data, len(data))
+	m.data = make(map[meteringEntry]Data, len(data))
 	m.Unlock()
 
 	if len(data) == 0 {
 		return
 	}
 	array := make([]map[string]any, 0, len(data))
-	for keyspace, d := range data {
+	for entry, d := range data {
 		array = append(array, map[string]any{
 			"version":               "1",
-			"cluster_id":            keyspace,
+			"cluster_id":            entry.keyspace,
 			"source_name":           category,
-			"task_type":             d.taskType,
-			"task_id":               &common.MeteringValue{Value: uint64(d.taskID)},
+			"task_type":             entry.taskType,
+			"task_id":               &common.MeteringValue{Value: uint64(entry.taskID)},
 			"put_external_requests": &common.MeteringValue{Value: d.putRequests},
 			"get_external_requests": &common.MeteringValue{Value: d.getRequests},
 			"read_data_bytes":       &common.MeteringValue{Value: d.readDataBytes, Unit: "bytes"},
@@ -248,7 +254,7 @@ func (m *Meter) flush(ts int64) {
 	if err := m.writer.Write(flushCtx, meteringData); err != nil {
 		m.logger.Warn("failed to write metering data", zap.Error(err))
 	}
-	m.logger.Info("flush metering data succeed", zap.Duration("duration", time.Since(startTime)))
+	m.logger.Info("flush metering data succeed", zap.Duration("duration", time.Since(startTime)), zap.Any("data", meteringData))
 }
 
 // Close closes the metering writer.
