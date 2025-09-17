@@ -6075,13 +6075,13 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "c2338e5e6c81df58c2d72a08af3ac0c3670adc4dd55f48811a4a92ae4c6a01cc",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20250616075548-d951fb623bb3",
+        sha256 = "56809a50881ec0f1b54cd8bbd3b07b419e8a7eedcc1b87fdf5bafbb6f786db7b",
+        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20250728031536-f08901d17bf4",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250616075548-d951fb623bb3.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250616075548-d951fb623bb3.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250616075548-d951fb623bb3.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250616075548-d951fb623bb3.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250728031536-f08901d17bf4.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250728031536-f08901d17bf4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250728031536-f08901d17bf4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250728031536-f08901d17bf4.zip",
         ],
     )
     go_repository(
@@ -7272,13 +7272,13 @@ def go_deps():
         build_tags = ["nextgen"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "ae7575a9055def212e39121dc880c534f5ffd6a9a50057cf36cc754419ce816a",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250708031306-557a4986e4c4",
+        sha256 = "2906c907af2688fb6dc4c50a77bcbb2d46b7e26c1a0e0a7b688d2725ec4094bd",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250917111308-6cbd7e4f9761",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250708031306-557a4986e4c4.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250708031306-557a4986e4c4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250708031306-557a4986e4c4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250708031306-557a4986e4c4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250917111308-6cbd7e4f9761.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250917111308-6cbd7e4f9761.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250917111308-6cbd7e4f9761.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250917111308-6cbd7e4f9761.zip",
         ],
     )
     go_repository(
@@ -10796,13 +10796,13 @@ def go_deps():
         name = "org_modernc_mathutil",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/mathutil",
-        sha256 = "3a9e2065897e172b4c092c3098e15a2d66bc2700432f88ba6812c1b6b0acf2b2",
-        strip_prefix = "modernc.org/mathutil@v1.6.0",
+        sha256 = "5be0da18eb557a1198bfe370e37022f2dbdb9cdc5d63130fc8e8330ab240bd2e",
+        strip_prefix = "modernc.org/mathutil@v1.7.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/mathutil/org_modernc_mathutil-v1.6.0.zip",
-            "http://ats.apps.svc/gomod/modernc.org/mathutil/org_modernc_mathutil-v1.6.0.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/mathutil/org_modernc_mathutil-v1.6.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/mathutil/org_modernc_mathutil-v1.6.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/mathutil/org_modernc_mathutil-v1.7.1.zip",
+            "http://ats.apps.svc/gomod/modernc.org/mathutil/org_modernc_mathutil-v1.7.1.zip",
+            "https://cache.hawkingrei.com/gomod/modernc.org/mathutil/org_modernc_mathutil-v1.7.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/mathutil/org_modernc_mathutil-v1.7.1.zip",
         ],
     )
     go_repository(
