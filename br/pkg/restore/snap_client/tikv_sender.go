@@ -403,12 +403,12 @@ func (rc *SnapClient) sendRequestToStore(
 }
 
 func (rc *SnapClient) compactAndCheckSSTRange(ctx context.Context, startKey, endKey []byte) error {
-	checkReq := &import_sstpb.CheckAndCompactRequest{
+	checkReq := &import_sstpb.AddPartitionRangeRequest{
 		Range: &import_sstpb.Range{
 			Start: startKey,
 			End:   endKey,
 		},
-		Ttl: 7200,
+		TtlSeconds: 7200,
 	}
 	return rc.sendRequestToStore(ctx, func(ectx context.Context, client importclient.ImporterClient, storeId uint64) error {
 		if err := client.CheckAndCompact(ectx, storeId, checkReq); err != nil {
@@ -425,7 +425,7 @@ func (rc *SnapClient) compactAndCheckSSTRange(ctx context.Context, startKey, end
 }
 
 func (rc *SnapClient) removeForcePartitionRange(ctx context.Context, startKey, endKey []byte) error {
-	removeReq := &import_sstpb.RemoveRangeRequest{
+	removeReq := &import_sstpb.RemovePartitionRangeRequest{
 		Range: &import_sstpb.Range{
 			Start: startKey,
 			End:   endKey,
