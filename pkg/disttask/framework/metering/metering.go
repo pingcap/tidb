@@ -44,6 +44,8 @@ const (
 type TaskType string
 
 const (
+	// TaskTypeUnknown is the type of metering when task type is unknown.
+	TaskTypeUnknown TaskType = ""
 	// TaskTypeAddIndex is the type of metering during add index.
 	TaskTypeAddIndex TaskType = "add-index"
 	// TaskTypeImportInto is the type of metering during import into.
@@ -116,6 +118,9 @@ func SetMetering(m *Meter) {
 
 // Data represents the metering data.
 type Data struct {
+	keyspace string
+	taskType TaskType
+
 	putRequests    uint64
 	getRequests    uint64
 	readDataBytes  uint64
@@ -123,6 +128,10 @@ type Data struct {
 }
 
 func (m *Data) merge(other *Data) {
+	if m.keyspace == "" || m.taskType == TaskTypeUnknown {
+		m.keyspace = other.keyspace
+		m.taskType = other.taskType
+	}
 	m.putRequests += other.putRequests
 	m.getRequests += other.getRequests
 	m.readDataBytes += other.readDataBytes
@@ -139,7 +148,7 @@ type meteringEntry struct {
 type Meter struct {
 	sync.Mutex
 	ctx    context.Context
-	data   map[meteringEntry]Data // keyspace -> meter data
+	data   map[int64]Data // taskID -> meter data
 	uuid   string
 	writer *meteringwriter.MeteringWriter
 	logger *zap.Logger
@@ -176,7 +185,7 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	writer := meteringwriter.NewMeteringWriter(provider, meteringConfig)
 	return &Meter{
 		logger: logger,
-		data:   make(map[meteringEntry]Data),
+		data:   make(map[int64]Data),
 		writer: writer,
 		uuid:   strings.ReplaceAll(uuid.New().String(), "-", "_"), // no dash in the metering sdk
 	}, nil
@@ -186,14 +195,11 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 func (m *Meter) Record(keyspace string, taskType TaskType, taskID int64, other *Data) {
 	m.Lock()
 	defer m.Unlock()
-	entry := meteringEntry{
-		keyspace: keyspace,
-		taskID:   taskID,
-		taskType: taskType,
-	}
-	orig := m.data[entry]
+	other.keyspace = keyspace
+	other.taskType = taskType
+	orig := m.data[taskID]
 	orig.merge(other)
-	m.data[entry] = orig
+	m.data[taskID] = orig
 }
 
 // StartFlushLoop creates a flush loop.
@@ -218,23 +224,23 @@ func (m *Meter) StartFlushLoop(ctx context.Context) {
 
 func (m *Meter) flush(ts int64) {
 	startTime := time.Now()
-	var data map[meteringEntry]Data
+	var data map[int64]Data
 	m.Lock()
 	data = m.data
-	m.data = make(map[meteringEntry]Data, len(data))
+	m.data = make(map[int64]Data, len(data))
 	m.Unlock()
 
 	if len(data) == 0 {
 		return
 	}
 	array := make([]map[string]any, 0, len(data))
-	for entry, d := range data {
+	for taskID, d := range data {
 		array = append(array, map[string]any{
 			"version":               "1",
-			"cluster_id":            entry.keyspace,
+			"cluster_id":            d.keyspace,
 			"source_name":           category,
-			"task_type":             entry.taskType,
-			"task_id":               &common.MeteringValue{Value: uint64(entry.taskID)},
+			"task_type":             d.taskType,
+			"task_id":               &common.MeteringValue{Value: uint64(taskID)},
 			"put_external_requests": &common.MeteringValue{Value: d.putRequests},
 			"get_external_requests": &common.MeteringValue{Value: d.getRequests},
 			"read_data_bytes":       &common.MeteringValue{Value: d.readDataBytes, Unit: "bytes"},

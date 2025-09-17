@@ -50,25 +50,20 @@ func TestNewMeterValidConfig(t *testing.T) {
 
 func TestRecord(t *testing.T) {
 	m := &Meter{
-		data: make(map[meteringEntry]Data),
-	}
-	entry := meteringEntry{
-		keyspace: "keyspace1",
-		taskID:   1,
-		taskType: TaskTypeAddIndex,
+		data: make(map[int64]Data),
 	}
 	md := &Data{
 		putRequests: 5,
 	}
 	m.Record("keyspace1", TaskTypeAddIndex, 1, md)
-	require.Equal(t, uint64(5), m.data[entry].putRequests)
+	require.Equal(t, uint64(5), m.data[1].putRequests)
 	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{getRequests: 3})
-	require.Equal(t, uint64(5), m.data[entry].putRequests)
-	require.Equal(t, uint64(3), m.data[entry].getRequests)
+	require.Equal(t, uint64(5), m.data[1].putRequests)
+	require.Equal(t, uint64(3), m.data[1].getRequests)
 }
 
 func TestConcurrentRecord(t *testing.T) {
-	m := &Meter{data: make(map[meteringEntry]Data)}
+	m := &Meter{data: make(map[int64]Data)}
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Add(1)
@@ -78,12 +73,7 @@ func TestConcurrentRecord(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	entry := meteringEntry{
-		keyspace: "ks1",
-		taskID:   1,
-		taskType: TaskTypeAddIndex,
-	}
-	require.Equal(t, uint64(100), m.data[entry].putRequests)
+	require.Equal(t, uint64(100), m.data[1].putRequests)
 }
 
 func TestFlush(t *testing.T) {
