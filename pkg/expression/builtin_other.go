@@ -225,31 +225,16 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				}
 				continue
 			}
-<<<<<<< HEAD
-			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
-=======
-
 			// Only keep this arg if value wasn't seen before
 			if _, exists := b.hashSet[val]; !exists {
 				b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
 				b.args[uniqueArgCount] = b.args[i]
 				uniqueArgCount++
 			}
-		case ConstOnlyInContext:
-			// Avoid build plans for wrong type.
-			if _, _, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
-				return err
-			}
+		} else {
 			b.args[uniqueArgCount] = b.args[i]
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
 			uniqueArgCount++
-		default:
-			b.args[uniqueArgCount] = b.args[i]
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
-			uniqueArgCount++
->>>>>>> e7b038b9913 (expression: deduplicate the args of IN function (#61249))
 		}
 	}
 
@@ -355,12 +340,6 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				}
 				continue
 			}
-<<<<<<< HEAD
-			b.hashSet.Insert(string(collator.Key(val))) // should do memory copy here
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
-=======
-
 			key := string(collator.Key(val)) // should do memory copy here
 			// Only keep this arg if value wasn't seen before
 			if !b.hashSet.Exist(key) {
@@ -368,19 +347,10 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				b.args[uniqueArgCount] = b.args[i]
 				uniqueArgCount++
 			}
-		case ConstOnlyInContext:
-			// Avoid build plans for wrong type.
-			if _, _, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
-				return err
-			}
+		} else {
 			b.args[uniqueArgCount] = b.args[i]
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
 			uniqueArgCount++
-		default:
-			b.args[uniqueArgCount] = b.args[i]
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
-			uniqueArgCount++
->>>>>>> e7b038b9913 (expression: deduplicate the args of IN function (#61249))
 		}
 	}
 
@@ -465,31 +435,16 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				}
 				continue
 			}
-<<<<<<< HEAD
-			b.hashSet.Insert(val)
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
-=======
-
 			// Only keep this arg if value wasn't seen before
 			if !b.hashSet.Exist(val) {
 				b.hashSet.Insert(val)
 				b.args[uniqueArgCount] = b.args[i]
 				uniqueArgCount++
 			}
-		case ConstOnlyInContext:
-			// Avoid build plans for wrong type.
-			if _, _, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
-				return err
-			}
+		} else {
 			b.args[uniqueArgCount] = b.args[i]
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
 			uniqueArgCount++
-		default:
-			b.args[uniqueArgCount] = b.args[i]
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
-			uniqueArgCount++
->>>>>>> e7b038b9913 (expression: deduplicate the args of IN function (#61249))
 		}
 	}
 
@@ -577,12 +532,6 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 			if err != nil {
 				return err
 			}
-<<<<<<< HEAD
-			b.hashSet.Insert(string(key))
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
-=======
-
 			hashKey := string(key)
 			// Only keep this arg if value wasn't seen before
 			if !b.hashSet.Exist(hashKey) {
@@ -590,19 +539,10 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				b.args[uniqueArgCount] = b.args[i]
 				uniqueArgCount++
 			}
-		case ConstOnlyInContext:
-			// Avoid build plans for wrong type.
-			if _, _, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
-				return err
-			}
+		} else {
 			b.args[uniqueArgCount] = b.args[i]
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
 			uniqueArgCount++
-		default:
-			b.args[uniqueArgCount] = b.args[i]
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
-			uniqueArgCount++
->>>>>>> e7b038b9913 (expression: deduplicate the args of IN function (#61249))
 		}
 	}
 
@@ -690,12 +630,6 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				}
 				continue
 			}
-<<<<<<< HEAD
-			b.hashSet[val.CoreTime()] = struct{}{}
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
-=======
-
 			coreTime := val.CoreTime()
 			// Only keep this arg if value wasn't seen before
 			if _, exists := b.hashSet[coreTime]; !exists {
@@ -703,19 +637,10 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				b.args[uniqueArgCount] = b.args[i]
 				uniqueArgCount++
 			}
-		case ConstOnlyInContext:
-			// Avoid build plans for wrong type.
-			if _, _, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
-				return err
-			}
+		} else {
 			b.args[uniqueArgCount] = b.args[i]
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
 			uniqueArgCount++
-		default:
-			b.args[uniqueArgCount] = b.args[i]
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
-			uniqueArgCount++
->>>>>>> e7b038b9913 (expression: deduplicate the args of IN function (#61249))
 		}
 	}
 
@@ -798,31 +723,16 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error 
 				}
 				continue
 			}
-<<<<<<< HEAD
-			b.hashSet[val.Duration] = struct{}{}
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
-=======
-
 			// Only keep this arg if value wasn't seen before
 			if _, exists := b.hashSet[val.Duration]; !exists {
 				b.hashSet[val.Duration] = struct{}{}
 				b.args[uniqueArgCount] = b.args[i]
 				uniqueArgCount++
 			}
-		case ConstOnlyInContext:
-			// Avoid build plans for wrong type.
-			if _, _, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
-				return err
-			}
+		} else {
 			b.args[uniqueArgCount] = b.args[i]
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
 			uniqueArgCount++
-		default:
-			b.args[uniqueArgCount] = b.args[i]
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
-			uniqueArgCount++
->>>>>>> e7b038b9913 (expression: deduplicate the args of IN function (#61249))
 		}
 	}
 
