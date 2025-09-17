@@ -24,7 +24,11 @@
       "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
       "explain format='brief' select b from t3 where fts_match_word('hello', title)",
       "explain format='brief' select a, b from t3 where fts_match_word('hello', title)",
-      "explain format='brief' select b, a from t3 where fts_match_word('hello', title)"
+      "explain format='brief' select b, a from t3 where fts_match_word('hello', title)",
+      "explain format='brief' select count(*) from t3 where fts_match_word('hello', title)",
+      "explain format='brief' select count(b) from t3 where fts_match_word('hello', title)",
+      "explain format='brief' select sum(a) from t3 where fts_match_word('hello', title)",
+      "explain format='brief' select count(*) from t3 where fts_match_word('hello', title) group by a"
     ]
   }
 ]

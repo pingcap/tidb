@@ -62,26 +62,22 @@
       {
         "SQL": "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(test.t1.id)->Column#5",
-          "└─IndexReader 1000.00 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t1.id)->Column#7",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now",
-          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now"
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(1)->Column#5",
-          "└─IndexReader 1000.00 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#7",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now",
-          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now"
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
@@ -195,14 +191,12 @@
       {
         "SQL": "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(test.t3.a)->Column#4",
-          "└─IndexReader 1000.00 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.a)->Column#6",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now",
-          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now"
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain format='brief' select b from t3 where fts_match_word('hello', title)",
@@ -228,6 +222,50 @@
           "  └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from t3 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#6",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(b) from t3 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.b)->Column#6",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select sum(a) from t3 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#4",
+          "└─Projection 1000.00 root  cast(test.t3.a, decimal(10,0) BINARY)->Column#9",
+          "  └─IndexReader 1000.00 root  index:IndexRangeScan",
+          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Aggregation can not be pushed to tici because AggFunc `sum` is not supported now",
+          "Aggregation can not be pushed to tici because AggFunc `sum` is not supported now"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from t3 where fts_match_word('hello', title) group by a",
+        "Plan": [
+          "HashAgg 8000.00 root  group by:test.t3.a, funcs:count(1)->Column#4",
+          "└─IndexReader 1000.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Aggregation can not be pushed to tici because "
+        ]
       }
     ]
   }
