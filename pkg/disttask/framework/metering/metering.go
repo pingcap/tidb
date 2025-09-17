@@ -225,9 +225,9 @@ func (m *Meter) flush(ctx context.Context, ts int64) {
 			"cluster_id":            d.keyspace,
 			"source_name":           category,
 			"task_type":             d.taskType,
-			"task_id":               &common.MeteringValue{Value: uint64(taskID)},
-			"put_external_requests": &common.MeteringValue{Value: d.putRequests},
-			"get_external_requests": &common.MeteringValue{Value: d.getRequests},
+			"task_id":               taskID,
+			"put_external_requests": d.putRequests,
+			"get_external_requests": d.getRequests,
 			"read_data_bytes":       &common.MeteringValue{Value: d.readDataBytes, Unit: "bytes"},
 			"write_data_bytes":      &common.MeteringValue{Value: d.writeDataBytes, Unit: "bytes"},
 		})
