@@ -1069,23 +1069,39 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	return newColl
 }
 
+// PseudoHistColl creates a lightweight pseudo HistColl for cost calculation.
+// This is optimized for cases where only HistColl is needed, avoiding the overhead
+// of creating a full pseudo table with ColAndIdxExistenceMap and other structures.
+func PseudoHistColl(physicalID int64, allowTriggerLoading bool) HistColl {
+	return HistColl{
+		RealtimeCount:     PseudoRowCount,
+		PhysicalID:        physicalID,
+		columns:           nil,
+		indices:           nil,
+		Pseudo:            true,
+		CanNotTriggerLoad: !allowTriggerLoading,
+		ModifyCount:       0,
+		StatsVer:          0,
+	}
+}
+
 // PseudoTable creates a pseudo table statistics.
 // Usually, we don't want to trigger stats loading for pseudo table.
 // But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
 // Such case could possibly happen in getStatsTable().
 func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHistMeta bool) *Table {
-	pseudoHistColl := HistColl{
-		RealtimeCount:     PseudoRowCount,
-		PhysicalID:        tblInfo.ID,
-		columns:           make(map[int64]*Column, 2),
-		indices:           make(map[int64]*Index, 2),
-		Pseudo:            true,
-		CanNotTriggerLoad: !allowTriggerLoading,
-	}
 	t := &Table{
-		HistColl:              pseudoHistColl,
+		HistColl:              PseudoHistColl(tblInfo.ID, allowTriggerLoading),
+		Version:               PseudoVersion,
 		ColAndIdxExistenceMap: NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices)),
 	}
+
+	// Initialize columns and indices maps only when allowFillHistMeta is true
+	if allowFillHistMeta {
+		t.columns = make(map[int64]*Column, len(tblInfo.Columns))
+		t.indices = make(map[int64]*Index, len(tblInfo.Indices))
+	}
+
 	for _, col := range tblInfo.Columns {
 		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.
 		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
@@ -1097,7 +1113,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 					PhysicalID: tblInfo.ID,
 					Info:       col,
 					IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-					Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+					Histogram:  *NewPseudoHistogram(col.ID, &col.FieldType),
 				}
 			}
 		}
@@ -1109,7 +1125,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 				t.indices[idx.ID] = &Index{
 					PhysicalID: tblInfo.ID,
 					Info:       idx,
-					Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+					Histogram:  *NewPseudoHistogram(idx.ID, types.NewFieldType(mysql.TypeBlob)),
 				}
 			}
 		}

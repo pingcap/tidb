@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ngaut/pools"
@@ -24,7 +25,7 @@ import (
 func TestDDLWorkerPool(t *testing.T) {
 	f := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
-			wk := newWorker(nil, addIdxWorker, nil, nil, nil)
+			wk := newWorker(context.Background(), addIdxWorker, nil, nil, nil)
 			return wk, nil
 		}
 	}
