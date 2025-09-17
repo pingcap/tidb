@@ -4201,6 +4201,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.RealtimeCount == 0 {
+		ctx.GetSessionVars().RecordPlanRiskFlag(variable.PlanRiskPseudoStats)
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
 		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading, true)
@@ -4214,8 +4215,10 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 		tbl.Pseudo = true
 		statsTbl = &tbl
 		if pseudoStatsForUninitialized {
+			ctx.GetSessionVars().RecordPlanRiskFlag(variable.PlanRiskPseudoStats)
 			core_metrics.PseudoEstimationNotAvailable.Inc()
 		} else {
+			ctx.GetSessionVars().RecordPlanRiskFlag(variable.PlanRiskStaleStats)
 			core_metrics.PseudoEstimationOutdate.Inc()
 		}
 	}
