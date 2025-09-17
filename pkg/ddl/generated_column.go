@@ -15,8 +15,6 @@
 package ddl
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -162,17 +160,15 @@ func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName ast.CIStr) 
 	return false, "", false
 }
 
-func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
-	if newCol.IsGenerated() || col.IsGenerated() {
+func isGeneratedRelatedColumn(tblInfo *model.TableInfo, changingCol, col *model.ColumnInfo) bool {
+	if changingCol.IsGenerated() || col.IsGenerated() {
 		// TODO: Make it compatible with MySQL error.
-		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		return true
 	}
-	if ok, dep, _ := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
-		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	if ok, _, _ := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
+		return true
 	}
-	return nil
+	return false
 }
 
 type generatedColumnChecker struct {

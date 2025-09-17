@@ -168,16 +168,17 @@ func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockInsertValueAfterCheckNull"))
-	}()
+	// insert null value before modifying column
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnCheckValue", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("insert into test.tt values (NULL, NULL)")
+	})
 
 	tk.MustExec("drop table if exists tt;")
 	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
 	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
 	err := tk.ExecToErr("alter table tt modify a int not null;")
-	require.EqualError(t, err, "[ddl:1265]Data truncated for column 'a' at row 1")
+	require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
 	tk.MustExec("drop table tt")
 }
 
@@ -236,12 +237,11 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 600*time.Millisecond)
 	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-
 	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
 	tk1.MustExec("create table t1 (c1 int, c2 int)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
@@ -254,32 +254,22 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 			return
 		}
 		once.Do(func() {
-			checkErr = tk2.ExecToErr("insert into t1 values ()")
+			// Insert null value to make modify column fail.
+			require.NoError(t, tk2.ExecToErr("insert into t1 values ()"))
 		})
 	})
 	err := tk1.ExecToErr("alter table t1 change c2 c2 tinyint not null")
 	require.NoError(t, checkErr)
-	require.EqualError(t, err, "[ddl:1265]Data truncated for column 'c2' at row 1")
+	require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID {
-			return
-		}
-
-		if job.State != model.JobStateRunning {
-			return
-		}
-		if job.SchemaState == model.StatePublic {
-			return
-		}
-		// now c2 has PreventNullInsertFlag, an error is expected.
-		checkErr = tk2.ExecToErr("insert into t1 values ()")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnStateDeleteOnly", func(_ int64) {
+		err = tk2.ExecToErr("insert into t1 values ()")
+		require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 	})
 	tk1.MustExec("alter table t1 change c2 c2 tinyint not null")
-	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
 	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
 	require.True(t, mysql.HasNotNullFlag(c2.GetFlag()))
@@ -559,14 +549,13 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	tk.MustExec(`
 		CREATE TABLE t (
 			id int NOT NULL AUTO_INCREMENT,
-			val0 bigint NOT NULL,
-			val1 int NOT NULL,
+			val0 varchar(16) NOT NULL,
 			padding varchar(256) NOT NULL DEFAULT '',
-			PRIMARY KEY (id)
+			PRIMARY KEY (id),
+			INDEX val0_idx (val0)
 		);
 	`)
-	tk.MustExec("CREATE INDEX val0_idx ON t (val0)")
-	tk.MustExec("insert into t (val0, val1, padding) values (1, 1, 'a'), (2, 2, 'b'), (3, 3, 'c');")
+	tk.MustExec("insert into t (val0, padding) values ('1', 'a'), ('2', 'b'), ('3', 'c')")
 
 	conflictOnce := sync.Once{}
 	conflictCh := make(chan struct{})
@@ -576,7 +565,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 			conflictOnce.Do(func() {
 				tk1.MustExec("use test")
 				// inject a write conflict for the delete DML.
-				tk1.MustExec("update t set val0 = 100 where id = 1;")
+				tk1.MustExec("update t set val0 = '100' where id = 1;")
 				close(conflictCh)
 			})
 		}
@@ -594,60 +583,16 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
 				insertOnce.Do(func() {
 					tk3.MustExec("use test")
-					tk3.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
+					tk3.MustExec("insert into t (val0, padding) values ('4', 'd');")
 				})
 			})
 			<-conflictCh
 		})
 	})
-	tk.MustExec("alter table t modify column val0 int not null;")
+	tk.MustExec("alter table t modify column val0 varchar(8) not null;")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
 		"2 2 2 b",
 		"3 3 3 c",
 		"4 4 4 d"))
-}
-
-func TestXxx(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(id bigint)")
-
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeModifyColumnStateWriteReorg", func() {
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		tk2.MustExec("insert into t1 values(12345678912)")
-	})
-
-	tk.MustExec("alter table t1 modify column id int")
-}
-
-func TestXxx2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(id bigint, c1 bigint, index idx1(id, c1))")
-
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeModifyColumnStateWriteReorg", func() {
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("set @session.sql_mode=''")
-		tk2.MustExec("use test")
-		// Although we use non-strict mode, we still can't insert a value out of range,
-		// since we are doing reorg with strict mode.
-		tk2.ExecToErr("insert into t1 values(10000000000, 123)")
-	})
-
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterModifyColumnStateDeleteOnly", func(_ int64) {
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("set @session.sql_mode=''")
-		tk2.MustExec("use test")
-		// Although we use non-strict mode, we still can't insert a value out of range,
-		// since we are doing reorg with strict mode.
-		tk2.ExecToErr("delete from t1 where id = 10000000001")
-	})
-
-	tk.MustExec("alter table t1 modify column id int")
 }
