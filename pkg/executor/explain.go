@@ -168,6 +168,16 @@ func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() exec.Executor {
 	return nil
 }
 
+func (e *ExplainExec) getAnalyzeExecWithForeignKeyTrigger() WithForeignKeyTrigger {
+	if e.explain.Analyze && e.analyzeExec != nil {
+		exec, ok := e.analyzeExec.(WithForeignKeyTrigger)
+		if ok {
+			return exec
+		}
+	}
+	return nil
+}
+
 type memoryDebugModeHandler struct {
 	ctx          context.Context
 	minHeapInUse int64

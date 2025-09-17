@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -486,35 +485,6 @@ func (p *PointGetPlan) AccessObject() base.AccessObject {
 		res.Indexes = []access.IndexAccess{index}
 	}
 	return res
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PointGetPlan)
-	*cloned = *p
-	cloned.Plan = *p.Plan.CloneWithNewCtx(newCtx)
-	if p.PartitionIdx != nil {
-		cloned.PartitionIdx = new(int)
-		*cloned.PartitionIdx = *p.PartitionIdx
-	}
-	if p.Handle != nil {
-		cloned.Handle = p.Handle.Copy()
-	}
-	if p.HandleConstant != nil {
-		if p.HandleConstant.SafeToShareAcrossSession() {
-			cloned.HandleConstant = p.HandleConstant
-		} else {
-			cloned.HandleConstant = p.HandleConstant.Clone().(*expression.Constant)
-		}
-	}
-	cloned.IndexValues = util.CloneDatums(p.IndexValues)
-	cloned.IndexConstants = utilfuncp.CloneConstantsForPlanCache(p.IndexConstants, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(p.AccessConditions, nil)
-	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(p.accessCols, nil)
-	return cloned, true
 }
 
 // BatchPointGetPlan represents a physical plan which contains a bunch of
@@ -1073,29 +1043,4 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 		res.Indexes = []access.IndexAccess{index}
 	}
 	return res
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(BatchPointGetPlan)
-	*cloned = *p
-	cloned.SimpleSchemaProducer = *p.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
-	probeParents, ok := ClonePhysicalPlansForPlanCache(newCtx, p.ProbeParents)
-	if !ok {
-		return nil, false
-	}
-	cloned.ProbeParents = probeParents
-	cloned.ctx = newCtx
-	cloned.Handles = util.CloneHandles(p.Handles)
-	cloned.HandleParams = utilfuncp.CloneConstantsForPlanCache(p.HandleParams, nil)
-	cloned.IndexValues = util.CloneDatum2D(p.IndexValues)
-	cloned.IndexValueParams = CloneConstant2DForPlanCache(p.IndexValueParams)
-	cloned.AccessConditions = utilfuncp.CloneExpressionsForPlanCache(p.AccessConditions, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.PartitionIdxs = make([]int, len(p.PartitionIdxs))
-	copy(cloned.PartitionIdxs, p.PartitionIdxs)
-	cloned.accessCols = utilfuncp.CloneColumnsForPlanCache(p.accessCols, nil)
-	return cloned, true
 }

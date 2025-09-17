@@ -1705,7 +1705,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		selection, ok := p.(*plannercore.Update).SelectPlan.(*physicalop.PhysicalSelection)
+		selection, ok := p.(*physicalop.Update).SelectPlan.(*physicalop.PhysicalSelection)
 		require.True(t, ok)
 		_, ok = selection.Children()[0].(*physicalop.PointGetPlan)
 		require.True(t, ok)
@@ -1724,7 +1724,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		del := p.(*plannercore.Delete)
+		del := p.(*physicalop.Delete)
 		require.Equal(t, "PointGet(Index(test6.uk_expr)[KindUint64 32 KindInt64 45])->Sel([eq(test.test6.b, 46)])->Projection", plannercore.ToString(del.SelectPlan))
 		proj := del.SelectPlan.(*physicalop.PhysicalProjection)
 		//nolint: printexpression

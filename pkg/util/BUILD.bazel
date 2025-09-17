@@ -38,6 +38,7 @@ go_library(
         "//pkg/session/sessmgr",
         "//pkg/types",
         "//pkg/util/collate",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/tls",
         "@com_github_ngaut_pools//:pools",

@@ -233,41 +233,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return str.String()
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexMergeReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.PushedLimit = p.PushedLimit.Clone()
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	partialPlans, ok := ClonePhysicalPlansForPlanCache(newCtx, p.PartialPlansRaw)
-	if !ok {
-		return nil, false
-	}
-	cloned.PartialPlansRaw = partialPlans
-	if p.TablePlan != nil {
-		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.PartialPlans = make([][]base.PhysicalPlan, len(p.PartialPlans))
-	for i, plan := range cloned.PartialPlansRaw {
-		cloned.PartialPlans[i] = FlattenPushDownPlan(plan)
-	}
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.HandleCols != nil {
-		cloned.HandleCols = p.HandleCols.Clone()
-	}
-	return cloned, true
-}
-
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 	err = ResolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.Schema())

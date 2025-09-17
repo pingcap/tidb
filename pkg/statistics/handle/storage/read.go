@@ -505,6 +505,10 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
 	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	defer tracker.Detach()
+
+	// Delay copying until we know what needs to be modified
+	needsCopy := true
+
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
@@ -513,24 +517,35 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			HistColl:              histColl,
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 		}
-	} else {
-		// We copy it before writing to avoid race.
-		table = table.Copy()
+		needsCopy = false
 	}
-	table.Pseudo = false
 
-	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
+	realtimeCount, modifyCount, isNull, err := StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 	if err != nil || isNull {
 		return nil, err
 	}
-	table.ModifyCount = modidyCount
-	table.RealtimeCount = realtimeCount
 
 	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %?", tableID)
 	if err != nil {
 		return nil, err
 	}
-	// Check table has no index/column stats.
+
+	if needsCopy {
+		if len(rows) == 0 {
+			// Only metadata update needed
+			table = table.CopyAs(statistics.MetaOnly)
+		} else {
+			// Indexes and Columns maps potentially get updated
+			table = table.CopyAs(statistics.BothMapsWritable)
+		}
+	}
+
+	// Update metadata
+	table.Pseudo = false
+	table.ModifyCount = modifyCount
+	table.RealtimeCount = realtimeCount
+
+	// Early return if no histogram data to process
 	if len(rows) == 0 {
 		return table, nil
 	}
@@ -569,7 +584,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 	}
 	table.ColAndIdxExistenceMap.SetChecked()
-	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
+	return ExtendedStatsFromStorage(sctx, table.CopyAs(statistics.ExtendedStatsWritable), tableID, loadAll)
 }
 
 // LoadHistogram will load histogram from storage.
@@ -600,14 +615,14 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle) (err error) {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(sctx, statsHandle, item.TableItemID, loadFMSketch, item.FullLoad)
+			err = loadNeededColumnHistograms(sctx, statsHandle, item.TableItemID, item.FullLoad)
 		} else {
 			// Index is always full load.
-			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID, loadFMSketch)
+			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID)
 		}
 		if err != nil {
 			statslogutil.StatsSampleLogger().Error("load needed histogram failed",
@@ -652,7 +667,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, fullLoad bool) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
@@ -699,7 +714,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
 			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
-			statsTbl = statsTbl.Copy()
+			statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 			statsTbl.SetCol(col.ID, fakeCol)
 			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 				Updated: []*statistics.Table{statsTbl},
@@ -722,7 +737,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	var (
 		cms  *statistics.CMSketch
 		topN *statistics.TopN
-		fms  *statistics.FMSketch
 	)
 	if fullLoad {
 		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
@@ -733,12 +747,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if loadFMSketch {
-			fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
 	}
 
 	colHist := &statistics.Column{
@@ -747,7 +755,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		Info:       colInfo,
 		CMSketch:   cms,
 		TopN:       topN,
-		FMSketch:   fms,
 		IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 		StatsVer:   statsVer,
 	}
@@ -763,7 +770,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		)
 		return nil
 	}
-	statsTbl = statsTbl.Copy()
+	statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 	if colHist.StatsAvailable() {
 		if fullLoad {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
@@ -790,7 +797,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 
 // loadNeededIndexHistograms loads the necessary index histograms.
 // It is similar to loadNeededColumnHistograms, but for index.
-func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each index at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
@@ -848,18 +855,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = FMSketchFromStorage(sctx, idx.TableID, 1, idx.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	idxHist := &statistics.Index{
 		Histogram:         *hg,
 		CMSketch:          cms,
 		TopN:              topN,
-		FMSketch:          fms,
 		Info:              idxInfo,
 		StatsVer:          statsVer,
 		PhysicalID:        idx.TableID,
@@ -876,7 +875,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		)
 		return nil
 	}
-	tbl = tbl.Copy()
+	tbl = tbl.CopyAs(statistics.IndexMapWritable)
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)

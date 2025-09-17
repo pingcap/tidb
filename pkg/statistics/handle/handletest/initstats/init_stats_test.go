@@ -20,12 +20,71 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLiteInitStatsWithTableIDs(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer store.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "create table t1( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table t2( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table t3( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into t3 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "analyze table t1, t2, t3 all columns;")
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl3, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+	require.NoError(t, err)
+
+	dom.Close()
+
+	vardef.SetStatsLease(-1)
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	_, ok := h.Get(tbl1.Meta().ID)
+	require.False(t, ok)
+	require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID))
+	_, ok = h.Get(tbl1.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl2.Meta().ID)
+	require.False(t, ok)
+	_, ok = h.Get(tbl3.Meta().ID)
+	require.False(t, ok)
+
+	// Make sure it can be loaded multiple times.
+	require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID, tbl2.Meta().ID))
+	_, ok = h.Get(tbl1.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl2.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl3.Meta().ID)
+	require.False(t, ok)
+
+	require.NoError(t, h.InitStatsLite(context.Background()))
+	_, ok = h.Get(tbl1.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl2.Meta().ID)
+	require.True(t, ok)
+	_, ok = h.Get(tbl3.Meta().ID)
+	require.True(t, ok)
+
+	dom.Close()
+}
 
 func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	restore := config.RestoreFunc()
@@ -98,7 +157,13 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsAllEvicted())
 		}
 	}
-	require.Equal(t, int64(130), handle.GetMaxTidRecordForTest())
+	if kerneltype.IsClassic() {
+		require.Equal(t, int64(130), handle.GetMaxTidRecordForTest())
+	} else {
+		// In next-gen, the table ID is different from classic because the system table IDs and the regular table IDs are different,
+		// so the next-gen table ID will be ahead of the classic table ID.
+		require.Equal(t, int64(23), handle.GetMaxTidRecordForTest())
+	}
 }
 
 func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {
@@ -134,4 +199,32 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	require.NoError(t, h.InitStats(context.Background(), is))
+}
+
+func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
+	config.GetGlobalConfig().Performance.SkipInitStats = true
+	defer func() {
+		config.GetGlobalConfig().Performance.SkipInitStats = false
+	}()
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer store.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "create table t( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "analyze table t all columns;")
+	dom.Close()
+
+	vardef.SetStatsLease(3)
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	<-h.InitStatsDone
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	_, ok := h.StatsCache.Get(tbl.Meta().ID)
+	require.False(t, ok)
+	dom.Close()
 }
