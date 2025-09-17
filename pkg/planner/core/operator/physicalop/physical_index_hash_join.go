@@ -16,12 +16,15 @@ package physicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -90,4 +93,55 @@ func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
 	}
 
 	return p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfBool
+}
+
+func constructIndexHashJoin(
+	p *logicalop.LogicalJoin,
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	innerTask base.Task,
+	ranges ranger.MutableRanges,
+	keyOff2IdxOff []int,
+	path *util.AccessPath,
+	compareFilters *ColWithCmpFuncManager,
+) []base.PhysicalPlan {
+	indexJoins := constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, true)
+	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
+	for _, plan := range indexJoins {
+		join := plan.(*PhysicalIndexJoin)
+		indexHashJoin := PhysicalIndexHashJoin{
+			PhysicalIndexJoin: *join,
+			// Prop is empty means that the parent operator does not need the
+			// join operator to provide any promise of the output order.
+			KeepOuterOrder: !prop.IsSortItemEmpty(),
+		}.Init(p.SCtx())
+		indexHashJoins = append(indexHashJoins, indexHashJoin)
+	}
+	return indexHashJoins
+}
+
+// constructIndexHashJoinStatic is used to enumerate current a physical index hash join with undecided inner plan. Via index join prop
+// pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
+// operator. This function is quite similar with constructIndexJoinStatic.
+func constructIndexHashJoinStatic(
+	p *logicalop.LogicalJoin,
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	indexJoinProp *property.IndexJoinRuntimeProp,
+	outerStats *property.StatsInfo,
+) []base.PhysicalPlan {
+	// new one index join with the same index join prop pushed down.
+	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinProp, outerStats)
+	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
+	for _, plan := range indexJoins {
+		join := plan.(*PhysicalIndexJoin)
+		indexHashJoin := PhysicalIndexHashJoin{
+			PhysicalIndexJoin: *join,
+			// Prop is empty means that the parent operator does not need the
+			// join operator to provide any promise of the output order.
+			KeepOuterOrder: !prop.IsSortItemEmpty(),
+		}.Init(p.SCtx())
+		indexHashJoins = append(indexHashJoins, indexHashJoin)
+	}
+	return indexHashJoins
 }
