@@ -85,7 +85,7 @@ func rebuildRange(p base.Plan) error {
 		if err := x.Ranges.Rebuild(sctx); err != nil {
 			return err
 		}
-		if mutableRange, ok := x.Ranges.(*mutableIndexJoinRange); ok {
+		if mutableRange, ok := x.Ranges.(*physicalop.mutableIndexJoinRange); ok {
 			rangeInfo := mutableRange.rangeInfo
 			innerPlan := x.Children()[x.InnerChildIdx]
 			updateRange(innerPlan, x.Ranges.Range(), rangeInfo)

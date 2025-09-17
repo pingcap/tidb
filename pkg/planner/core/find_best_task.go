@@ -1720,26 +1720,10 @@ func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, true)
 }
 
-// getGEAndDS get the possible group expression and logical operator from common lp pointer.
-func getGEAndDS(super base.LogicalPlan) (ge *memo.GroupExpression, ds *logicalop.DataSource) {
-	// since base.LogicalPlan can represent GroupExpression and LogicalOperator at same time, we can use the same
-	// function signature as the common portal.
-	// for datasource, since it's a leaf node, we don't need GE inputs to dive its children, so almost all part of
-	// the code below is shared in common, except the physical plan cache.
-	switch x := super.(type) {
-	case *memo.GroupExpression:
-		ge = x
-		ds = ge.GetWrappedLogicalPlan().(*logicalop.DataSource)
-	case *logicalop.DataSource:
-		ds = x
-	}
-	return ge, ds
-}
-
 func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.PhysicalProperty,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	// get the possible group expression and logical operator from common lp pointer.
-	ge, ds := getGEAndDS(super)
+	ge, ds := base.GetGEAndLogical[*logicalop.DataSource](super)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -1794,7 +1778,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		// index join build logic, we can't merge this with normal datasource's index range
 		// because normal index range is built on expression EQ/IN. while index join's inner
 		// has its special runtime constants detecting and filling logic.
-		return getBestIndexJoinInnerTaskByProp(ds, prop, planCounter)
+		return physicalop.getBestIndexJoinInnerTaskByProp(ds, prop, planCounter)
 	}
 	var cnt int64
 	var unenforcedTask base.Task

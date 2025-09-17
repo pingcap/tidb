@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package physicalop
 
 import (
 	"bytes"
@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -92,7 +92,7 @@ type indexJoinPathResult struct {
 	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
 	usedColsNDV    float64                 // the estimated NDV of the used columns on this index, the NDV of `t1(a, b)`
 	idxOff2KeyOff  []int
-	lastColManager *physicalop.ColWithCmpFuncManager
+	lastColManager *ColWithCmpFuncManager
 }
 
 // indexJoinPathInfo records necessary information to build IndexJoin.
@@ -214,7 +214,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
-	lastColManager := &physicalop.ColWithCmpFuncManager{
+	lastColManager := &ColWithCmpFuncManager{
 		TargetCol:         lastPossibleCol,
 		ColLength:         path.IdxColLens[lastColPos],
 		AffectedColSchema: expression.NewSchema(),
@@ -313,7 +313,7 @@ func indexJoinPathConstructResult(
 	ranges ranger.MutableRanges,
 	path *util.AccessPath, accesses,
 	remained []expression.Expression,
-	lastColManager *physicalop.ColWithCmpFuncManager,
+	lastColManager *ColWithCmpFuncManager,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
 	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
@@ -530,7 +530,7 @@ func indexJoinPathFindUsefulEQIn(sctx planctx.PlanContext, indexJoinInfo *indexJ
 // indexJoinPathBuildColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
 // The returned value is just for outputting explain information
 func indexJoinPathBuildColManager(indexJoinInfo *indexJoinPathInfo,
-	nextCol *expression.Column, cwc *physicalop.ColWithCmpFuncManager) []expression.Expression {
+	nextCol *expression.Column, cwc *ColWithCmpFuncManager) []expression.Expression {
 	var lastColAccesses []expression.Expression
 loopOtherConds:
 	for _, filter := range indexJoinInfo.joinOtherConditions {

@@ -7059,22 +7059,6 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
-func hasMPPJoinHints(preferJoinType uint) bool {
-	return (preferJoinType&h.PreferBCJoin > 0) || (preferJoinType&h.PreferShuffleJoin > 0)
-}
-
-// isJoinHintSupportedInMPPMode is used to check if the specified join hint is available under MPP mode.
-func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
-	if preferJoinType == 0 {
-		return true
-	}
-	mppMask := h.PreferShuffleJoin ^ h.PreferBCJoin
-	// Currently, TiFlash only supports HASH JOIN, so the hint for HASH JOIN is available while other join method hints are forbidden.
-	joinMethodHintSupportedByTiflash := h.PreferHashJoin ^ h.PreferLeftAsHJBuild ^ h.PreferRightAsHJBuild ^ h.PreferLeftAsHJProbe ^ h.PreferRightAsHJProbe
-	onesCount := bits.OnesCount(preferJoinType & ^joinMethodHintSupportedByTiflash & ^mppMask)
-	return onesCount < 1
-}
-
 // buildCte prepares for a CTE. It works together with buildWith().
 // It will push one entry into b.handleHelper.
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p base.LogicalPlan, err error) {

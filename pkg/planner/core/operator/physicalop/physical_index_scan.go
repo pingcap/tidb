@@ -16,6 +16,7 @@ package physicalop
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -29,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -42,11 +45,13 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // PhysicalIndexScan represents an index scan plan.
@@ -685,4 +690,191 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		is.KeepOrder = true
 	}
 	return is
+}
+
+// constructDS2IndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
+func constructDS2IndexScanTask(
+	ds *logicalop.DataSource,
+	path *util.AccessPath,
+	ranges ranger.Ranges,
+	filterConds []expression.Expression,
+	idxOffset2joinKeyOffset []int,
+	rangeInfo string,
+	keepOrder bool,
+	desc bool,
+	rowCount float64,
+	maxOneRow bool,
+) base.Task {
+	// If `ds.TableInfo.GetPartitionInfo() != nil`,
+	// it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.TableInfo.GetPartitionInfo() != nil {
+		return nil
+	}
+	is := PhysicalIndexScan{
+		Table:            ds.TableInfo,
+		TableAsName:      ds.TableAsName,
+		DBName:           ds.DBName,
+		Columns:          ds.Columns,
+		Index:            path.Index,
+		IdxCols:          path.IdxCols,
+		IdxColLens:       path.IdxColLens,
+		DataSourceSchema: ds.Schema(),
+		KeepOrder:        keepOrder,
+		Ranges:           ranges,
+		RangeInfo:        rangeInfo,
+		Desc:             desc,
+		IsPartition:      ds.PartitionDefIdx != nil,
+		PhysicalTableID:  ds.PhysicalTableID,
+		TblColHists:      ds.TblColHists,
+		PkIsHandleCol:    ds.GetPKIsHandleCol(),
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	cop := &CopTask{
+		indexPlan:   is,
+		tblColHists: ds.TblColHists,
+		tblCols:     ds.TblCols,
+		keepOrder:   is.KeepOrder,
+	}
+	cop.physPlanPartInfo = &PhysPlanPartInfo{
+		PruningConds:   ds.AllConds,
+		PartitionNames: ds.PartitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.OutputNames(),
+	}
+	if !path.IsSingleScan {
+		// On this way, it's double read case.
+		ts := physicalop.PhysicalTableScan{
+			Columns:         ds.Columns,
+			Table:           is.Table,
+			TableAsName:     ds.TableAsName,
+			DBName:          ds.DBName,
+			PhysicalTableID: ds.PhysicalTableID,
+			TblCols:         ds.TblCols,
+			TblColHists:     ds.TblColHists,
+		}.Init(ds.SCtx(), ds.QueryBlockOffset())
+		ts.SetSchema(is.DataSourceSchema.Clone())
+		ts.SetIsPartition(ds.PartitionDefIdx != nil)
+		if ds.TableInfo.IsCommonHandle {
+			commonHandle := ds.HandleCols.(*util.CommonHandleCols)
+			for _, col := range commonHandle.GetColumns() {
+				if ts.Schema().ColumnIndex(col) == -1 {
+					ts.Schema().Append(col)
+					ts.Columns = append(ts.Columns, col.ToInfo())
+					cop.needExtraProj = true
+				}
+			}
+		}
+		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
+		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
+		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
+		ts.SetStats(&property.StatsInfo{StatsVersion: ds.TableStats.StatsVersion})
+		usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+		if usedStats != nil && usedStats.GetUsedInfo(ts.PhysicalTableID) != nil {
+			ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
+		}
+		// If inner cop task need keep order, the extraHandleCol should be set.
+		if cop.keepOrder && !ds.TableInfo.IsCommonHandle {
+			var needExtraProj bool
+			cop.extraHandleCol, needExtraProj = ts.AppendExtraHandleCol(ds)
+			cop.needExtraProj = cop.needExtraProj || needExtraProj
+		}
+		if cop.needExtraProj {
+			cop.originSchema = ds.Schema()
+		}
+		cop.tablePlan = ts
+	}
+	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
+		cop.commonHandleCols = ds.CommonHandleCols
+	}
+	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
+	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
+
+	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
+	//
+	// Because we are estimating an average row count of the inner side corresponding to each row from the outer side,
+	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
+	// We can calculate the lower bound of the NDV therefore we can get an upper bound of the row count here.
+	rowCountUpperBound := -1.0
+	fixControlOK := fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, false)
+	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix44855)
+	if fixControlOK && ds.TableStats != nil {
+		usedColIDs := make([]int64, 0)
+		// We only consider columns in this index that (1) are used to probe as join key,
+		// and (2) are not prefix column in the index (for which we can't easily get a lower bound)
+		for idxOffset, joinKeyOffset := range idxOffset2joinKeyOffset {
+			if joinKeyOffset < 0 ||
+				path.FullIdxColLens[idxOffset] != types.UnspecifiedLength ||
+				path.FullIdxCols[idxOffset] == nil {
+				continue
+			}
+			usedColIDs = append(usedColIDs, path.FullIdxCols[idxOffset].UniqueID)
+		}
+		joinKeyNDV := getColsNDVLowerBoundFromHistColl(usedColIDs, ds.TableStats.HistColl)
+		if joinKeyNDV > 0 {
+			rowCountUpperBound = ds.TableStats.RowCount / float64(joinKeyNDV)
+		}
+	}
+
+	if rowCountUpperBound > 0 {
+		rowCount = math.Min(rowCount, rowCountUpperBound)
+	}
+	if maxOneRow {
+		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
+		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
+		// unique constraint in NDV.
+		rowCount = math.Min(rowCount, 1.0)
+	}
+	tmpPath := &util.AccessPath{
+		IndexFilters:        indexConds,
+		TableFilters:        tblConds,
+		CountAfterIndex:     rowCount,
+		CountAfterAccess:    rowCount,
+		MinCountAfterAccess: 0,
+		MaxCountAfterAccess: 0,
+	}
+	// Assume equal conditions used by index join and other conditions are independent.
+	if len(tblConds) > 0 {
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, tblConds, ds.PossibleAccessPaths)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
+			selectivity = cost.SelectionFactor
+		}
+		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
+		// i.e, rowCount equals to `countAfterIndex * selectivity`.
+		cnt := rowCount / selectivity
+		if rowCountUpperBound > 0 {
+			cnt = math.Min(cnt, rowCountUpperBound)
+		}
+		if maxOneRow {
+			cnt = math.Min(cnt, 1.0)
+		}
+		tmpPath.CountAfterIndex = cnt
+		tmpPath.CountAfterAccess = cnt
+	}
+	if len(indexConds) > 0 {
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, indexConds, ds.PossibleAccessPaths)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
+			selectivity = cost.SelectionFactor
+		}
+		cnt := tmpPath.CountAfterIndex / selectivity
+		if rowCountUpperBound > 0 {
+			cnt = math.Min(cnt, rowCountUpperBound)
+		}
+		if maxOneRow {
+			cnt = math.Min(cnt, 1.0)
+		}
+		tmpPath.CountAfterAccess = cnt
+	}
+	is.SetStats(ds.TableStats.ScaleByExpectCnt(is.SCtx().GetSessionVars(), tmpPath.CountAfterAccess))
+	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
+		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
+	}
+	finalStats := ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount)
+	if err := addPushedDownSelection4PhysicalIndexScan(is, cop, ds, tmpPath, finalStats); err != nil {
+		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection4PhysicalIndexScan function", zap.Error(err))
+		return nil
+	}
+	return cop
 }

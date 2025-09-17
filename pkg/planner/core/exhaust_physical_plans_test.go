@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -185,7 +186,7 @@ type indexJoinTestCase struct {
 	compareFilters string
 }
 
-func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...any) *indexJoinPathResult {
+func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...any) *physicalop.indexJoinPathResult {
 	ctx := testCtx.dataSourceNode.SCtx()
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode
@@ -196,16 +197,16 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.Schema(), testCtx.joinColNames)
 	require.NoError(t, err)
 	joinNode.OtherConditions = others
-	indexJoinInfo := &indexJoinPathInfo{
+	indexJoinInfo := &physicalop.indexJoinPathInfo{
 		joinOtherConditions:   others,
 		outerJoinKeys:         testCase.innerKeys,
 		innerJoinKeys:         testCase.innerKeys,
 		innerStats:            dataSourceNode.StatsInfo(),
 		innerSchema:           dataSourceNode.Schema(),
 		innerPushedConditions: dataSourceNode.PushedDownConds}
-	result, _, err := indexJoinPathBuild(ctx, testCtx.path, indexJoinInfo, testCase.rebuildMode)
+	result, _, err := physicalop.indexJoinPathBuild(ctx, testCtx.path, indexJoinInfo, testCase.rebuildMode)
 	if result == nil {
-		result = &indexJoinPathResult{}
+		result = &physicalop.indexJoinPathResult{}
 	}
 	if result.chosenRanges == nil {
 		result.chosenRanges = ranger.Ranges{}
