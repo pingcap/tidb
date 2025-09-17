@@ -92,7 +92,7 @@ func (s *Solver) buildLeadingJoinTree(order *LeadingTableOrder, curJoinGroup []L
 		return nil, curJoinGroup, nil
 	}
 
-	// leaf nodes
+	// leaf node
 	if order.Table != nil {
 		hintTbl := order.Table
 		var plan LogicalPlan
@@ -102,9 +102,7 @@ func (s *Solver) buildLeadingJoinTree(order *LeadingTableOrder, curJoinGroup []L
 		for i, p := range curJoinGroup {
 			if hintTbl.TblName == p.Name() && hintTbl.SelectOffset == p.SelectOffset() {
 				plan = p
-				remainingGroup = make([]LogicalPlan, len(curJoinGroup)-1)
-				copy(remainingGroup, curJoinGroup[:i])
-				copy(remainingGroup[i:], curJoinGroup[i+1:])
+				remainingGroup = append(curJoinGroup[:i], curJoinGroup[i+1:]...)
 				matchFound = true
 				break
 			}
@@ -115,6 +113,7 @@ func (s *Solver) buildLeadingJoinTree(order *LeadingTableOrder, curJoinGroup []L
 		return plan, remainingGroup, nil
 	}
 
+	// recursively build left and right subtree
 	leftPlan, leftRemaining, err := s.buildLeadingJoinTree(order.Left, curJoinGroup, hasOuterJoin)
 	if err != nil {
 		return nil, nil, err
@@ -124,14 +123,16 @@ func (s *Solver) buildLeadingJoinTree(order *LeadingTableOrder, curJoinGroup []L
 		return nil, nil, err
 	}
 
-	// simplyfier
-	if hasOuterJoin {
-		if leftPlan == nil || rightPlan == nil {
-			return nil, nil, fmt.Errorf("cartesian join not allowed with outer join")
-		}
+	if hasOuterJoin && (leftPlan == nil || rightPlan == nil) {
+		return nil, nil, fmt.Errorf("cartesian join not allowed with outer join")
 	}
 
-	joinPlan := &mockPlan{name: fmt.Sprintf("join(%s,%s)", leftPlan.Name(), rightPlan.Name()), offset: 0}
+	// always make leftPlan the left side, rightPlan the right side
+	joinPlan := &mockPlan{
+		name:   fmt.Sprintf("join(%s,%s)", leftPlan.Name(), rightPlan.Name()),
+		offset: 0,
+	}
+
 	return joinPlan, rightRemaining, nil
 }
 

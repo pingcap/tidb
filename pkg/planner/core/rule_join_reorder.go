@@ -435,13 +435,42 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingPlan(curJoinGroup []base
 
 	for i := 1; i < len(leadingPlans); i++ {
 		rightPlan := leadingPlans[i]
-		_, _, usedEdges, joinType := s.checkConnection(resultPlan, rightPlan)
+
+		tmpSolver := &baseSingleGroupJoinOrderSolver{
+			ctx:                s.ctx,
+			basicJoinGroupInfo: s.basicJoinGroupInfo,
+		}
+
+		// Find conditions and type for the new join.
+		_, _, usedEdges, joinType := tmpSolver.checkConnection(resultPlan, rightPlan)
 		if hasOuterJoin && usedEdges == nil {
 			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("cartesian join for leading hint is not allowed with outer join")
 			return false, nil, nil
 		}
 
-		resultPlan, s.otherConds = s.makeJoin(resultPlan, rightPlan, usedEdges, joinType, opt)
+		newJoinPlan, newOtherConds := tmpSolver.makeJoin(resultPlan, rightPlan, usedEdges, joinType, opt)
+		resultPlan = newJoinPlan
+		s.otherConds = newOtherConds // Update the main solver's other conditions for the next loop iteration.
+	}
+
+	for len(remainingPlans) > 0 {
+		nextPlan := remainingPlans[0]
+		remainingPlans = slices.Delete(remainingPlans, 0, 1)
+
+		tmpSolver := &baseSingleGroupJoinOrderSolver{
+			ctx:                s.ctx,
+			basicJoinGroupInfo: s.basicJoinGroupInfo,
+		}
+
+		_, _, usedEdges, joinType := tmpSolver.checkConnection(resultPlan, nextPlan)
+		if hasOuterJoin && usedEdges == nil {
+			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("cartesian join for leading hint is not allowed with outer join")
+			return false, nil, nil
+		}
+
+		newJoinPlan, newOtherConds := tmpSolver.makeJoin(resultPlan, nextPlan, usedEdges, joinType, opt)
+		resultPlan = newJoinPlan
+		s.otherConds = newOtherConds
 	}
 
 	return true, resultPlan, remainingPlans
