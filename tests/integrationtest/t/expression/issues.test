@@ -2183,7 +2183,6 @@ CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
 INSERT INTO test.t VALUES (1234567890123456);
 SELECT IFNULL(id, 'abcdef') FROM test.t;
 
-<<<<<<< HEAD
 # TestIssue56772
 drop table if exists lrr_test;
 create table lrr_test( `COL1` tinyint(16),`COL3` bigint(20) DEFAULT NULL,KEY `UM_COL` (`COL1`,`COL3`));
@@ -2192,29 +2191,6 @@ insert into lrr_test values(-2,2295421130981788987);
 prepare stmt from 'select * from lrr_test t1 join lrr_test t2 on t1.col1 = t2.col1 where t1. col1 + 10 > ? + 10 or t2. col1 + 10 >= ? + 10;';
 set @a=NULL, @b=-2;
 execute stmt using @a,@b;
-=======
-# TestIssue56339
-drop table if exists test.t;
-create table test.t(a double);
-insert into test.t values('20000102030405.0078125');
-select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';
-
-# TestIssue57647
-drop table if exists t0;
-create table `t0`
-(
-    `vkey` integer,
-    `pkey` integer,
-    `c0`   integer
-);
-insert into `t0`
-values (1, 2, 3);
-select *
-from `t0`
-where (nullif(
-    3 ^ 10 & (abs(-50)) ,
-    round(case when (((`t0`.`c0`) >= 1) or null) then 91 else 86 end)
-    )) in (select `vkey` from `t0` where false);
 
 # TestIssue61246
 # Test for duplicate constant values in IN expressions
@@ -2245,4 +2221,3 @@ select * from t_str where s in ('a', 'a', 'a', 'b', 'a');
 select * from t_dec where d in (1.5, 1.5, 2.5, 1.5);
 select * from t where a in (1, NULL, NULL, NULL, 2);
 select * from t_date where dt in ('2023-01-01', '2023-01-01', '2023-01-02');
->>>>>>> e7b038b9913 (expression: deduplicate the args of IN function (#61249))

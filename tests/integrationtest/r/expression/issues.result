@@ -3232,7 +3232,6 @@ INSERT INTO test.t VALUES (1234567890123456);
 SELECT IFNULL(id, 'abcdef') FROM test.t;
 IFNULL(id, 'abcdef')
 1234567890123456
-<<<<<<< HEAD
 drop table if exists lrr_test;
 create table lrr_test( `COL1` tinyint(16),`COL3` bigint(20) DEFAULT NULL,KEY `UM_COL` (`COL1`,`COL3`));
 insert into lrr_test(col3) values(-825024501864323944);
@@ -3242,29 +3241,6 @@ set @a=NULL, @b=-2;
 execute stmt using @a,@b;
 COL1	COL3	COL1	COL3
 -2	2295421130981788987	-2	2295421130981788987
-=======
-drop table if exists test.t;
-create table test.t(a double);
-insert into test.t values('20000102030405.0078125');
-select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';
-a
-20000102030405.008
-drop table if exists t0;
-create table `t0`
-(
-`vkey` integer,
-`pkey` integer,
-`c0`   integer
-);
-insert into `t0`
-values (1, 2, 3);
-select *
-from `t0`
-where (nullif(
-3 ^ 10 & (abs(-50)) ,
-round(case when (((`t0`.`c0`) >= 1) or null) then 91 else 86 end)
-)) in (select `vkey` from `t0` where false);
-vkey	pkey	c0
 use test;
 drop table if exists t;
 create table t(a int);
@@ -3319,4 +3295,3 @@ select * from t_date where dt in ('2023-01-01', '2023-01-01', '2023-01-02');
 dt
 2023-01-01
 2023-01-02
->>>>>>> e7b038b9913 (expression: deduplicate the args of IN function (#61249))
