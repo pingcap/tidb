@@ -414,14 +414,14 @@ type baseSingleGroupJoinOrderSolver struct {
 // generateLeadingPlan builds a join plan tree from the given LEADING hint expression.
 // It returns true if successful, the built plan, and the remaining join groups.
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingPlan(curJoinGroup []base.LogicalPlan, leadingHintTables []hint.HintedTable, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (bool, base.LogicalPlan, []base.LogicalPlan) {
-	var leadingPlans []base.LogicalPlan
+	leadingPlans := make([]base.LogicalPlan, 0, len(curJoinGroup))
 	remainingPlans := make([]base.LogicalPlan, len(curJoinGroup))
 	copy(remainingPlans, curJoinGroup)
 
 	for _, hintedTbl := range leadingHintTables {
 		plan, foundIdx := findPlanByHintedTable(remainingPlans, &hintedTbl)
 		if plan == nil {
-			s.ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("table %s in leading hint is not found in join group", hintedTbl.TblName.O))
+			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("table " + hintedTbl.TblName.O + " in leading hint is not found in join group")
 			return false, nil, nil
 		}
 		leadingPlans = append(leadingPlans, plan)
@@ -437,7 +437,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingPlan(curJoinGroup []base
 		rightPlan := leadingPlans[i]
 		_, _, usedEdges, joinType := s.checkConnection(resultPlan, rightPlan)
 		if hasOuterJoin && usedEdges == nil {
-			s.ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("cartesian join for leading hint is not allowed with outer join"))
+			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("cartesian join for leading hint is not allowed with outer join")
 			return false, nil, nil
 		}
 
