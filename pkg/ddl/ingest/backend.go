@@ -249,6 +249,14 @@ func (bc *litBackendCtx) tryAcquireDistLock() (func(), error) {
 }
 
 func (bc *litBackendCtx) unsafeImportAndResetAllEngines(ctx context.Context) error {
+	cleanupFunc, err := bc.backend.AddPartitionRangeForTable(ctx, bc.tbl.Meta().ID)
+	if err != nil {
+		logutil.Logger(bc.ctx).Warn("add partition range for table failed",
+			zap.String("table", bc.tbl.Meta().Name.L), zap.Error(err))
+	}
+	if cleanupFunc != nil {
+		defer cleanupFunc()
+	}
 	for indexID, ei := range bc.engines {
 		if err := bc.unsafeImportAndReset(ctx, ei); err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type cloudImportExecutor struct {
@@ -145,6 +146,15 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+
+	cleanupFunc, err := localBackend.AddPartitionRangeForTable(ctx, e.ptbl.GetPhysicalID())
+	if err != nil {
+		logutil.Logger(ctx).Warn("add partition range for table failed", zap.String("table", e.ptbl.Meta().Name.L), zap.Error(err))
+	}
+	if cleanupFunc != nil {
+		defer cleanupFunc()
+	}
+
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded

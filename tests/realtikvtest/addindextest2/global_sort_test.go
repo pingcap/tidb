@@ -704,3 +704,45 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.Equal(t, readBytes, 0) // 0
 	require.Equal(t, bytes, 0)     // 0
 }
+
+func TestAddPartitionRangeForTable(t *testing.T) {
+	// Make sure that AddPartitionRangeForTable will be called before importing
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	tk.MustExec("CREATE TABLE t (c int)")
+	for i := range 1024 {
+		tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d)", i))
+	}
+
+	testcases := []struct {
+		caseName       string
+		enableDistTask string
+		globalSort     string
+	}{
+		{"local ingest", "off", ""},
+		{"dxf ingest", "on", ""},
+		{"dxf global-sort", "on", cloudStorageURI},
+	}
+	var count int
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		count += 1
+	})
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
+			count = 0
+			tk.MustExec("alter table t add index i(c)")
+			require.Greater(t, count, 0)
+			tk.MustExec("alter table t drop index i")
+		})
+	}
+}

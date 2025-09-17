@@ -31,7 +31,6 @@ go_library(
         "//lightning/pkg/web",
         "//pkg/config",
         "//pkg/ddl",
-        "//pkg/distsql",
         "//pkg/errno",
         "//pkg/keyspace",
         "//pkg/kv",

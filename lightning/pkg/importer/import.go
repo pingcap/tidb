@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -1156,18 +1155,6 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 				f(do)
 			}
 		}
-}
-
-func (rc *Controller) buildTablesRanges() []tidbkv.KeyRange {
-	var keyRanges []tidbkv.KeyRange
-	for _, dbInfo := range rc.dbInfos {
-		for _, tableInfo := range dbInfo.Tables {
-			if ranges, err := distsql.BuildTableRanges(tableInfo.Core); err == nil {
-				keyRanges = append(keyRanges, ranges...)
-			}
-		}
-	}
-	return keyRanges
 }
 
 type checksumManagerKeyType struct{}

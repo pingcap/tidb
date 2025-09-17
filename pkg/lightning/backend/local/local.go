@@ -838,6 +838,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 
 // AddPartitionRangeForTable implements Backend interface
 func (local *Backend) AddPartitionRangeForTable(ctx context.Context, tableID int64) (func(), error) {
+	failpoint.InjectCall("AddPartitionRangeForTable")
 	tableStartKey := tablecodec.EncodeTablePrefix(tableID)
 	checkEndKey := tablecodec.EncodeTablePrefix(tableID + 1)
 
