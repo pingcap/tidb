@@ -971,6 +971,9 @@ func getPlanCostVer24PhysicalCTE(pp base.PhysicalPlan, taskType property.TaskTyp
 }
 
 func indexJoinSeekingCostVer2(option *optimizetrace.PlanCostOption, buildRows, numRanges float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	if buildRows <= 1 || numRanges <= 1 { // ignore seeking cost
+		return costusage.ZeroCostVer2
+	}
 	// Large IN lists like `a in (1, 2, 3...)` could generate a large number of ranges and seeking operations, which could be magnified by IndexJoin
 	// and slow down the query performance obviously, we need to consider this part of cost. Please see a case in issue #62499.
 	// To simplify the calculation of seeking cost, we treat a seeking operation as a scan of 10 rows with 8 row-width.
