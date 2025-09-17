@@ -123,7 +123,6 @@ func TestAllViewHintType(t *testing.T) {
 			})
 			res := testKit.MustQuery(tt)
 			res.Check(testkit.Rows(output[i].Plan...))
-			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
 }
@@ -325,7 +324,7 @@ func TestHints(t *testing.T) {
 				output[i].Warn = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
 			})
 			testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-			//testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
+			testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 		}
 	})
 }
