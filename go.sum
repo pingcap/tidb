@@ -788,8 +788,6 @@ github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7/go.mod h1:8AanEdAHATuR
 github.com/pingcap/log v1.1.0/go.mod h1:DWQW5jICDR7UJh4HtxXSM20Churx4CQL0fwL/SoOSA4=
 github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e h1:8AZZRv1Ox9FVGATVZBBgr6y1MrNBQFABEdovNJt1QIc=
 github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
-github.com/pingcap/metering_sdk v0.0.0-20250910063513-219eaccb6f53 h1:tjmldDdCraD3Hc6uMTI4eMmpMwMXdCqfMhZAHwPfynU=
-github.com/pingcap/metering_sdk v0.0.0-20250910063513-219eaccb6f53/go.mod h1:Qj77xzm/Bscv47607+/BkP0ovAHnf4j7HWSLKQaKwBw=
 github.com/pingcap/metering_sdk v0.0.0-20250916072917-67671f4fa7f9 h1:tcDp2qEqWLL1eO9IhDFX3uEy/2Igjc0KP2D7WYAm9yA=
 github.com/pingcap/metering_sdk v0.0.0-20250916072917-67671f4fa7f9/go.mod h1:Qj77xzm/Bscv47607+/BkP0ovAHnf4j7HWSLKQaKwBw=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=

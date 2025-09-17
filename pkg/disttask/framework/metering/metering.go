@@ -147,7 +147,6 @@ type meteringEntry struct {
 // Meter is responsible for recording and reporting metering data.
 type Meter struct {
 	sync.Mutex
-	ctx    context.Context
 	data   map[int64]Data // taskID -> meter data
 	uuid   string
 	writer *meteringwriter.MeteringWriter
@@ -211,18 +210,18 @@ func (m *Meter) StartFlushLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 		case <-time.After(nextTime.Sub(curTime)):
-			m.flush(nextTime.Unix())
+			m.flush(ctx, nextTime.Unix())
 			nextTime = nextTime.Add(time.Minute)
 			curTime = time.Now()
 		}
 	}
 	// Try our best to flush the final data even after closing.
-	m.flush(nextTime.Unix())
+	m.flush(ctx, nextTime.Unix())
 	err := m.writer.Close()
 	m.logger.Warn("metering writer closed", zap.Error(err))
 }
 
-func (m *Meter) flush(ts int64) {
+func (m *Meter) flush(ctx context.Context, ts int64) {
 	startTime := time.Now()
 	var data map[int64]Data
 	m.Lock()
@@ -254,7 +253,7 @@ func (m *Meter) flush(ts int64) {
 		Category:  category,
 		Data:      array,
 	}
-	flushCtx, cancel := context.WithTimeout(m.ctx, writeTimeout)
+	flushCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	if err := m.writer.Write(flushCtx, meteringData); err != nil {
 		m.logger.Warn("failed to write metering data",

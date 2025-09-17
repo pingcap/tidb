@@ -82,7 +82,7 @@ func TestFlush(t *testing.T) {
 	data := readMeteringData(t, reader, ts-writeInterval)
 	require.Len(t, data, 0)
 	meter.Record("ks1", TaskTypeAddIndex, 1, &Data{putRequests: 10, getRequests: 20, readDataBytes: 300, writeDataBytes: 400})
-	meter.flush(ts)
+	meter.flush(context.Background(), ts)
 	data = readMeteringData(t, reader, ts-writeInterval)
 	require.Len(t, data, 0)
 	data = readMeteringData(t, reader, ts)
@@ -124,7 +124,6 @@ func createLocalMeter(t *testing.T, dir string) (*Meter, *meteringreader.Meterin
 	t.Cleanup(func() {
 		require.NoError(t, reader.Close())
 	})
-	m.ctx = context.Background()
 	return m, reader
 }
 
