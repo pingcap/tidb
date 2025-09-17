@@ -98,6 +98,7 @@ func TestFlush(t *testing.T) {
 
 func createLocalMeter(t *testing.T, dir string) (*Meter, *meteringreader.MeteringReader) {
 	m, err := NewMeter(&mconfig.MeteringConfig{
+		Type:   "s3",
 		Bucket: "bucket",
 		AWS: &mconfig.MeteringAWSConfig{
 			AssumeRoleARN: "test-role-arn",
