@@ -985,6 +985,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	backendObj := mock.NewMockBackend(controller)
 	backendObj.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	backendObj.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	backendObj.EXPECT().AddPartitionRangeForTable(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	backendObj.EXPECT().ImportEngine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	backendObj.EXPECT().CleanupEngine(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	backendObj.EXPECT().ShouldPostProcess().Return(false).AnyTimes()
