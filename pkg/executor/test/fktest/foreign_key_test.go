@@ -2294,7 +2294,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		} else {
 			require.Regexp(t, ca.plan, explain, ca.sql)
 		}
-
 	}
 }
 
