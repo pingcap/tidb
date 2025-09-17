@@ -32,6 +32,26 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
+// isTableExpressionPlan determines if a plan represents a table expression
+// (subquery, view, derived table) rather than a base table
+func isTableExpressionPlan(plan base.LogicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+
+	switch plan.(type) {
+	case *logicalop.LogicalTableDual:
+		return false // TableDual is a special case
+	case *logicalop.DataSource:
+		return false // Base table
+	case *logicalop.LogicalSelection, *logicalop.LogicalProjection:
+		return true // These are typically table expressions
+	default:
+		// Other types like subqueries, CTEs, etc. are likely table expressions
+		return true
+	}
+}
+
 // extractJoinGroup extracts all the join nodes connected with continuous
 // Joins to construct a join group. This join group is further used to
 // construct a new join order based on a reorder algorithm.
@@ -122,6 +142,17 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 				if affectedGroups > 1 {
 					noExpand = true
 					break
+				}
+			}
+
+			// Check if any of the left group tables are table expressions
+			// If so, and this is not a cartesian join, don't reorder
+			if !noExpand && len(join.EqualConditions) > 0 {
+				for _, lhs := range lhsGroup {
+					if isTableExpressionPlan(lhs) {
+						noExpand = true
+						break
+					}
 				}
 			}
 		}
