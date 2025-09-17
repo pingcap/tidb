@@ -2258,8 +2258,6 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 						}
 						idxScan.FtsQueryInfo.AggExpr = aggPBExpr
 					}
-					partialAgg.SetChildren(cop.indexPlan)
-					cop.indexPlan = partialAgg
 				} else {
 					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
 					// inheritStatsFromBottomForIndexJoinInner(p, t) to inherit stats from the bottom plan for index
