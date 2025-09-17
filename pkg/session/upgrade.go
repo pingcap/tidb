@@ -460,6 +460,14 @@ const (
 
 	// version250 add keyspace to tidb_global_task and tidb_global_task_history.
 	version250 = 250
+
+	// version 251
+	// Add group_key to mysql.tidb_import_jobs.
+	version251 = 251
+
+	// version 252
+	// Update FSP of mysql.bind_info timestamp columns to microsecond precision.
+	version252 = 252
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -473,7 +481,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version250
+var currentBootstrapVersion int64 = version252
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -648,6 +656,8 @@ var (
 		{version: version248, fn: upgradeToVer248},
 		{version: version249, fn: upgradeToVer249},
 		{version: version250, fn: upgradeToVer250},
+		{version: version251, fn: upgradeToVer251},
+		{version: version252, fn: upgradeToVer252},
 	}
 )
 
@@ -2007,4 +2017,14 @@ func upgradeToVer250(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `keyspace` varchar(64) DEFAULT '' AFTER `extra_params`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer251(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN `group_key` VARCHAR(256) NOT NULL DEFAULT '' AFTER `created_by`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_group_key(group_key)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer252(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info CHANGE create_time create_time TIMESTAMP(6)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info CHANGE update_time update_time TIMESTAMP(6)")
 }

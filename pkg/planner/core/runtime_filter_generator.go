@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
@@ -65,12 +64,12 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.Physica
 		generator.generateRuntimeFilterInterval(physicalPlan)
 	case *physicalop.PhysicalTableScan:
 		generator.assignRuntimeFilter(physicalPlan)
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		generator.parentPhysicalPlan = plan
 		generator.childIdxForParentPhysicalPlan = 0
-		generator.GenerateRuntimeFilter(physicalPlan.tablePlan)
+		generator.GenerateRuntimeFilter(physicalPlan.TablePlan)
 		if physicalPlan.StoreType == kv.TiFlash {
-			physicalPlan.TablePlans = flattenPushDownPlan(physicalPlan.tablePlan)
+			physicalPlan.TablePlans = physicalop.FlattenPushDownPlan(physicalPlan.TablePlan)
 		}
 	}
 
@@ -161,8 +160,8 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *physicalop.PhysicalHashJoin) bool {
 	if hashJoinPlan.RightIsBuildSide() {
 		// case1: build side is on the right
-		if hashJoinPlan.JoinType == logicalop.LeftOuterJoin || hashJoinPlan.JoinType == logicalop.AntiSemiJoin ||
-			hashJoinPlan.JoinType == logicalop.LeftOuterSemiJoin || hashJoinPlan.JoinType == logicalop.AntiLeftOuterSemiJoin {
+		if hashJoinPlan.JoinType == base.LeftOuterJoin || hashJoinPlan.JoinType == base.AntiSemiJoin ||
+			hashJoinPlan.JoinType == base.LeftOuterSemiJoin || hashJoinPlan.JoinType == base.AntiLeftOuterSemiJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the right",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -170,7 +169,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *physicalop.Physical
 		}
 	} else {
 		// case2: build side is on the left
-		if hashJoinPlan.JoinType == logicalop.RightOuterJoin {
+		if hashJoinPlan.JoinType == base.RightOuterJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the left",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -231,7 +230,7 @@ func (generator *RuntimeFilterGenerator) calculateRFMode(buildNode *physicalop.P
 
 func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode base.PhysicalPlan, targetNode *physicalop.PhysicalTableScan) bool {
 	switch currentNode.(type) {
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		// terminal traversal
 		return false
 	case *physicalop.PhysicalTableScan:

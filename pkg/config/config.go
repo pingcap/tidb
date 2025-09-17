@@ -531,6 +531,20 @@ type Instance struct {
 	// StmtSummaryFileMaxBackups indicates the maximum number of files written
 	// by stmtsummary when StmtSummaryEnablePersistent is true.
 	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
+	// StmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	StmtSummaryMaxStmtCount uint64 `toml:"tidb_stmt_summary_max_stmt_count" json:"tidb_stmt_summary_max_stmt_count"`
+	// ServerMemoryLimit indicates the memory limit of the tidb-server instance.
+	ServerMemoryLimit string `toml:"tidb_server_memory_limit" json:"tidb_server_memory_limit"`
+	// ServerMemoryLimitGCTrigger indicates the gc percentage of the ServerMemoryLimit.
+	ServerMemoryLimitGCTrigger string `toml:"tidb_server_memory_limit_gc_trigger" json:"tidb_server_memory_limit_gc_trigger"`
+	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
+	InstancePlanCacheMaxMemSize string `toml:"tidb_instance_plan_cache_max_size" json:"tidb_instance_plan_cache_max_size"`
+	// StatsCacheMemQuota records stats cache quota.
+	StatsCacheMemQuota uint64 `toml:"tidb_stats_cache_mem_quota" json:"tidb_stats_cache_mem_quota"`
+	// MemQuotaBindingCache indicates the memory quota for the bind cache.
+	MemQuotaBindingCache uint64 `toml:"tidb_mem_quota_binding_cache" json:"tidb_mem_quota_binding_cache"`
+	// SchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	SchemaCacheSize string `toml:"tidb_schema_cache_size" json:"tidb_schema_cache_size"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
@@ -601,6 +615,8 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// SEMConfig represents the path to the SEM configuration file.
+	SEMConfig string `toml:"sem-config" json:"sem-config"`
 	// Allow automatic TLS certificate generation
 	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
@@ -733,7 +749,13 @@ type Performance struct {
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
+	// Deprecated: this config has been deprecated. It has no effect.
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
+
+	// SkipInitStats determines whether to skip initializing statistics when TiDB starts.
+	// It is primarily intended for internal use cases in TiDB Cloud and may cause issues if enabled on a standard cluster.
+	// See: https://github.com/pingcap/tidb/issues/63103
+	SkipInitStats bool `toml:"skip-init-stats" json:"skip-init-stats"`
 
 	// LiteInitStats indicates whether to use the lite version of stats.
 	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
@@ -1027,6 +1049,7 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          true,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
+		SkipInitStats:                     false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
 		// Deprecated: Stats are always initialized concurrently.
@@ -1069,6 +1092,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		SEMConfig:                   "",
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 		AuthTokenJWKS:               "",
@@ -1327,7 +1351,7 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
-	if err := naming.Check(c.KeyspaceName); err != nil {
+	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {

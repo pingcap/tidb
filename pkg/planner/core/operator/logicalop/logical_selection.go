@@ -101,7 +101,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
 	// Apply predicate simplification to the conditions. because propagateConstant has been dealed in the ConstantPropagationSolver
 	// so we don't need to do it again.
-	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false)
+	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
@@ -115,7 +115,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	retConditions = append(retConditions, canNotBePushDown...)
 	sctx := p.SCtx()
 	if len(retConditions) > 0 {
-		p.Conditions = utilfuncp.ApplyPredicateSimplification(sctx, retConditions, true)
+		p.Conditions = ruleutil.ApplyPredicateSimplification(sctx, retConditions, true, nil)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
@@ -203,7 +203,7 @@ func (p *LogicalSelection) PredicateSimplification(opt *optimizetrace.LogicalOpt
 		for _, cond := range pp.Conditions {
 			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), pp.Conditions, false)
+		actualExprs := ruleutil.ApplyPredicateSimplification(p.SCtx(), pp.Conditions, false, nil)
 		actual := make([]string, 0, len(actualExprs))
 		for _, cond := range actualExprs {
 			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
@@ -239,7 +239,7 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	if !reload && p.StatsInfo() != nil {
 		return p.StatsInfo(), false, nil
 	}
-	p.SetStats(childStats[0].Scale(cost.SelectionFactor))
+	p.SetStats(childStats[0].Scale(p.SCtx().GetSessionVars(), cost.SelectionFactor))
 	p.StatsInfo().GroupNDVs = nil
 	return p.StatsInfo(), true, nil
 }
@@ -249,11 +249,6 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return childrenProperties[0]
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalSelection(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

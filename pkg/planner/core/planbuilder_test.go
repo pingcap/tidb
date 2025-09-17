@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -131,7 +132,7 @@ func TestGetPathByIndexName(t *testing.T) {
 }
 
 func TestRewriterPool(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -144,7 +145,7 @@ func TestRewriterPool(t *testing.T) {
 	dirtyRewriter.asScalar = true
 	dirtyRewriter.planCtx.aggrMap = make(map[*ast.AggregateFuncExpr]int)
 	dirtyRewriter.preprocess = func(ast.Node) ast.Node { return nil }
-	dirtyRewriter.planCtx.insertPlan = &Insert{}
+	dirtyRewriter.planCtx.insertPlan = &physicalop.Insert{}
 	dirtyRewriter.disableFoldCounter = 1
 	dirtyRewriter.ctxStack = make([]expression.Expression, 2)
 	dirtyRewriter.ctxNameStk = make([]*types.FieldName, 2)
@@ -182,7 +183,7 @@ func TestDisableFold(t *testing.T) {
 		}},
 	}
 
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -260,17 +261,17 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	tableScan.SetSchema(schema)
 
 	// table reader
-	tableReader := &PhysicalTableReader{
-		tablePlan:  tableScan,
+	tableReader := &physicalop.PhysicalTableReader{
+		TablePlan:  tableScan,
 		TablePlans: []base.PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
 	clonedPlan, err := tableReader.Clone(ctx)
 	require.NoError(t, err)
-	newTableReader, ok := clonedPlan.(*PhysicalTableReader)
+	newTableReader, ok := clonedPlan.(*physicalop.PhysicalTableReader)
 	require.True(t, ok)
-	require.True(t, newTableReader.tablePlan == newTableReader.TablePlans[0])
+	require.True(t, newTableReader.TablePlan == newTableReader.TablePlans[0])
 }
 
 func TestPhysicalPlanClone(t *testing.T) {
@@ -296,8 +297,8 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(tableScan))
 
 	// table reader
-	tableReader := &PhysicalTableReader{
-		tablePlan:  tableScan,
+	tableReader := &physicalop.PhysicalTableReader{
+		TablePlan:  tableScan,
 		TablePlans: []base.PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
@@ -316,8 +317,8 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(indexScan))
 
 	// index reader
-	indexReader := &PhysicalIndexReader{
-		indexPlan:     indexScan,
+	indexReader := &physicalop.PhysicalIndexReader{
+		IndexPlan:     indexScan,
 		IndexPlans:    []base.PhysicalPlan{indexScan},
 		OutputColumns: []*expression.Column{col, col},
 	}
@@ -325,11 +326,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(indexReader))
 
 	// index lookup
-	indexLookup := &PhysicalIndexLookUpReader{
+	indexLookup := &physicalop.PhysicalIndexLookUpReader{
 		IndexPlans:     []base.PhysicalPlan{indexReader},
-		indexPlan:      indexScan,
+		IndexPlan:      indexScan,
 		TablePlans:     []base.PhysicalPlan{tableReader},
-		tablePlan:      tableScan,
+		TablePlan:      tableScan,
 		ExtraHandleCol: col,
 		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
@@ -691,7 +692,7 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 }
 
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -745,7 +746,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 }
 
 func TestRequireInsertAndSelectPriv(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -920,7 +921,7 @@ func TestTraffic(t *testing.T) {
 	}
 
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	for _, test := range tests {
 		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
@@ -937,7 +938,7 @@ func TestTraffic(t *testing.T) {
 
 func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 
@@ -1025,7 +1026,7 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 
 func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 	// random speed value

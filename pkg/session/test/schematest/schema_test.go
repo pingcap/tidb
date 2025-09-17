@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -54,6 +55,9 @@ func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreO
 }
 
 func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := createMockStoreForSchemaTest(t)
 
 	setTxnTk := testkit.NewTestKit(t, store)
@@ -116,6 +120,9 @@ func TestTableReaderChunk(t *testing.T) {
 	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("chk"))
 	require.NoError(t, err)
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
 	tk.Session().GetSessionVars().SetDistSQLScanConcurrency(1)
@@ -321,6 +328,9 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("chk"))
 	require.NoError(t, err)
 	indexStart := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, tbl.Indices()[0].Meta().ID)
+	if kerneltype.IsNextGen() {
+		indexStart = store.GetCodec().EncodeKey(indexStart)
+	}
 	cluster.SplitKeys(indexStart, indexStart.PrefixNext(), 10)
 
 	tk.Session().GetSessionVars().IndexLookupSize = 10

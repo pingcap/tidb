@@ -88,7 +88,7 @@ var (
 
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
-	&ColumnPruner{},
+	&rule.ColumnPruner{},
 	&ResultReorder{},
 	&rule.BuildKeySolver{},
 	&DecorrelateSolver{},
@@ -102,14 +102,14 @@ var optRuleList = []base.LogicalOptRule{
 	&PPDSolver{},
 	&OuterJoinEliminator{},
 	&rule.PartitionProcessor{},
-	&CollectPredicateColumnsPoint{},
+	&rule.CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
-	&PredicateSimplification{},
+	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
-	&SyncWaitStatsLoadPoint{},
+	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
-	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
@@ -462,10 +462,10 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 		mergeContinuousSelections(child)
 	}
 	// merge continuous selections in a coprocessor task of tiflash
-	tableReader, isTableReader := p.(*PhysicalTableReader)
+	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
-		mergeContinuousSelections(tableReader.tablePlan)
-		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		mergeContinuousSelections(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenPushDownPlan(tableReader.TablePlan)
 	}
 }
 
@@ -534,8 +534,8 @@ Rewritten Query: select count(k1) from table
 */
 func countStarRewrite(plan base.PhysicalPlan) {
 	countStarRewriteInternal(plan)
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		countStarRewrite(tableReader.tablePlan)
+	if tableReader, ok := plan.(*physicalop.PhysicalTableReader); ok {
+		countStarRewrite(tableReader.TablePlan)
 	} else {
 		for _, child := range plan.Children() {
 			countStarRewrite(child)
@@ -642,10 +642,10 @@ func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan b
 }
 
 func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+	if tableReader, ok := plan.(*physicalop.PhysicalTableReader); ok {
+		if _, isExchangeSender := tableReader.TablePlan.(*physicalop.PhysicalExchangeSender); isExchangeSender {
 			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*physicalop.BasePhysicalPlan, 1)}
-			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
+			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.TablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
 	} else {
 		for _, child := range plan.Children() {
@@ -863,7 +863,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *physicalop.PhysicalProjection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *physicalop.PhysicalHashAgg:
@@ -896,7 +896,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// don't apply fine grained shuffle for probe side
 		helper.clear()
 		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeSender:
+	case *physicalop.PhysicalExchangeSender:
 		if x.ExchangeType == tipb.ExchangeType_Hash {
 			// Set up stream count for all plans based on shuffle target type.
 			var exchangeColCount = x.Schema().Len()
@@ -959,7 +959,7 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
 	case *physicalop.PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
-		*PhysicalIndexMergeJoin:
+		*physicalop.PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
@@ -970,18 +970,18 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 			newParents = append(newParents, plan)
 			propagateProbeParents(plan.Children()[join.GetInnerChildIdx()], newParents)
 		}
-	case *PhysicalTableReader:
-		propagateProbeParents(x.tablePlan, probeParents)
-	case *PhysicalIndexReader:
-		propagateProbeParents(x.indexPlan, probeParents)
-	case *PhysicalIndexLookUpReader:
-		propagateProbeParents(x.indexPlan, probeParents)
-		propagateProbeParents(x.tablePlan, probeParents)
-	case *PhysicalIndexMergeReader:
-		for _, pchild := range x.partialPlans {
+	case *physicalop.PhysicalTableReader:
+		propagateProbeParents(x.TablePlan, probeParents)
+	case *physicalop.PhysicalIndexReader:
+		propagateProbeParents(x.IndexPlan, probeParents)
+	case *physicalop.PhysicalIndexLookUpReader:
+		propagateProbeParents(x.IndexPlan, probeParents)
+		propagateProbeParents(x.TablePlan, probeParents)
+	case *physicalop.PhysicalIndexMergeReader:
+		for _, pchild := range x.PartialPlansRaw {
 			propagateProbeParents(pchild, probeParents)
 		}
-		propagateProbeParents(x.tablePlan, probeParents)
+		propagateProbeParents(x.TablePlan, probeParents)
 	default:
 		for _, child := range plan.Children() {
 			propagateProbeParents(child, probeParents)
@@ -1002,7 +1002,7 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
-		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
+		_, err := physicalop.SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
@@ -1202,8 +1202,8 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
 func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
-	var pointGet *PointGetPlan
-	var batchPointGet *BatchPointGetPlan
+	var pointGet *physicalop.PointGetPlan
+	var batchPointGet *physicalop.BatchPointGetPlan
 	var physLock *physicalop.PhysicalLock
 	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
@@ -1211,9 +1211,9 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 			return false
 		}
 		switch x := p.(type) {
-		case *PointGetPlan:
+		case *physicalop.PointGetPlan:
 			pointGet = x
-		case *BatchPointGetPlan:
+		case *physicalop.BatchPointGetPlan:
 			batchPointGet = x
 		case *physicalop.PhysicalLock:
 			physLock = x
@@ -1230,15 +1230,14 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 	}
 	if physLock != nil {
 		lock, waitTime := getLockWaitTime(sctx, physLock.Lock)
-		if !lock {
-			return p
-		}
-		if pointGet != nil {
-			pointGet.Lock = lock
-			pointGet.LockWaitTime = waitTime
-		} else {
-			batchPointGet.Lock = lock
-			batchPointGet.LockWaitTime = waitTime
+		if lock {
+			if pointGet != nil {
+				pointGet.Lock = lock
+				pointGet.LockWaitTime = waitTime
+			} else {
+				batchPointGet.Lock = lock
+				batchPointGet.LockWaitTime = waitTime
+			}
 		}
 	}
 	return transformPhysicalPlan(p, func(p base.PhysicalPlan) base.PhysicalPlan {
@@ -1270,7 +1269,7 @@ func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base
 
 func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
-		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
+		return join.JoinType == base.InnerJoin || join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin
 	}
 	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }
@@ -1298,8 +1297,8 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 		return false
 	}
 	switch plan.(type) {
-	case *PhysicalTableReader, *PhysicalIndexReader,
-		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
+	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader, *physicalop.PointGetPlan:
 		if existsOverlongType(plan.Schema()) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true

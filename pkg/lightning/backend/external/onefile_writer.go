@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"path/filepath"
 	"slices"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -58,6 +57,7 @@ type OneFileWriter struct {
 	// Statistic information per writer.
 	totalSize uint64
 	totalCnt  uint64
+	putReqCnt uint64
 	rc        *rangePropertiesCollector
 
 	// file information.
@@ -69,7 +69,7 @@ type OneFileWriter struct {
 	dataWriter     storage.ExternalFileWriter
 	statWriter     storage.ExternalFileWriter
 
-	onClose OnCloseFunc
+	onClose OnWriterCloseFunc
 	closed  bool
 
 	// for duplicate detection.
@@ -88,8 +88,9 @@ type OneFileWriter struct {
 	minKey []byte
 	maxKey []byte
 
-	logger   *zap.Logger
-	partSize int64
+	logger       *zap.Logger
+	partSize     int64
+	writtenBytes int64
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -102,14 +103,18 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
 	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    w.partSize})
+		PartSize:    w.partSize,
+		OnUpload:    func() { w.putReqCnt++ },
+	})
 	if err != nil {
 		return err
 	}
 	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
 	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    MinUploadPartSize})
+		PartSize:    MinUploadPartSize,
+		OnUpload:    func() { w.putReqCnt++ },
+	})
 	if err != nil {
 		w.logger.Info("create stat writer failed", zap.Error(err))
 		_ = dataWriter.Close(ctx)
@@ -227,7 +232,6 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		return err
 	}
 	// 1. encode data and write to kvStore.
-	writeStartTime := time.Now()
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
@@ -257,10 +261,11 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
-	writeDuration := time.Since(writeStartTime)
-	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
-	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
-		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
+	w.writtenBytes += int64(length)
+	if w.writtenBytes >= 16*units.MiB {
+		metrics.MergeSortWriteBytes.Add(float64(w.writtenBytes))
+		w.writtenBytes = 0
+	}
 	return nil
 }
 
@@ -303,6 +308,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: mStats,
 		ConflictInfo:       conflictInfo,
+		PutRequestCount:    w.putReqCnt,
 	})
 	w.totalCnt = 0
 	w.totalSize = 0

@@ -202,7 +202,7 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
-	ts.SetStats(ds.TableStats.ScaleByExpectCnt(rowCount))
+	ts.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(ts.PhysicalTableID) != nil {
 		ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
@@ -290,39 +290,6 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
 	}
 	return clonedScan, nil
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableScan)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(p.AccessCondition, nil)
-	cloned.FilterCondition = utilfuncp.CloneExpressionsForPlanCache(p.FilterCondition, nil)
-	cloned.LateMaterializationFilterCondition = utilfuncp.CloneExpressionsForPlanCache(p.LateMaterializationFilterCondition, nil)
-	cloned.HandleIdx = make([]int, len(p.HandleIdx))
-	copy(cloned.HandleIdx, p.HandleIdx)
-	if p.HandleCols != nil {
-		cloned.HandleCols = p.HandleCols.Clone()
-	}
-	cloned.ByItems = util.CloneByItemss(p.ByItems)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.SampleInfo != nil {
-		return nil, false
-	}
-	cloned.constColsByCond = make([]bool, len(p.constColsByCond))
-	copy(cloned.constColsByCond, p.constColsByCond)
-	if p.runtimeFilterList != nil {
-		return nil, false
-	}
-	if p.UsedColumnarIndexes != nil {
-		return nil, false
-	}
-	return cloned, true
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.

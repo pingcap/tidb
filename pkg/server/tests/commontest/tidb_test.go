@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/plugin"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -749,6 +751,9 @@ func TestSystemTimeZone(t *testing.T) {
 }
 
 func TestInternalSessionTxnStartTS(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	se, err := session.CreateSession4Test(ts.Store)
@@ -3533,4 +3538,116 @@ func TestCloseConnForUndeterminedError(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "commit")
 	// because TiKV responses UndeterminedResult, the connection should be disconnected without reporting mysql error.
 	require.EqualError(t, err, "invalid connection")
+}
+
+func TestAuditPluginInfoForStarting(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	type normalTest struct {
+		sql         string
+		rows        uint64
+		stmtType    string
+		dbs         string
+		tables      string
+		cmd         string
+		event       plugin.GeneralEvent
+		params      string
+		redactedSQL string
+		stmtID      uint32
+		currentDB   string
+	}
+
+	var dbNames, tableNames []string
+	var testResults []normalTest
+
+	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
+		dbNames = dbNames[:0]
+		tableNames = tableNames[:0]
+		for _, value := range sctx.StmtCtx.Tables {
+			dbNames = append(dbNames, value.DB)
+			tableNames = append(tableNames, value.Table)
+		}
+		redactedSQL, _ := sctx.StmtCtx.SQLDigest()
+		audit := normalTest{
+			sql:         sctx.StmtCtx.OriginalSQL,
+			rows:        sctx.StmtCtx.AffectedRows(),
+			stmtType:    sctx.StmtCtx.StmtType,
+			dbs:         strings.Join(dbNames, ","),
+			tables:      strings.Join(tableNames, ","),
+			cmd:         cmd,
+			event:       event,
+			params:      sctx.PlanCacheParams.String(),
+			redactedSQL: redactedSQL,
+			currentDB:   sctx.CurrentDB,
+		}
+		if stmtID := ctx.Value(plugin.PrepareStmtIDCtxKey); stmtID != nil {
+			audit.stmtID = stmtID.(uint32)
+		}
+		testResults = append(testResults, audit)
+	}
+	plugin.LoadPluginForTest(t, onGeneralEvent)
+	defer plugin.Shutdown(context.Background())
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(context.Background(), "use test")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "drop table if exists t")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(context.Background(), "create table t(a int)")
+		require.NoError(t, err)
+
+		testResults = testResults[:0]
+		stmt, err := conn.PrepareContext(context.Background(), "insert into t values (?)")
+		require.NoError(t, err)
+
+		// Test execute audit log
+		testResults = testResults[:0]
+		for i := range 1000 {
+			_, err = stmt.ExecContext(context.Background(), i)
+			require.NoError(t, err)
+		}
+		require.Eventually(t, func() bool {
+			// EXECUTE statement doesn't have STARTING info
+			return len(testResults) == 1000
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[len(testResults)-1], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Execute",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+			stmtID:      1,
+			currentDB:   "test",
+		})
+
+		// Test close audit log
+		testResults = testResults[:0]
+		err = stmt.Close()
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			return len(testResults) == 1
+		}, time.Second, time.Millisecond*10)
+		require.Equal(t, testResults[0], normalTest{
+			sql:         "insert into t values (?)",
+			rows:        1,
+			stmtType:    "Insert",
+			dbs:         "test",
+			tables:      "t",
+			cmd:         "Close stmt",
+			event:       plugin.Completed,
+			params:      " [arguments: 999]",
+			redactedSQL: "insert into `t` values ( ? )",
+			stmtID:      1,
+			currentDB:   "test",
+		})
+
+		testResults = testResults[:0]
+	})
 }

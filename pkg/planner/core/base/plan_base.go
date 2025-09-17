@@ -255,12 +255,6 @@ type LogicalPlan interface {
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
 	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
 
-	// ExhaustPhysicalPlans generates all possible plans that can match the required property.
-	// It will return:
-	// 1. All possible plans that can match the required property.
-	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	ExhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
-
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
 
@@ -301,4 +295,102 @@ type LogicalPlan interface {
 	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
 	// For logicalPlan implementation, it just returns itself as well.
 	GetWrappedLogicalPlan() LogicalPlan
+
+	// GetChildStatsAndSchema gets the stats and schema of the first child.
+	GetChildStatsAndSchema() (*property.StatsInfo, *expression.Schema)
+
+	// GetJoinChildStatsAndSchema gets the stats and schema of both children.
+	GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema)
+}
+
+// GroupExpression is the interface for group expression.
+type GroupExpression interface {
+	LogicalPlan
+	// IsExplored return whether this gE has explored rule i.
+	IsExplored(i uint) bool
+	// InputsLen returns the length of inputs.
+	InputsLen() int
+}
+
+// GetGEAndLogical is get the possible group expression and logical operator from common super pointer.
+func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpression, proj T) {
+	switch x := super.(type) {
+	case T:
+		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
+		// to downcast as the every specific logical operator.
+		proj = x
+	case GroupExpression:
+		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
+		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
+		// get the specific logical operator inside.
+		ge = x
+		proj = ge.GetWrappedLogicalPlan().(T)
+	}
+	return ge, proj
+}
+
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
+type JoinType int
+
+const (
+	// InnerJoin means inner join.
+	InnerJoin JoinType = iota
+	// LeftOuterJoin means left join.
+	LeftOuterJoin
+	// RightOuterJoin means right join.
+	RightOuterJoin
+	// SemiJoin means if row a in table A matches some rows in B, just output a.
+	SemiJoin
+	// AntiSemiJoin means if row a in table A does not match any row in B, then output a.
+	AntiSemiJoin
+	// LeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
+	LeftOuterSemiJoin
+	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
+	AntiLeftOuterSemiJoin
+)
+
+// IsOuterJoin returns if this joiner is an outer joiner
+func (tp JoinType) IsOuterJoin() bool {
+	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsSemiJoin returns if this joiner is a semi/anti-semi joiner
+func (tp JoinType) IsSemiJoin() bool {
+	return tp == SemiJoin || tp == AntiSemiJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsInnerJoin returns if this joiner is a inner joiner
+func (tp JoinType) IsInnerJoin() bool {
+	return tp == InnerJoin
+}
+
+func (tp JoinType) String() string {
+	switch tp {
+	case InnerJoin:
+		return "inner join"
+	case LeftOuterJoin:
+		return "left outer join"
+	case RightOuterJoin:
+		return "right outer join"
+	case SemiJoin:
+		return "semi join"
+	case AntiSemiJoin:
+		return "anti semi join"
+	case LeftOuterSemiJoin:
+		return "left outer semi join"
+	case AntiLeftOuterSemiJoin:
+		return "anti left outer semi join"
+	}
+	return "unsupported join type"
+}
+
+// PhysicalJoin provides some common methods for join operators.
+// Note that PhysicalApply is deliberately excluded from this interface.
+type PhysicalJoin interface {
+	PhysicalPlan
+	PhysicalJoinImplement()
+	GetInnerChildIdx() int
+	GetJoinType() JoinType
 }

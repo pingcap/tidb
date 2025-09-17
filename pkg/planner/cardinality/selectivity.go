@@ -29,6 +29,7 @@ import (
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -80,6 +81,7 @@ func Selectivity(
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
+		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
@@ -203,13 +205,12 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, minCnt, maxCnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
+			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			selectivity := cnt / float64(coll.RealtimeCount)
-			minSelectivity := minCnt / float64(coll.RealtimeCount)
-			maxSelectivity := maxCnt / float64(coll.RealtimeCount)
+			countResult.DivideAll(float64(coll.RealtimeCount))
+			selectivity, minSelectivity, maxSelectivity := countResult.Est, countResult.MinEst, countResult.MaxEst
 			nodes = append(nodes, &StatsNode{
 				Tp:                       IndexType,
 				ID:                       id,
@@ -238,7 +239,7 @@ func Selectivity(
 		// of the extracted access conditions, we multiply another selectionFactor for the residual
 		// conditions.
 		if set.partCover {
-			ret *= selectionFactor
+			ret *= ctx.GetSessionVars().SelectivityFactor
 		}
 		if sc.EnableOptimizerCETrace {
 			// Tracing for the expression estimation results after applying this StatsNode.
@@ -364,7 +365,7 @@ OUTER:
 			curSelectivity, _, err := Selectivity(ctx, coll, cnfItems, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-				curSelectivity = selectionFactor
+				curSelectivity = ctx.GetSessionVars().SelectivityFactor
 			}
 
 			selectivity = selectivity + curSelectivity - selectivity*curSelectivity
@@ -430,7 +431,7 @@ OUTER:
 	if mask > 0 {
 		minSelectivity := 1.0
 		if len(notCoveredConstants) > 0 || len(notCoveredDNF) > 0 || len(notCoveredOtherExpr) > 0 {
-			minSelectivity = math.Min(minSelectivity, selectionFactor)
+			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().SelectivityFactor)
 		}
 		if len(notCoveredStrMatch) > 0 {
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetStrMatchDefaultSelectivity())
@@ -442,6 +443,7 @@ OUTER:
 		if sc.EnableOptimizerDebugTrace {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Default Selectivity", minSelectivity)
 		}
+		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 	}
 
 	if sc.EnableOptimizerCETrace {

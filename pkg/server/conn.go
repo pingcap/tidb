@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -1159,13 +1160,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
 		if err != nil {
-			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
+			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				server_metrics.DisconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
-				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
+				logutil.Logger(ctx).Warn("result undetermined, close this connection", zap.Error(err))
 				server_metrics.DisconnectErrorUndetermined.Inc()
 				return
 			} else if terror.ErrCritical.Equal(err) {
@@ -1700,12 +1701,12 @@ func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.Pl
 	return e.DumpSQLsFromFile(ctx, data)
 }
 
-func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
+func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&cc.ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
+			ctx := context.WithValue(ctx, plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
 			audit.OnGeneralEvent(ctx, cc.ctx.GetSessionVars(), eventType, cmd)
 		}
 		return nil
@@ -1874,7 +1875,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	handlePlan := func(sctx sessionctx.Context, p base.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
-		case *plannercore.PointGetPlan:
+		case *physicalop.PointGetPlan:
 			isTableDual, err0 := v.PrunePartitions(sctx)
 			if err0 != nil || isTableDual {
 				return err0
@@ -1882,7 +1883,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
+				idxKey, err1 := physicalop.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
 				if err1 != nil {
 					return err1
 				}
@@ -1891,7 +1892,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			} else {
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
-		case *plannercore.BatchPointGetPlan:
+		case *physicalop.BatchPointGetPlan:
 			_, isTableDual, err1 := v.PrunePartitionsAndValues(sctx)
 			if err1 != nil {
 				return err1
@@ -1909,7 +1910,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
 				for i, idxVals := range v.IndexValues {
-					idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
+					idxKey, err1 := physicalop.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
 					if err1 != nil {
 						return err1
 					}
@@ -1947,7 +1948,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		// Only support Update and Delete for now.
 		// TODO: support other point plans.
 		switch x := p.(type) {
-		case *plannercore.Update:
+		case *physicalop.Update:
 			//nolint:forcetypeassert
 			updateStmt, ok := stmt.(*ast.UpdateStmt)
 			if !ok {
@@ -1961,7 +1962,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			if err != nil {
 				return nil, err
 			}
-		case *plannercore.Delete:
+		case *physicalop.Delete:
 			deleteStmt, ok := stmt.(*ast.DeleteStmt)
 			if !ok {
 				logutil.BgLogger().Warn("unexpected statement type for Delete plan",
@@ -2029,7 +2030,7 @@ func (cc *clientConn) handleStmt(
 ) (bool, error) {
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
-	cc.audit(plugin.Starting)
+	cc.audit(context.Background(), plugin.Starting)
 
 	// if stmt is load data stmt, store the channel that reads from the conn
 	// into the ctx for executor to use

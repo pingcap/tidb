@@ -224,7 +224,8 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.Cte.RecursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
 		if p.Cte.IsDistinct {
-			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(p.Schema().Columns, p.Schema(), p.StatsInfo())
+			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(
+				p.SCtx(), p.Schema().Columns, p.Schema(), p.StatsInfo())
 		} else {
 			p.StatsInfo().RowCount += recurStat.RowCount
 		}
@@ -235,11 +236,6 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
-func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalCTE(p, prop)
-}
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
 func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {

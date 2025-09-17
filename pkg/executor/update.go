@@ -29,7 +29,7 @@ import (
 	mmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -57,8 +57,8 @@ type UpdateExec struct {
 
 	matched uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
-	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
-	tblColPosInfos            plannercore.TblColPosInfoSlice
+	// the columns ordinals is present in ordinal range format, @see physicalop.TblColPosInfos
+	tblColPosInfos            physicalop.TblColPosInfoSlice
 	assignFlag                []int
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
@@ -342,7 +342,7 @@ func (e *UpdateExec) exec(
 // the inner handle field is filled with a NULL value.
 //
 // This fixes: https://github.com/pingcap/tidb/issues/7176.
-func unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
+func unmatchedOuterRow(tblPos physicalop.TblColPosInfo, waitUpdateRow []types.Datum) bool {
 	firstHandleIdx := tblPos.HandleCols.GetCol(0)
 	return waitUpdateRow[firstHandleIdx.Index].IsNull()
 }
@@ -366,7 +366,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := exec.RetTypes(e.Children(0))
-	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
+	colsInfo := physicalop.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
 	chk := exec.TryNewCacheChunk(e.Children(0))
 	if !e.allAssignmentsAreConstant {

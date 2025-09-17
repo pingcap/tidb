@@ -13,6 +13,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/util",
         "//pkg/extension",
         "//pkg/metrics",
@@ -21,6 +22,7 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/plugin",
         "//pkg/server",
         "//pkg/server/internal/column",
         "//pkg/server/internal/resultset",

@@ -23,5 +23,7 @@ import "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 
 func init() {
 	util.BuildKeyInfoPortal = buildKeyInfo
+	util.ApplyPredicateSimplification = applyPredicateSimplification
+	util.ApplyPredicateSimplificationForJoin = applyPredicateSimplificationForJoin
 	util.SetPredicatePushDownFlag = setPredicatePushDownFlag
 }

@@ -194,7 +194,7 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 	return coord
 }
 
-func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, allTiFlashZoneInfo map[string]string) error {
+func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allTiFlashZoneInfo map[string]string) error {
 	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.Sink}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -486,13 +486,13 @@ func getActualPhysicalPlan(plan base.Plan) base.PhysicalPlan {
 		return getActualPhysicalPlan(x.TargetPlan)
 	case *plannercore.SelectInto:
 		return getActualPhysicalPlan(x.TargetPlan)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		return x.SelectPlan
 	case *plannercore.ImportInto:
 		return x.SelectPlan
-	case *plannercore.Update:
+	case *physicalop.Update:
 		return x.SelectPlan
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		return x.SelectPlan
 	case *plannercore.Execute:
 		return getActualPhysicalPlan(x.Plan)
@@ -506,13 +506,13 @@ func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, fou
 	switch x := plan.(type) {
 	case *physicalop.PhysicalLimit:
 		return needReportExecutionSummary(x.Children()[0], destTablePlanID, true)
-	case *plannercore.PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		if foundLimit {
 			return x.GetTablePlan().ID() == destTablePlanID
 		}
 	case *physicalop.PhysicalShuffleReceiverStub:
 		return needReportExecutionSummary(x.DataSource, destTablePlanID, foundLimit)
-	case *plannercore.PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		if needReportExecutionSummary(x.SeedPlan, destTablePlanID, foundLimit) {
 			return true
 		}
@@ -920,9 +920,9 @@ func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error)
 // Execute implements MppCoordinator interface
 func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.KeyRange, error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
-	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
+	sender := c.originalPlan.(*physicalop.PhysicalExchangeSender)
 	sctx := c.sessionCtx
-	frags, kvRanges, nodeInfo, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
+	frags, kvRanges, nodeInfo, err := physicalop.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
