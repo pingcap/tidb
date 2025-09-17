@@ -30,7 +30,7 @@
       {
         "SQL": "explain format = 'brief' select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
-          "HashJoin 1.00 root  CARTESIAN inner join",
+          "MergeJoin 1.00 root  inner join, left key:test_partition.t1.id, right key:test_partition.t2.id",
           "├─Point_Get(Build) 1.00 root table:t2, partition:p2, index:PRIMARY(id, a) ",
           "└─Point_Get(Probe) 1.00 root table:t1, partition:p5 handle:5"
         ]
@@ -46,7 +46,7 @@
       {
         "SQL": "explain format = 'brief' select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
-          "HashJoin 1.00 root  CARTESIAN inner join",
+          "HashJoin 1.00 root  inner join, equal:[eq(test_partition.t2.id, test_partition.t1.id) eq(test_partition.t2.a, test_partition.t1.id)]",
           "├─Point_Get(Build) 1.00 root table:t1, partition:p2 handle:12",
           "└─Point_Get(Probe) 1.00 root table:t2, partition:p4, index:PRIMARY(id, a) "
         ]
@@ -494,7 +494,7 @@
         "SQL": "select * from t1 join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3 and t1.b in (3,5)) and t2.a in (6,7,8) and t2.b=7 and t2.id=7",
         "Result": null,
         "Plan": [
-          "HashJoin 1.00 root  CARTESIAN inner join",
+          "HashJoin 1.00 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t2.id)]",
           "├─TableReader(Build) 1.00 root partition:p1 data:Selection",
           "│ └─Selection 1.00 cop[tikv]  eq(test_partition.t2.b, 7), eq(test_partition.t2.id, 7), in(test_partition.t2.a, 6, 7, 8)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -503,7 +503,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "HashJoin 3.00 root  CARTESIAN inner join",
+          "HashJoin 1.25 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
           "├─IndexReader(Build) 1.00 root partition:p0 index:Selection",
           "│ └─Selection 1.00 cop[tikv]  eq(test_partition_1.t1.id, 7)",
           "│   └─IndexRangeScan 10.20 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo",
@@ -1072,7 +1072,7 @@
         "SQL": "select * from t1 left join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3) and t2.a in (6,7,8)",
         "Result": null,
         "Plan": [
-          "HashJoin 24.98 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t2.id)]",
+          "HashJoin 24.97 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t2.id)]",
           "├─TableReader(Build) 19.98 root partition:p0 data:Selection",
           "│ └─Selection 19.98 cop[tikv]  not(isnull(test_partition.t1.id)), or(eq(test_partition.t1.a, 1), eq(test_partition.t1.a, 3))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -1081,7 +1081,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "HashJoin 24.98 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
+          "HashJoin 24.97 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
           "├─IndexReader(Build) 19.98 root partition:p0 index:Selection",
           "│ └─Selection 19.98 cop[tikv]  not(isnull(test_partition_1.t1.id))",
           "│   └─IndexRangeScan 20.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3,3], keep order:false, stats:pseudo",
@@ -1097,7 +1097,7 @@
           "3 3 3 3 3 3"
         ],
         "Plan": [
-          "HashJoin 24.98 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t2.id)]",
+          "HashJoin 24.97 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t2.id)]",
           "├─TableReader(Build) 19.98 root partition:p0 data:Selection",
           "│ └─Selection 19.98 cop[tikv]  not(isnull(test_partition.t1.id)), or(eq(test_partition.t1.a, 1), eq(test_partition.t1.a, 3))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -1106,7 +1106,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "HashJoin 24.98 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
+          "HashJoin 24.97 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
           "├─IndexReader(Build) 19.98 root partition:p0 index:Selection",
           "│ └─Selection 19.98 cop[tikv]  not(isnull(test_partition_1.t1.id))",
           "│   └─IndexRangeScan 20.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3,3], keep order:false, stats:pseudo",

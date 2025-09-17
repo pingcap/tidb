@@ -554,7 +554,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }
 
-func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
+func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 
@@ -585,10 +585,12 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
-	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
-	})
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
+		t.Cleanup(func() {
+			tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
+		})
+	}
 
 	var pipeClosed bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
@@ -622,4 +624,83 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 	require.True(t, pipeClosed)
 	require.True(t, modified.Load())
 	tk.MustExec("admin check index gsort idx")
+}
+
+func TestDXFAddIndexRealtimeSummary(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
+	testutil.ReduceCheckInterval(t)
+
+	server, cloudStorageURI := genServerWithStorage(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	})
+
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (id varchar(255), b int, c int, primary key(id) clustered);")
+	tk.MustExec("insert into t values ('a',1,1),('b',2,2),('c',3,3);")
+
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
+	tk.MustExec("alter table t add index idx(c);")
+	sql := `with global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history)
+		select id from global_tasks where task_key like concat('%%/', '%d');`
+	taskIDRows := tk.MustQuery(fmt.Sprintf(sql, jobID)).Rows()
+	taskID := taskIDRows[0][0].(string)
+
+	getSummary := func(taskID string, step int64) (getReqCnt, putReqCnt, readBytes, bytes int) {
+		sql = `with subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history)
+		select
+			json_extract(summary, '$.get_request_count'),
+			json_extract(summary, '$.put_request_count'),
+			json_extract(summary, '$.read_bytes'),
+			json_extract(summary, '$.bytes')
+		from subtasks where task_key = '%s' and step = %d;`
+		fmtSQL := fmt.Sprintf(sql, taskID, step)
+		rs := tk.MustQuery(fmtSQL).Rows()
+		require.Len(t, rs, 1)
+		var err error
+		getReqCnt, err = strconv.Atoi(rs[0][0].(string))
+		require.NoError(t, err)
+		putReqCnt, err = strconv.Atoi(rs[0][1].(string))
+		require.NoError(t, err)
+		readBytes, err = strconv.Atoi(rs[0][2].(string))
+		require.NoError(t, err)
+		bytes, err = strconv.Atoi(rs[0][3].(string))
+		require.NoError(t, err)
+		return
+	}
+	getReqCnt, putReqCnt, readBytes, bytes := getSummary(taskID, 1)
+	require.Equal(t, getReqCnt, 0)   // 0, because step 1 doesn't read s3
+	require.Equal(t, putReqCnt, 2)   // 2 times (data + stats)
+	require.Greater(t, readBytes, 0) // 143 bytes for reading table records
+	require.Equal(t, bytes, 0)       // Fixme(tangenta): should be greater than 0 but the writers are not flushed when recorded.
+
+	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 2)
+	require.Equal(t, getReqCnt, 1) // 1, read s3
+	require.Equal(t, putReqCnt, 2) // 2 times (data + stats)
+	require.Equal(t, readBytes, 0) // 0, not suitable for merge sort
+	require.Equal(t, bytes, 0)     // 0, not suitable for merge sort
+
+	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 3)
+	require.Equal(t, getReqCnt, 1) // 2, read s3
+	require.Equal(t, putReqCnt, 0) // 0, because step 3 doesn't write s3
+	require.Equal(t, readBytes, 0) // 0
+	require.Equal(t, bytes, 0)     // 0
 }

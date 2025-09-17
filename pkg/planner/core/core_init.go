@@ -35,22 +35,16 @@ func init() {
 	utilfuncp.FindBestTask4LogicalTableDual = findBestTask4LogicalTableDual
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
 	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
-	utilfuncp.ExhaustPhysicalPlans4LogicalCTE = exhaustPhysicalPlans4LogicalCTE
 	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
 	utilfuncp.ExhaustPhysicalPlans4LogicalTopN = exhaustPhysicalPlans4LogicalTopN
 	utilfuncp.ExhaustPhysicalPlans4LogicalLock = exhaustPhysicalPlans4LogicalLock
 	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
 	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
-	utilfuncp.ExhaustPhysicalPlans4LogicalLimit = exhaustPhysicalPlans4LogicalLimit
 	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
 	utilfuncp.ExhaustPhysicalPlans4LogicalExpand = exhaustPhysicalPlans4LogicalExpand
 	utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll = exhaustPhysicalPlans4LogicalUnionAll
 	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
-	utilfuncp.ExhaustPhysicalPlans4LogicalSelection = exhaustPhysicalPlans4LogicalSelection
 	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
-	utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan = exhaustPhysicalPlans4LogicalUnionScan
-	utilfuncp.ExhaustPhysicalPlans4LogicalProjection = exhaustPhysicalPlans4LogicalProjection
-	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
 	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
 
 	// for physical operators.
@@ -115,6 +109,10 @@ func init() {
 	utilfuncp.GetCost4PhysicalIndexHashJoin = getCost4PhysicalIndexHashJoin
 	utilfuncp.GetPlanCostVer1PhysicalIndexHashJoin = getPlanCostVer1PhysicalIndexHashJoin
 	utilfuncp.Attach2Task4PhysicalIndexHashJoin = attach2Task4PhysicalIndexHashJoin
+	// for physical index merge join
+	utilfuncp.GetCost4PhysicalIndexMergeJoin = getCost4PhysicalIndexMergeJoin
+	utilfuncp.GetPlanCostVer14PhysicalIndexMergeJoin = getPlanCostVer14PhysicalIndexMergeJoin
+	utilfuncp.Attach2Task4PhysicalIndexMergeJoin = attach2Task4PhysicalIndexMergeJoin
 	// for physical hash agg
 	utilfuncp.GetCost4PhysicalHashAgg = getCost4PhysicalHashAgg
 	utilfuncp.Attach2Task4PhysicalHashAgg = attach2Task4PhysicalHashAgg
@@ -156,6 +154,14 @@ func init() {
 	// for table reader
 	utilfuncp.GetPlanCostVer14PhysicalTableReader = getPlanCostVer14PhysicalTableReader
 	utilfuncp.GetPlanCostVer24PhysicalTableReader = getPlanCostVer24PhysicalTableReader
+	// for physical point get
+	utilfuncp.GetCost4PointGetPlan = getCost4PointGetPlan
+	utilfuncp.GetPlanCostVer14PointGetPlan = getPlanCostVer14PointGetPlan
+	utilfuncp.GetPlanCostVer24PointGetPlan = getPlanCostVer24PointGetPlan
+	// for physical batch point get
+	utilfuncp.GetCost4BatchPointGetPlan = getCost4BatchPointGetPlan
+	utilfuncp.GetPlanCostVer14BatchPointGetPlan = getPlanCostVer14BatchPointGetPlan
+	utilfuncp.GetPlanCostVer24BatchPointGetPlan = getPlanCostVer24BatchPointGetPlan
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
@@ -171,10 +177,6 @@ func init() {
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
-	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
-	utilfuncp.CloneColumnsForPlanCache = cloneColumnsForPlanCache
-	utilfuncp.CloneConstantsForPlanCache = cloneConstantsForPlanCache
-	utilfuncp.CloneScalarFunctionsForPlanCache = cloneScalarFunctionsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

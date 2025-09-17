@@ -107,7 +107,7 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 			RightJoinKeys:   rightKeys,
 			IsNullEQ:        newIsNullEQ,
 		}
-		mergeJoin := PhysicalMergeJoin{BasePhysicalJoin: baseJoin}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset())
+		mergeJoin := PhysicalMergeJoin{BasePhysicalJoin: baseJoin}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset())
 		mergeJoin.SetSchema(schema)
 		mergeJoin.OtherConditions = moveEqualToOtherConditions(p, offsets)
 		mergeJoin.initCompareFuncs()
@@ -184,10 +184,10 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 			return nil
 		}
 		// If the output wants the order of the inner side. We should reject it since we might add null-extend rows of that side.
-		if p.JoinType == logicalop.LeftOuterJoin && hasRightColInProp {
+		if p.JoinType == base.LeftOuterJoin && hasRightColInProp {
 			return nil
 		}
-		if p.JoinType == logicalop.RightOuterJoin && hasLeftColInProp {
+		if p.JoinType == base.RightOuterJoin && hasLeftColInProp {
 			return nil
 		}
 	}
@@ -219,7 +219,7 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 		IsNullEQ:        newNullEQ,
 		OtherConditions: otherConditions,
 	}
-	enforcedPhysicalMergeJoin := PhysicalMergeJoin{BasePhysicalJoin: baseJoin, Desc: desc}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset())
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{BasePhysicalJoin: baseJoin, Desc: desc}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset())
 	enforcedPhysicalMergeJoin.SetSchema(schema)
 	enforcedPhysicalMergeJoin.SetChildrenReqProps([]*property.PhysicalProperty{lProp, rProp})
 	enforcedPhysicalMergeJoin.initCompareFuncs()
@@ -232,7 +232,7 @@ func ShouldSkipHashJoin(p *logicalop.LogicalJoin) bool {
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
-func BuildMergeJoinPlan(ctx base.PlanContext, joinType logicalop.JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
+func BuildMergeJoinPlan(ctx base.PlanContext, joinType base.JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
 	baseJoin := BasePhysicalJoin{
 		JoinType:      joinType,
 		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},
@@ -261,18 +261,6 @@ func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.CompareFuncs = append(cloned.CompareFuncs, p.CompareFuncs...)
 	cloned.Desc = p.Desc
 	return cloned, nil
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalMergeJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalMergeJoin)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalJoin = *basePlan
-	return cloned, true
 }
 
 // Attach2Task implements PhysicalPlan interface.
@@ -404,7 +392,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 
 	colsNeedResolving := p.Schema().Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.
@@ -451,10 +439,10 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 		if !prop.IsPrefix(lProp) && !prop.IsPrefix(rProp) {
 			return nil, false
 		}
-		if prop.IsPrefix(rProp) && p.JoinType == logicalop.LeftOuterJoin {
+		if prop.IsPrefix(rProp) && p.JoinType == base.LeftOuterJoin {
 			return nil, false
 		}
-		if prop.IsPrefix(lProp) && p.JoinType == logicalop.RightOuterJoin {
+		if prop.IsPrefix(lProp) && p.JoinType == base.RightOuterJoin {
 			return nil, false
 		}
 	}

@@ -28,15 +28,16 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -169,6 +170,7 @@ var (
 		diskQuotaOption:       {},
 		maxWriteSpeedOption:   {},
 		cloudStorageURIOption: {},
+		threadOption:          {},
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
@@ -549,8 +551,18 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 	}, nil
 }
 
+// Option is used to set optional parameters for LoadDataController.
+type Option func(c *LoadDataController)
+
+// WithLogger sets the logger for LoadDataController.
+func WithLogger(logger *zap.Logger) Option {
+	return func(c *LoadDataController) {
+		c.logger = logger
+	}
+}
+
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
+func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs, options ...Option) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
@@ -560,6 +572,10 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		logger:          logger,
 		ExecuteNodesCnt: 1,
 	}
+	for _, opt := range options {
+		opt(c)
+	}
+
 	if err := c.checkFieldParams(); err != nil {
 		return nil, err
 	}
@@ -612,11 +628,11 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
-	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+	var threadCnt int
+	threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
 		threadCnt = 2
 	}
-
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
@@ -866,10 +882,12 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ManualRecovery = true
 	}
 
-	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
-		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
-		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
-			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+	if kerneltype.IsClassic() {
+		if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+			p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+			if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+				p.MaxNodeCnt = scheduler.CalcMaxNodeCountByStoresNum(ctx, seCtx.GetStore())
+			}
 		}
 	}
 
@@ -1304,6 +1322,30 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
+
+	return nil
+}
+
+// CalResourceParams calculates resource related parameters according to the total
+// file size and target node cpu count.
+func (e *LoadDataController) CalResourceParams(ctx context.Context) error {
+	targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return err
+	}
+	totalSize := e.TotalFileSize
+	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
+	e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
+	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
+	e.logger.Info("auto calculate resource related params",
+		zap.Int("thread count", e.ThreadCnt),
+		zap.Int("max node count", e.MaxNodeCnt),
+		zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
+		zap.Int("target node cpu count", targetNodeCPUCnt),
+		zap.String("total file size", units.BytesSize(float64(totalSize))),
+		zap.Int("file count", len(e.dataFiles)),
+	)
 	return nil
 }
 
@@ -1606,6 +1648,3 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	}
 	return handle.GetCPUCountOfNode(ctx)
 }
-
-// TestSyncCh is used in unit test to synchronize the execution.
-var TestSyncCh = make(chan struct{})

@@ -16,7 +16,6 @@ package cardinality
 
 import (
 	"bytes"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -594,7 +593,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
 		minSel *= selectivity
 	}
-	// Sort them.
+	// Sort selectivities ascending (most selective first) for exponential backoff
 	slices.Sort(singleColumnEstResults)
 	l := len(singleColumnEstResults)
 	failpoint.Inject("cleanEstResults", func() {
@@ -614,26 +613,26 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		histNDV = idx.NDV
 	}
 	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
+	minBound := idxLowBound
+	// Adjust idxLowBound upwards if we have not used all index columns.
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
 	// maxSel assumes correlation, so is the selectivity of the most filtering column
 	maxSel = max(idxLowBound, singleColumnEstResults[0])
 	// minSel assumes independence between columns, so is the product of all single column selectivities.
-	minSel = max(idxLowBound, minSel)
-	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
-	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
-	if l == 2 {
-		return max(minTwoCol, multTwoCol), minSel, maxSel, true, nil
+	minSel = max(minBound, minSel)
+
+	// Calculate minimum bound: take minimum of all selectivities (up to limit) and index bound
+	maxCols := min(MaxExponentialBackoffCols, l)
+	for i := range maxCols {
+		minBound = min(minBound, singleColumnEstResults[i])
 	}
-	minThreeCol := min(minTwoCol, singleColumnEstResults[2])
-	multThreeCol := multTwoCol * math.Sqrt(math.Sqrt(singleColumnEstResults[2]))
-	if l == 3 {
-		return max(minThreeCol, multThreeCol), minSel, maxSel, true, nil
-	}
-	minFourCol := min(minThreeCol, singleColumnEstResults[3])
-	multFourCol := multThreeCol * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3])))
-	return max(minFourCol, multFourCol), minSel, maxSel, true, nil
+
+	// Apply exponential backoff to pre-sorted selectivities
+	multResult := ApplyExponentialBackoff(singleColumnEstResults, minBound, 1.0)
+
+	return multResult, minSel, maxSel, true, nil
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.

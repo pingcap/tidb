@@ -17,6 +17,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/util",
         "//pkg/util/disttask",
+        "//pkg/util/etcd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@io_etcd_go_etcd_api_v3//mvccpb",

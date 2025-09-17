@@ -11,15 +11,6 @@
       "pkg/extension/enterprise/audit/filter.go": "pkg/extension/enterprise/audit/filter.go"
     }
   },
-  "asciicheck": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
-      "lightning/pkg/web/res_vfsdata.go": "ignore code"
-    }
-  },
   "asmdecl": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -600,7 +591,8 @@
       "pkg/owner/": "owner code",
       "pkg/timer/": "timer code",
       "pkg/domain": "domain code",
-      "pkg/workloadlearning": "workloadlearning code"
+      "pkg/workloadlearning": "workloadlearning code",
+      "pkg/kv": "kv code"
     }
   },
   "shift": {
@@ -691,20 +683,7 @@
       "br/pkg/conn/": "br/pkg/conn/ coded",
       "br/pkg/checkpoint/": "br/pkg/checkpoint/ coded",
       "br/pkg/backup/": "br/pkg/backup/ coded",
-      "pkg/planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
-      "pkg/planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
-      "pkg/planer/core/casetest/dag": "planer/core/casetest/dag",
-      "pkg/planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
-      "pkg/planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
-      "pkg/planer/core/casetest/hint": "planer/core/casetest/hint",
-      "pkg/planer/core/casetest/mpp": "planer/core/casetest/mpp",
-      "pkg/planer/core/casetest/partition": "planer/core/casetest/partition",
-      "pkg/planer/core/casetest/pushdown": "planer/core/casetest/pushdown",
-      "pkg/planer/core/casetest/rule": "planer/core/casetest/rule",
-      "pkg/planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
-      "pkg/planer/core/casetest/testdata": "planer/core/casetest/testdata",
-      "pkg/planer/core/casetest/windows": "planer/core/casetest/windows",
-      "pkg/planer/core/tests/": "planer/core/tests/",
+      "pkg/planner/core": "planner/core",
       "pkg/executor/test/admintest": "executor/test/admintest",
       "pkg/executor/test/aggregate": "executor/test/aggregate",
       "pkg/executor/test/autoidtest": "executor/test/autoidtest",

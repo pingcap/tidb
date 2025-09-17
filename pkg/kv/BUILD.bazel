@@ -84,7 +84,7 @@ go_test(
     ],
     embed = [":kv"],
     flaky = True,
-    shard_count = 26,
+    shard_count = 27,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/keyspace",
