@@ -251,9 +251,12 @@ func (m *Meter) flush(ts int64) {
 	flushCtx, cancel := context.WithTimeout(m.ctx, writeTimeout)
 	defer cancel()
 	if err := m.writer.Write(flushCtx, meteringData); err != nil {
-		m.logger.Warn("failed to write metering data", zap.Error(err))
+		m.logger.Info("failed to write metering data",
+			zap.Error(err),
+			zap.Duration("duration", time.Since(startTime)),
+			zap.Any("data", meteringData))
 	}
-	m.logger.Info("flush metering data succeed", zap.Duration("duration", time.Since(startTime)), zap.Any("data", meteringData))
+
 }
 
 // Close closes the metering writer.
