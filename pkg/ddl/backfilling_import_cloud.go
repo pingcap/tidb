@@ -137,7 +137,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			OnReaderClose: func(summary *external.ReaderSummary) {
 				e.summary.GetReqCnt.Add(summary.GetRequestCount)
 				metering.NewRecorder(e.store, metering.TaskTypeAddIndex, subtask.TaskID).
-					GetRequestCount(summary.GetRequestCount)
+					RecordGetRequestCount(summary.GetRequestCount)
 			},
 		},
 		TS: sm.TS,

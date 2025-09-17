@@ -406,7 +406,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		kvMeta.MergeSummary(summary)
 		r.summary.PutReqCnt.Add(summary.PutRequestCount)
 		metering.NewRecorder(r.store, metering.TaskTypeAddIndex, taskID).
-			PutRequestCount(summary.PutRequestCount)
+			RecordPutRequestCount(summary.PutRequestCount)
 		s.mu.Unlock()
 	}
 	var idxNames strings.Builder
@@ -463,7 +463,7 @@ func newDistTaskRowCntCollector(
 func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 	d.summary.ReadBytes.Add(bytes)
 	metering.NewRecorder(d.store, metering.TaskTypeAddIndex, d.taskID).
-		ReadDataBytes(uint64(bytes))
+		RecordReadDataBytes(uint64(bytes))
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
@@ -471,5 +471,5 @@ func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
 	metering.NewRecorder(d.store, metering.TaskTypeAddIndex, d.taskID).
-		WriteDataBytes(uint64(bytes))
+		RecordWriteDataBytes(uint64(bytes))
 }

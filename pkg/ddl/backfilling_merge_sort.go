@@ -87,12 +87,12 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		m.mu.Unlock()
 		m.summary.PutReqCnt.Add(summary.PutRequestCount)
 		metering.NewRecorder(m.store, metering.TaskTypeAddIndex, subtask.TaskID).
-			PutRequestCount(summary.PutRequestCount)
+			RecordPutRequestCount(summary.PutRequestCount)
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
 		metering.NewRecorder(m.store, metering.TaskTypeAddIndex, subtask.TaskID).
-			GetRequestCount(summary.GetRequestCount)
+			RecordGetRequestCount(summary.GetRequestCount)
 	}
 
 	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)

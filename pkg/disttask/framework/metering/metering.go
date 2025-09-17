@@ -73,24 +73,23 @@ func NewRecorder(store kv.Storage, taskType TaskType, taskID int64) *Recorder {
 	}
 }
 
-// GetRequestCount records the get request count.
-// get-return: function 'GetRequestCount' seems to be a getter but it does not return any result (all_revive)
-func (r *Recorder) GetRequestCount(v uint64) {
+// RecordGetRequestCount records the get request count.
+func (r *Recorder) RecordGetRequestCount(v uint64) {
 	r.record(&Data{getRequests: v})
 }
 
-// PutRequestCount records the put request count.
-func (r *Recorder) PutRequestCount(v uint64) {
+// RecordPutRequestCount records the put request count.
+func (r *Recorder) RecordPutRequestCount(v uint64) {
 	r.record(&Data{putRequests: v})
 }
 
-// ReadDataBytes records the read data bytes.
-func (r *Recorder) ReadDataBytes(v uint64) {
+// RecordReadDataBytes records the read data bytes.
+func (r *Recorder) RecordReadDataBytes(v uint64) {
 	r.record(&Data{readDataBytes: v})
 }
 
-// WriteDataBytes records the write data bytes.
-func (r *Recorder) WriteDataBytes(v uint64) {
+// RecordWriteDataBytes records the write data bytes.
+func (r *Recorder) RecordWriteDataBytes(v uint64) {
 	r.record(&Data{writeDataBytes: v})
 }
 

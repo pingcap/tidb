@@ -173,7 +173,7 @@ func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
 	s.summary.Bytes.Add(bytes)
 	s.summary.RowCnt.Add(rowCnt)
 	metering.NewRecorder(s.store, metering.TaskTypeImportInto, s.taskID).
-		WriteDataBytes(uint64(bytes))
+		RecordWriteDataBytes(uint64(bytes))
 }
 
 func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
@@ -412,12 +412,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		metering.NewRecorder(m.store, metering.TaskTypeImportInto, subtask.TaskID).
-			PutRequestCount(summary.PutRequestCount)
+			RecordPutRequestCount(summary.PutRequestCount)
 	}
 	onReaderClose := func(summary *external.ReaderSummary) {
 		m.summary.GetReqCnt.Add(summary.GetRequestCount)
 		metering.NewRecorder(m.store, metering.TaskTypeImportInto, subtask.TaskID).
-			GetRequestCount(summary.GetRequestCount)
+			RecordGetRequestCount(summary.GetRequestCount)
 	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
@@ -575,7 +575,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			OnReaderClose: func(summary *external.ReaderSummary) {
 				e.summary.GetReqCnt.Add(summary.GetRequestCount)
 				metering.NewRecorder(e.store, metering.TaskTypeImportInto, subtask.TaskID).
-					GetRequestCount(summary.GetRequestCount)
+					RecordGetRequestCount(summary.GetRequestCount)
 			},
 		},
 		TS: sm.TS,
