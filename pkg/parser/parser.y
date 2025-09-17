@@ -12066,17 +12066,6 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
-<<<<<<< HEAD
-=======
-| 	"IMPORT" "GROUPS"
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups}
-	}
-| 	"IMPORT" "GROUP" stringLit
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
-	}
->>>>>>> 12bbfbcc94a (*: add SET INSTANCE syntax (#63484))
 |	"IMPORT" "JOBS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
