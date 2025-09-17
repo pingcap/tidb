@@ -50,20 +50,27 @@ func TestNewMeterValidConfig(t *testing.T) {
 
 func TestRecord(t *testing.T) {
 	m := &Meter{
-		data: make(map[int64]Data),
+		data: make(map[int64]*Data),
 	}
-	md := &Data{
-		putRequests: 5,
-	}
-	m.Record("keyspace1", TaskTypeAddIndex, 1, md)
+	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{putRequests: 5})
 	require.Equal(t, uint64(5), m.data[1].putRequests)
 	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{getRequests: 3})
 	require.Equal(t, uint64(5), m.data[1].putRequests)
 	require.Equal(t, uint64(3), m.data[1].getRequests)
+
+	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{readDataBytes: 100, writeDataBytes: 200})
+	require.Equal(t, uint64(100), m.data[1].readDataBytes)
+	require.Equal(t, uint64(200), m.data[1].writeDataBytes)
+	m.Record("keyspace1", TaskTypeAddIndex, 1, &Data{readDataBytes: 200, writeDataBytes: 100})
+	require.Equal(t, uint64(300), m.data[1].readDataBytes)
+	require.Equal(t, uint64(300), m.data[1].writeDataBytes)
+
+	m.Record("keyspace1", TaskTypeAddIndex, 2, &Data{putRequests: 5})
+	require.Equal(t, uint64(5), m.data[1].putRequests)
 }
 
 func TestConcurrentRecord(t *testing.T) {
-	m := &Meter{data: make(map[int64]Data)}
+	m := &Meter{data: make(map[int64]*Data)}
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Add(1)
@@ -78,20 +85,22 @@ func TestConcurrentRecord(t *testing.T) {
 
 func TestFlush(t *testing.T) {
 	meter, reader := createLocalMeter(t, t.TempDir())
-	ts := time.Now().Unix()/writeInterval*writeInterval + writeInterval
-	data := readMeteringData(t, reader, ts-writeInterval)
+	curTime := time.Now()
+
+	writeTime := curTime.Truncate(time.Minute).Add(time.Minute)
+	data := readMeteringData(t, reader, writeTime.Add(-time.Minute).Unix())
 	require.Len(t, data, 0)
 	meter.Record("ks1", TaskTypeAddIndex, 1, &Data{putRequests: 10, getRequests: 20, readDataBytes: 300, writeDataBytes: 400})
-	meter.flush(context.Background(), ts)
-	data = readMeteringData(t, reader, ts-writeInterval)
+	meter.flush(context.Background(), writeTime.Unix())
+	data = readMeteringData(t, reader, writeTime.Add(-time.Minute).Unix())
 	require.Len(t, data, 0)
-	data = readMeteringData(t, reader, ts)
+	data = readMeteringData(t, reader, writeTime.Unix())
 	require.Len(t, data, 1)
 	require.Equal(t, "1", data[0]["version"])
 	require.Equal(t, "ks1", data[0]["cluster_id"])
 	require.Equal(t, "dxf", data[0]["source_name"])
-	require.Equal(t, float64(10), data[0]["put_external_requests"].(map[string]any)["value"])
-	require.Equal(t, float64(20), data[0]["get_external_requests"].(map[string]any)["value"])
+	require.Equal(t, float64(10), data[0]["put_external_requests"].(float64))
+	require.Equal(t, float64(20), data[0]["get_external_requests"].(float64))
 	require.Equal(t, float64(300), data[0]["read_data_bytes"].(map[string]any)["value"])
 	require.Equal(t, float64(400), data[0]["write_data_bytes"].(map[string]any)["value"])
 }

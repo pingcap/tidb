@@ -34,7 +34,6 @@ import (
 )
 
 const (
-	writeInterval = 60
 	// The timeout can not be too long because the pod grace termination period is fixed.
 	writeTimeout = 10 * time.Second
 	category     = "dxf"
@@ -102,15 +101,6 @@ func (r *Recorder) record(d *Data) {
 	r.m.Record(r.keyspace, r.taskType, r.taskID, d)
 }
 
-// GetMetering gets the metering instance.
-func GetMetering() (*Meter, error) {
-	v := meteringInstance.Load()
-	if v == nil {
-		return nil, errors.New("metering instance is not initialized")
-	}
-	return v, nil
-}
-
 // SetMetering sets the metering instance for dxf.
 func SetMetering(m *Meter) {
 	meteringInstance.Store(m)
@@ -128,26 +118,16 @@ type Data struct {
 }
 
 func (m *Data) merge(other *Data) {
-	if m.keyspace == "" || m.taskType == TaskTypeUnknown {
-		m.keyspace = other.keyspace
-		m.taskType = other.taskType
-	}
 	m.putRequests += other.putRequests
 	m.getRequests += other.getRequests
 	m.readDataBytes += other.readDataBytes
 	m.writeDataBytes += other.writeDataBytes
 }
 
-type meteringEntry struct {
-	keyspace string
-	taskID   int64
-	taskType TaskType
-}
-
 // Meter is responsible for recording and reporting metering data.
 type Meter struct {
 	sync.Mutex
-	data   map[int64]Data // taskID -> meter data
+	data   map[int64]*Data // taskID -> meter data
 	uuid   string
 	writer *meteringwriter.MeteringWriter
 	logger *zap.Logger
@@ -168,7 +148,7 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	writer := meteringwriter.NewMeteringWriter(provider, meteringConfig)
 	return &Meter{
 		logger: logger,
-		data:   make(map[int64]Data),
+		data:   make(map[int64]*Data),
 		writer: writer,
 		uuid:   strings.ReplaceAll(uuid.New().String(), "-", "_"), // no dash in the metering sdk
 	}, nil
@@ -178,11 +158,13 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 func (m *Meter) Record(keyspace string, taskType TaskType, taskID int64, other *Data) {
 	m.Lock()
 	defer m.Unlock()
-	other.keyspace = keyspace
-	other.taskType = taskType
-	orig := m.data[taskID]
-	orig.merge(other)
-	m.data[taskID] = orig
+	if m.data[taskID] == nil {
+		m.data[taskID] = &Data{
+			keyspace: keyspace,
+			taskType: taskType,
+		}
+	}
+	m.data[taskID].merge(other)
 }
 
 // StartFlushLoop creates a flush loop.
@@ -209,10 +191,10 @@ func (m *Meter) StartFlushLoop(ctx context.Context) {
 
 func (m *Meter) flush(ctx context.Context, ts int64) {
 	startTime := time.Now()
-	var data map[int64]Data
+	var data map[int64]*Data
 	m.Lock()
 	data = m.data
-	m.data = make(map[int64]Data, len(data))
+	m.data = make(map[int64]*Data, len(data))
 	m.Unlock()
 
 	if len(data) == 0 {
