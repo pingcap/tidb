@@ -534,7 +534,7 @@ func (w *worker) doModifyColumnTypeWithReorg(
 	changingCol, oldCol *model.ColumnInfo,
 	args *model.ModifyColumnArgs,
 ) (ver int64, err error) {
-	newColName, pos := args.Column.Name, args.Position
+	colName, pos := args.Column.Name, args.Position
 	changingIdxs := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 
 	switch changingCol.State {
@@ -638,7 +638,7 @@ func (w *worker) doModifyColumnTypeWithReorg(
 			}
 
 			oldCol.FieldType = changingCol.FieldType
-			oldCol.Name = newColName
+			oldCol.Name = colName
 			oldCol.DelFlag(mysql.PreventNullInsertFlag)
 			oldCol.DelFlag(mysql.PreventTruncateFlag)
 			removeOldObjects(tblInfo, changingCol, nil)
@@ -675,60 +675,6 @@ func (w *worker) doModifyColumnTypeWithReorg(
 			return ver, errors.Trace(err)
 		}
 
-		// When meta-only change is applicable, changingCol can never reach public state.
-		// So we need to do all the needed change here and finish the job.
-		// if args.SkipRowReorg {
-		// 	if job.MultiSchemaInfo == nil {
-		// 		oldCol.FieldType = changingCol.FieldType
-		// 		oldCol.DelFlag(mysql.PreventNullInsertFlag)
-		// 		oldCol.DelFlag(mysql.PreventTruncateFlag)
-		// 		removeOldObjects(tblInfo, changingCol, changingIdxs)
-
-		// 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		// 		if err != nil {
-		// 			return ver, errors.Trace(err)
-		// 		}
-
-		// 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		// 		args.IndexIDs = args.RedundantIdxs
-		// 		args.PartitionIDs = getPartitionIDs(tblInfo)
-		// 		job.FillFinishedArgs(args)
-		// 		job.SchemaState = model.StatePublic
-		// 		return ver, errors.Trace(err)
-		// 	} else if job.MultiSchemaInfo.Revertible {
-		// 		// Rollback index changes here
-		// 		for _, idx := range changingIdxs {
-		// 			if !isFromPreviousMultiSchemaChange(idx, changingCol, oldCol) {
-		// 				args.RedundantIdxs = append(args.RedundantIdxs, idx.ID)
-		// 				removeOldIndexes(tblInfo, idx)
-		// 			}
-		// 		}
-		// 		if ver, err := updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true); err != nil {
-		// 			return ver, errors.Trace(err)
-		// 		}
-		// 		job.FillArgs(args)
-		// 		job.MarkNonRevertible()
-		// 		return ver, errors.Trace(err)
-
-		// 	}
-
-		// 	oldCol.FieldType = changingCol.FieldType
-		// 	oldCol.DelFlag(mysql.PreventNullInsertFlag)
-		// 	oldCol.DelFlag(mysql.PreventTruncateFlag)
-		// 	removeOldObjects(tblInfo, changingCol, nil)
-		// 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		// 	if err != nil {
-		// 		return ver, errors.Trace(err)
-		// 	}
-
-		// 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		// 	args.IndexIDs = args.RedundantIdxs
-		// 	args.PartitionIDs = getPartitionIDs(tblInfo)
-		// 	job.FillFinishedArgs(args)
-		// 	job.SchemaState = model.StatePublic
-		// 	return ver, errors.Trace(err)
-		// }
-
 		reorgElements := BuildElements(changingCol, changingIdxs, args.SkipRowReorg)
 
 		var done bool
@@ -744,14 +690,14 @@ func (w *worker) doModifyColumnTypeWithReorg(
 
 		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		if tblInfo.TTLInfo != nil {
-			updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, newColName)
+			updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, colName)
 		}
 		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
 
 		updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
 		updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
-		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, newColName)
+		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
 		moveChangingColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
 		moveOldColumnInfo(tblInfo, oldCol)
 		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
@@ -786,7 +732,9 @@ func (w *worker) doModifyColumnTypeWithReorg(
 			}
 			// Finish this job.
 			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-			args.IndexIDs = removedIdxIDs
+			// Refactor the job args to add the old index ids into delete range table.
+			rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
+			args.IndexIDs = rmIdxs
 			args.PartitionIDs = getPartitionIDs(tblInfo)
 			job.FillFinishedArgs(args)
 		default:

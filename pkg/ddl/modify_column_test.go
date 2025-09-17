@@ -592,7 +592,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	tk.MustExec("alter table t modify column val0 varchar(8) not null;")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
-		"2 2 2 b",
-		"3 3 3 c",
-		"4 4 4 d"))
+		"2 2 b",
+		"3 3 c",
+		"4 4 d"))
 }
