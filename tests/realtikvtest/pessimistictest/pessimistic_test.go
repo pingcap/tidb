@@ -3721,7 +3721,7 @@ func TestMaxExecutionTimeWithSelectForUpdate(t *testing.T) {
 		"Expected max_execution_time error, but got: %v", err)
 
 	require.Greater(t, elapsed, 2340*time.Millisecond, "Query should take more than 2 seconds due to max_execution_time, but took %v", elapsed)
-	require.Less(t, elapsed, 4*time.Second, "Query should timeout within 5 seconds due to max_execution_time, but took %v", elapsed)
+	require.Less(t, elapsed, 4*time.Second, "Query should timeout within 4 seconds due to max_execution_time, but took %v", elapsed)
 
 	tk2.MustExec("rollback")
 	tk1.MustExec("rollback")
