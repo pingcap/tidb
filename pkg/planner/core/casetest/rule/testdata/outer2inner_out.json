@@ -314,16 +314,17 @@
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo",
-          "└─HashAgg(Probe) 63872064.00 root  group by:test.dd.col_blob_key, funcs:firstrow(test.dd.col_blob_key)->test.dd.col_blob_key",
-          "  └─HashJoin 99800100.00 root  inner join, equal:[eq(Column#21, Column#20)]",
-          "    ├─Projection(Build) 79920000.00 root  cast(test.d.col_date, double BINARY)->Column#20",
-          "    │ └─TableReader 79920000.00 root  data:Selection",
-          "    │   └─Selection 79920000.00 cop[tikv]  gt(test.dd.col_int_key, 6)",
-          "    │     └─TableFullScan 99900000.00 cop[tikv] table:innrcte keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 79840080.00 root  test.dd.col_blob_key, cast(test.dd.pk, double BINARY)->Column#21",
-          "      └─TableReader 79840080.00 root  data:Selection",
-          "        └─Selection 79840080.00 cop[tikv]  gt(test.dd.col_int_key, 6), not(isnull(test.dd.col_blob_key))",
-          "          └─TableFullScan 99900000.00 cop[tikv] table:innr1 keep order:false, stats:pseudo"
+          "└─HashAgg(Probe) 51148800.00 root  group by:test.dd.col_blob_key, funcs:firstrow(test.dd.col_blob_key)->test.dd.col_blob_key",
+          "  └─Selection 79920000.00 root  not(isnull(test.dd.col_blob_key))",
+          "    └─HashJoin 99900000.00 root  left outer join, left side:Projection, equal:[eq(Column#20, Column#21)]",
+          "      ├─Projection(Build) 79920000.00 root  cast(test.d.col_date, double BINARY)->Column#20",
+          "      │ └─TableReader 79920000.00 root  data:Selection",
+          "      │   └─Selection 79920000.00 cop[tikv]  gt(test.dd.col_int_key, 6)",
+          "      │     └─TableFullScan 99900000.00 cop[tikv] table:innrcte keep order:false, stats:pseudo",
+          "      └─Projection(Probe) 79920000.00 root  test.dd.col_blob_key, cast(test.dd.pk, double BINARY)->Column#21",
+          "        └─TableReader 79920000.00 root  data:Selection",
+          "          └─Selection 79920000.00 cop[tikv]  gt(test.dd.col_int_key, 6)",
+          "            └─TableFullScan 99900000.00 cop[tikv] table:innr1 keep order:false, stats:pseudo"
         ]
       },
       {

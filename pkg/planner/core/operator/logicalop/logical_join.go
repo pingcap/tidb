@@ -784,7 +784,7 @@ func extractNotNullColumn(e expression.Expression) (*expression.Column, bool) {
 func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) []expression.Expression {
 	sch := child.Schema()
 
-	// 1) split into inSchema and crossScopeEq (保持你的原逻辑)
+	// 1) Split predicates into inSchema and crossScopeEq
 	inSchema := make([]expression.Expression, 0, len(combined))
 	crossScopeEq := make([]expression.Expression, 0, 4)
 	for _, e := range combined {
@@ -813,7 +813,7 @@ func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) [
 		}
 	}
 
-	// 2) Outer-join child: gate NOT-NULL across the nullable side using whitelist (保持你的原逻辑)
+	// 2) Outer-join child: gate NOT-NULL across the nullable side using whitelist
 	if j, ok := child.(*LogicalJoin); ok && j.JoinType.IsOuterJoin() {
 		var nullSide *expression.Schema
 		switch j.JoinType {
@@ -823,7 +823,7 @@ func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) [
 			nullSide = j.Children()[0].Schema()
 		}
 
-		// build whitelist of child-side columns that appear in parent EQ/NullEQ (保持你的原逻辑)
+		// build whitelist of child-side columns that appear in parent EQ/NullEQ
 		eqColsInChild := intset.NewFastIntSet()
 		for _, e := range crossScopeEq {
 			sf := e.(*expression.ScalarFunction)
@@ -856,7 +856,7 @@ func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) [
 		// IMPORTANT:
 		// Forward cross-scope EQ only if `child` is itself a join (so deeper levels can build their whitelist).
 		// If `child` is a leaf, they are useless — drop them to avoid extra scanning.
-		return append(keep, crossScopeEq...) // child 在这个分支里必定是 *LogicalJoin
+		return append(keep, crossScopeEq...)
 	}
 
 	// 3) Non-outer-join child:
