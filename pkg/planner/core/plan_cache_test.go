@@ -353,9 +353,9 @@ func TestIssue40093(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (a int, b int, key(b, a))")
-	tk.MustExec("prepare st from 'select * from t1 left join t2 on t1.a=t2.a where t2.b in (?)'")
-	tk.MustExec("set @b=1")
-	tk.MustExec("execute st using @b")
+	tk.MustExec("prepare st from 'select * from t1 left join t2 on t1.a=t2.a where t2.b in (?,?)'")
+	tk.MustExec("set @b=1, @c=2")
+	tk.MustExec("execute st using @b, @c")
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*sessmgr.ProcessInfo{tkProcess}
@@ -372,9 +372,14 @@ func TestIssue40093(t *testing.T) {
 			{"      └─TableFullScan_32"},
 		})
 
-	tk.MustExec("execute st using @b")
-	tk.MustExec("execute st using @b")
+	tk.MustExec("execute st using @b, @c")
+	tk.MustExec("execute st using @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @b=1, @c=null")
+	tk.MustExec("execute st using @b, @c")
+	tk.MustExec("execute st using @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
 }
 
 func TestIssue38205(t *testing.T) {
