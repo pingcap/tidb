@@ -1643,6 +1643,9 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		},
 	}
 
+	tidbReadStalenessMethod := staleReadMethods[0]
+	otherStaleReadMethods := staleReadMethods[1:]
+
 	replicaReadSettings := []string{
 		"leader",
 		"follower",
@@ -1695,30 +1698,45 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		*/
 	}
 
-	// Test all combinations
+	// Run tidb_read_staleness combinations first to minimize elapsed time from setup.
 	for _, label := range labelSettings {
-		t.Run(label.name, func(t *testing.T) {
-			// Update global config with current label setting
+		t.Run(label.name+"/tidb_read_staleness", func(t *testing.T) {
 			conf := *config.GetGlobalConfig()
 			conf.Labels = label.labels
 			config.StoreGlobalConfig(&conf)
 
 			for _, replicaRead := range replicaReadSettings {
 				t.Run(replicaRead, func(t *testing.T) {
-					// Set replica read mode
+					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+					method := tidbReadStalenessMethod
+					t.Run(method.name, func(t *testing.T) {
+						defer method.clean()
+						method.setup()
+						result := tk.MustQuery(method.query)
+						result.Check(testkit.Rows(method.expect...))
+					})
+				})
+			}
+		})
+	}
+
+	// Run remaining stale read methods and transaction mode combinations afterwards.
+	for _, label := range labelSettings {
+		t.Run(label.name+"/others", func(t *testing.T) {
+			conf := *config.GetGlobalConfig()
+			conf.Labels = label.labels
+			config.StoreGlobalConfig(&conf)
+
+			for _, replicaRead := range replicaReadSettings {
+				t.Run(replicaRead, func(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
 
-					for _, method := range staleReadMethods {
+					for _, method := range otherStaleReadMethods {
 						t.Run(method.name, func(t *testing.T) {
-							// Setup stale read method
 							defer method.clean()
 							method.setup()
-
-							// Execute query and verify results
 							result := tk.MustQuery(method.query)
 							result.Check(testkit.Rows(method.expect...))
-
-							// Cleanup
 						})
 					}
 
