@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	kvutil "github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -86,7 +85,6 @@ type jobContext struct {
 	ctx               context.Context
 	infoCache         *infoschema.InfoCache
 	autoidCli         *autoid.ClientDiscover
-	pdCli             pd.Client
 	store             kv.Storage
 	schemaVerSyncer   schemaver.Syncer
 	eventPublishStore notifier.Store

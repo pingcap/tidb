@@ -65,9 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -360,7 +357,6 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
-	pdCli        pd.Client
 	autoidCli    *autoid.ClientDiscover
 	schemaLoader SchemaLoader
 
@@ -705,7 +701,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		tableLockCkr:      deadLockCkr,
 		etcdCli:           opt.EtcdCli,
 		autoidCli:         opt.AutoIDClient,
-		pdCli:             opt.Store.(tikv.Storage).GetRegionCache().PDClient().WithCallerComponent(caller.Ddl),
 		schemaLoader:      opt.SchemaLoader,
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)

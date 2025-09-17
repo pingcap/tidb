@@ -63,9 +63,11 @@ import (
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -424,7 +426,8 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 	})
 
 	ctx := context.Background()
-	stores, err := jobCtx.pdCli.GetAllStores(ctx)
+	pdCli := jobCtx.store.(tikv.Storage).GetRegionCache().PDClient().WithCallerComponent(caller.Ddl)
+	stores, err := pdCli.GetAllStores(ctx)
 	if err != nil {
 		return needWait, errors.Trace(err)
 	}
@@ -440,7 +443,7 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 	}
 	for _, pDef := range addingDefinitions {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pDef.ID)
-		regions, err := jobCtx.pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
+		regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
 		if err != nil {
 			return needWait, errors.Trace(err)
 		}
