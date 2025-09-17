@@ -255,13 +255,8 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 			eqConds = append(eqConds, newSf)
 		}
 	}
-<<<<<<< HEAD
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin)
-	_, err := join.RecursiveDeriveStats(nil)
-=======
 	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin, opt)
-	_, _, err := join.RecursiveDeriveStats(nil)
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+	_, err := join.RecursiveDeriveStats(nil)
 	return join, err
 }
 

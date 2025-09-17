@@ -121,18 +121,9 @@ func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, 
 		return predicates, p.self
 	}
 	child := p.children[0]
-<<<<<<< HEAD
 	rest, newChild := child.PredicatePushDown(predicates, opt)
-	addSelection(p.self, newChild, rest, 0, opt)
-	return nil, p.self
-=======
-	rest, newChild, err := child.PredicatePushDown(predicates, opt)
-	if err != nil {
-		return nil, p.self, err
-	}
 	AddSelection(p.self, newChild, rest, 0, opt)
-	return nil, p.self, nil
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+	return nil, p.self
 }
 
 // PruneColumns implements LogicalPlan.<2nd> interface.

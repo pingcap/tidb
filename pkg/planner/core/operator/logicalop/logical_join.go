@@ -289,23 +289,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	leftChild := children[0]
 	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
 	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
-<<<<<<< HEAD
 	leftRet, lCh := leftChild.PredicatePushDown(leftCond, opt)
 	rightRet, rCh := rightChild.PredicatePushDown(rightCond, opt)
-	addSelection(p, lCh, leftRet, 0, opt)
-	addSelection(p, rCh, rightRet, 1, opt)
-=======
-	leftRet, lCh, err := leftChild.PredicatePushDown(leftCond, opt)
-	if err != nil {
-		return nil, nil, err
-	}
-	rightRet, rCh, err := rightChild.PredicatePushDown(rightCond, opt)
-	if err != nil {
-		return nil, nil, err
-	}
 	AddSelection(p, lCh, leftRet, 0, opt)
 	AddSelection(p, rCh, rightRet, 1, opt)
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	return ret, p.Self()
