@@ -2378,7 +2378,6 @@ func TestCanGenerateTiFlashCopWithKeepOrer(t *testing.T) {
 
 	}
 
-	if !found {
-		t.Fatalf("expected at least one plan contains TableRangeScan, cop[tiflash], and keep order:true")
-	}
+	// expected at least one plan contains TableRangeScan, cop[tiflash], and keep order:true"
+	require.True(t, found)
 }
