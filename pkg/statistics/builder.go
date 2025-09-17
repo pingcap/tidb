@@ -359,14 +359,9 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
-<<<<<<< HEAD
-		// case 2-1, do not add a count of 1 if we're sampling
-		if curCnt == 1 && sampleFactor > 1 && allowPruning {
-=======
 		sampleNDV++
 		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
 		if curCnt == 1 && allowPruning && (len(topNList) >= (numTopN/10) || sampleFactor > 1) {
->>>>>>> 39c35fc9d96 (planner: Use NDV from the sample for TopN/Buckets (#62094))
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -444,13 +439,9 @@ func BuildHistAndTopN(
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
 
-<<<<<<< HEAD
-	// Step2: exclude topn from samples
-=======
 	haveAllNDV := sampleNDV == lenTopN && lenTopN > 0
 
 	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
->>>>>>> 39c35fc9d96 (planner: Use NDV from the sample for TopN/Buckets (#62094))
 	lenSamples := int64(len(samples))
 	if lenTopN > 0 && !haveAllNDV && lenSamples > 0 && numBuckets > 0 {
 		for i := int64(0); i < lenSamples; i++ {
@@ -507,13 +498,8 @@ func BuildHistAndTopN(
 		topNTotalCount += topn.TopN[i].Count
 	}
 
-<<<<<<< HEAD
-	if uint64(count) <= topNTotalCount || hg.NDV <= lenTopN {
-		// If we've collected everything  - don't create any buckets
-=======
 	if haveAllNDV || numBuckets <= 0 {
 		// If we've collected everything or numBuckets == 0 - don't create any buckets
->>>>>>> 39c35fc9d96 (planner: Use NDV from the sample for TopN/Buckets (#62094))
 		return hg, topn, nil
 	}
 
