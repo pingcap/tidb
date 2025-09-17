@@ -172,19 +172,21 @@ func (ran *Range) IsFullRange(unsignedIntHandle bool) bool {
 		if len(ran.LowVal) != 1 || len(ran.HighVal) != 1 {
 			return false
 		}
-		lowValRawString := formatDatum(ran.LowVal[0], true)
-		highValRawString := formatDatum(ran.HighVal[0], false)
-		return lowValRawString == "0" && highValRawString == "+inf"
+		return isBoundaryValue(ran.LowVal[0], true) &&
+			isBoundaryValue(ran.HighVal[0], false)
 	}
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
 	for i := range ran.LowVal {
-		lowValRawString := formatDatum(ran.LowVal[i], true)
-		highValRawString := formatDatum(ran.HighVal[i], false)
-		if ("-inf" != lowValRawString && "NULL" != lowValRawString) ||
-			("+inf" != highValRawString && "NULL" != highValRawString) ||
-			("NULL" == lowValRawString && "NULL" == highValRawString) {
+		leftIsBoundary := isBoundaryValue(ran.LowVal[i], true)
+		leftIsNull := ran.LowVal[i].IsNull()
+		rightIsBoundary := isBoundaryValue(ran.HighVal[i], false)
+		rightIsNull := ran.HighVal[i].IsNull()
+		// treat [NULL, +inf), (-inf, NULL] as full range
+		if (!leftIsBoundary && !leftIsNull) ||
+			(!rightIsBoundary && !rightIsNull) ||
+			(leftIsNull || rightIsNull) {
 			return false
 		}
 	}
@@ -296,6 +298,27 @@ func (ran *Range) MemUsage() (sum int64) {
 	}
 	// We ignore size of collator currently.
 	return sum
+}
+
+func isBoundaryValue(d types.Datum, isLeftSide bool) bool {
+	isRightSide := !isLeftSide
+	switch d.Kind() {
+	case types.KindNull:
+		return false
+	case types.KindMinNotNull:
+		return isLeftSide
+	case types.KindMaxValue:
+		return isRightSide
+	case types.KindInt64:
+		v := d.GetInt64()
+		return (v == math.MinInt64 && isLeftSide) || (v == math.MaxInt64 && isRightSide)
+	case types.KindUint64:
+		v := d.GetUint64()
+		return (v == 0 && isLeftSide) || (v == math.MaxUint64 && isRightSide)
+	default:
+		// for other types, no concept of boundary value
+		return false
+	}
 }
 
 func formatDatum(d types.Datum, isLeftSide bool) string {
