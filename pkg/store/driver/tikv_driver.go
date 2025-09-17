@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -119,6 +120,29 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	for _, f := range options {
 		f(d)
 	}
+}
+
+// GetPDClient is used to get pd client by etcd addrs and keyspace name.
+func GetPDClient(keyspaceName string, pdEtcdAddrs []string) (pd.Client, error) {
+	cfg := config.GetGlobalConfig()
+	pdCli, err := pd.NewClientWithAPIContext(context.Background(), keyspace.BuildAPIContext(keyspaceName), pdEtcdAddrs,
+		pd.SecurityOption{
+			CAPath:   cfg.Security.ClusterSSLCA,
+			CertPath: cfg.Security.ClusterSSLCert,
+			KeyPath:  cfg.Security.ClusterSSLKey,
+		},
+		pd.WithGRPCDialOptions(
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+			}),
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
+			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(256*1024*1024)),
+		),
+		pd.WithCustomTimeoutOption(time.Duration(cfg.PDClient.PDServerTimeout)*time.Second),
+		pd.WithForwardingOption(cfg.EnableForwarding),
+	)
+	return pdCli, err
 }
 
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig

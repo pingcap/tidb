@@ -31,6 +31,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -64,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/cgmon"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
@@ -91,8 +93,10 @@ import (
 	repository "github.com/pingcap/tidb/pkg/util/workloadrepo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
@@ -147,10 +151,12 @@ const (
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 	nmKeyspaceName                = "keyspace-name"
 	nmTiDBServiceScope            = "tidb-service-scope"
-
 	nmStandby           = "standby"
 	nmActivationTimeout = "activation-timeout"
 	nmMaxIdleSeconds    = "max-idle-seconds"
+
+	// Serverless flag names
+	nmWaitKeyspaceEnabled = "wait-keyspace-enabled"
 )
 
 const (
@@ -224,6 +230,9 @@ var (
 	standbyMode       *bool
 	activationTimeout *uint
 	maxIdleSeconds    *uint
+
+	// Serverless flags
+	waitKeyspaceEnabled *bool
 )
 
 func initFlagSet() *flag.FlagSet {
@@ -291,6 +300,9 @@ func initFlagSet() *flag.FlagSet {
 	standbyMode = flagBoolean(fset, nmStandby, false, "start tidb-server as standby")
 	activationTimeout = fset.Uint(nmActivationTimeout, 0, "max time in second allowed for tidb to activate from standby, 0 means no limit")
 	maxIdleSeconds = fset.Uint(nmMaxIdleSeconds, 0, "max idle seconds for a connection, 0 means no limit")
+
+	// Serverless flags
+	waitKeyspaceEnabled = flagBoolean(fset, nmWaitKeyspaceEnabled, true, "wait for keyspace to become enabled during bootstrap")
 
 	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
@@ -363,6 +375,12 @@ func main() {
 	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
 
+	if _, pdCli, err := getServerlessInfo(); err != nil {
+		terror.MustNil(err)
+	} else if pdCli != nil {
+		pdCli.Close()
+	}
+
 	if vardef.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err = disk.InitializeTempDir()
@@ -421,7 +439,6 @@ func main() {
 	printInfo()
 	setupMetrics()
 
-	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
@@ -466,6 +483,94 @@ func exitCodeForSignal(sig os.Signal) int {
 		return exitCodeInt
 	}
 	return exitCodeOK
+}
+
+const (
+	waitKeyspaceEnabledTimeout          = 60 * time.Second
+	waitKeyspaceEnabledRetryInterval    = 50 * time.Millisecond
+	waitKeyspaceEnabledRetryMaxInterval = 3 * time.Second
+)
+
+func getServerlessInfo() (*keyspacepb.KeyspaceMeta, pd.Client, error) {
+	// load keyspace and set metric labels.
+	cfg := config.GetGlobalConfig()
+	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || cfg.Store != config.StoreTypeTiKV {
+		return nil, nil, nil
+	}
+
+	// TODO: activateRequest logic
+	//activateRequest := standby.GetActivateRequest()
+	//if activateRequest.KeyspaceID != "" {
+	//	metrics.SetConstLabels(
+	//		"keyspace_id", activateRequest.KeyspaceID,
+	//		"tenant_id", activateRequest.TenantID,
+	//		"cluster_id", activateRequest.ClusterID,
+	//		"project_id", activateRequest.ProjectID)
+	//}
+
+	log.Info("serverless cluster info loading...", zap.Any("keyspace", cfg.KeyspaceName))
+	pdEtcdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	pdCli, err := driver.GetPDClient(cfg.KeyspaceName, pdEtcdAddrs)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			pdCli.Close()
+		}
+	}()
+
+	start := time.Now()
+	retry := 0
+	// Backoff in case there are many TiDBs activing at the same time.
+	backoffer := backoff.NewExponential(waitKeyspaceEnabledRetryInterval, 2, waitKeyspaceEnabledRetryMaxInterval)
+	var keyspaceMeta *keyspacepb.KeyspaceMeta
+	for {
+		keyspaceMeta, err = pdCli.LoadKeyspace(context.Background(), cfg.KeyspaceName)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if !*waitKeyspaceEnabled || keyspaceMeta.State == keyspacepb.KeyspaceState_ENABLED {
+			break
+		}
+
+		if time.Since(start) >= waitKeyspaceEnabledTimeout {
+			return nil, nil, errors.New("keyspace is not enabled")
+		}
+		if retry%5 == 0 {
+			log.Info("waiting for keyspace to be enabled, retrying")
+		}
+		time.Sleep(backoffer.Backoff(retry))
+		retry += 1
+	}
+
+	// TODO: metric labels
+	//metrics.SetServerlessLabels(keyspaceMeta.Config[serverless.LabelTenantID],
+	//	keyspaceMeta.Config[serverless.LabelProjectID],
+	//	keyspaceMeta.Config[serverless.LabelClusterID])
+	//log.Info("serverless cluster info loaded",
+	//	zap.String("tenant-id", metrics.ServerlessTenantID),
+	//	zap.String("project-id", metrics.ServerlessProjectID),
+	//	zap.String("cluster-id", metrics.ServerlessClusterID),
+	//	zap.Stringer("keyspace-meta", keyspaceMeta),
+	// )
+
+	log.Info("serverless cluster info loaded",
+		zap.Stringer("keyspace-meta", keyspaceMeta),
+	)
+
+	//  TODO(ystaticy): check keyspace config migration status
+	//if isInETCDMigration, exists := keyspaceMeta.Config[keyspace.KeyspaceMetaConfigIsInETCDMigration]; exists {
+	//	if isInETCDMigration == "true" {
+	//		return nil, nil, keyspace.ErrMigrationEtcd
+	//	}
+	//}
+
+	return keyspaceMeta, pdCli, nil
 }
 
 func syncLog() error {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
@@ -754,6 +755,12 @@ type Driver interface {
 	// Open returns a new Storage.
 	// The path is the string for storage specific format.
 	Open(path string) (Storage, error)
+}
+
+// DriverOpenOption is the option for open driver.
+type DriverOpenOption struct {
+	KeyspaceMeta *keyspacepb.KeyspaceMeta
+	PdCli        pd.Client
 }
 
 // Storage defines the interface for storage.
