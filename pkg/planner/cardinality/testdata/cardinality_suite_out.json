@@ -4233,8 +4233,8 @@
       {
         "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1",
         "Result": [
-          "IndexReader 20.32 root  index:IndexRangeScan",
-          "└─IndexRangeScan 20.32 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
+          "IndexReader 18.29 root  index:IndexRangeScan",
+          "└─IndexRangeScan 18.29 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
         ]
       }
     ]

@@ -718,3 +718,43 @@ func IsAccessDeniedNeedConfigPrivilegeError(err error) bool {
 	e, ok := err.(*mysql.MySQLError)
 	return ok && e.Number == errno.ErrSpecificAccessDenied && strings.Contains(e.Message, "CONFIG")
 }
+
+// SkipReadRowCount determines whether the target table requires a precise row count.
+// If any unique index/clustered primary contains columns with auto_random/auto_increment,
+// we must read the actual row count to prevent generating duplicate keys. Otherwise,
+// we can skip reading it to improve performance.
+func SkipReadRowCount(tblInfo *model.TableInfo) bool {
+	// Some tests may not set the table info.
+	if tblInfo == nil {
+		return false
+	}
+
+	if TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
+		return false
+	}
+
+	for _, idx := range tblInfo.Indices {
+		if !idx.Unique || !idx.Primary {
+			continue
+		}
+		for _, col := range idx.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			if tmysql.HasAutoIncrementFlag(colInfo.GetFlag()) {
+				return false
+			}
+		}
+	}
+
+	for _, col := range tblInfo.Columns {
+		if tmysql.HasPriKeyFlag(col.GetFlag()) && tmysql.HasAutoIncrementFlag(col.GetFlag()) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ChunkFlushStatus is the status of a chunk flush.
+type ChunkFlushStatus interface {
+	Flushed() bool
+}

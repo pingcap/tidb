@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
@@ -86,20 +86,20 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 }
 
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType logicalop.JoinType, join base.PhysicalPlan) *expression.Schema {
+func BuildPhysicalJoinSchema(joinType base.JoinType, join base.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
+	case base.SemiJoin, base.AntiSemiJoin:
 		return leftSchema.Clone()
-	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 		newSchema := leftSchema.Clone()
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
 	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
-	if joinType == logicalop.LeftOuterJoin {
+	if joinType == base.LeftOuterJoin {
 		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
-	} else if joinType == logicalop.RightOuterJoin {
+	} else if joinType == base.RightOuterJoin {
 		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
 	}
 	return newSchema
@@ -115,11 +115,11 @@ func GetStatsInfo(i any) map[string]uint64 {
 	p := i.(base.Plan)
 	var physicalPlan base.PhysicalPlan
 	switch x := p.(type) {
-	case *Insert:
+	case *physicalop.Insert:
 		physicalPlan = x.SelectPlan
-	case *Update:
+	case *physicalop.Update:
 		physicalPlan = x.SelectPlan
-	case *Delete:
+	case *physicalop.Delete:
 		physicalPlan = x.SelectPlan
 	case base.PhysicalPlan:
 		physicalPlan = x
@@ -130,7 +130,7 @@ func GetStatsInfo(i any) map[string]uint64 {
 	}
 
 	statsInfos := make(map[string]uint64)
-	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
+	statsInfos = physicalop.CollectPlanStatsVersion(physicalPlan, statsInfos)
 	return statsInfos
 }
 
