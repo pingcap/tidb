@@ -414,6 +414,9 @@ type baseSingleGroupJoinOrderSolver struct {
 // generateLeadingPlan builds a join plan tree from the given LEADING hint expression.
 // It returns true if successful, the built plan, and the remaining join groups.
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingPlan(curJoinGroup []base.LogicalPlan, leadingHintTables []hint.HintedTable, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (bool, base.LogicalPlan, []base.LogicalPlan) {
+	if len(leadingHintTables) == 0 {
+		return false, nil, curJoinGroup
+	}
 	leadingPlans := make([]base.LogicalPlan, 0, len(curJoinGroup))
 	remainingPlans := make([]base.LogicalPlan, len(curJoinGroup))
 	copy(remainingPlans, curJoinGroup)
@@ -561,19 +564,18 @@ func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expre
 func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression) {
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
-
 	var (
-		otherConds   []expression.Expression
-		leftConds    []expression.Expression
-		rightConds   []expression.Expression
+		otherConds []expression.Expression
+		leftConds  []expression.Expression
+		rightConds []expression.Expression
+
+		// for outer bind conditions
 		obOtherConds []expression.Expression
 		obLeftConds  []expression.Expression
 		obRightConds []expression.Expression
 	)
 	mergedSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 
-	// Filter out conditions that belong to the new join
-	// This logic correctly partitions the conditions
 	remainOtherConds, leftConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, leftPlan.Schema()) && !expression.ExprFromSchema(expr, rightPlan.Schema())
 	})
@@ -585,16 +587,35 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.Logic
 	})
 
 	if joinType.JoinType == base.LeftOuterJoin || joinType.JoinType == base.RightOuterJoin || joinType.JoinType == base.LeftOuterSemiJoin || joinType.JoinType == base.AntiLeftOuterSemiJoin {
-		// ... (outer join logic remains unchanged)
-	} else {
-		// For inner joins, append all conditions that apply to the current schema.
-		otherConds = append(otherConds, leftConds...)
-		otherConds = append(otherConds, rightConds...)
+		// the original outer join's other conditions has been bound to the outer join Edge,
+		// these remained other condition here shouldn't be appended to it because on-mismatch
+		// logic will produce more append-null rows which is banned in original semantic.
+		remainOtherConds = append(remainOtherConds, otherConds...) // nozero
+		remainOtherConds = append(remainOtherConds, leftConds...)  // nozero
+		remainOtherConds = append(remainOtherConds, rightConds...) // nozero
+		otherConds = otherConds[:0]
+		leftConds = leftConds[:0]
+		rightConds = rightConds[:0]
 	}
-
-	newJoin := s.newJoinWithEdges(leftPlan, rightPlan, eqEdges,
-		append(otherConds, obOtherConds...), append(leftConds, obLeftConds...), append(rightConds, obRightConds...), joinType.JoinType, opt)
-	return newJoin, remainOtherConds
+	if len(joinType.outerBindCondition) > 0 {
+		remainOBOtherConds := make([]expression.Expression, len(joinType.outerBindCondition))
+		copy(remainOBOtherConds, joinType.outerBindCondition)
+		remainOBOtherConds, obLeftConds = expression.FilterOutInPlace(remainOBOtherConds, func(expr expression.Expression) bool {
+			return expression.ExprFromSchema(expr, leftPlan.Schema()) && !expression.ExprFromSchema(expr, rightPlan.Schema())
+		})
+		remainOBOtherConds, obRightConds = expression.FilterOutInPlace(remainOBOtherConds, func(expr expression.Expression) bool {
+			return expression.ExprFromSchema(expr, rightPlan.Schema()) && !expression.ExprFromSchema(expr, leftPlan.Schema())
+		})
+		// _ here make the linter happy.
+		_, obOtherConds = expression.FilterOutInPlace(remainOBOtherConds, func(expr expression.Expression) bool {
+			return expression.ExprFromSchema(expr, mergedSchema)
+		})
+		// case like: (A * B) left outer join C on (A.a = C.a && B.b > 0) will remain B.b > 0 in remainOBOtherConds (while this case
+		// has been forbidden by: filters of the outer join is related with multiple leaves of the outer join side in #34603)
+		// so noway here we got remainOBOtherConds remained.
+	}
+	return s.newJoinWithEdges(leftPlan, rightPlan, eqEdges,
+		append(otherConds, obOtherConds...), append(leftConds, obLeftConds...), append(rightConds, obRightConds...), joinType.JoinType, opt), remainOtherConds
 }
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
