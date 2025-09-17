@@ -156,26 +156,10 @@ type Meter struct {
 // NewMeter creates a new Meter instance.
 func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	logger := logutil.BgLogger().With(zap.String("component", "meter"))
-	if len(cfg.Bucket) == 0 {
+	if len(cfg.Type) == 0 || len(cfg.Bucket) == 0 {
 		return nil, nil
 	}
-	if cfg.AWS == nil {
-		return nil, nil
-	}
-	providerType := storage.ProviderTypeS3
-	if len(cfg.Type) > 0 {
-		providerType = cfg.Type
-	}
-
-	s3Config := &storage.ProviderConfig{
-		Type:   providerType,
-		Bucket: cfg.Bucket,
-		Region: cfg.Region,
-		Prefix: cfg.Prefix,
-		AWS: &storage.AWSConfig{
-			AssumeRoleARN: cfg.AWS.AssumeRoleARN,
-		},
-	}
+	s3Config := cfg.ToProviderConfig()
 	provider, err := storage.NewObjectStorageProvider(s3Config)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create storage provider")
