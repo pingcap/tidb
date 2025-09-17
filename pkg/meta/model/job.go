@@ -116,7 +116,8 @@ const (
 	ActionModifyEngineAttribute  ActionType = 74
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
-	ActionAddFullTextIndex       ActionType = 77
+	ActionModifySchemaReadOnly   ActionType = 77 // reserve for database read-only feature
+	ActionAddFullTextIndex       ActionType = 78
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -192,6 +193,7 @@ var ActionMap = map[ActionType]string{
 	ActionModifyEngineAttribute:         "modify engine attribute",
 	ActionAlterTableMode:                "alter table mode",
 	ActionRefreshMeta:                   "refresh meta",
+	ActionModifySchemaReadOnly:          "modify schema read only",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -753,6 +755,10 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StateDeleteOnly ||
 			job.SchemaState == StateDeleteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionModifyColumn:
+		if job.SchemaState == StatePublic {
 			return false
 		}
 	case ActionAddTablePartition:

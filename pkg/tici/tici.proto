@@ -319,10 +319,9 @@ message AddShardResponse {
 
 // CreateIndexRequest is a request to create an index
 message CreateIndexRequest {
-  // Index information
-  IndexInfo index_info = 1;
-  // Table information
-  TableInfo table_info = 2;
+  string database_name = 1;
+  bytes table_info = 2;
+  int64 index_id = 3;
 }
 
 // CreateIndexResponse is a response to the index creation request

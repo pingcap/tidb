@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -313,6 +315,9 @@ func TestGetOracleTime(t *testing.T) {
 }
 
 func TestPrepareGC(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip TestPrepareGC when kernel type is NextGen - test not yet adjusted to support next-gen")
+	}
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error. as we keep adding offset to time oracle,
 	// so we need set a very large lease.
@@ -967,6 +972,9 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip TestLeaderTick when kernel type is NextGen - test not yet adjusted to support next-gen")
+	}
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, time.Hour)
@@ -1255,6 +1263,9 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 }
 
 func TestRunGCJob(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip TestRunGCJob when kernel type is NextGen - test not yet adjusted to support next-gen")
+	}
 	s := createGCWorkerSuite(t)
 
 	txnSafePointSyncWaitTime = 0
@@ -1501,6 +1512,9 @@ func TestGCLabelRules(t *testing.T) {
 }
 
 func TestGCWithPendingTxn(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip TestGCWithPendingTxn when kernel type is NextGen - test not yet adjusted to support next-gen")
+	}
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 30*time.Minute)
 
 	ctx := gcContext()
@@ -1627,6 +1641,9 @@ func TestGCWithPendingTxn2(t *testing.T) {
 }
 
 func TestSkipGCAndOnlyResolveLock(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip TestSkipGCAndOnlyResolveLock when kernel type is NextGen - test not yet adjusted to support next-gen")
+	}
 	// as we are adjusting the base TS, we need a larger schema lease to avoid
 	// the info schema outdated error.
 	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
@@ -1685,7 +1702,7 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)

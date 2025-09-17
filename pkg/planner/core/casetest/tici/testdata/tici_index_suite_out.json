@@ -102,6 +102,16 @@
         "Warn": null
       },
       {
+        "SQL": "explain format='brief' select id from t1 where (not fts_match_word('hello', title)) AND id > 10",
+        "Plan": [
+          "IndexLookUp 3333.33 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:not(istrue_with_null(fts_match_word(\"hello\", test.t1.title))), keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
+          "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
         "Plan": [
           "Projection 8000.00 root  test.t1.id",
@@ -178,7 +188,9 @@
           "└─IndexReader 0.10 root  index:IndexRangeScan",
           "  └─IndexRangeScan 0.10 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
+        ]
       },
       {
         "SQL": "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
