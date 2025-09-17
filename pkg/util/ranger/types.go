@@ -172,16 +172,16 @@ func (ran *Range) IsFullRange(unsignedIntHandle bool) bool {
 		if len(ran.LowVal) != 1 || len(ran.HighVal) != 1 {
 			return false
 		}
-		return isBoundaryValue(ran.LowVal[0], true) &&
-			isBoundaryValue(ran.HighVal[0], false)
+		return isBoundaryValue(ran.LowVal[0], true, true) &&
+			isBoundaryValue(ran.HighVal[0], true, false)
 	}
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
 	for i := range ran.LowVal {
-		leftIsBoundary := isBoundaryValue(ran.LowVal[i], true)
+		leftIsBoundary := isBoundaryValue(ran.LowVal[i], false, true)
 		leftIsNull := ran.LowVal[i].IsNull()
-		rightIsBoundary := isBoundaryValue(ran.HighVal[i], false)
+		rightIsBoundary := isBoundaryValue(ran.HighVal[i], false, false)
 		rightIsNull := ran.HighVal[i].IsNull()
 		// treat [NULL, +inf), (-inf, NULL] as full range
 		if (!leftIsBoundary && !leftIsNull) ||
@@ -300,7 +300,7 @@ func (ran *Range) MemUsage() (sum int64) {
 	return sum
 }
 
-func isBoundaryValue(d types.Datum, isLeftSide bool) bool {
+func isBoundaryValue(d types.Datum, unsignedIntHandle, isLeftSide bool) bool {
 	isRightSide := !isLeftSide
 	switch d.Kind() {
 	case types.KindMinNotNull:
@@ -313,7 +313,7 @@ func isBoundaryValue(d types.Datum, isLeftSide bool) bool {
 			(v == math.MaxInt64 && isRightSide) // +inf
 	case types.KindUint64:
 		v := d.GetUint64()
-		return (v == 0 && isLeftSide) || // 0
+		return (v == 0 && unsignedIntHandle && isLeftSide) || // 0
 			(v == math.MaxUint64 && isRightSide) // +inf
 	default: // for other types, no concept of boundary value
 		return false
