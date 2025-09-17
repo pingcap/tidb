@@ -168,9 +168,15 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	return nil
 }
 
+// Accepted implements Collector.Accepted interface.
+func (s *importStepExecutor) Accepted(bytes int64) {
+	s.summary.Bytes.Add(bytes)
+	metering.NewRecorder(s.store, metering.TaskTypeImportInto, s.taskID).
+		RecordReadDataBytes(uint64(bytes))
+}
+
 // Processed implements Collector.Processed interface.
 func (s *importStepExecutor) Processed(bytes, rowCnt int64) {
-	s.summary.Bytes.Add(bytes)
 	s.summary.RowCnt.Add(rowCnt)
 	metering.NewRecorder(s.store, metering.TaskTypeImportInto, s.taskID).
 		RecordWriteDataBytes(uint64(bytes))

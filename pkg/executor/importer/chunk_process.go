@@ -175,7 +175,7 @@ func newEncodedKVGroupBatch(keyspace []byte, count int) *encodedKVGroupBatch {
 }
 
 // add must be called with `kvs` from the same session for a encodedKVGroupBatch.
-func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
+func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) (kvBytes int64, err error) {
 	for _, pair := range kvs.Pairs {
 		if tablecodec.IsRecordKey(pair.Key) {
 			b.dataKVs = append(b.dataKVs, pair)
@@ -183,7 +183,7 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 		} else {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
-				return errors.Trace(err)
+				return kvBytes, errors.Trace(err)
 			}
 			if len(b.indexKVs[indexID]) == 0 {
 				b.indexKVs[indexID] = make([]common.KvPair, 0, cap(b.dataKVs))
@@ -191,6 +191,7 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
 			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
 		}
+		kvBytes += int64(len(pair.Key) + len(pair.Val))
 	}
 
 	// the related buf is shared, so we only need to record any one of them.
@@ -198,7 +199,7 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 		b.bytesBuf = kvs.BytesBuf
 		b.memBuf = kvs.MemBuf
 	}
-	return nil
+	return kvBytes, nil
 }
 
 // chunkEncoder encodes data from readFn and sends encoded data to sendFn.
@@ -275,6 +276,9 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 				encodedBytesCounter.Add(float64(delta))
 			}
 		}
+		if p.collector != nil {
+			p.collector.Accepted(delta)
+		}
 
 		if metrics != nil {
 			metrics.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
@@ -285,10 +289,13 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.readTotalDur += readDur
 
 		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, rowCount)
+		var totalKVBytes int64
 		for _, kvs := range rowBatch {
-			if err := kvGroupBatch.add(kvs); err != nil {
+			sz, err := kvGroupBatch.add(kvs)
+			if err != nil {
 				return errors.Trace(err)
 			}
+			totalKVBytes += sz
 		}
 
 		p.groupChecksum.Add(kvGroupBatch.groupChecksum)
@@ -298,7 +305,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 
 		if p.collector != nil {
-			p.collector.Processed(delta, int64(rowCount))
+			p.collector.Processed(totalKVBytes, int64(rowCount))
 		}
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should

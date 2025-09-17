@@ -218,7 +218,9 @@ func (m *Meter) StartFlushLoop(ctx context.Context) {
 	// Try our best to flush the final data even after closing.
 	m.flush(ctx, nextTime.Unix())
 	err := m.writer.Close()
-	m.logger.Warn("metering writer closed", zap.Error(err))
+	if err != nil {
+		m.logger.Warn("metering writer closed", zap.Error(err))
+	}
 }
 
 func (m *Meter) flush(ctx context.Context, ts int64) {
