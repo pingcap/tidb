@@ -2375,7 +2375,6 @@ func TestCanGenerateTiFlashCopWithKeepOrer(t *testing.T) {
 			found = true
 			break
 		}
-
 	}
 
 	// expected at least one plan contains TableRangeScan, cop[tiflash], and keep order:true"
