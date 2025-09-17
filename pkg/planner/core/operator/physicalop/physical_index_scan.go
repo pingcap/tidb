@@ -720,7 +720,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	if is.FtsQueryInfo != nil {
-		is.StoreType = kv.TiFlash
+		is.StoreType = kv.TiCI
 	}
 	rowCount := path.CountAfterAccess
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)

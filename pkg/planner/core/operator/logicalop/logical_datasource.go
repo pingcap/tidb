@@ -714,6 +714,8 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		_, ok = matchedFuncs[sf]
 		return ok
 	})
+	// Re-construct the AllConds because column pruning relays on AllConds.
+	ds.AllConds = slices.Clone(ds.PushedDownConds)
 	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFuncs)
 }
 

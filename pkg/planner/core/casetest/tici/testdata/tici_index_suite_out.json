@@ -6,7 +6,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -15,7 +15,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_prefix('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -23,10 +23,8 @@
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "Projection 10000.00 root  test.t1.id",
-          "└─IndexLookUp 1000.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -34,7 +32,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10",
         "Plan": [
           "IndexLookUp 3333.33 root  ",
-          "├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
           "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -44,7 +42,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
         "Plan": [
           "IndexLookUp 2666.67 root  ",
-          "├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─Selection(Probe) 2666.67 cop[tikv]  gt(length(test.t1.title), 1), gt(test.t1.id, 10)",
           "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -55,7 +53,7 @@
         "Plan": [
           "Projection 2666.67 root  test.t1.title",
           "└─IndexLookUp 2666.67 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "  └─Selection(Probe) 2666.67 cop[tikv]  gt(length(test.t1.title), 1), gt(test.t1.id, 10)",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -64,54 +62,52 @@
       {
         "SQL": "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
-          "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "  └─HashAgg(Probe) 1.00 cop[tikv]  funcs:count(test.t1.id)->Column#6",
-          "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(test.t1.id)->Column#5",
+          "└─IndexReader 1000.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now",
+          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now"
+        ]
       },
       {
         "SQL": "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "  └─HashAgg(Probe) 1.00 cop[tikv]  funcs:count(1)->Column#7",
-          "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(1)->Column#5",
+          "└─IndexReader 1000.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now",
+          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now"
+        ]
       },
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "Projection 10000.00 root  test.t1.id",
-          "└─IndexLookUp 1000.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10",
         "Plan": [
-          "Projection 3333.33 root  test.t1.id",
-          "└─IndexLookUp 3333.33 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
-          "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "IndexLookUp 3333.33 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
+          "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where (not fts_match_word('hello', title)) AND id > 10",
         "Plan": [
-          "Projection 3333.33 root  test.t1.id",
-          "└─IndexLookUp 3333.33 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:not(istrue_with_null(fts_match_word(\"hello\", test.t1.title))), keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
-          "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "IndexLookUp 3333.33 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:not(istrue_with_null(fts_match_word(\"hello\", test.t1.title))), keep order:false, stats:pseudo",
+          "└─Selection(Probe) 3333.33 cop[tikv]  gt(test.t1.id, 10)",
+          "  └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -120,7 +116,7 @@
         "Plan": [
           "Projection 8000.00 root  test.t1.id",
           "└─IndexLookUp 8000.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "  └─Selection(Probe) 8000.00 cop[tikv]  gt(length(test.t1.body), 10)",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -131,7 +127,7 @@
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 0.10 root  ",
-          "  ├─IndexRangeScan(Build) 0.10 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 0.10 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "  └─Limit(Probe) 0.10 cop[tikv]  offset:0, count:1",
           "    └─TableRowIDScan 0.10 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -140,30 +136,24 @@
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) and fts_match_word('world', title)",
         "Plan": [
-          "Projection 10000.00 root  test.t1.id",
-          "└─IndexLookUp 1000.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), fts_match_word(\"world\", test.t1.title), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t1.title), fts_match_word(\"world\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where (fts_match_word('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
         "Plan": [
-          "Projection 10000.00 root  test.t1.id",
-          "└─IndexLookUp 1000.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:or(and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:or(and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where (fts_match_prefix('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
         "Plan": [
-          "Projection 10000.00 root  test.t1.id",
-          "└─IndexLookUp 1000.00 root  ",
-          "  ├─IndexRangeScan(Build) 1000.00 batchCop[tiflash] table:t1, index:title(title) range:[NULL,+inf], search func:or(and(istrue_with_null(fts_match_prefix(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:title(title) range:[NULL,+inf], search func:or(and(istrue_with_null(fts_match_prefix(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -182,6 +172,62 @@
         "Warn": [
           "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
         ]
+      },
+      {
+        "SQL": "explain format='brief' select a from t3 where fts_match_word('hello', title)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select /*+ LIMIT_TO_COP() */ a from t3 where fts_match_word('hello', title) limit 1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexReader 0.10 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 0.10 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(test.t3.a)->Column#4",
+          "└─IndexReader 1000.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now",
+          "Aggregation can not be pushed to tici because AggFunc `count` is not supported now"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select b from t3 where fts_match_word('hello', title)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select a, b from t3 where fts_match_word('hello', title)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select b, a from t3 where fts_match_word('hello', title)",
+        "Plan": [
+          "Projection 10000.00 root  test.t3.b, test.t3.a",
+          "└─IndexReader 1000.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   }
