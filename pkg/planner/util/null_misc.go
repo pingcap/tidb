@@ -152,11 +152,28 @@ func tryNullifyInnerAndFold(
 	pred expression.Expression,
 	skipPlanCacheCheck bool,
 ) (decided bool, reject bool) {
+	// Guard: bail out if the predicate mentions any non-inner column.
+	hasNonInner := false
+	for _, c := range expression.ExtractColumns(pred) {
+		if !inner.Contains(c) {
+			hasNonInner = true
+			break
+		}
+	}
+
 	buildCtx := ctx.GetNullRejectCheckExprCtx()
 	folded, err := expression.EvaluateExprWithNull(buildCtx, inner, pred, skipPlanCacheCheck)
 	if err != nil || folded == nil {
 		return false, false
 	}
+
+	if hasNonInner {
+		// Do not trust a constant produced by folding when outer columns exist.
+		// Example: (outer AND inner!=NULL) IS FALSE  → still depends on outer.
+		return false, false
+	}
+
+	// Safe: the predicate was over inner-only columns, so P(NULL) is a real constant.
 	return judgeFoldedConstant(ctx, folded)
 }
 
@@ -367,7 +384,38 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 	case ast.In:
 		return false, false
 
-	// ---- 4) Boolean composition ---------------------------------------------
+		// ---- 4) IS [NOT] TRUE/FALSE (3VL predicates) ----------------------------
+		// For `E IS FALSE/TRUE`, we must NOT reuse the boolean-connective rules.
+		// Example: (FALSE AND innerNullable) is FALSE, so `IS FALSE` is TRUE and the
+		// row is KEPT — i.e. NOT NULL-rejecting. Treat these separately:
+	case ast.IsFalsity, ast.IsTruthWithoutNull, ast.IsTruthWithNull:
+		// If child doesn’t reference inner cols, it can’t reject inner NULLs.
+		hasInner := false
+		for _, c := range expression.ExtractColumns(args[0]) {
+			if inner.Contains(c) {
+				hasInner = true
+				break
+			}
+		}
+		if !hasInner {
+			return false, true
+		}
+		// If the child is a NULL-hiding boolean/control operator, we cannot
+		// conclude structurally — let fallback handle exact 3VL.
+		if child, ok := args[0].(*expression.ScalarFunction); ok {
+			switch child.FuncName.L {
+			case ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.If, ast.Case, ast.Coalesce, ast.Ifnull:
+				return false, false
+			}
+		}
+		// Otherwise, if child is strictly NULL-propagating w.r.t inner,
+		// then inner=NULL ⇒ child=NULL ⇒ (child IS TRUE/FALSE) is FALSE ⇒ row rejected.
+		if isNullPropagatingWRTInner(args[0], inner) {
+			return true, true
+		}
+		return false, false
+
+	// ---- 5) Boolean composition ---------------------------------------------
 	case ast.LogicAnd:
 		// AND is NULL-rejecting if EITHER side is NULL-rejecting.
 		l, lok := isNullRejectingByStructure(args[0], inner)
