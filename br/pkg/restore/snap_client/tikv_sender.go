@@ -411,7 +411,7 @@ func (rc *SnapClient) compactAndCheckSSTRange(ctx context.Context, startKey, end
 		TtlSeconds: 7200,
 	}
 	return rc.sendRequestToStore(ctx, func(ectx context.Context, client importclient.ImporterClient, storeId uint64) error {
-		if err := client.CheckAndCompact(ectx, storeId, checkReq); err != nil {
+		if err := client.AddForcePartitionRange(ectx, storeId, checkReq); err != nil {
 			if s, ok := status.FromError(err); ok {
 				if s.Code() == codes.Unimplemented {
 					log.Warn("tikv node doesn't support check and compact.", zap.Uint64("store id", storeId))

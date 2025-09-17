@@ -77,7 +77,7 @@ type ImporterClient interface {
 
 	CheckMultiIngestSupport(ctx context.Context, stores []uint64) error
 
-	CheckAndCompact(ctx context.Context, storeID uint64, req *import_sstpb.AddPartitionRangeRequest) error
+	AddForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.AddPartitionRangeRequest) error
 
 	RemoveForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.RemovePartitionRangeRequest) error
 }
@@ -263,7 +263,7 @@ func (ic *importClient) CheckMultiIngestSupport(ctx context.Context, stores []ui
 	return nil
 }
 
-func (ic *importClient) CheckAndCompact(ctx context.Context, storeID uint64, req *import_sstpb.AddPartitionRangeRequest) error {
+func (ic *importClient) AddForcePartitionRange(ctx context.Context, storeID uint64, req *import_sstpb.AddPartitionRangeRequest) error {
 	client, err := ic.GetImportClient(ctx, storeID)
 	if err != nil {
 		return errors.Trace(err)
