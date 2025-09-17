@@ -186,7 +186,7 @@ func (ran *Range) IsFullRange(unsignedIntHandle bool) bool {
 		// treat [NULL, +inf), (-inf, NULL] as full range
 		if (!leftIsBoundary && !leftIsNull) ||
 			(!rightIsBoundary && !rightIsNull) ||
-			(leftIsNull || rightIsNull) {
+			(leftIsNull && rightIsNull) {
 			return false
 		}
 	}
