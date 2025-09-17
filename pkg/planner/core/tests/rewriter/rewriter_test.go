@@ -22,9 +22,10 @@ import (
 )
 
 func TestVariableRewritter(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustGetErrCode("select @@session.ddl_slow_threshold", errno.ErrIncorrectGlobalLocalVar)
-		tk.MustGetErrCode("select @@global.warning_count", errno.ErrIncorrectGlobalLocalVar)
-		tk.MustGetErrCode("select @@instance.tidb_redact_log", errno.ErrIncorrectGlobalLocalVar)
-	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustGetErrCode("select @@session.ddl_slow_threshold", errno.ErrIncorrectGlobalLocalVar)
+	tk.MustGetErrCode("select @@global.warning_count", errno.ErrIncorrectGlobalLocalVar)
+	tk.MustGetErrCode("select @@instance.tidb_redact_log", errno.ErrIncorrectGlobalLocalVar)
 }
