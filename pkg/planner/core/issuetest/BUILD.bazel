@@ -10,11 +10,7 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 9,
-=======
-    shard_count = 11,
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+    shard_count = 10,
     deps = [
         "//pkg/parser",
         "//pkg/planner",
