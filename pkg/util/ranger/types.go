@@ -303,20 +303,19 @@ func (ran *Range) MemUsage() (sum int64) {
 func isBoundaryValue(d types.Datum, isLeftSide bool) bool {
 	isRightSide := !isLeftSide
 	switch d.Kind() {
-	case types.KindNull:
-		return false
 	case types.KindMinNotNull:
-		return isLeftSide
+		return isLeftSide // -inf
 	case types.KindMaxValue:
-		return isRightSide
+		return isRightSide // +inf
 	case types.KindInt64:
 		v := d.GetInt64()
-		return (v == math.MinInt64 && isLeftSide) || (v == math.MaxInt64 && isRightSide)
+		return (v == math.MinInt64 && isLeftSide) || // -inf
+			(v == math.MaxInt64 && isRightSide) // +inf
 	case types.KindUint64:
 		v := d.GetUint64()
-		return (v == 0 && isLeftSide) || (v == math.MaxUint64 && isRightSide)
-	default:
-		// for other types, no concept of boundary value
+		return (v == 0 && isLeftSide) || // 0
+			(v == math.MaxUint64 && isRightSide) // +inf
+	default: // for other types, no concept of boundary value
 		return false
 	}
 }
