@@ -15,7 +15,6 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/model",
