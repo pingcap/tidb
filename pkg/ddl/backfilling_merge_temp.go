@@ -18,10 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/pingcap/errors"
-	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -70,52 +68,19 @@ func (*mergeTempIndexExecutor) Init(ctx context.Context) error {
 }
 
 func (e *mergeTempIndexExecutor) initializeByMeta(ctx context.Context, meta *BackfillSubTaskMeta) error {
-	bfMs := []int{1, 50, 250, 500, 1000, 2000}
-	ticker := time.NewTicker(time.Duration(bfMs[0]) * time.Millisecond)
-	defer ticker.Stop()
-
-	attempts := 0
-	var readyToMerge bool
-	for !readyToMerge {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			_, tbl, err := getTableByTxn(ctx, e.store, e.job.SchemaID, e.job.TableID)
-			if err != nil {
-				if kv.IsTxnRetryableError(err) {
-					logutil.Logger(ctx).Warn("failed to get table, retrying", zap.Error(err))
-					continue
-				}
-				return errors.Trace(err)
-			}
-			physicalID := tablecodec.DecodeTableID(meta.StartKey)
-			idxInfo, err := findIndexInfoByDecodingKey(tbl.Indices(), meta.StartKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if idxInfo.BackfillState != model.BackfillStateMerging {
-				ddllogutil.SampleLogger().Info("wait for temp index to be ready for merging",
-					zap.Int64("jobID", e.job.ID),
-					zap.String("indexName", idxInfo.Name.L),
-					zap.Stringer("currentState", idxInfo.BackfillState),
-				)
-				attempts++
-				bfMsIdx := min(attempts, len(bfMs)-1)
-				ticker.Reset(time.Duration(bfMs[bfMsIdx]) * time.Millisecond)
-				continue
-			}
-			e.ptbl = tbl.(table.PhysicalTable)
-			if tbl.Meta().Partition != nil && !idxInfo.Global {
-				e.ptbl = tbl.GetPartitionedTable().GetPartition(physicalID)
-				if e.ptbl == nil {
-					return errors.Errorf("partitioned table %d not found for index %s", physicalID, idxInfo.Name.L)
-				}
-			}
-			e.idxInfo = idxInfo
-			readyToMerge = true
+	physicalID := tablecodec.DecodeTableID(meta.StartKey)
+	idxInfo, err := findIndexInfoByDecodingKey(e.ptbl.Indices(), meta.StartKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if e.ptbl.Meta().Partition != nil && !idxInfo.Global {
+		e.ptbl = e.ptbl.GetPartitionedTable().GetPartition(physicalID)
+		if e.ptbl == nil {
+			return errors.Errorf("partitioned table %d not found for index %s", physicalID, idxInfo.Name.L)
 		}
 	}
+	e.idxInfo = idxInfo
+
 	e.mergeCounter = metrics.GetBackfillTotalByLabel(
 		metrics.LblMergeTmpIdxRate,
 		e.job.SchemaName, e.ptbl.Meta().Name.String(), e.idxInfo.Name.L)
@@ -140,31 +105,34 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	e.Reset()
 
 	opCtx, cancel := NewDistTaskOperatorCtx(ctx)
-	defer cancel()
 	collector := &mergeTempIndexCollector{}
 
 	srcOp := NewTempIndexScanTaskSource(opCtx, e.store, e.ptbl, meta.StartKey, meta.EndKey)
 	mergeOp := NewMergeTempIndexOperator(opCtx, e.store, e.ptbl, e.idxInfo, e.job.ID, subtask.Concurrency, e.batchCnt, e.job.ReorgMeta)
 	sinkOp := newTempIndexResultSink(opCtx, e.ptbl, collector)
 
-	operator.Compose[TempIndexScanTask](srcOp, mergeOp)
-	operator.Compose[MergeTempIndexResult](mergeOp, sinkOp)
+	operator.Compose(srcOp, mergeOp)
+	operator.Compose(mergeOp, sinkOp)
 
 	pipe := operator.NewAsyncPipeline(srcOp, mergeOp, sinkOp)
 	err = pipe.Execute()
 	if err != nil {
+		cancel()
 		logutil.Logger(ctx).Error("merge temp index operator meet error", zap.Error(err))
 		return err
 	}
 	err = pipe.Close()
+	cancel()
+	if opErr := opCtx.OperatorErr(); opErr != nil {
+		return opErr
+	}
 	if err != nil {
-		logutil.Logger(ctx).Error("merge temp index operator close meet error", zap.Error(err))
 		return err
 	}
 	e.mergeCounter.Add(float64(collector.addCount))
 	e.RowCnt.Add(int64(collector.addCount))
 	e.totalRows += int64(collector.scanCount)
-
+	logutil.Logger(ctx).Info("merge temp index executor finish subtask", zap.Int("added", collector.addCount), zap.Int("scanned", collector.scanCount))
 	return nil
 }
 

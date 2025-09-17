@@ -141,7 +141,8 @@ func getTaskID(t *testing.T, jobID int64) int64 {
 	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	task, err := mgr.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID))
+	tkBuilder := ddl.NewTaskKeyBuilder()
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, tkBuilder.Build(jobID))
 	require.NoError(t, err)
 	return task.ID
 }

@@ -48,7 +48,8 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	jobIDStr := rs[0][0].(string)
 	jobID, err := strconv.Atoi(jobIDStr)
 	require.NoError(t, err)
-	taskKey := ddl.TaskKey(int64(jobID))
+	builder := ddl.NewTaskKeyBuilder()
+	taskKey := builder.Build(int64(jobID))
 
 	// job to user keyspace, task to system keyspace
 	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())

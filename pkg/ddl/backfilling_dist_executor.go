@@ -50,6 +50,7 @@ type BackfillTaskMeta struct {
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
+	MergeTempIndex  bool   `json:"merge_temp_index"`
 
 	Version int `json:"version,omitempty"`
 }

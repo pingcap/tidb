@@ -1093,14 +1093,14 @@ func (src *TempIndexScanTaskSource) getBatchTableScanTask(
 	return batchTasks
 }
 
-type MergeTempIndexResult struct {
+type TempIndexResult struct {
 	ID    int
 	Added int
 }
 
 // TableScanOperator scans table records in given key ranges from kv store.
 type MergeTempIndexOperator struct {
-	*operator.AsyncOperator[TempIndexScanTask, MergeTempIndexResult]
+	*operator.AsyncOperator[TempIndexScanTask, TempIndexResult]
 	logger     *zap.Logger
 	totalCount *atomic.Int64
 }
@@ -1121,7 +1121,7 @@ func NewMergeTempIndexOperator(
 		"MergeTempIndexOperator",
 		util.DDL,
 		concurrency,
-		func() workerpool.Worker[TempIndexScanTask, MergeTempIndexResult] {
+		func() workerpool.Worker[TempIndexScanTask, TempIndexResult] {
 			return &mergeTempIndexWorker{
 				ctx:        ctx,
 				store:      store,
@@ -1144,7 +1144,7 @@ func NewMergeTempIndexOperator(
 // Close implements operator.Operator interface.
 func (o *MergeTempIndexOperator) Close() error {
 	defer func() {
-		o.logger.Info("table scan operator total count", zap.Int64("count", o.totalCount.Load()))
+		o.logger.Info("merge temp index operator total count", zap.Int64("count", o.totalCount.Load()))
 	}()
 	return o.AsyncOperator.Close()
 }
@@ -1162,7 +1162,7 @@ type mergeTempIndexWorker struct {
 	totalCount *atomic.Int64
 }
 
-func (w *mergeTempIndexWorker) HandleTask(task TempIndexScanTask, sender func(MergeTempIndexResult)) {
+func (w *mergeTempIndexWorker) HandleTask(task TempIndexScanTask, sender func(TempIndexResult)) {
 	failpoint.Inject("injectPanicForTableScan", func() {
 		panic("mock panic")
 	})
@@ -1173,7 +1173,7 @@ func (w *mergeTempIndexWorker) Close() {}
 
 func (e *mergeTempIndexWorker) handleOneRange(
 	task TempIndexScanTask,
-	sender func(MergeTempIndexResult),
+	sender func(TempIndexResult),
 ) {
 	var currentTxnStartTS uint64
 	oprStartTime := time.Now()
@@ -1249,7 +1249,7 @@ func (e *mergeTempIndexWorker) handleOneRange(
 					zap.Error(err))
 				continue
 			}
-			e.ctx.onError(errors.Trace(err))
+			e.ctx.onError(err)
 			break
 		}
 		break
@@ -1263,7 +1263,7 @@ func (e *mergeTempIndexWorker) handleOneRange(
 		}
 	})
 	logSlowOperations(time.Since(oprStartTime), "mergeTempIndexExecutorHandleOneRange", 3000)
-	sender(MergeTempIndexResult{
+	sender(TempIndexResult{
 		ID:    task.ID,
 		Added: result.addCount,
 	})
@@ -1274,7 +1274,7 @@ type tempIndexResultSink struct {
 	tbl       table.PhysicalTable
 	collector execute.Collector
 	errGroup  errgroup.Group
-	source    operator.DataChannel[MergeTempIndexResult]
+	source    operator.DataChannel[TempIndexResult]
 }
 
 func newTempIndexResultSink(
@@ -1290,7 +1290,7 @@ func newTempIndexResultSink(
 	}
 }
 
-func (s *tempIndexResultSink) SetSource(source operator.DataChannel[MergeTempIndexResult]) {
+func (s *tempIndexResultSink) SetSource(source operator.DataChannel[TempIndexResult]) {
 	s.source = source
 }
 
@@ -1303,6 +1303,7 @@ func (s *tempIndexResultSink) collectResult() error {
 	for {
 		select {
 		case <-s.ctx.Done():
+			logutil.BgLogger().Info("temp index result sink context done", zap.Error(s.ctx.Err()))
 			return s.ctx.Err()
 		case rs, ok := <-s.source.Channel():
 			if !ok {

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -94,6 +95,8 @@ func TestMergeTempIndexBasic(t *testing.T) {
 		},
 	}
 
+	tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
+	tk.MustExec("create view all_subtasks as select * from mysql.tidb_background_subtask union all select * from mysql.tidb_background_subtask_history;")
 	for _, tc := range testCases {
 		tk.WithComments(tc.name)
 		tk.MustExec("drop database if exists test;")
@@ -129,12 +132,19 @@ func TestMergeTempIndexBasic(t *testing.T) {
 			tk.MustExec(tc.adminCheck)
 		}
 
+		tkBuilder := ddl.NewTaskKeyBuilder()
+		taskKey := tkBuilder.Build(jobID)
+
 		require.True(t, runInsert)
-		taskIDRows := tk.MustQuery(fmt.Sprintf("select id from mysql.tidb_global_task where task_key like concat('%%/', '%d')", jobID)).Rows()
+		query := fmt.Sprintf(`select id from all_global_tasks where task_key like '%s' order by id`, fmt.Sprintf("%%%s%%", taskKey))
+		t.Log(query)
+		taskIDRows := tk.MustQuery(query).Rows()
+		require.Len(t, taskIDRows, 2)
 		taskID := taskIDRows[0][0].(string)
-		readIdxCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from mysql.tidb_background_subtask where task_key = %s and step = 1", taskID)
+		mergeTaskID := taskIDRows[1][0].(string)
+		readIdxCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = %s and step = 1", taskID)
 		tk.MustQuery(readIdxCntSQL).Check(testkit.Rows(tc.readIdxRowCnt...))
-		mergeCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from mysql.tidb_background_subtask where task_key = %s and step = 4", taskID)
+		mergeCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = %s and step = 4", mergeTaskID)
 		tk.MustQuery(mergeCntSQL).Check(testkit.Rows(tc.mergeIdxCnt...))
 	}
 }

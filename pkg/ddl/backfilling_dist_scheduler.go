@@ -52,9 +52,10 @@ import (
 // LitBackfillScheduler wraps BaseScheduler.
 type LitBackfillScheduler struct {
 	*scheduler.BaseScheduler
-	d          *ddl
-	GlobalSort bool
-	nodeRes    *proto.NodeResource
+	d              *ddl
+	GlobalSort     bool
+	MergeTempIndex bool
+	nodeRes        *proto.NodeResource
 }
 
 var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
@@ -87,6 +88,7 @@ func (sch *LitBackfillScheduler) Init() (err error) {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 	sch.GlobalSort = len(taskMeta.CloudStorageURI) > 0
+	sch.MergeTempIndex = taskMeta.MergeTempIndex
 	sch.BaseScheduler.Extension = sch
 	return sch.BaseScheduler.Init()
 }
@@ -200,16 +202,19 @@ func getUserStoreAndTable(
 func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
+		if sch.MergeTempIndex {
+			return proto.BackfillStepMergeTempIndex
+		}
 		return proto.BackfillStepReadIndex
 	case proto.BackfillStepReadIndex:
 		if sch.GlobalSort {
 			return proto.BackfillStepMergeSort
 		}
-		return proto.BackfillStepMergeTempIndex
+		return proto.StepDone
 	case proto.BackfillStepMergeSort:
 		return proto.BackfillStepWriteAndIngest
 	case proto.BackfillStepWriteAndIngest:
-		return proto.BackfillStepMergeTempIndex
+		return proto.StepDone
 	case proto.BackfillStepMergeTempIndex:
 		return proto.StepDone
 	default:
@@ -883,14 +888,16 @@ func genMergeTempPlanForOneIndex(
 			batch := regionMetas[i:endIdx]
 			subTaskMeta := &BackfillSubTaskMeta{
 				PhysicalTableID: tbl.GetPhysicalID(),
-				RowStart:        batch[0].StartKey(),
-				RowEnd:          batch[len(batch)-1].EndKey(),
+				SortedKVMeta: external.SortedKVMeta{
+					StartKey: batch[0].StartKey(),
+					EndKey:   batch[len(batch)-1].EndKey(),
+				},
 			}
 			if i == 0 {
-				subTaskMeta.RowStart = start
+				subTaskMeta.StartKey = start
 			}
 			if endIdx == len(regionMetas) {
-				subTaskMeta.RowEnd = end
+				subTaskMeta.EndKey = end
 			}
 			metaBytes, err := subTaskMeta.Marshal()
 			if err != nil {
