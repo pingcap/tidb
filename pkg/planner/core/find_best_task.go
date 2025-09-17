@@ -1722,26 +1722,10 @@ func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, true)
 }
 
-// getGEAndDS get the possible group expression and logical operator from common lp pointer.
-func getGEAndDS(super base.LogicalPlan) (ge *memo.GroupExpression, ds *logicalop.DataSource) {
-	// since base.LogicalPlan can represent GroupExpression and LogicalOperator at same time, we can use the same
-	// function signature as the common portal.
-	// for datasource, since it's a leaf node, we don't need GE inputs to dive its children, so almost all part of
-	// the code below is shared in common, except the physical plan cache.
-	switch x := super.(type) {
-	case *memo.GroupExpression:
-		ge = x
-		ds = ge.GetWrappedLogicalPlan().(*logicalop.DataSource)
-	case *logicalop.DataSource:
-		ds = x
-	}
-	return ge, ds
-}
-
 func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.PhysicalProperty,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	// get the possible group expression and logical operator from common lp pointer.
-	ge, ds := getGEAndDS(super)
+	ge, ds := base.GetGEAndLogical[*logicalop.DataSource](super)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -2136,7 +2120,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 			scan = convertToPartialTableScan(ds, prop, partPath, candidate.isMatchProp, byItems)
 		} else {
 			var remainingFilters []expression.Expression
-			scan, remainingFilters, err = convertToPartialIndexScan(ds, cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
+			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
 			if err != nil {
 				return base.InvalidTask, err
 			}
@@ -2152,7 +2136,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
 	}
-	ts, remainingFilters2, moreColumn, err := buildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.isMatchProp)
+	ts, remainingFilters2, moreColumn, err := physicalop.BuildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.isMatchProp)
 	if err != nil {
 		return base.InvalidTask, err
 	}
@@ -2188,46 +2172,6 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		task = cop
 	}
 	return task, nil
-}
-
-func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *physicalop.PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
-	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, matchProp, false)
-	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
-	indexConds := path.IndexFilters
-	if matchProp {
-		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
-			is.Columns = tmpColumns
-			is.SetSchema(tmpSchema)
-		}
-		// Add sort items for index scan for merge-sort operation between partitions.
-		is.ByItems = byItems
-	}
-
-	// Add a `Selection` for `IndexScan` with global index.
-	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
-	indexConds, err := is.AddSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if len(indexConds) > 0 {
-		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds)
-		var selectivity float64
-		if path.CountAfterAccess > 0 {
-			selectivity = path.CountAfterIndex / path.CountAfterAccess
-		}
-		rowCount := is.StatsInfo().RowCount * selectivity
-		stats := &property.StatsInfo{RowCount: rowCount}
-		stats.StatsVersion = ds.StatisticTable.Version
-		if ds.StatisticTable.Pseudo {
-			stats.StatsVersion = statistics.PseudoVersion
-		}
-		indexPlan := physicalop.PhysicalSelection{Conditions: pushedFilters}.Init(is.SCtx(), stats, ds.QueryBlockOffset())
-		indexPlan.SetChildren(is)
-		return indexPlan, remainingFilter, nil
-	}
-	return is, nil, nil
 }
 
 func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
@@ -2293,132 +2237,6 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 	}
 	ts.SetSchema(expression.NewSchema(exprCols...))
 	ts.Columns = infoCols
-}
-
-// setIndexMergeTableScanHandleCols set the handle columns of the table scan.
-func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *physicalop.PhysicalTableScan) (err error) {
-	handleCols := ds.HandleCols
-	if handleCols == nil {
-		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
-	}
-	hdColNum := handleCols.NumCols()
-	exprCols := make([]*expression.Column, 0, hdColNum)
-	for i := range hdColNum {
-		col := handleCols.GetCol(i)
-		exprCols = append(exprCols, col)
-	}
-	ts.HandleCols, err = handleCols.ResolveIndices(expression.NewSchema(exprCols...))
-	return
-}
-
-// buildIndexMergeTableScan() returns Selection that will be pushed to TiKV.
-// Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
-func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expression.Expression,
-	totalRowCount float64, matchProp bool) (base.PhysicalPlan, []expression.Expression, bool, error) {
-	ts := physicalop.PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         slices.Clone(ds.Columns),
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		PhysicalTableID: ds.PhysicalTableID,
-		HandleCols:      ds.HandleCols,
-		TblCols:         ds.TblCols,
-		TblColHists:     ds.TblColHists,
-	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	ts.SetIsPartition(ds.PartitionDefIdx != nil)
-	ts.SetSchema(ds.Schema().Clone())
-	err := setIndexMergeTableScanHandleCols(ds, ts)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	ts.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), totalRowCount))
-	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats.GetUsedInfo(ts.PhysicalTableID) != nil {
-		ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
-	}
-	if ds.StatisticTable.Pseudo {
-		ts.StatsInfo().StatsVersion = statistics.PseudoVersion
-	}
-	var currentTopPlan base.PhysicalPlan = ts
-	if len(tableFilters) > 0 {
-		pushedFilters, remainingFilters := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), tableFilters)
-		pushedFilters1, remainingFilters1 := physicalop.SplitSelCondsWithVirtualColumn(pushedFilters)
-		pushedFilters = pushedFilters1
-		remainingFilters = append(remainingFilters, remainingFilters1...)
-		if len(pushedFilters) != 0 {
-			selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, pushedFilters, nil)
-			if err != nil {
-				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = cost.SelectionFactor
-			}
-			sel := physicalop.PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), selectivity*totalRowCount), ts.QueryBlockOffset())
-			sel.SetChildren(ts)
-			currentTopPlan = sel
-		}
-		if len(remainingFilters) > 0 {
-			return currentTopPlan, remainingFilters, false, nil
-		}
-	}
-	// If we don't need to use ordered scan, we don't need do the following codes for adding new columns.
-	if !matchProp {
-		return currentTopPlan, nil, false, nil
-	}
-
-	// Add the row handle into the schema.
-	columnAdded := false
-	if ts.Table.PKIsHandle {
-		pk := ts.Table.GetPkColInfo()
-		pkCol := expression.ColInfo2Col(ts.TblCols, pk)
-		if !ts.Schema().Contains(pkCol) {
-			ts.Schema().Append(pkCol)
-			ts.Columns = append(ts.Columns, pk)
-			columnAdded = true
-		}
-	} else if ts.Table.IsCommonHandle {
-		idxInfo := ts.Table.GetPrimaryKey()
-		for _, idxCol := range idxInfo.Columns {
-			col := ts.TblCols[idxCol.Offset]
-			if !ts.Schema().Contains(col) {
-				columnAdded = true
-				ts.Schema().Append(col)
-				ts.Columns = append(ts.Columns, col.ToInfo())
-			}
-		}
-	} else if !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
-		ts.Schema().Append(ts.HandleCols.GetCol(0))
-		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
-		columnAdded = true
-	}
-
-	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
-	if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		tmpColumns, tmpSchema, newColAdded := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
-		ts.Columns = tmpColumns
-		ts.SetSchema(tmpSchema)
-		columnAdded = columnAdded || newColAdded
-	}
-	return currentTopPlan, nil, columnAdded, nil
-}
-
-// extractFiltersForIndexMerge returns:
-// `pushed`: exprs that can be pushed to TiKV.
-// `remaining`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
-// Why do we need this func?
-// IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
-//
-//	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
-//	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
-func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
-	for _, expr := range filters {
-		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.TiKV) {
-			pushed = append(pushed, expr)
-			continue
-		}
-		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.UnSpecified) {
-			remaining = append(remaining, expr)
-		}
-	}
-	return
 }
 
 func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {

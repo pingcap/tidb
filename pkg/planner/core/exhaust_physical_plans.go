@@ -1023,7 +1023,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 func completeIndexJoinFeedBackInfo(innerTask *CopTask, indexJoinResult *indexJoinPathResult, ranges ranger.MutableRanges, keyOff2IdxOff []int) {
 	info := innerTask.IndexJoinInfo
 	if info == nil {
-		info = &IndexJoinInfo{}
+		info = &physicalop.IndexJoinInfo{}
 	}
 	if indexJoinResult != nil {
 		if indexJoinResult.chosenPath != nil {

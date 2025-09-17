@@ -15,8 +15,6 @@
 package core
 
 import (
-	"math"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -25,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -38,70 +35,6 @@ var (
 	_ base.Task = &CopTask{}
 )
 
-type simpleWarnings struct {
-	warnings []*context.SQLWarn
-}
-
-// WarningCount returns the number of warnings.
-func (s *simpleWarnings) WarningCount() int {
-	return len(s.warnings)
-}
-
-// Copy implemented the simple warnings copy to avoid use the same warnings slice for different task instance.
-func (s *simpleWarnings) Copy(src *simpleWarnings) {
-	warnings := make([]*context.SQLWarn, 0, len(src.warnings))
-	warnings = append(warnings, src.warnings...)
-	s.warnings = warnings
-}
-
-// CopyFrom copy the warnings from src to s.
-func (s *simpleWarnings) CopyFrom(src ...*simpleWarnings) {
-	if src == nil {
-		return
-	}
-	length := 0
-	for _, one := range src {
-		if one == nil {
-			continue
-		}
-		length += one.WarningCount()
-	}
-	s.warnings = make([]*context.SQLWarn, 0, length)
-	for _, one := range src {
-		if one == nil {
-			continue
-		}
-		s.warnings = append(s.warnings, one.warnings...)
-	}
-}
-
-// AppendWarning appends a warning to the warnings slice.
-func (s *simpleWarnings) AppendWarning(warn error) {
-	if len(s.warnings) < math.MaxUint16 {
-		s.warnings = append(s.warnings, &context.SQLWarn{Level: context.WarnLevelWarning, Err: warn})
-	}
-}
-
-// AppendNote appends a note to the warnings slice.
-func (s *simpleWarnings) AppendNote(note error) {
-	if len(s.warnings) < math.MaxUint16 {
-		s.warnings = append(s.warnings, &context.SQLWarn{Level: context.WarnLevelNote, Err: note})
-	}
-}
-
-// GetWarnings returns the internal all stored warnings.
-func (s *simpleWarnings) GetWarnings() []context.SQLWarn {
-	// we just reuse and reorganize pointer of warning elem across different level's
-	// task warnings slice to avoid copy them totally leading mem cost.
-	// when best task is finished and final warnings is determined, we should convert
-	// pointer to struct to append it to session context.
-	warnings := make([]context.SQLWarn, 0, len(s.warnings))
-	for _, w := range s.warnings {
-		warnings = append(warnings, *w)
-	}
-	return warnings
-}
-
 // ************************************* RootTask Start ******************************************
 
 // RootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
@@ -110,10 +43,10 @@ type RootTask struct {
 
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
-	IndexJoinInfo *IndexJoinInfo
+	IndexJoinInfo *physicalop.IndexJoinInfo
 
 	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
-	warnings simpleWarnings
+	warnings physicalop.SimpleWarnings
 }
 
 // GetPlan returns the root task's plan.
@@ -210,7 +143,7 @@ type MppTask struct {
 	tblColHists   *statistics.HistColl
 
 	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
-	warnings simpleWarnings
+	warnings physicalop.SimpleWarnings
 }
 
 // Count implements Task interface.
@@ -358,10 +291,10 @@ type CopTask struct {
 
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
-	IndexJoinInfo *IndexJoinInfo
+	IndexJoinInfo *physicalop.IndexJoinInfo
 
 	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
-	warnings simpleWarnings
+	warnings physicalop.SimpleWarnings
 }
 
 // AppendWarning appends a warning
