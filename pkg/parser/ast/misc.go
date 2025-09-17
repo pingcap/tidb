@@ -718,6 +718,7 @@ type ExecuteStmt struct {
 	UsingVars  []ExprNode
 	BinaryArgs any
 	PrepStmt   any // the corresponding prepared statement
+	PrepStmtId uint32
 	IdxInMulti int
 
 	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
