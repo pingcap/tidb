@@ -675,7 +675,7 @@ func (w *worker) doModifyColumnTypeWithReorg(
 			return ver, errors.Trace(err)
 		}
 
-		reorgElements := BuildElements(changingCol, changingIdxs, args.SkipRowReorg)
+		reorgElements := BuildElements(changingCol, changingIdxs)
 
 		var done bool
 		if job.MultiSchemaInfo != nil {
