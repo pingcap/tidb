@@ -1,6 +1,6 @@
 drop table if exists t;
 create table t(a int, b int, c int, d int, primary key (a,b,c) clustered);
-insert into t values 
+insert into t values
 (1, 1, 1, 10), (1, 1, 2, 20), (1, 1, 3, 30), (1, 1, 4, 31),
 (1, 2, 1, 32), (1, 2, 2, 33), (1, 2, 5, 34),
 (1, 3, 1, 40), (1, 3, 2, 50), (1, 3, 3, 60), (1, 3, 6, 61),
@@ -41,7 +41,7 @@ select c from t where a = 1 and b in (1, 3, 5) and d < 200 order by c;
 
 drop table if exists t2;
 create table t2(a int, b int, c int, d int, index iabc(a,b,c));
-insert into t2 values 
+insert into t2 values
 (1, 1, 1, 10), (1, 1, 2, 15), (1, 1, 3, 30), (1, 1, 4, 35),
 (1, 2, 1, 25), (1, 2, 3, 45), (1, 2, 5, 55),
 (1, 3, 1, 40), (1, 3, 2, 45), (1, 3, 3, 60), (1, 3, 6, 65),
@@ -82,7 +82,7 @@ CREATE TABLE tp (
   PARTITION p2 VALUES LESS THAN (300)
 );
 
-insert into tp values 
+insert into tp values
 (1, 1, 1, 10), (1, 1, 2, 20), (1, 1, 3, 30), (1, 1, 4, 35),
 (1, 2, 1, 25), (1, 2, 5, 45), (1, 2, 8, 55),
 (1, 3, 1, 40), (1, 3, 2, 50), (1, 3, 3, 60), (1, 3, 6, 65),
@@ -149,7 +149,7 @@ CREATE TABLE tp (
   PARTITION p2 VALUES LESS THAN (300)
 );
 
-insert into tp values 
+insert into tp values
 (1, 1, 1, 10), (1, 1, 2, 20), (1, 1, 3, 30), (1, 1, 4, 35),
 (1, 2, 1, 25), (1, 2, 5, 45), (1, 2, 8, 55),
 (1, 3, 1, 40), (1, 3, 2, 50), (1, 3, 3, 60), (1, 3, 6, 65),
@@ -224,7 +224,7 @@ create table t_outer(a int, b int, index idx_a(a));
 create table t_inner(x int, y int, z int, index ixy(x,y,z));
 
 insert into t_outer values (1, 10), (2, 20), (3, 30), (4, 40);
-insert into t_inner values 
+insert into t_inner values
 (1, 1, 100), (1, 2, 200), (1, 3, 300), (1, 4, 350), (1, 5, 400),
 (1, 6, 450), (1, 7, 500), (1, 8, 550),
 (2, 1, 400), (2, 2, 500), (2, 3, 600), (2, 4, 650), (2, 5, 700),
@@ -233,34 +233,34 @@ insert into t_inner values
 (3, 8, 1050), (3, 9, 1100), (3, 10, 1150),
 (4, 1, 1200), (4, 2, 1250), (4, 3, 1300), (4, 6, 1350), (4, 7, 1400);
 
-explain format = 'brief' 
-select * from t_outer o 
+explain format = 'brief'
+select * from t_outer o
 where exists (
-  select /*+ no_decorrelate() */ 1 from t_inner i 
-  where i.x = o.a and i.y in (1, 2, 3) 
+  select /*+ no_decorrelate() */ 1 from t_inner i
+  where i.x = o.a and i.y in (1, 2, 3)
   order by i.x, i.z limit 1
 );
 
-select * from t_outer o 
+select * from t_outer o
 where exists (
-  select /*+ no_decorrelate() */ 1 from t_inner i 
-  where i.x = o.a and i.y in (1, 2, 3) 
+  select /*+ no_decorrelate() */ 1 from t_inner i
+  where i.x = o.a and i.y in (1, 2, 3)
   order by i.x, i.z limit 1
 );
 
 explain format = 'brief'
 select *, (
-  select z from t_inner i 
-  where i.x = o.a and i.y in (1, 2) 
-  order by i.z 
+  select z from t_inner i
+  where i.x = o.a and i.y in (1, 2)
+  order by i.z
   limit 1
 ) as max_z
 from t_outer o;
 
 select *, (
-  select z from t_inner i 
-  where i.x = o.a and i.y in (1, 2) 
-  order by i.z 
+  select z from t_inner i
+  where i.x = o.a and i.y in (1, 2)
+  order by i.z
   limit 1
 ) as max_z
 from t_outer o;
