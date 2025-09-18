@@ -896,7 +896,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		{
 			require.Equal(t, consumeEvent, []int{1, 3, 2})
 			// priority low: canceled
-			require.ErrorContains(t, trackers[0].Killer.HandleSignal(), "[executor:8267]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & priority-mode)] [conn=")
+			require.ErrorContains(t, trackers[0].Killer.HandleSignal(), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & priority-mode)] [conn=")
 			// exec by priority order high -> medium
 			require.NoError(t, trackers[1].Killer.HandleSignal())
 			require.NoError(t, trackers[2].Killer.HandleSignal())
@@ -1006,7 +1006,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			t2.Consume(m.limit())
 		}()
 		wg.Wait()
-		require.ErrorContains(t, err, "[executor:8267]Query execution was stopped by the global memory arbitrator [reason=KILL(out-of-memory)] [conn=")
+		require.ErrorContains(t, err, "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=KILL(out-of-memory)] [conn=")
 		RemovePoolFromGlobalMemArbitrator(t1.SessionID.Load())
 		RemovePoolFromGlobalMemArbitrator(t2.SessionID.Load())
 		m.runOneRound()

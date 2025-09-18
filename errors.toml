@@ -2011,6 +2011,11 @@ error = '''
 Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
 '''
 
+["executor:8180"]
+error = '''
+Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -2029,11 +2034,6 @@ Quarantined and interrupted because of being in runaway watch list
 ["executor:8255"]
 error = '''
 Unknown background task name '%-.192s'
-'''
-
-["executor:8267"]
-error = '''
-Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
 '''
 
 ["expression:1139"]

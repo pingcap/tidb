@@ -3356,7 +3356,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	tk.MustExec("set tidb_mem_arbitrator_wait_averse=1")
 	for i := range 3 {
 		sql := fmt.Sprintf("select /*+ resource_group(rg%d) set_var(tidb_mem_arbitrator_query_reserved=%s) */ * from t", i+1, maxServerLimitStr)
-		require.ErrorContains(t, tk.QueryToErr(sql), "[executor:8267]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & wait-averse)] [conn=")
+		require.ErrorContains(t, tk.QueryToErr(sql), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & wait-averse)] [conn=")
 		expectTaskFail++
 		expectCancelWaitAverse++
 		{
@@ -3372,7 +3372,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		tk.MustExec("set global tidb_mem_arbitrator_mode = standard")
 		for i := range 3 {
 			sql := fmt.Sprintf("select /*+ resource_group(rg%d) set_var(tidb_mem_arbitrator_query_reserved=%s) */ * from t", i+1, maxServerLimitStr)
-			require.ErrorContains(t, tk.QueryToErr(sql), "[executor:8267]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & standard-mode)] [conn=")
+			require.ErrorContains(t, tk.QueryToErr(sql), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & standard-mode)] [conn=")
 			expectCancelStandardMode++
 			expectTaskFail++
 			{
@@ -3393,12 +3393,12 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		tk.MustExec("set global tidb_mem_arbitrator_mode = standard")
 		tk.MustExec("set tidb_mem_arbitrator_wait_averse = default")
 		m0 := memory.GlobalMemArbitrator().ExecMetrics()
-		require.ErrorContains(t, tk.ExecToErr("select /*+ set_var(tidb_mem_arbitrator_query_reserved=1) */ * from t"), "[executor:8267]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & standard-mode), path=ParseSQL] [conn=")
+		require.ErrorContains(t, tk.ExecToErr("select /*+ set_var(tidb_mem_arbitrator_query_reserved=1) */ * from t"), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & standard-mode), path=ParseSQL] [conn=")
 		m1 := memory.GlobalMemArbitrator().ExecMetrics()
 		require.Equal(t, m0.Cancel, m1.Cancel)
 		tk.MustExec("set global tidb_mem_arbitrator_mode = priority")
 		tk.MustExec("set tidb_mem_arbitrator_wait_averse = 1")
-		require.ErrorContains(t, tk.ExecToErr("select * from t"), "[executor:8267]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & wait-averse), path=ParseSQL] [conn=")
+		require.ErrorContains(t, tk.ExecToErr("select * from t"), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & wait-averse), path=ParseSQL] [conn=")
 		m2 := memory.GlobalMemArbitrator().ExecMetrics()
 		require.Equal(t, m2.Cancel, m1.Cancel)
 		tk.MustExec("set tidb_mem_arbitrator_wait_averse = default")
