@@ -858,7 +858,9 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			return
 		case <-ticker.C:
 			failpoint.InjectCall("onUpdateJobParam")
-			reorgInfo.UpdateConfigFromSysTbl(ctx)
+			if reorgInfo != nil {
+				reorgInfo.UpdateConfigFromSysTbl(ctx)
+			}
 			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
@@ -884,7 +886,10 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 }
 
 func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, reorgInfo *reorgInfo, bcCtx ingest.BackendCtx, avgRowSize int) error {
-	job := reorgInfo.Job
+	var job *model.Job
+	if reorgInfo != nil {
+		job = reorgInfo.Job
+	}
 	err := pipe.Execute()
 	if err != nil {
 		return err
