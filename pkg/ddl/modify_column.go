@@ -134,9 +134,12 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	// We only need to check column existance once for reorg job.
+	if args.ChangingColumn == nil {
+		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	if !needChangeColumnData(oldCol, args.Column) {
