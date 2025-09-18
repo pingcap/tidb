@@ -85,9 +85,34 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	}
 
+<<<<<<< HEAD
 	if setReorgParam {
 		if kerneltype.IsNextGen() && setDistTaskParam {
 			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)
+=======
+	failpoint.Inject("MockTableSize", func(v failpoint.Value) {
+		if size, ok := v.(int); ok && size > 0 {
+			tableSizeInBytes = int64(size)
+		}
+	})
+
+	var (
+		autoConc, autoMaxNode int
+		factorField           = zap.Skip()
+	)
+	if shouldCalResource {
+		factors, err := dxfhandle.GetScheduleTuneFactors(ctx, sctx.GetStore().GetKeyspace())
+		if err != nil {
+			return err
+		}
+		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
+		autoConc = calc.CalcConcurrency()
+		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
+		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
+	}
+	if setReorgParam {
+		if shouldCalResource && setDistTaskParam {
+>>>>>>> 276ed0cf95a (dxf: add api to manually tune the calculation of resource related params (#63517))
 			m.SetConcurrency(autoConc)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
@@ -104,8 +129,13 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
+<<<<<<< HEAD
 		if kerneltype.IsNextGen() {
 			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(tableSizeInBytes, cpuNum)
+=======
+		if shouldCalResource {
+			m.MaxNodeCount = autoMaxNode
+>>>>>>> 276ed0cf95a (dxf: add api to manually tune the calculation of resource related params (#63517))
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
@@ -142,6 +172,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
+		factorField,
 	)
 	return nil
 }
