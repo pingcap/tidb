@@ -122,7 +122,7 @@ func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, 
 	}
 	child := p.children[0]
 	rest, newChild := child.PredicatePushDown(predicates, opt)
-	addSelection(p.self, newChild, rest, 0, opt)
+	AddSelection(p.self, newChild, rest, 0, opt)
 	return nil, p.self
 }
 
