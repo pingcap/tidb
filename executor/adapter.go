@@ -1179,8 +1179,12 @@ func (a *ExecStmt) logAudit() {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
-			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
+			cmdBin := byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))
+			cmd := mysql.Command2Str[cmdBin]
 			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
+			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
+			}
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Completed, cmd)
 		}
 		return nil
