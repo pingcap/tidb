@@ -288,9 +288,10 @@ type SwissMapWrap struct {
 }
 
 // ToSwissMap converts a map to SwissMapWrap.
-func ToSwissMap[K comparable, V any](m map[K]V) SwissMapWrap {
+func ToSwissMap[K comparable, V any](m map[K]V) (sm SwissMapWrap) {
 	ref := any(m)
-	return *(*SwissMapWrap)(unsafe.Pointer(&ref))
+	sm = *(*SwissMapWrap)(unsafe.Pointer(&ref))
+	return
 }
 
 const (
@@ -369,18 +370,16 @@ func (m *MemAwareMap[K, V]) Set(key K, value V) (deltaBytes int64) {
 		newBytes := max(m.Bytes, approxSizeV2(m.groupSize, sm.Used))
 		deltaBytes = int64(newBytes) - int64(m.Bytes)
 		m.Bytes = newBytes
-		m.nextCheckNum = maxTableCapacity + sm.Used
+		m.nextCheckNum = min(sm.Used, maxTableCapacity) + sm.Used
 	}
 	return
 }
 
-// SetExt sets the value for the key in the map and returns the memory delta and whether the map is split.
-func (m *MemAwareMap[K, V]) SetExt(key K, value V) (deltaBytes int64, split bool, insert bool) {
+// SetExt sets the value for the key in the map and returns the memory delta and whether it's an insert.
+func (m *MemAwareMap[K, V]) SetExt(key K, value V) (deltaBytes int64, insert bool) {
 	sm := m.unwrap()
-	oriDirLen := sm.dirLen
 	oriUsed := sm.Used
 	deltaBytes = m.Set(key, value)
-	split = oriDirLen != sm.dirLen
 	insert = oriUsed != sm.Used
 	return
 }
@@ -396,7 +395,11 @@ func (m *MemAwareMap[K, V]) Init(v map[K]V) int64 {
 
 	m.groupSize = uint64(ToSwissMap(m.M).Type.GroupSize)
 	m.Bytes = sm.Size(m.groupSize)
-	m.nextCheckNum = sm.Used/maxTableCapacity*maxTableCapacity + maxTableCapacity
+	if sm.Used <= swissMapGroupSlots {
+		m.nextCheckNum = swissMapGroupSlots * 2
+	} else {
+		m.nextCheckNum = min(sm.Used, maxTableCapacity) + sm.Used
+	}
 	return int64(m.Bytes)
 }
 

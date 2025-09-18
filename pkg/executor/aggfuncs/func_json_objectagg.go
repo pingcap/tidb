@@ -94,7 +94,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGro
 
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
-			if delta, _, insert := p.entries.SetExt(key, realVal); insert {
+			if delta, insert := p.entries.SetExt(key, realVal); insert {
 				memDelta += int64(len(key)) + getValMemDelta(realVal) + delta
 			}
 		default:

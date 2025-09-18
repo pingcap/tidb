@@ -271,7 +271,7 @@ func (s *deserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialR
 		for s.pab.Pos < byteNum {
 			key := util.DeserializeString(s.pab)
 			realVal := util.DeserializeInterface(s.pab)
-			if delta, _, insert := dst.entries.SetExt(key, realVal); insert {
+			if delta, insert := dst.entries.SetExt(key, realVal); insert {
 				memDelta += int64(len(key)) + getValMemDelta(realVal) + delta
 			}
 		}
