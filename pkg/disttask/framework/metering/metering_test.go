@@ -106,13 +106,14 @@ func TestFlush(t *testing.T) {
 }
 
 func createLocalMeter(t *testing.T, dir string) (*Meter, *meteringreader.MeteringReader) {
-	m, err := NewMeter(&mconfig.MeteringConfig{
+	meterConfig := &mconfig.MeteringConfig{
 		Type:   "s3",
 		Bucket: "bucket",
 		AWS: &mconfig.MeteringAWSConfig{
 			AssumeRoleARN: "test-role-arn",
 		},
-	})
+	}
+	m, err := NewMeter(meterConfig)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, m.Close())
@@ -128,9 +129,9 @@ func createLocalMeter(t *testing.T, dir string) (*Meter, *meteringreader.Meterin
 	}
 	provider, err := storage.NewObjectStorageProvider(localConfig)
 	require.NoError(t, err)
-	meteringConfig := mconfig.DefaultConfig().WithLogger(m.logger)
-	m.writer = meteringwriter.NewMeteringWriter(provider, meteringConfig)
-	reader := meteringreader.NewMeteringReader(provider, meteringConfig)
+	cfg := mconfig.DefaultConfig().WithLogger(m.logger)
+	m.writer = meteringwriter.NewMeteringWriterFromConfig(provider, cfg, meterConfig)
+	reader := meteringreader.NewMeteringReader(provider, cfg)
 	t.Cleanup(func() {
 		require.NoError(t, reader.Close())
 	})

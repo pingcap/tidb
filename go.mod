@@ -91,7 +91,7 @@ require (
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20250728031536-f08901d17bf4
 	github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e
-	github.com/pingcap/metering_sdk v0.0.0-20250916072917-67671f4fa7f9
+	github.com/pingcap/metering_sdk v0.0.0-20250918015914-468cd6feb1dc
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20250829062436-85a019a5df23

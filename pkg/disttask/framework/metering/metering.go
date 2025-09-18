@@ -145,7 +145,7 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 		return nil, errors.Wrap(err, "failed to create storage provider")
 	}
 	meteringConfig := mconfig.DefaultConfig().WithLogger(logger)
-	writer := meteringwriter.NewMeteringWriter(provider, meteringConfig)
+	writer := meteringwriter.NewMeteringWriterFromConfig(provider, meteringConfig, cfg)
 	return &Meter{
 		logger: logger,
 		data:   make(map[int64]*Data),
