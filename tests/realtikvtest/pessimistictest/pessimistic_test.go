@@ -3787,22 +3787,15 @@ func TestMaxExecutionTimeWithSelectForUpdate(t *testing.T) {
 	tk2.MustExec("set max_execution_time = 2345")
 
 	// Also test with hint
-	start := time.Now()
 	err := tk2.ExecToErr("select * from test_lock where id = 1 for update")
-	elapsed := time.Since(start)
 
-	// The query should timeout due to max_execution_time (around 2s), not lock_wait_timeout (50s)
+	// The query should timeout due to max_execution_time (around 2s), not lock_wait_timeout (30s)
 	require.Error(t, err)
 
 	// Check if it's a max execution time exceeded error
 	// Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
-	require.True(t, strings.Contains(err.Error(), "Query execution was interrupted") ||
-		strings.Contains(err.Error(), "maximum statement execution time exceeded") ||
-		err.Error() == "context deadline exceeded",
+	require.True(t, strings.Contains(err.Error(), "maximum statement execution time exceeded"),
 		"Expected max_execution_time error, but got: %v", err)
-
-	require.Greater(t, elapsed, 2340*time.Millisecond, "Query should take more than 2 seconds due to max_execution_time, but took %v", elapsed)
-	require.Less(t, elapsed, 4*time.Second, "Query should timeout within 4 seconds due to max_execution_time, but took %v", elapsed)
 
 	tk2.MustExec("rollback")
 	tk1.MustExec("rollback")

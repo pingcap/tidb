@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
@@ -603,20 +602,8 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 		seVars := e.Ctx().GetSessionVars()
 		lockWaitTime := e.lockWaitTime
 
-		// Check max_execution_time constraint for point-get with lock
-		// max_execution_time only applies to SELECT statements
-		maxExecTimeMS := seVars.GetMaxExecutionTime()
-		if maxExecTimeMS > 0 && seVars.StmtCtx.InSelectStmt {
-			// Get the query start time from ProcessInfo
-			processInfo := e.Ctx().ShowProcess()
-			if processInfo != nil {
-				queryStartTime := processInfo.Time
-				elapsed := time.Since(queryStartTime).Milliseconds()
-				if elapsed >= int64(maxExecTimeMS) {
-					// Already exceeded max_execution_time, fail immediately
-					return nil, exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
-				}
-			}
+		if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+			return nil, err
 		}
 
 		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1)

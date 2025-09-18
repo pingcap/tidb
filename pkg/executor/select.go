@@ -291,21 +291,8 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
-	// Check max_execution_time constraint for SELECT FOR UPDATE/SHARE
-	// max_execution_time only applies to SELECT statements
-	sessVars := e.Ctx().GetSessionVars()
-	maxExecTimeMS := sessVars.GetMaxExecutionTime()
-	if maxExecTimeMS > 0 && sessVars.StmtCtx.InSelectStmt {
-		// Get the query start time from ProcessInfo
-		processInfo := e.Ctx().ShowProcess()
-		if processInfo != nil {
-			queryStartTime := processInfo.Time
-			elapsed := time.Since(queryStartTime).Milliseconds()
-			if elapsed >= int64(maxExecTimeMS) {
-				// Already exceeded max_execution_time, fail immediately
-				return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
-			}
-		}
+	if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+		return err
 	}
 
 	for id := range e.tblID2Handle {
@@ -316,6 +303,40 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
+}
+
+// checkMaxExecutionTimeExceeded validates whether the current statement already hit the
+// max_execution_time limit. Centralized here so different executors share the same behaviour.
+func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
+	if sctx == nil {
+		return nil
+	}
+
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil {
+		return nil
+	}
+
+	if !sessVars.StmtCtx.InSelectStmt {
+		return nil
+	}
+
+	maxExecTimeMS := sessVars.GetMaxExecutionTime()
+	if maxExecTimeMS == 0 {
+		return nil
+	}
+
+	processInfo := sctx.ShowProcess()
+	if processInfo == nil || processInfo.Time.IsZero() {
+		return nil
+	}
+
+	elapsed := time.Since(processInfo.Time)
+	if elapsed >= time.Duration(maxExecTimeMS)*time.Millisecond {
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+	}
+
+	return nil
 }
 
 func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
