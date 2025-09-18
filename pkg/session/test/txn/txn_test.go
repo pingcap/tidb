@@ -516,83 +516,83 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 // }
 
 
-// func TestXXX(t *testing.T) {
-// 	store := testkit.CreateMockStore(t)
-// 	tk := testkit.NewTestKit(t, store)
-// 	tk.MustExec("use test")
-
-// 	tk1 := testkit.NewTestKit(t, store)
-// 	tk1.MustExec("use test")
-
-
-// 	tk.MustExec("create table t (id int primary key, c int, index(c))")
-// 	for i:=0; i<10; i++ {
-// 		tk.MustExec("insert into t values (?, ?)", i, i)
-// 	}
-// 	tk.MustExec("create table t2 (id int)")
-
-
-// 	tk.MustExec("begin")
-// 	tk.MustExec("update t set c = c + 1 where id = 5")
-
-
-// 	tk1.MustExec("begin optimistic")
-// 	se := tk1.Session()
-// 	txn, err := se.Txn(false)
-// 	require.NoError(t, err)
-// 	txn.SetOption(kv.SkipNewerChange, nil)
-// 	tk1.MustExec("update t set c = 666 where id = 5")
-// 	tk1.MustExec("insert into t2 values (42)")
-
-// 	tk.MustExec("commit")
-// 	// Without kv.SkipNewerChange option, transaction conflicts and this line fails.
-// 	tk1.MustExec("commit")
-
-// 	// Check the result to see it's partially success.
-// 	tk1.MustQuery("select * from t where id = 5").Check(testkit.Rows("5 6"))
-// 	tk1.MustQuery("select * from t2").Check(testkit.Rows("42"))
-// }
-
-
 func TestXXX(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	txn.Set(kv.Key("key1"), []byte("val1"))
-	txn.Set(kv.Key("key2"), []byte("val2"))
-	txn.Set(kv.Key("key3"), []byte("val3"))
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 
 
-	txn, err = store.Begin()
-	ts := txn.StartTS()
-	require.NoError(t, err)
-	txn.Set(kv.Key("key2"), []byte("val2-2"))
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-
-
-	// txn1, err := store.Begin()
-	// snap := txn1.GetSnapshot()
-	snap := store.GetSnapshot(kv.Version{Ver: ts})
-	snap.SetOption(kv.SkipNewerChange, nil)
-
-	txn2, err := store.Begin()
-	txn2.Set(kv.Key("key1"), []byte("new-val"))
-	err = txn2.Commit(context.Background())
-	require.NoError(t, err)
-
-	key := kv.Key("key")
-	iter, err := snap.Iter(key, key.PrefixNext())
-	require.NoError(t, err)
-	defer iter.Close()
-
-	for iter.Valid() {
-		key := iter.Key()
-		val := iter.Value()
-		fmt.Println("key = ", key, "val = ", val)
-		iter.Next()
+	tk.MustExec("create table t (id int primary key, c int, index(c))")
+	for i:=0; i<10; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
+	tk.MustExec("create table t2 (id int)")
+
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set c = c + 1 where id = 5")
+
+
+	tk1.MustExec("begin optimistic")
+	se := tk1.Session()
+	txn, err := se.Txn(false)
+	require.NoError(t, err)
+	txn.SetOption(kv.SkipNewerChange, nil)
+	tk1.MustExec("update t set c = 666 where id = 5")
+	tk1.MustExec("insert into t2 values (42)")
+
+	tk.MustExec("commit")
+	// Without kv.SkipNewerChange option, transaction conflicts and this line fails.
+	tk1.MustExec("commit")
+
+	// Check the result to see it's partially success.
+	tk1.MustQuery("select * from t where id = 5").Check(testkit.Rows("5 6"))
+	tk1.MustQuery("select * from t2").Check(testkit.Rows("42"))
 }
+
+
+// func TestXXX(t *testing.T) {
+// 	store := testkit.CreateMockStore(t)
+
+// 	txn, err := store.Begin()
+// 	require.NoError(t, err)
+// 	txn.Set(kv.Key("key1"), []byte("val1"))
+// 	txn.Set(kv.Key("key2"), []byte("val2"))
+// 	txn.Set(kv.Key("key3"), []byte("val3"))
+// 	err = txn.Commit(context.Background())
+// 	require.NoError(t, err)
+
+
+// 	txn, err = store.Begin()
+// 	ts := txn.StartTS()
+// 	require.NoError(t, err)
+// 	txn.Set(kv.Key("key2"), []byte("val2-2"))
+// 	err = txn.Commit(context.Background())
+// 	require.NoError(t, err)
+
+
+// 	// txn1, err := store.Begin()
+// 	// snap := txn1.GetSnapshot()
+// 	snap := store.GetSnapshot(kv.Version{Ver: ts})
+// 	snap.SetOption(kv.SkipNewerChange, nil)
+
+// 	txn2, err := store.Begin()
+// 	txn2.Set(kv.Key("key1"), []byte("new-val"))
+// 	err = txn2.Commit(context.Background())
+// 	require.NoError(t, err)
+
+// 	key := kv.Key("key")
+// 	iter, err := snap.Iter(key, key.PrefixNext())
+// 	require.NoError(t, err)
+// 	defer iter.Close()
+
+// 	for iter.Valid() {
+// 		key := iter.Key()
+// 		val := iter.Value()
+// 		fmt.Println("key = ", key, "val = ", val)
+// 		iter.Next()
+// 	}
+// }
