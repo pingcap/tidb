@@ -485,12 +485,19 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 	// if x comes from the inner side. For other NOT forms, defer to fallback.
 	case ast.UnaryNot:
 		if child, ok := args[0].(*expression.ScalarFunction); ok {
-			childName := strings.ToLower(child.FuncName.L)
-			if childName == ast.IsNull && expression.ExprFromSchema(child.GetArgs()[0], inner) {
-				return true, true
-			}
-			// NOT (IN(...)) → defer to fallback
-			if childName == ast.In {
+			switch child.FuncName.L {
+			case ast.IsNull:
+				// NOT (X IS NULL) ≡ X IS NOT NULL
+				// Treat it as NULL-rejecting only if X *propagates* inner NULL.
+				// e.g. X=inner.col            → propagates  → true
+				//      X=NOT(ISNULL(inner.col))→ never NULL → false
+				if isNullPropagatingWRTInner(child.GetArgs()[0], inner) {
+					return true, true
+				}
+				// Deterministically NOT null-rejecting if X doesn't propagate inner NULL.
+				return false, true
+			case ast.In:
+				// NOT (IN(...)) → let fallback handle exact 3VL
 				return false, false
 			}
 		}
