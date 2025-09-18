@@ -138,6 +138,18 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
+	defer func() {
+		for _, idxInfo := range tblInfo.Indices {
+			for _, idxCol := range idxInfo.Columns {
+				tblCol := tblInfo.Columns[idxCol.Offset]
+				if idxCol.Name.L != tblCol.Name.L {
+					logutil.DDLLogger().Error(fmt.Sprintf("column %s in index %s doesn't match any column in table %s",
+						idxCol.Name.O, idxInfo.Name.O, tblInfo.Name.O), zap.String("columnInIndex", idxCol.Name.O))
+				}
+			}
+		}
+	}()
+
 	if job.IsRollingback() {
 		if !needChangeColumnData(oldCol, args.Column) {
 			// For those column-type-change jobs which don't reorg the data.

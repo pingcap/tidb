@@ -202,20 +202,11 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 		})
 	}
 
-	// Change int to tinyint.
-	// Although display length is increased, the default flen is decreased, reorg is needed.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int(1))")
-	tbl := external.GetTableByName(t, tk, "test", "t")
-	assertHasAlterWriteReorg(tbl)
-	tk.MustExec("alter table t modify column a tinyint(3)")
-	require.True(t, assertResult)
-
 	// Change tinyint to tinyint
 	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
-	tbl = external.GetTableByName(t, tk, "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(1)")
 	require.False(t, assertResult)

@@ -242,6 +242,14 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 		}
 
+		for _, idxCol := range c.idxInfo.Columns {
+			tblCol := c.tblInfo.Columns[idxCol.Offset]
+			if idxCol.Name.L != tblCol.Name.L {
+				return nil, errors.Errorf("column %s in index %s doesn't match any column in table %s",
+					idxCol.Name.O, c.idxInfo.Name.O, c.tblInfo.Name.O)
+			}
+		}
+
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
 		c.initNeedRestoreData.Do(func() {
