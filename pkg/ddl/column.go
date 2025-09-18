@@ -349,8 +349,10 @@ func removeOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo)
 }
 
 // updateNewIdxColsNameOffset updates the name&offset of the index column.
-func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
-	oldName ast.CIStr, changingCol *model.ColumnInfo) {
+func updateNewIdxColsNameOffset(
+	changingIdxs []*model.IndexInfo,
+	oldName ast.CIStr, changingCol *model.ColumnInfo,
+) {
 	for _, idx := range changingIdxs {
 		for _, col := range idx.Columns {
 			if col.Name.L == oldName.L {
