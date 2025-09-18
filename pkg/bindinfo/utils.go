@@ -241,15 +241,16 @@ func addLockForBinds(sctx sessionctx.Context, bindings []*Binding) error {
 	for _, binding := range bindings {
 		sqlDigest := binding.SQLDigest
 		planDigest := binding.PlanDigest
-		sql := fmt.Sprintf(" sql_digest = '%s'", sqlDigest)
+		sql := fmt.Sprintf("('%s'", sqlDigest)
 		if planDigest == "" {
-			sql += " AND plan_digest IS NULL"
+			sql += ",NULL)"
 		} else {
-			sql += fmt.Sprintf(" AND plan_digest = '%s' ", planDigest)
+			sql += fmt.Sprintf(",'%s')", planDigest)
 		}
 		condition = append(condition, sql)
 	}
-	locksql := "select 1 from mysql.bind_info use index(digest_index) where " + strings.Join(condition, " or ") + " for update"
+	locksql := "select 1 from mysql.bind_info use index(digest_index) where (plan_digest, sql_digest) in (" +
+		strings.Join(condition, " , ") + ") for update"
 	_, err := exec(sctx, locksql)
 	if err != nil {
 		return errors.Trace(err)
