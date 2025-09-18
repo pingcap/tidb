@@ -607,3 +607,49 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 		"3 3 3 c",
 		"4 4 4 d"))
 }
+
+//func TestAdminAlterDDLJob(t *testing.T) {
+//	//store := realtikvtest.CreateMockStoreAndSetup(t)
+//	store := testkit.CreateMockStore(t)
+//	tk1 := testkit.NewTestKit(t, store)
+//	tk1.MustExec("use test")
+//	tk1.MustExec("create table t (a int);")
+//	tk1.MustExec("insert into t values (1);")
+//	wg := sync.WaitGroup{}
+//	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockStuckBackfillData", "return(false)")
+//	defer failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockStuckBackfillData", "return(true)")
+//	go func() {
+//		wg.Add(1)
+//		defer wg.Done()
+//		tk1.MustExec("alter table t modify a varchar(30);")
+//	}()
+//	time.Sleep(6 * time.Second) // sleep > updateProgressInverval := 5 * time.Second
+//	reorgWorkerCnt := 7
+//	tk2 := testkit.NewTestKit(t, store)
+//	jobID := 0
+//	for {
+//		r := tk2.MustQuery("admin show ddl jobs where job_type='modify column'")
+//		if len(r.Rows()) != 0 {
+//			j, err := strconv.ParseInt(r.Rows()[0][0].(string), 10, 64)
+//			require.NoError(t, err)
+//			jobID = int(j)
+//			break
+//		}
+//		time.Sleep(100 * time.Millisecond)
+//	}
+//	require.Greater(t, jobID, 0)
+//	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = %d", jobID, reorgWorkerCnt))
+//
+//	workerCnt := 0
+//	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkReorgWorkerCnt", func(w int) {
+//		workerCnt = w
+//	})
+//	fmt.Println("workerCnt", workerCnt, reorgWorkerCnt)
+//	require.Eventually(t, func() bool {
+//		return workerCnt == reorgWorkerCnt
+//	}, time.Second*5, time.Millisecond*100)
+//	//time.Sleep(2 * time.Second)
+//	fmt.Println("workerCnt", workerCnt, reorgWorkerCnt)
+//	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockStuckBackfillData", "return(true)")
+//	wg.Wait()
+//}

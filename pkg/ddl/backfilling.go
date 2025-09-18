@@ -830,7 +830,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, job, bcCtx, avgRowSize)
+	err = executeAndClosePipeline(opCtx, pipe, reorgInfo, bcCtx, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
@@ -844,7 +844,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
+func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int, reorgInfo *reorgInfo) {
 	reader, writer := pipe.GetReaderAndWriter()
 	if reader == nil || writer == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
@@ -858,6 +858,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			return
 		case <-ticker.C:
 			failpoint.InjectCall("onUpdateJobParam")
+			reorgInfo.UpdateConfigFromSysTbl(ctx)
 			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
@@ -877,11 +878,13 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
 					zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
 			}
+			failpoint.InjectCall("checkReorgConcurrency", job)
 		}
 	}
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) error {
+func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, reorgInfo *reorgInfo, bcCtx ingest.BackendCtx, avgRowSize int) error {
+	job := reorgInfo.Job
 	err := pipe.Execute()
 	if err != nil {
 		return err
@@ -892,7 +895,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	adjustCtx, cancel := context.WithCancel(ctx)
 	if job != nil {
 		wg.RunWithLog(func() {
-			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
+			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize, reorgInfo)
 		})
 	}
 
@@ -1098,6 +1101,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			case <-doneCh:
 				break outer
 			case <-ticker.C:
+				reorgInfo.UpdateConfigFromSysTbl(ctx)
 				currentWorkerCnt := exec.currentWorkerSize()
 				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrency()
 				if currentWorkerCnt != targetWorkerCnt {
@@ -1110,6 +1114,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int("current worker count", exec.currentWorkerSize()))
 					}
 				}
+				failpoint.InjectCall("checkReorgWorkerCnt", targetWorkerCnt)
 			}
 		}
 		return nil
