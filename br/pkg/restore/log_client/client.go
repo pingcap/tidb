@@ -1504,6 +1504,27 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	return logIter, nil
 }
 
+// ResetTiflashReplicas set tiflash replicas by given sqls concurrently.
+func (rc *LogClient) ResetTiflashReplicas(ctx context.Context, sqls []string, g glue.Glue) error {
+	resetSessions, err := createSessions(ctx, g, rc.dom.Store(), 16)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		closeSessions(resetSessions)
+	}()
+	workerpool := tidbutil.NewWorkerPool(16, "repair ingest index")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, sql := range sqls {
+		workerpool.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			resetSession := resetSessions[id%uint64(len(resetSessions))]
+			log.Info("reset tiflash replica", zap.String("sql", sql))
+			return resetSession.ExecuteInternal(ectx, sql)
+		})
+	}
+	return eg.Wait()
+}
+
 func colsToStr(cols []ast.CIStr) string {
 	var str strings.Builder
 	for i, col := range cols {

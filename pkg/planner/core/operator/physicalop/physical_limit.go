@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -37,6 +38,32 @@ type PhysicalLimit struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+}
+
+// ExhaustPhysicalPlans4LogicalLimit will be called by LogicalLimit in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalLimit(p *logicalop.LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	if !prop.IsSortItemEmpty() {
+		return nil, true, nil
+	}
+
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	// lift the recursive check of canPushToCop(tiFlash)
+	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+		allTaskTypes = append(allTaskTypes, property.MppTaskType)
+	}
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	for _, tp := range allTaskTypes {
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset),
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+		limit := PhysicalLimit{
+			Offset:      p.Offset,
+			Count:       p.Count,
+			PartitionBy: p.GetPartitionBy(),
+		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), resultProp)
+		limit.SetSchema(p.Schema())
+		ret = append(ret, limit)
+	}
+	return ret, true, nil
 }
 
 // Init initializes PhysicalLimit.
@@ -96,19 +123,6 @@ func (p *PhysicalLimit) ExplainInfo() string {
 		fmt.Fprintf(buffer, "offset:?, count:?")
 	}
 	return buffer.String()
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalLimit)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.PartitionBy = util.CloneSortItems(p.PartitionBy)
-	return cloned, true
 }
 
 // ToPB implements PhysicalPlan ToPB interface.

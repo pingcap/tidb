@@ -2343,3 +2343,40 @@ func TestNoAliveTiFlashRetry(t *testing.T) {
 	}()
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
 }
+
+func TestCanGenerateTiFlashCopWithKeepOrer(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int, c2 int, primary key(c1));")
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set tidb_isolation_read_engines = 'tiflash';")
+	tk.MustExec("set @@tidb_allow_batch_cop = 0;")
+
+	found := false
+	for i := 0; i < 100; i++ {
+		sql := fmt.Sprintf(
+			"explain format='brief' select /*+ nth_plan(%d), set_var(tidb_allow_tiflash_cop=on) */ * from t1 where c1 < 10 and c2 > 100 order by c1 limit 100",
+			i,
+		)
+
+		rows := tk.MustQuery(sql)
+		resBuff := bytes.NewBufferString("")
+		for _, row := range rows.Rows() {
+			_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+		}
+		explain := resBuff.String()
+		if strings.Contains(explain, "TableRangeScan") &&
+			strings.Contains(explain, "cop[tiflash]") &&
+			strings.Contains(explain, "keep order:true") {
+			found = true
+			break
+		}
+	}
+
+	// expected at least one plan contains TableRangeScan, cop[tiflash], and keep order:true"
+	require.True(t, found)
+}

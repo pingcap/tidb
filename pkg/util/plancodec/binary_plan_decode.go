@@ -43,6 +43,9 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 	for _, cte := range pb.Ctes {
 		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, false)
 	}
+	for _, subQ := range pb.Subqueries {
+		rows = decodeBinaryOperator(subQ, "", true, pb.WithRuntimeStats, rows, false)
+	}
 	if len(rows) == 0 {
 		return "", nil
 	}
