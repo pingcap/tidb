@@ -896,7 +896,7 @@ func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
 	}()
 }
 
-func TestUpgradeVersion245(t *testing.T) {
+func TestUpgradeVersion245Primary(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -913,6 +913,36 @@ func TestUpgradeVersion245(t *testing.T) {
 	revertVersionAndVariables(t, seV244, 244)
 	require.NoError(t, err)
 	session.MustExec(t, seV244, "ADMIN SET BDR ROLE PRIMARY")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV244)
+	require.NoError(t, err)
+	require.Equal(t, int64(244), ver)
+	dom.Close()
+	newVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = session.GetBootstrapVersion(seV244)
+	require.NoError(t, err)
+	require.Equal(t, int64(252), ver)
+	newVer.Close()
+}
+
+func TestUpgradeVersion245SECONDARY(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	seV244 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(244))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	revertVersionAndVariables(t, seV244, 244)
+	require.NoError(t, err)
+	session.MustExec(t, seV244, "ADMIN SET BDR ROLE SECONDARY")
 	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV244)
 	require.NoError(t, err)
