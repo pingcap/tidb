@@ -371,7 +371,6 @@ func TestIssue40093(t *testing.T) {
 			{"    └─Selection_33"},
 			{"      └─TableFullScan_32"},
 		})
-
 	tk.MustExec("execute st using @b, @c")
 	tk.MustExec("execute st using @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
@@ -379,7 +378,6 @@ func TestIssue40093(t *testing.T) {
 	tk.MustExec("execute st using @b, @c")
 	tk.MustExec("execute st using @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
 }
 
 func TestIssue38205(t *testing.T) {
@@ -409,6 +407,10 @@ func TestIssue38205(t *testing.T) {
 			{"    └─IndexRangeScan"},
 		})
 
+	tk.MustExec("execute stmt using @a, @b, @c")
+	tk.MustExec("execute stmt using @a, @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @a=null, @b=null, @c=null")
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))

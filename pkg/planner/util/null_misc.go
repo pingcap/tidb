@@ -115,6 +115,41 @@ func referencesAnyInner(e expression.Expression, inner *expression.Schema) bool 
 	return false
 }
 
+// -------- Opaque info/metadata functions ------------------------------------
+// These functions (like collation/charset/coercibility) should not be used as "NULL propagation" evidence
+// to drive outer join elimination, otherwise expressions like `where collation(t2.c) = 'utf8mb4_bin'`
+// would be incorrectly judged as allowing LEFT JOIN to be converted to INNER JOIN.
+// Approach: The structural judgment phase relies on isNullPropagatingWRTInner (treating them as "potentially masking NULL"),
+// while in the fallback (inner-only case) we do another contains check as a safety net.
+var opaqueInfoFuncSet = map[string]struct{}{
+	ast.Collation:    {},
+	ast.Charset:      {},
+	ast.Coercibility: {},
+}
+
+func isOpaqueInfoFuncName(name string) bool {
+	_, ok := opaqueInfoFuncSet[name]
+	return ok
+}
+
+// containsOpaqueInfoFunc: whether "info functions" appear in the expression tree
+func containsOpaqueInfoFunc(e expression.Expression) bool {
+	switch x := e.(type) {
+	case *expression.ScalarFunction:
+		if isOpaqueInfoFuncName(x.FuncName.L) {
+			return true
+		}
+		for _, a := range x.GetArgs() {
+			if containsOpaqueInfoFunc(a) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // judgeFoldedConstant examines an already-folded expression `e`.
 // Decision rule (SQL 3-valued logic):
 //   - NULL (UNKNOWN)  → null-rejecting (return true, true)
@@ -160,7 +195,13 @@ func tryNullifyInnerAndFold(
 			break
 		}
 	}
-
+	// Only enter the expensive path when "only referencing inner columns"; if info functions appear at this point,
+	// directly abandon giving conclusions through folding (more conservative).
+	if !hasNonInner {
+		if containsOpaqueInfoFunc(pred) {
+			return false, false
+		}
+	}
 	buildCtx := ctx.GetNullRejectCheckExprCtx()
 	folded, err := expression.EvaluateExprWithNull(buildCtx, inner, pred, skipPlanCacheCheck)
 	if err != nil || folded == nil {
@@ -307,6 +348,9 @@ func isNullPropagatingWRTInner(e expression.Expression, inner *expression.Schema
 			// (via short-circuiting or branch substitution), so at the structural
 			// phase we cannot assert "must propagate NULL".
 			return false
+		// Info functions: treat them as "potentially masking NULL" so they are not used as structural NULL propagation evidence
+		case ast.Collation, ast.Charset, ast.Coercibility:
+			return false
 		}
 		for _, a := range x.GetArgs() {
 			if isNullPropagatingWRTInner(a, inner) {
@@ -367,7 +411,7 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 		}
 		if len(args) == 2 &&
 			(isNullPropagatingWRTInner(args[0], inner) || isNullPropagatingWRTInner(args[1], inner)) {
-			return true, true // structurally certain
+			return true, true // structurally sufficient (info functions already excluded in isNullPropagatingWRTInner)
 		}
 		// We saw inner columns but couldn't prove propagation structurally
 		// (e.g., both sides have potential NULL-hiding). Let fallback decide.
