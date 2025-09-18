@@ -944,6 +944,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		for {
 			stop := true
 			failpoint.Inject("mockStuckBackfillData", func(val failpoint.Value) {
+				//nolint:forcetypeassert
 				stop = val.(bool)
 			})
 			if stop {

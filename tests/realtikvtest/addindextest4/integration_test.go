@@ -120,14 +120,18 @@ func TestAdminAlterDDLJobAdjustConfigLocalIngest(t *testing.T) {
 		defer wg.Done()
 		tk1.MustExec("alter table t add index idx_a(a);")
 	}()
-	reorgWorkerCnt := 7
-	tk2 := testkit.NewTestKit(t, store)
 	realWorkerCnt := 0
-	jobID := ""
+	realBatchSize := 0
+	realMaxWriteSpeed := 0
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkReorgConcurrency", func(j *model.Job) {
 		realWorkerCnt = j.ReorgMeta.GetConcurrency()
+		realBatchSize = j.ReorgMeta.GetBatchSize()
+		realMaxWriteSpeed = j.ReorgMeta.GetMaxWriteSpeed()
 		fmt.Println("checkReorgConcurrency", realWorkerCnt)
 	})
+
+	jobID := ""
+	tk2 := testkit.NewTestKit(t, store)
 	for {
 		row := tk2.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 		if len(row) == 1 {
@@ -135,9 +139,14 @@ func TestAdminAlterDDLJobAdjustConfigLocalIngest(t *testing.T) {
 			break
 		}
 	}
-	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = %d", jobID, reorgWorkerCnt))
+	workerCnt := 7
+	batchSize := 89
+	maxWriteSpeed := 1011
+	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = %d", jobID, workerCnt))
+	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s batch_size = %d", jobID, batchSize))
+	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed = %d", jobID, maxWriteSpeed))
 	require.Eventually(t, func() bool {
-		return realWorkerCnt == reorgWorkerCnt
+		return realWorkerCnt == workerCnt && realBatchSize == batchSize && realMaxWriteSpeed == maxWriteSpeed
 	}, time.Second*5, time.Millisecond*100)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockStuckIndexIngestWorker", "return(true)")
 	wg.Wait()
