@@ -1493,6 +1493,7 @@ func TestStaleReadAllCombinations(t *testing.T) {
 	defer config.RestoreFunc()()
 
 	tk := testkit.NewTestKit(t, store)
+	oracleClient := tk.Session().GetStore().GetOracle()
 
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20160102-15:04:05 -0700"
@@ -1508,20 +1509,24 @@ func TestStaleReadAllCombinations(t *testing.T) {
 
 	// Insert row #1
 	tk.MustExec("insert into t values (1, 10)")
-	time.Sleep(3000 * time.Millisecond)                   // Increased from 1s to 3s for better timing separation
-	firstTime := time.Now().Add(-1500 * time.Millisecond) // Adjusted offset
-	// Retrieve current TSO from store's Oracle instead of @@tidb_current_ts.
-	externalTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-	if err != nil {
-		t.Fatalf("failed to get TSO: %v", err)
-	}
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s for better timing separation
+	ts, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	firstTime := oracle.GetTimeFromTS(ts).Add(-1500 * time.Millisecond)
+
+	externalTS, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
 
 	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s
 	// Insert row #2
 	tk.MustExec("insert into t values (2, 20)")
-	row2CreatedTime := time.Now()
-	time.Sleep(3000 * time.Millisecond)                    // Increased from 1s to 3s
-	secondTime := time.Now().Add(-1500 * time.Millisecond) // Adjusted offset
+	row2CreatedTS, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	row2CreatedTime := oracle.GetTimeFromTS(row2CreatedTS)
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s
+	ts, err = oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	secondTime := oracle.GetTimeFromTS(ts).Add(-1500 * time.Millisecond)
 
 	staleReadMethods := []struct {
 		name   string
@@ -1533,7 +1538,10 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		{
 			name: "tidb_read_staleness",
 			setup: func() {
-				row2CreatedElapsed := int(time.Since(row2CreatedTime).Seconds())
+				ts, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+				require.NoError(t, err)
+				elapsed := oracle.GetTimeFromTS(ts).Sub(row2CreatedTime)
+				row2CreatedElapsed := int(elapsed.Seconds())
 				// Ensure sufficient buffer: with 3s sleep intervals, elapsed should be ~3s
 				// Adding 2s buffer ensures stale read is safely before row2 insertion
 				staleness := row2CreatedElapsed + 2
