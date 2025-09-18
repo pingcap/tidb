@@ -84,6 +84,16 @@ lint:tools/bin/revive
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_resource_control.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_runtime.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/overview_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/performance_overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/performance_overview_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_resource_control_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_runtime_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_summary_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_worker.json
 
 .PHONY: license
 license:
