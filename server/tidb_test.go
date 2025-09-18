@@ -43,7 +43,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:server/tidb_test.go
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -53,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -70,37 +70,6 @@ import (
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-=======
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/plugin"
-	server2 "github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/server/internal/column"
-	"github.com/pingcap/tidb/pkg/server/internal/resultset"
-	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
-	"github.com/pingcap/tidb/pkg/server/internal/testutil"
-	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/server/tests/servertestkit"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
-	"github.com/pingcap/tidb/pkg/util/topsql"
-	"github.com/pingcap/tidb/pkg/util/topsql/collector"
-	mockTopSQLTraceCPU "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
-	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
->>>>>>> bbd963f9cb0 (executor, plugin: add statement id info to the plugin (#63526)):pkg/server/tests/commontest/tidb_test.go
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.opencensus.io/stats/view"
@@ -3263,7 +3232,7 @@ func TestLoadData(t *testing.T) {
 }
 
 func TestAuditPluginInfoForStarting(t *testing.T) {
-	ts := servertestkit.CreateTidbTestSuite(t)
+	ts := createTidbTestSuite(t)
 
 	type normalTest struct {
 		sql         string
@@ -3298,7 +3267,7 @@ func TestAuditPluginInfoForStarting(t *testing.T) {
 			tables:      strings.Join(tableNames, ","),
 			cmd:         cmd,
 			event:       event,
-			params:      sctx.PlanCacheParams.String(),
+			params:      sctx.PreparedParams.String(),
 			redactedSQL: redactedSQL,
 			currentDB:   sctx.CurrentDB,
 		}
@@ -3310,7 +3279,7 @@ func TestAuditPluginInfoForStarting(t *testing.T) {
 	plugin.LoadPluginForTest(t, onGeneralEvent)
 	defer plugin.Shutdown(context.Background())
 
-	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+	ts.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		conn, err := dbt.GetDB().Conn(context.Background())
 		require.NoError(t, err)
 
@@ -3327,7 +3296,7 @@ func TestAuditPluginInfoForStarting(t *testing.T) {
 
 		// Test execute audit log
 		testResults = testResults[:0]
-		for i := range 1000 {
+		for i := 0; i < 1000; i++ {
 			_, err = stmt.ExecContext(context.Background(), i)
 			require.NoError(t, err)
 		}
