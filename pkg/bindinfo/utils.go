@@ -170,43 +170,86 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
 	return
 }
 
-const updateBindingUsageInfoBatchSize = 100
-
 var (
+	// UpdateBindingUsageInfoBatchSize indicates the batch size when updating binding usage info to storage.
+	UpdateBindingUsageInfoBatchSize = 20
 	// MaxWriteInterval indicates the interval at which a write operation needs to be performed after a binding has not been read.
 	MaxWriteInterval = 6 * time.Hour
 )
 
 func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings []*Binding) error {
-	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) error {
-		cnt := 0
-		for _, binding := range bindings {
-			lastSaved := binding.UsageInfo.LastSavedAt.Load()
-			if lastSaved == nil {
-				continue
+	toWrite := make([]*Binding, 0, UpdateBindingUsageInfoBatchSize)
+	for _, binding := range bindings {
+		lastSaved := binding.UsageInfo.LastSavedAt.Load()
+		if lastSaved == nil {
+			continue
+		}
+		lastUsed := binding.UsageInfo.LastUsedAt.Load()
+		if lastUsed == nil {
+			continue
+		}
+		intest.Assert(lastUsed.Compare(*lastSaved) >= 0, " lastUsed should be later than or equal to lastSaved")
+		if time.Since(*lastSaved) > MaxWriteInterval ||
+			// if the last used time is updated for more than 1 hour, we also write it back to storage.
+			time.Since(*lastUsed) > 1*time.Hour {
+			toWrite = append(toWrite, binding)
+		}
+		if len(toWrite) == UpdateBindingUsageInfoBatchSize {
+			err := updateBindingUsageInfoToStorageInternal(sPool, toWrite)
+			if err != nil {
+				return err
 			}
+			toWrite = toWrite[:0]
+		}
+	}
+	if len(toWrite) > 0 {
+		err := updateBindingUsageInfoToStorageInternal(sPool, toWrite)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, bindings []*Binding) error {
+	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) error {
+		addLockForBind(sctx, bindings)
+		for _, binding := range bindings {
 			lastUsed := binding.UsageInfo.LastUsedAt.Load()
 			if lastUsed == nil {
 				continue
 			}
-			intest.Assert(lastUsed.Compare(*lastSaved) >= 0, " lastUsed should be later than or equal to lastSaved")
-			if time.Since(*lastSaved) > MaxWriteInterval ||
-				// if the last used time is updated for more than 1 hour, we also write it back to storage.
-				time.Since(*lastUsed) > 1*time.Hour {
-				err := saveBindUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
-				if err != nil {
-					return err
-				}
-				binding.ResetUsageInfo()
-				cnt++
-			}
-			if cnt > updateBindingUsageInfoBatchSize {
-				break
-			}
+			saveBindUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
 		}
 		return nil
 	})
+	if err == nil {
+		for _, binding := range bindings {
+			binding.ResetUsageInfo()
+		}
+	}
 	return err
+}
+
+func addLockForBind(sctx sessionctx.Context, bindings []*Binding) error {
+	condition := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		sqlDigest := binding.SQLDigest
+		planDigest := binding.PlanDigest
+		sql := fmt.Sprintf(" sql_digest = '%s'", sqlDigest)
+		if planDigest == "" {
+			sql += " AND plan_digest IS NULL"
+		} else {
+			sql += fmt.Sprintf(" AND plan_digest = '%s' ", planDigest)
+		}
+		condition = append(condition, sql)
+	}
+	locksql := "select 1 from mysql.bind_info use index(digest_index) where " + strings.Join(condition, " or ") + " for update"
+	_, err := exec(sctx, locksql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func saveBindUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {

@@ -30,6 +30,7 @@ func TestBindUsageInfo(t *testing.T) {
 		"9d3995845aef70ba086d347f38a4e14c9705e966f7c5793b9fa92194bca2bbef",
 		"aa3c510b94b9d680f729252ca88415794c8a4f52172c5f9e06c27bee57d08329",
 	}
+	bindinfo.UpdateBindingUsageInfoBatchSize = 2
 	bindinfo.MaxWriteInterval = 1 * time.Microsecond
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	bindingHandle := dom.BindingHandle()
@@ -67,7 +68,8 @@ func TestBindUsageInfo(t *testing.T) {
 	// The last_used_date should be updated.
 	require.True(t, !origin.Equal(result.Rows()))
 	var last *testkit.Result
-	for range 5 {
+	for idx := range 5 {
+		bindinfo.UpdateBindingUsageInfoBatchSize = max(1, idx)
 		tk.MustExec("execute stmt1;")
 		tk.MustExec("execute stmt2;")
 		tk.MustExec("execute stmt3;")
