@@ -101,13 +101,20 @@ func (w *worker) tryMetaOnlyModifyColumn(
 		return false, ver, err
 	}
 
-	oldColName := oldCol.Name
-	oldCol.FieldType = args.Column.FieldType
-	oldCol.Name = args.Column.Name
-	oldCol.ChangingFieldType = nil
-	oldCol.DelFlag(mysql.PreventNullInsertFlag)
-	moveChangingColumnInfoToDest(tblInfo, oldCol, oldCol, args.Position)
-	updateNewIdxColsNameOffset(tblInfo.Indices, oldColName, oldCol)
+	newCol := args.Column
+	newCol.ID = oldCol.ID
+	newCol.Offset = oldCol.Offset
+	newCol.State = oldCol.State
+
+	destOffset, err := LocateOffsetToMove(oldCol.Offset, args.Position, tblInfo)
+	if err != nil {
+		return false, ver, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
+	}
+	tblInfo.Columns[oldCol.Offset] = newCol
+	tblInfo.MoveColumnInfo(oldCol.Offset, destOffset)
+	updateNewIdxColsNameOffset(tblInfo.Indices, oldCol.Name, newCol)
+	updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, newCol.Name)
+
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return false, ver, errors.Trace(err)
