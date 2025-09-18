@@ -56,34 +56,23 @@ for file_path in "$DUMPLING_BASE_NAME"/data/*; do
     exit 1
   fi
   
-  # Verify each chunk file contains a complete INSERT statement
+  # Compare each chunk file with the expected result file
   for chunk_file in "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql; do
-    if ! grep -q "INSERT INTO \`$table_name\` VALUES" "$chunk_file"; then
-      echo "ERROR: Chunk file $chunk_file does not contain a complete INSERT statement"
+    chunk_basename=$(basename "$chunk_file")
+    # Extract the chunk number from the filename (e.g., composite_string_key.comp_str_case_0.000000000.sql -> comp_str_case_0.000000000.sql)
+    expected_file="${chunk_basename#composite_string_key.}"
+    
+    if [ ! -f "$DUMPLING_BASE_NAME/result/$expected_file" ]; then
+      echo "ERROR: Expected result file $DUMPLING_BASE_NAME/result/$expected_file not found"
+      exit 1
+    fi
+    
+    # Compare the chunk with expected result
+    if ! diff -B -w "$chunk_file" "$DUMPLING_BASE_NAME/result/$expected_file"; then
+      echo "ERROR: Chunk file $chunk_file does not match expected result $expected_file"
       exit 1
     fi
   done
-  
-  # Collect all data from chunks and verify completeness
-  # This is just to ensure all data is exported, not to verify the format
-  temp_file="$DUMPLING_OUTPUT_DIR/temp_$table_name.sql"
-  for chunk_file in "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql; do
-    # Extract only the data rows (remove headers and INSERT INTO line)
-    sed -n '/INSERT INTO/,/;$/p' "$chunk_file" | sed '1s/INSERT INTO .* VALUES//' | sed 's/;$//' | tr -d '\n' | sed 's/,(/\n(/g' | grep -v '^$' >> "$temp_file"
-  done
-  
-  # Sort both files for comparison (data order might differ between chunks)
-  sort "$temp_file" > "$temp_file.sorted"
-  sed -n '/INSERT INTO/,/;$/p' "$DUMPLING_BASE_NAME/result/$table_name.sql" | sed '1s/INSERT INTO .* VALUES//' | sed 's/;$//' | tr -d '\n' | sed 's/,(/\n(/g' | grep -v '^$' | sort > "$DUMPLING_BASE_NAME/result/$table_name.sorted"
-  
-  # Compare sorted data to ensure all rows are exported
-  if ! diff -b "$temp_file.sorted" "$DUMPLING_BASE_NAME/result/$table_name.sorted"; then
-    echo "ERROR: Data mismatch for $table_name"
-    exit 1
-  fi
-  
-  # Cleanup
-  rm -f "$temp_file" "$temp_file.sorted" "$DUMPLING_BASE_NAME/result/$table_name.sorted"
   
   echo "Table $table_name: Successfully validated $chunk_count chunks"
 done
