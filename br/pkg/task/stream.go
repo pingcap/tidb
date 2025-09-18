@@ -1783,19 +1783,8 @@ func restoreStream(
 		sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
 		log.Info("Generating SQLs for restoring TiFlash Replica",
 			zap.Strings("sqls", sqls))
-		err = g.UseOneShotSession(mgr.GetStorage(), false, func(se glue.Session) error {
-			for _, sql := range sqls {
-				if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
-					logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
-						logutil.ShortError(errExec),
-						zap.String("sql", sql),
-					)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return err
+		if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
+			return errors.Annotate(err, "failed to reset tiflash replicas")
 		}
 	}
 
