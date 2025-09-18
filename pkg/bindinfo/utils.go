@@ -212,14 +212,19 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 }
 
 func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, bindings []*Binding) error {
-	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) error {
-		addLockForBind(sctx, bindings)
+	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) (err error) {
+		if err = lockBindInfoTable(sctx); err != nil {
+			return errors.Trace(err)
+		}
 		for _, binding := range bindings {
 			lastUsed := binding.UsageInfo.LastUsedAt.Load()
 			if lastUsed == nil {
 				continue
 			}
-			saveBindUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
+			err = saveBindUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		return nil
 	})
@@ -229,27 +234,6 @@ func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, 
 		}
 	}
 	return err
-}
-
-func addLockForBind(sctx sessionctx.Context, bindings []*Binding) error {
-	condition := make([]string, 0, len(bindings))
-	for _, binding := range bindings {
-		sqlDigest := binding.SQLDigest
-		planDigest := binding.PlanDigest
-		sql := fmt.Sprintf(" sql_digest = '%s'", sqlDigest)
-		if planDigest == "" {
-			sql += " AND plan_digest IS NULL"
-		} else {
-			sql += fmt.Sprintf(" AND plan_digest = '%s' ", planDigest)
-		}
-		condition = append(condition, sql)
-	}
-	locksql := "select 1 from mysql.bind_info use index(digest_index) where " + strings.Join(condition, " or ") + " for update"
-	_, err := exec(sctx, locksql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
 }
 
 func saveBindUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {

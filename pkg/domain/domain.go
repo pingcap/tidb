@@ -1595,8 +1595,8 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				// if there are many tidb servers. The next write interval is [5s, 100s].
 				writeBindingUsageTicker.Reset(
 					randomDuration(
-						5,
-						100,
+						5*60,  // 5min
+						30*60, // 30min
 					),
 				)
 			}
