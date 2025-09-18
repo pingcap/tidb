@@ -365,7 +365,9 @@ func DumpColStatsUsageEntries(pool util.DestroyableSessionPool, entries []ColSta
 			thresholdMinutes := int(colStatsUsageUpdateInterval / time.Minute)
 			sql := new(strings.Builder)
 			sqlescape.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
-			for j := 0; j < len(batch); j++ {
+			for j := range len(batch) {
+				// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
+				// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
 				sqlescape.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", batch[j].TableID, batch[j].ColumnID, batch[j].LastUsedAt)
 				if j < len(batch)-1 {
 					sqlescape.MustFormatSQL(sql, ",")
@@ -377,7 +379,7 @@ func DumpColStatsUsageEntries(pool util.DestroyableSessionPool, entries []ColSta
 				return err
 			}
 			dur := time.Since(start)
-			statslogutil.StatsSampleLogger().Info("column_stats_usage: upsert-only(threshold) batch done",
+			statslogutil.StatsSampleLogger().Debug("column_stats_usage: upsert batch done",
 				zap.Int("batchSize", len(batch)),
 				zap.Duration("duration", dur))
 			if rec != nil {
@@ -393,9 +395,9 @@ func DumpColStatsUsageEntries(pool util.DestroyableSessionPool, entries []ColSta
 
 // ColStatsUsageEntry represents one (table_id, column_id, last_used_at) item to persist.
 type ColStatsUsageEntry struct {
+	LastUsedAt string
 	TableID    int64
 	ColumnID   int64
-	LastUsedAt string
 }
 
 // NewSessionStatsItem allocates a stats collector for a session.
