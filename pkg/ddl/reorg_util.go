@@ -76,7 +76,11 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	var tableSizeInBytes int64
 	var cpuNum int
-	if (setReorgParam || setDistTaskParam) && kerneltype.IsNextGen() {
+	// we don't use DXF service for bootstrap/upgrade related DDL, so no need to
+	// calculate resources.
+	initing := sctx.Value(sessionctx.Initing) != nil
+	shouldCalResource := kerneltype.IsNextGen() && !initing
+	if (setReorgParam || setDistTaskParam) && shouldCalResource {
 		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), tbl)
 		var err error
 		cpuNum, err = scheduler.GetExecCPUNode(ctx)
@@ -91,8 +95,11 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	})
 
-	var autoConc, autoMaxNode int
-	if kerneltype.IsNextGen() {
+	var (
+		autoConc, autoMaxNode int
+		factorField           = zap.Skip()
+	)
+	if shouldCalResource {
 		factors, err := dxfhandle.GetScheduleTuneFactors(ctx, sctx.GetStore().GetKeyspace())
 		if err != nil {
 			return err
@@ -100,9 +107,10 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
 		autoConc = calc.CalcConcurrency()
 		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
+		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
 	}
 	if setReorgParam {
-		if kerneltype.IsNextGen() && setDistTaskParam {
+		if shouldCalResource && setDistTaskParam {
 			m.SetConcurrency(autoConc)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
@@ -119,7 +127,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
-		if kerneltype.IsNextGen() {
+		if shouldCalResource {
 			m.MaxNodeCount = autoMaxNode
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
@@ -157,6 +165,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
+		factorField,
 	)
 	return nil
 }
