@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/config"
 	"math/rand"
 	"strings"
 	"sync"
@@ -1694,4 +1695,28 @@ func TestIssue54652(t *testing.T) {
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
 	tk.MustExec(`commit`)
+}
+
+func TestNonPreparedPlanCacheMaxTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, key(a))`)
+	tk.MustExec(`create table t2 (a int, b int, key(a))`)
+	tk.MustExec(`create table t3 (a int, b int, key(a))`)
+	tk.MustExec(`create table t4 (a int, b int, key(a))`)
+	tk.MustExec(`create table t5 (a int, b int, key(a))`)
+	tk.MustExec(`create table t6 (a int, b int, key(a))`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+
+	require.Equal(t, 5, config.GetPlanCacheMaxTable())
+	tk.MustQuery("select * from t1,t2,t3,t4,t5").Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t1,t2,t3,t4,t5").Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustQuery("select * from t1,t2,t3,t4,t5,t6").Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t1,t2,t3,t4,t5,t6").Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }

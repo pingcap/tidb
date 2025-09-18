@@ -903,6 +903,8 @@ type Experimental struct {
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 	// Whether enable create table as select
 	EnableCreateTableAsSelect bool `toml:"enable-create-table-as-select" json:"enable-create-table-as-select"`
+	// PlanCacheMaxTable is the config for the max table count of plan cache.
+	PlanCacheMaxTable int `toml:"plan-cache-max-table" json:"plan-cache-max-table"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -1057,7 +1059,9 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental:               Experimental{},
+	Experimental: Experimental{
+		PlanCacheMaxTable: 2,
+	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
@@ -1449,6 +1453,14 @@ func hasRootPrivilege() bool {
 // TableLockEnabled uses to check whether enabled the table lock feature.
 func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
+}
+
+func GetPlanCacheMaxTable() int {
+	count := GetGlobalConfig().Experimental.PlanCacheMaxTable
+	if count > 0 && count < 256 {
+		return count
+	}
+	return 2
 }
 
 // TableLockDelayClean uses to get the time of delay clean table lock.

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -362,8 +363,9 @@ func extractTableNames(node ast.ResultSetNode, names []*ast.TableName) ([]*ast.T
 	default:
 		return names, false, "queries that have sub-queries are not supported"
 	}
-	if len(names) > 2 {
-		return names, false, "queries that have more than 2 tables are not supported"
+	maxTable := config.GetPlanCacheMaxTable()
+	if len(names) > maxTable {
+		return names, false, "queries that have more than plan-cache-max-table tables are not supported"
 	}
 	return names, true, ""
 }

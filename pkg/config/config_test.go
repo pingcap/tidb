@@ -745,6 +745,7 @@ keys-limit=123
 total-key-size-limit=1024
 [experimental]
 allow-expression-index = true
+plan-cache-max-table = 3
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -816,6 +817,7 @@ max_connections = 200
 	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.Equal(t, 3, conf.Experimental.PlanCacheMaxTable)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
 	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
