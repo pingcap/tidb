@@ -1060,6 +1060,9 @@ const (
 
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
+
+	// TiDBDefaultAutoIDCache indicates the default auto id cache size when create table.
+	TiDBDefaultAutoIDCache = "tidb_default_auto_id_cache"
 )
 
 // TiDB vars that have only global scope
@@ -1713,6 +1716,7 @@ const (
 	DefTiDBEnableTSValidation                         = true
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
+	DefTiDBAutoIDCache                                = 0
 )
 
 // Process global variables.
