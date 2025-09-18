@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -1265,6 +1266,44 @@ func TestCreateSysDatabaseByIDIfNotExists(t *testing.T) {
 		require.True(t, exist)
 		err = m.CreateSysDatabaseByIDIfNotExists("aaa", 123)
 		require.NoError(t, err)
+		return nil
+	}))
+}
+
+func TestSetGetDXFScheduleTuneFactors(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for next-gen")
+	}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	// not set yet
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		factors, err := m.GetDXFScheduleTuneFactors(store.GetKeyspace())
+		require.NoError(t, err)
+		require.Nil(t, factors)
+		return nil
+	}))
+	// set it
+	factors := &schstatus.TTLTuneFactors{
+		TTLInfo:     schstatus.TTLInfo{TTL: time.Hour},
+		TuneFactors: schstatus.TuneFactors{AmplifyFactor: 1.5},
+	}
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		err := m.SetDXFScheduleTuneFactors(store.GetKeyspace(), factors)
+		require.NoError(t, err)
+		return nil
+	}))
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		got, err := m.GetDXFScheduleTuneFactors(store.GetKeyspace())
+		require.NoError(t, err)
+		require.EqualValues(t, factors, got)
 		return nil
 	}))
 }

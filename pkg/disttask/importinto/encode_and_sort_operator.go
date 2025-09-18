@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -234,7 +233,7 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 
 func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
-	indexKVGroupCnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
+	indexKVGroupCnt := importer.GetNumOfIndexGenKV(plan.DesiredTableInfo)
 	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
 	// we use half of the total available memory for data writer, and the other half
 	// for encoding and other stuffs, it's an experience value, might not optimal.
@@ -249,31 +248,4 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	// 	| 13              | 192/64 MiB            |
 	memPerShare := float64(memPerCon) / 2 / float64(indexKVGroupCnt+3)
 	return uint64(memPerShare * 3), uint64(memPerShare)
-}
-
-func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
-	return len(getIndicesGenKV(tblInfo))
-}
-
-type genKVIndex struct {
-	name   string
-	unique bool
-}
-
-func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
-	res := make(map[int64]genKVIndex, len(tblInfo.Indices))
-	for _, idxInfo := range tblInfo.Indices {
-		// all public non-primary index generates index KVs
-		if idxInfo.State != model.StatePublic {
-			continue
-		}
-		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
-			continue
-		}
-		res[idxInfo.ID] = genKVIndex{
-			name:   idxInfo.Name.L,
-			unique: idxInfo.Unique,
-		}
-	}
-	return res
 }
