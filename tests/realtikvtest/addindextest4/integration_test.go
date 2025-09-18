@@ -115,8 +115,8 @@ func TestAdminAlterDDLJobAdjustConfigLocalIngest(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockStuckIndexIngestWorker", "return(false)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(100)")
 	wg := sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		tk1.MustExec("alter table t add index idx_a(a);")
 	}()
