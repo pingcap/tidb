@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.23.12
+go 1.24.0
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -136,7 +136,7 @@ require (
 	golang.org/x/net v0.42.0
 	golang.org/x/oauth2 v0.30.0
 	golang.org/x/sync v0.16.0
-	golang.org/x/sys v0.35.0
+	golang.org/x/sys v0.36.0
 	golang.org/x/term v0.34.0
 	golang.org/x/text v0.28.0
 	golang.org/x/time v0.12.0
