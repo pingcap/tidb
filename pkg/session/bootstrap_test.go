@@ -2591,7 +2591,9 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 			mockstore.WithStoreType(mockstore.EmbedUnistore),
 		)
 	} else {
-		store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+		store, err = mockstore.NewMockStore(
+			mockstore.WithStoreType(mockstore.EmbedUnistore),
+			mockstore.WithKeyspaceMeta(nil))
 	}
 	require.NoError(t, err)
 	defer func() {

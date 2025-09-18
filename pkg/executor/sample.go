@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"slices"
 
@@ -309,6 +310,7 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 			kvChan:      make(chan *sampleKV),
 			snapshot:    snap,
 			ranges:      ranges,
+			prefix:      s.table.RecordPrefix(),
 		}
 		go fetchers[i].run()
 	}
@@ -347,6 +349,7 @@ type sampleFetcher struct {
 	err         error
 	snapshot    kv.Snapshot
 	ranges      []kv.KeyRange
+	prefix      []byte
 }
 
 func (s *sampleFetcher) run() {
@@ -362,7 +365,7 @@ func (s *sampleFetcher) run() {
 		}
 		hasValue := false
 		for it.Valid() {
-			if !tablecodec.IsRecordKey(it.Key()) {
+			if !bytes.HasPrefix(it.Key(), s.prefix) {
 				if err = it.Next(); err != nil {
 					s.err = err
 					return

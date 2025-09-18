@@ -222,9 +222,6 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		},
 		storeType: defaultStoreType,
 	}
-	for _, f := range options {
-		f(&opt)
-	}
 	if kerneltype.IsNextGen() {
 		// in nextgen, all stores must have a keyspace meta set. to simplify the
 		// test, we set the default keyspace meta to system keyspace.
@@ -234,6 +231,9 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 				Name: keyspace.System,
 			}
 		}
+	}
+	for _, f := range options {
+		f(&opt)
 	}
 
 	var (
