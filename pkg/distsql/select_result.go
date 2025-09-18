@@ -595,7 +595,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
 			// not trigger an error log in this case.
 			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
-				logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+				logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
 					zap.Int("expected", len(r.copPlanIDs)),
 					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 			}
