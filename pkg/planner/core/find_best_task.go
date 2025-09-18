@@ -718,29 +718,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		return 0
 	}
 
-<<<<<<< HEAD
-	// If one index has statistics and the other does not, choose the index with statistics if it
-	// has the same or higher number of equal/IN predicates.
-	lhsHasStatistics := statsTbl.Pseudo
-	if statsTbl != nil && lhs.path.Index != nil {
-		lhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true)
-	}
-	rhsHasStatistics := statsTbl.Pseudo
-	if statsTbl != nil && rhs.path.Index != nil {
-		rhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true)
-	}
-	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
-		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
-		(!lhsHasStatistics || !rhsHasStatistics) && // At least one index doesn't have statistics
-		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
-		lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
-		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
-		if lhsHasStatistics && lhsTotalEqual > 0 && lhsTotalEqual >= rhsTotalEqual {
-			return 1
-		}
-		if rhsHasStatistics && rhsTotalEqual > 0 && rhsTotalEqual >= lhsTotalEqual {
-			return -1
-=======
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
@@ -770,7 +747,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 				(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount > 0 && len(rhs.indexCondsColMap) >= len(rhs.path.Index.Columns))) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
->>>>>>> 5ba9e6f57d6 (planner: notify skyline pruning of index statistics availability (#59110))
 		}
 	}
 
@@ -782,17 +758,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
 			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-<<<<<<< HEAD
-				return -1
-			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-				return 1
-=======
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
 			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
->>>>>>> 5ba9e6f57d6 (planner: notify skyline pruning of index statistics availability (#59110))
 			}
 		}
 	}
@@ -806,38 +775,21 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable1 {
-<<<<<<< HEAD
-		return 0
-=======
 		return 0, false // No winner (0). Do not return the pseudo result
->>>>>>> 5ba9e6f57d6 (planner: notify skyline pruning of index statistics availability (#59110))
 	}
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	if !comparable2 {
-<<<<<<< HEAD
-		return 0
-=======
 		return 0, false // No winner (0). Do not return the pseudo result
->>>>>>> 5ba9e6f57d6 (planner: notify skyline pruning of index statistics availability (#59110))
 	}
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
-<<<<<<< HEAD
-		return 1
-	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
-		return -1
-	}
-	return 0
-=======
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
 	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
->>>>>>> 5ba9e6f57d6 (planner: notify skyline pruning of index statistics availability (#59110))
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
