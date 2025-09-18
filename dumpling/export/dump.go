@@ -773,6 +773,21 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 
+	// For string fields, check if we have composite keys and get all fields
+	var fields []string
+	if isStringField {
+		// Get all fields for composite string keys
+		fields, _, err = pickupPossibleFieldsForStringChunking(tctx, meta, conn)
+		if err != nil || len(fields) == 0 {
+			tctx.L().Info("fallback to sequential dump due to no proper string fields. This won't influence the whole dump process",
+				zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
+			return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
+		}
+	} else {
+		// For numeric fields, use single field
+		fields = []string{field}
+	}
+
 	// Set chunking mode based on field analysis
 	conf.IsStringChunking = isStringField
 
@@ -789,6 +804,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		zap.String("table", tbl),
 		zap.Uint64("estimateCount", count),
 		zap.String("field", field),
+		zap.Strings("fields", fields),
 		zap.String("estimateField", estimateField),
 		zap.Bool("isStringField", isStringField))
 
@@ -832,8 +848,8 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		tctx.L().Info("using string-based chunking",
 			zap.String("database", db),
 			zap.String("table", tbl),
-			zap.String("field", field))
-		return d.concurrentDumpStringField(tctx, conn, meta, taskChan, field, orderByClause, count)
+			zap.Strings("fields", fields))
+		return d.concurrentDumpStringFields(tctx, conn, meta, taskChan, fields, orderByClause, count)
 	}
 
 	minv, maxv, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
