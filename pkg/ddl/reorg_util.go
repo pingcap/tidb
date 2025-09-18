@@ -76,7 +76,11 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	var tableSizeInBytes int64
 	var cpuNum int
-	if (setReorgParam || setDistTaskParam) && kerneltype.IsNextGen() {
+	// we don't use DXF service for bootstrap/upgrade related DDL, so no need to
+	// calculate resources.
+	initing := sctx.Value(sessionctx.Initing) != nil
+	shouldCalResource := kerneltype.IsNextGen() && !initing
+	if (setReorgParam || setDistTaskParam) && shouldCalResource {
 		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), tbl)
 		var err error
 		cpuNum, err = scheduler.GetExecCPUNode(ctx)
@@ -92,7 +96,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	})
 
 	if setReorgParam {
-		if kerneltype.IsNextGen() && setDistTaskParam {
+		if shouldCalResource && setDistTaskParam {
 			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)
 			m.SetConcurrency(autoConc)
 		} else {
@@ -110,7 +114,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
-		if kerneltype.IsNextGen() {
+		if shouldCalResource {
 			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(tableSizeInBytes, cpuNum)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {

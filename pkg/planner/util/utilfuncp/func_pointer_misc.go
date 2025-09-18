@@ -89,14 +89,6 @@ var ExhaustPhysicalPlans4LogicalSort func(lp base.LogicalPlan, prop *property.Ph
 var ExhaustPhysicalPlans4LogicalTopN func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
-// ExhaustPhysicalPlans4LogicalLimit will be called by LogicalLimit in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalLimit func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalProjection will be called by LogicalLimit in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalProjection func(lp base.LogicalPlan,
-	prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error)
-
 // ExhaustPhysicalPlans4LogicalWindow will be called by LogicalWindow in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
@@ -105,20 +97,8 @@ var ExhaustPhysicalPlans4LogicalWindow func(lp base.LogicalPlan, prop *property.
 var ExhaustPhysicalPlans4LogicalLock func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
-// ExhaustPhysicalPlans4LogicalUnionScan will be called by LogicalUnionScan in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalUnionScan func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalSelection will be called by LogicalSelection in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalSelection func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
 // ExhaustPhysicalPlans4LogicalJoin will be called by LogicalJoin in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalAggregation will be called by LogicalAggregation in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalAggregation func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalApply will be called by LogicalApply in logicalOp pkg.
@@ -135,10 +115,6 @@ var ExhaustPhysicalPlans4LogicalUnionAll func(lp base.LogicalPlan, prop *propert
 
 // ExhaustPhysicalPlans4LogicalExpand will be called by LogicalExpand in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalExpand func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
-
-// ExhaustPhysicalPlans4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalCTE func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
 // ****************************************** stats related **********************************************

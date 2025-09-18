@@ -349,6 +349,9 @@ func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 }
 
 func TestDefaultValForAnalyze(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version=1")
@@ -535,6 +538,9 @@ func TestAdjustSampleRateNote(t *testing.T) {
 }
 
 func TestAnalyzeIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -564,26 +570,6 @@ func TestIssue20874(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 0 1 1 \x02\xd2 \x02\xd2 0",
-		"test t  a 0 1 2 1 \x0e\x0f \x0e\x0f 0",
-		"test t  a 0 2 3 1 \x0e3 \x0e3 0",
-		"test t  b 0 0 1 1 \x00A \x00A 0",
-		"test t  b 0 1 3 2 \x00C \x00C 0",
-		"test t  idxa 1 0 1 1 \x02\xd2 \x02\xd2 0",
-		"test t  idxa 1 1 2 1 \x0e\x0f \x0e\x0f 0",
-		"test t  idxa 1 2 3 1 \x0e3 \x0e3 0",
-		"test t  idxb 1 0 1 1 \x00A \x00A 0",
-		"test t  idxb 1 1 3 2 \x00C \x00C 0",
-	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 3 0 9 1 1",
-		"0 2 2 0 9 1 -0.5",
-		"1 1 3 0 0 1 0",
-		"1 2 2 0 0 1 0",
-	))
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
