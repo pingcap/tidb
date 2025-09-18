@@ -1771,15 +1771,18 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression, vai
 }
 
 func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	combinedCond := make([]expression.Expression, 0,
-		len(p.LeftConditions)+len(p.RightConditions)+
-			len(p.EqualConditions)+len(p.OtherConditions)+
-			len(predicates))
-	combinedCond = append(combinedCond, p.LeftConditions...)
-	combinedCond = append(combinedCond, p.RightConditions...)
-	combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-	combinedCond = append(combinedCond, p.OtherConditions...)
+	combinedLen := len(predicates)
+	if p.JoinType != base.AntiSemiJoin && p.JoinType != base.AntiLeftOuterSemiJoin {
+		combinedLen += len(p.LeftConditions)+len(p.RightConditions)+
+			len(p.EqualConditions)+len(p.OtherConditions)
+		combinedCond := make([]expression.Expression, 0, combinedLen)
+		combinedCond = append(combinedCond, p.LeftConditions...)
+		combinedCond = append(combinedCond, p.RightConditions...)
+		combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+		combinedCond = append(combinedCond, p.OtherConditions...)
+	}
 	combinedCond = append(combinedCond, predicates...)
+
 	return combinedCond
 }
 
