@@ -271,7 +271,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 		// Rebuild groupedRanges if it was originally set
 		if len(e.groupByColIdxs) != 0 {
-			e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, e.groupByColIdxs)
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, e.groupByColIdxs)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

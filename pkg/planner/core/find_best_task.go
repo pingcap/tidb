@@ -1321,7 +1321,10 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 	}
 	if len(groupByColIdxs) > 0 && matchResult == property.PropMatched {
-		groups := GroupRangesByCols(path.Ranges, groupByColIdxs)
+		groups, err := GroupRangesByCols(path.Ranges, groupByColIdxs)
+		if err != nil {
+			return property.PropNotMatched
+		}
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
@@ -1332,7 +1335,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 }
 
 // GroupRangesByCols groups the ranges by the values of the columns specified by groupByColIdxs.
-func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) [][]*ranger.Range {
+func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) ([][]*ranger.Range, error) {
 	groups := make(map[string][]*ranger.Range)
 	for _, ran := range ranges {
 		var datums []types.Datum
@@ -1343,7 +1346,7 @@ func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) [][]*ranger
 		keyBytes, err := codec.EncodeValue(time.UTC, nil, datums...)
 		intest.AssertNoError(err)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		key := string(keyBytes)
 		groups[key] = append(groups[key], ran)
@@ -1351,7 +1354,7 @@ func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) [][]*ranger
 
 	// Convert map to slice
 	result := slices.Collect(maps.Values(groups))
-	return result
+	return result, nil
 }
 
 // matchPropForIndexMergeAlternatives will match the prop with inside PartialAlternativeIndexPaths, and choose

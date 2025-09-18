@@ -297,7 +297,10 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 		}
 		// Rebuild groupedRanges if it was originally set
 		if len(is.GroupByColIdxs) != 0 {
-			e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -572,7 +575,10 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		}
 		// Rebuild groupedRanges if it was originally set
 		if len(is.GroupByColIdxs) != 0 {
-			e.groupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
