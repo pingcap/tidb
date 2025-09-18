@@ -329,7 +329,7 @@ func removeChangingColAndIdxs(tblInfo *model.TableInfo, changingColID int64) {
 	tblInfo.Columns = restCols
 }
 
-func removeOldIndexes(tblInfo *model.TableInfo, changingIdxs ...*model.IndexInfo) {
+func removeOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo) {
 	// Remove the changing indexes.
 	for i, idx := range tblInfo.Indices {
 		for _, cIdx := range changingIdxs {
@@ -965,17 +965,15 @@ func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, chang
 }
 
 func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdxs []*model.IndexInfo) []int64 {
-	if oldCol != nil {
-		tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
-	}
+	tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
+	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 	var removedIdxIDs []int64
 	if len(oldIdxs) > 0 {
 		removedIdxIDs = make([]int64, 0, len(oldIdxs))
 		for _, idx := range oldIdxs {
 			removedIdxIDs = append(removedIdxIDs, idx.ID)
 		}
-		removeOldIndexes(tblInfo, oldIdxs...)
+		removeOldIndexes(tblInfo, oldIdxs)
 	}
 	return removedIdxIDs
 }
@@ -1274,12 +1272,6 @@ func modifyColsFromNull2NotNull(
 	defer w.sessPool.Put(sctx)
 
 	skipCheck := false
-	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			skipCheck = true
-		}
-	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = checkForNullValue(ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)

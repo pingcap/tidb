@@ -46,10 +46,60 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
+
+func (w *worker) tryMetaOnlyModifyColumn(
+	jobCtx *jobContext, job *model.Job,
+	args *model.ModifyColumnArgs,
+	dbInfo *model.DBInfo, tblInfo *model.TableInfo, oldCol *model.ColumnInfo,
+) (fallback bool, ver int64, err error) {
+	if !canDoMetaOnlyModifyColumn(oldCol, args.Column, job.SQLMode) {
+		return true, 0, nil
+	}
+
+	isFirstTimeCheck := oldCol.ChangingFieldType == nil
+
+	checked, err := checkModifyColumnCanSkipReorg(
+		jobCtx.stepCtx, w,
+		dbInfo.Name, tblInfo.Name,
+		oldCol, args.Column)
+
+	// There are two kinds of errors:
+	// 1. we meet some error before checking the data, like session error, just return and retry.
+	// 2. we find some value violates the constraint, rollback the job.
+	if err != nil {
+		if checked {
+			job.State = model.JobStateRollingback
+		}
+		return false, ver, errors.Trace(err)
+	}
+
+	// For first time check, we add the flag and wait for the next loop.
+	if isFirstTimeCheck {
+		ver, err := updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
+		return false, ver, errors.Trace(err)
+	}
+
+	// For multi schema change, mark non-revertible and wait for the next loop.
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		// Store the mark and enter the next DDL handling loop.
+		ver, err := updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
+		return false, ver, err
+	}
+
+	oldCol.FieldType = args.Column.FieldType
+	oldCol.Name = args.Column.Name
+	oldCol.ChangingFieldType = nil
+	oldCol.DelFlag(mysql.PreventNullInsertFlag)
+	moveChangingColumnInfoToDest(tblInfo, oldCol, oldCol, args.Position)
+	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
+	return false, ver, errors.Trace(err)
+}
 
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyColumnArgs(job)
@@ -64,12 +114,15 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	if job.IsRollingback() {
-		// For those column-type-change jobs which don't reorg the data.
 		if !needChangeColumnData(oldCol, args.Column) {
+			// For those column-type-change jobs which don't reorg the data.
 			return rollbackModifyColumnJob(jobCtx, tblInfo, job, args.Column, oldCol, args.ModifyColumnType)
+		} else if !canDoMetaOnlyModifyColumn(oldCol, args.Column, job.SQLMode) {
+			// For those column-type-change jobs which reorg the data.
+			return rollbackModifyColumnJobWithData(jobCtx, tblInfo, job, oldCol, args)
 		}
-		// For those column-type-change jobs which reorg the data.
-		return rollbackModifyColumnJobWithReorg(jobCtx, tblInfo, job, oldCol, args)
+		// For those column-type-change jobs which can do meta-only change.
+		return rollbackMetaOnlyModifyColumnJob(jobCtx, tblInfo, job, oldCol)
 	}
 
 	// Do some checks for both jobs w/w.o reorg.
@@ -103,6 +156,14 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column"))
 	}
+
+	// First, try to do the meta-only change.
+	fallback, ver, err := w.tryMetaOnlyModifyColumn(jobCtx, job, args, dbInfo, tblInfo, oldCol)
+	if !fallback {
+		return ver, errors.Trace(err)
+	}
+
+	// Forbid reorg modify column in primary key.
 	if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
@@ -116,24 +177,30 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		changingCol.Name = ast.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 
+		var redundantIdxs []int64
+
 		InitAndAddColumnToTable(tblInfo, changingCol)
 		indexesToChange := FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 		for _, info := range indexesToChange {
+			newIdxID := AllocateIndexID(tblInfo)
 			if !info.isTemp {
 				// We create a temp index for each normal index.
-				newIdxID := AllocateIndexID(tblInfo)
 				tmpIdx := info.IndexInfo.Clone()
 				tmpIdx.ID = newIdxID
 				tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
 				UpdateIndexCol(tmpIdx.Columns[info.Offset], changingCol)
 				tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 			} else {
-				// The index is a temp index created by previous modify column job(s),
-				// just update the index column. Because it may be reused, we postpone the ID allocation
-				// to the reorganization state.
-				UpdateIndexCol(info.IndexInfo.Columns[info.Offset], changingCol)
+				// The index is a temp index created by previous modify column job(s).
+				// We can overwrite it to reduce reorg cost, because it will be dropped eventually.
+				tmpIdx := info.IndexInfo
+				oldTempIdxID := tmpIdx.ID
+				tmpIdx.ID = newIdxID
+				UpdateIndexCol(tmpIdx.Columns[info.Offset], changingCol)
+				redundantIdxs = append(redundantIdxs, oldTempIdxID)
 			}
 		}
+		args.RedundantIdxs = redundantIdxs
 	} else {
 		changingCol = model.FindColumnInfoByID(tblInfo.Columns, args.ChangingColumn.ID)
 		if changingCol == nil {
@@ -144,14 +211,15 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	defer checkColumnOrderByStates(tblInfo)
-	return w.doModifyColumnTypeWithReorg(
+	return w.doModifyColumnTypeWithData(
 		jobCtx, job, dbInfo, tblInfo, changingCol, oldCol, args)
 }
 
 func checkColumnAlreadyExists(tblInfo *model.TableInfo, args *model.ModifyColumnArgs) error {
 	// If we want to rename the column name, we need to check whether it already exists.
 	if args.Column.Name.L != args.OldColumnName.L {
-		if model.FindColumnInfo(tblInfo.Columns, args.Column.Name.L) != nil {
+		c := model.FindColumnInfo(tblInfo.Columns, args.Column.Name.L)
+		if c != nil {
 			return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(args.Column.Name))
 		}
 	}
@@ -171,6 +239,24 @@ func rollbackModifyColumnJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *
 			return ver, errors.Trace(err)
 		}
 	}
+	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+	// For those column changes which doesn't need reorg data, we should also mock empty args for delete range.
+	job.FillFinishedArgs(&model.ModifyColumnArgs{})
+	return ver, nil
+}
+
+// rollbackMetaOnlyModifyColumnJob rollbacks the job when an error occurs.
+func rollbackMetaOnlyModifyColumnJob(
+	jobCtx *jobContext, tblInfo *model.TableInfo,
+	job *model.Job, oldCol *model.ColumnInfo,
+) (ver int64, err error) {
+	oldCol.DelFlag(mysql.PreventNullInsertFlag)
+	oldCol.ChangingFieldType = nil
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// For those column changes which doesn't need reorg data, we should also mock empty args for delete range.
 	job.FillFinishedArgs(&model.ModifyColumnArgs{})
@@ -211,8 +297,8 @@ func getModifyColumnInfo(
 	return dbInfo, tblInfo, oldCol, errors.Trace(err)
 }
 
-// rollbackModifyColumnJobWithReorg is used to rollback modify-column job which need to reorg the data.
-func rollbackModifyColumnJobWithReorg(
+// rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
+func rollbackModifyColumnJobWithData(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
 	// If the not-null change is included, we should clean the flag info in oldCol.
@@ -222,7 +308,6 @@ func rollbackModifyColumnJobWithReorg(
 		// Reset PreventNullInsertFlag flag.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.PreventNullInsertFlag)
 	}
-	tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventTruncateFlag)
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
 		changingIdxIDs = buildRelatedIndexIDs(tblInfo, args.ChangingColumn.ID)
@@ -235,9 +320,7 @@ func rollbackModifyColumnJobWithReorg(
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-	// Reconstruct the job args to add the temporary index ids into delete range table.
-	// For meta-only change, changingIdxIDs may has been stored in args.RedundantIdxs.
-	args.IndexIDs = append(args.RedundantIdxs, changingIdxIDs...)
+	args.IndexIDs = changingIdxIDs
 	args.PartitionIDs = getPartitionIDs(tblInfo)
 	job.FillFinishedArgs(args)
 	return ver, nil
@@ -399,6 +482,45 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
+// canDoMetaOnlyModifyColumn checks if we have the chance to do meta-only change.
+// TODO(joechenrh): integrate this with `checkModifyTypes“.
+func canDoMetaOnlyModifyColumn(oldCol, changingCol *model.ColumnInfo, sqlMode mysql.SQLMode) bool {
+	if !sqlMode.HasStrictMode() {
+		return false
+	}
+
+	oldTp := oldCol.GetType()
+	changingTp := changingCol.GetType()
+
+	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
+		return true
+	}
+
+	// Currently, we only support meta-only change from CHAR/BINARY
+	if oldTp != mysql.TypeString {
+		return false
+	}
+
+	// Incompatible collation
+	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
+		return false
+	}
+
+	switch changingTp {
+	case mysql.TypeString:
+		// binary has padding, it must need reorg.
+		return !mysql.HasBinaryFlag(changingCol.GetFlag())
+	case mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		// TODO(joechenrh): there are some different behaviours between meta-only and reorg.
+		// For example, considering changing from CHAR to VARCHAR, and user insert 'a ' to the column during DDL.
+		// For reorg path, user will see 'a' if succeed and 'a ' if rollback.
+		// But for meta-only path, user will always see 'a'.
+		return true
+	}
+
+	return false
+}
+
 // checkModifyColumnCanSkipReorg checks if we can skip reorg when modifying column type.
 // If no value violates the constraint, add `PreventTruncateFlag` flag to the old column
 // to prevent from inserting invalid values.
@@ -407,67 +529,42 @@ func checkModifyColumnCanSkipReorg(
 	w *worker,
 	dbName, tblName ast.CIStr,
 	oldCol, changingCol *model.ColumnInfo,
-	sqlMode mysql.SQLMode,
-	isDataTruncated bool,
-) (needRollback, checked bool, err error) {
+) (checked bool, err error) {
 	// Get sessionctx from context resource pool.
 	var sctx sessionctx.Context
 	sctx, err = w.sessPool.Get()
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	defer w.sessPool.Put(sctx)
 
-	sql := buildCheckSQLFromModifyColumn(dbName, tblName, oldCol, changingCol, sqlMode)
-	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
-		if v, ok := val.(bool); v && ok {
-			sql = ""
-		}
-	})
+	sql := buildCheckSQLFromModifyColumn(dbName, tblName, oldCol, changingCol)
 
-	if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
-		oldCol.AddFlag(mysql.PreventNullInsertFlag)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(rows) != 0 {
+		if rows[0].IsNull(0) {
+			return true, dbterror.ErrInvalidUseOfNull
+		}
+
+		datum := rows[0].GetDatum(0, &oldCol.FieldType)
+		dStr := datumToStringNoErr(datum)
+		return true, types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", oldCol.Name.L, dStr)
 	}
 
-	if sql != "" {
-		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
-		if err != nil {
-			return false, false, errors.Trace(err)
-		}
-		if len(rows) != 0 {
-			if rows[0].IsNull(0) {
-				return true, true, dbterror.ErrInvalidUseOfNull
-			}
-
-			datum := rows[0].GetDatum(0, &oldCol.FieldType)
-			dStr := datumToStringNoErr(datum)
-			return true, true, types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", oldCol.Name.L, dStr)
-		}
-
-		// If reach here, it means we are modifying column under strict mode, and we are
-		// trying to do meta-only change. So we set the flag here to prevent invalid
-		// insert and update.
-		oldCol.AddFlag(mysql.PreventTruncateFlag)
-		return false, true, nil
-	}
-
-	return false, false, nil
+	return true, nil
 }
 
-// buildCheckSQLFromModifyColumn builds the SQL to check whether the data conversion is valid when modifying column type.
-// It's done by check whether the data in the old column is in the range of the new column type.
+// buildCheckSQLFromModifyColumn builds the SQL to check whether the data conversion
+// is valid when modifying column type.
 func buildCheckSQLFromModifyColumn(
 	dbName, tblName ast.CIStr,
 	oldCol, changingCol *model.ColumnInfo,
-	sqlMode mysql.SQLMode,
 ) string {
 	oldTp := oldCol.GetType()
 	changingTp := changingCol.GetType()
-
-	// Only check the data conversion when strict mode is on
-	if !sqlMode.HasStrictMode() {
-		return ""
-	}
 
 	var conditions []string
 	template := "SELECT %s FROM %s WHERE %s LIMIT 1"
@@ -477,31 +574,19 @@ func buildCheckSQLFromModifyColumn(
 	if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
 		// Integer conversion
 		conditions = append(conditions, buildCheckRangeForIntegerTypes(oldCol, changingCol))
-	} else if oldCol.FieldType.GetCollate() == changingCol.FieldType.GetCollate() {
-		changingLen := changingCol.FieldType.GetFlen()
-		if changingLen == types.UnspecifiedLength {
-			return ""
-		}
-
-		if mysql.HasBinaryFlag(oldCol.GetFlag()) || mysql.HasBinaryFlag(changingCol.GetFlag()) {
-			return ""
-		}
-
-		// String conversion with same collation
-		if oldTp == mysql.TypeString && (changingTp == mysql.TypeVarchar || changingTp == mysql.TypeString) {
-			// CHAR to VARCHAR/CHAR
-			conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingLen))
-		}
+	} else if oldTp == mysql.TypeString && (changingTp == mysql.TypeVarchar || changingTp == mysql.TypeString) {
+		// CHAR to VARCHAR/CHAR
+		conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingCol.FieldType.GetFlen()))
 	}
 
 	checkNull := !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag())
 	if checkNull && !(oldTp != mysql.TypeTimestamp && changingTp == mysql.TypeTimestamp) {
 		conditions = append(conditions, fmt.Sprintf("`%s` IS NULL", oldCol.Name.O))
 	}
-
-	if len(conditions) == 0 {
-		return ""
+	if checkNull {
+		oldCol.AddFlag(mysql.PreventNullInsertFlag)
 	}
+	oldCol.ChangingFieldType = &changingCol.FieldType
 
 	return fmt.Sprintf(template, checkColName, tableName, strings.Join(conditions, " OR "))
 }
@@ -526,7 +611,7 @@ func buildCheckRangeForIntegerTypes(oldCol, changingCol *model.ColumnInfo) strin
 	return strings.Join(conditions, " OR ")
 }
 
-func (w *worker) doModifyColumnTypeWithReorg(
+func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
 	dbInfo *model.DBInfo,
@@ -535,30 +620,36 @@ func (w *worker) doModifyColumnTypeWithReorg(
 	args *model.ModifyColumnArgs,
 ) (ver int64, err error) {
 	colName, pos := args.Column.Name, args.Position
-	changingIdxs := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 
+	targetCol := changingCol.Clone()
+	targetCol.Name = colName
+	changingIdxs := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 	switch changingCol.State {
 	case model.StateNone:
-		if err = validatePosition(tblInfo, oldCol, pos); err != nil {
+		err = validatePosition(tblInfo, oldCol, pos)
+		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
-
-		if needRollback, _, err := checkModifyColumnCanSkipReorg(
-			jobCtx.stepCtx,
-			w,
-			dbInfo.Name,
-			tblInfo.Name,
-			oldCol,
-			changingCol,
-			job.SQLMode,
-			!oldCol.FieldType.Equal(&changingCol.FieldType)); err != nil {
-			if needRollback {
-				job.State = model.JobStateRollingback
+		// Column from null to not null.
+		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
+			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+			err := modifyColsFromNull2NotNull(
+				jobCtx.stepCtx,
+				w,
+				dbInfo,
+				tblInfo,
+				[]*model.ColumnInfo{oldCol},
+				targetCol,
+				oldCol.GetType() != changingCol.GetType(),
+			)
+			if err != nil {
+				if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
+					job.State = model.JobStateRollingback
+				}
+				return ver, errors.Trace(err)
 			}
-			return ver, errors.Trace(err)
 		}
-
 		// none -> delete only
 		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
 		failpoint.InjectCall("afterModifyColumnCheckValue")
@@ -575,88 +666,34 @@ func (w *worker) doModifyColumnTypeWithReorg(
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
-		needRollback, checked, err := checkModifyColumnCanSkipReorg(
-			jobCtx.stepCtx,
-			w,
-			dbInfo.Name,
-			tblInfo.Name,
-			oldCol,
-			changingCol,
-			job.SQLMode,
-			!oldCol.FieldType.Equal(&changingCol.FieldType))
-
-		if err != nil {
-			if needRollback {
-				job.State = model.JobStateRollingback
-			}
-			return ver, errors.Trace(err)
-		}
-
-		// We only allow meta-only change when the following conditions are all met:
-		// 1. Modify column is done in strict mode, which is satisfied by checked == true.
-		// 2. checkModifyColumn succeed, which means the data conversion is valid.
-		// 3. The job is not a multi-schema-change job, or it's doesn't change the position.
-		args.SkipRowReorg = !needRollback && checked && (job.MultiSchemaInfo == nil || args.Position == nil)
-
-		if args.SkipRowReorg {
-			// Changing index columns back to original column.
-			for _, idx := range changingIdxs {
-				if !isFromPreviousMultiSchemaChange(idx, changingCol, oldCol) {
-					args.RedundantIdxs = append(args.RedundantIdxs, idx.ID)
-					removeOldIndexes(tblInfo, idx)
+		// Column from null to not null.
+		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
+			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+			err := modifyColsFromNull2NotNull(
+				jobCtx.stepCtx,
+				w,
+				dbInfo,
+				tblInfo,
+				[]*model.ColumnInfo{oldCol},
+				targetCol,
+				oldCol.GetType() != changingCol.GetType(),
+			)
+			if err != nil {
+				if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
+					job.State = model.JobStateRollingback
 				}
+				return ver, err
 			}
-			updateObjectState(changingCol, nil, model.StateWriteOnly)
-			if ver, err := updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true); err != nil {
-				return ver, errors.Trace(err)
-			}
-			job.FillArgs(args)
-			return ver, errors.Trace(err)
 		}
-
-		// If meta-only change is inapplicable, apply new ID for changing indexes.
-		for _, idx := range changingIdxs {
-			args.RedundantIdxs = append(args.RedundantIdxs, idx.ID)
-			idx.ID = AllocateIndexID(tblInfo)
-		}
-
 		// delete only -> write only
 		updateObjectState(changingCol, changingIdxs, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.FillArgs(args)
 		job.SchemaState = model.StateWriteOnly
 		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
-		if args.SkipRowReorg {
-			if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
-				job.MarkNonRevertible()
-				// Store the mark and enter the next DDL handling loop.
-				return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
-			}
-
-			oldCol.FieldType = changingCol.FieldType
-			oldCol.Name = colName
-			oldCol.DelFlag(mysql.PreventNullInsertFlag)
-			oldCol.DelFlag(mysql.PreventTruncateFlag)
-			removeOldObjects(tblInfo, changingCol, nil)
-			moveChangingColumnInfoToDest(tblInfo, oldCol, oldCol, pos)
-
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-
-			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-			args.IndexIDs = args.RedundantIdxs
-			args.PartitionIDs = getPartitionIDs(tblInfo)
-			job.FillFinishedArgs(args)
-			job.SchemaState = model.StatePublic
-			return ver, errors.Trace(err)
-		}
-
 		// write only -> reorganization
 		updateObjectState(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -666,10 +703,7 @@ func (w *worker) doModifyColumnTypeWithReorg(
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
-		args.ChangingIdxs = changingIdxs
-		job.FillArgs(args)
 	case model.StateWriteReorganization:
-		failpoint.InjectCall("beforeModifyColumnStateWriteReorg")
 		tbl, err := getTable(jobCtx.getAutoIDRequirement(), dbInfo.ID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -851,21 +885,6 @@ var colStateOrd = map[model.SchemaState]int{
 	model.StateWriteOnly:            3,
 	model.StateWriteReorganization:  4,
 	model.StatePublic:               5,
-}
-
-// isFromPreviousMultiSchemaChange checks if the index column is from previous multi-schema change.
-// col is the changing column in this round.
-func isFromPreviousMultiSchemaChange(idx *model.IndexInfo, changingCol, oldCol *model.ColumnInfo) bool {
-	isFromPrevious := false
-	for _, idxCol := range idx.Columns {
-		if idxCol.Name.L != changingCol.Name.L && strings.HasPrefix(idxCol.Name.O, changingColumnPrefix) {
-			isFromPrevious = true
-		} else if idxCol.Name.L == changingCol.Name.L {
-			UpdateIndexCol(idxCol, oldCol)
-		}
-	}
-
-	return isFromPrevious
 }
 
 func checkColumnOrderByStates(tblInfo *model.TableInfo) {

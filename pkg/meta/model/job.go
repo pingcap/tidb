@@ -757,7 +757,9 @@ func (job *Job) IsRollbackable() bool {
 			return false
 		}
 	case ActionModifyColumn:
-		return job.SchemaState != StatePublic
+		if job.SchemaState == StatePublic {
+			return false
+		}
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,

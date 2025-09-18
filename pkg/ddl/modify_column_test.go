@@ -104,7 +104,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			job.Type == model.ActionModifyColumn {
 			currJob = job
 			a := args.(*model.ModifyColumnArgs)
-			elements = ddl.BuildElements(a.ChangingColumn, a.ChangingIdxs, false)
+			elements = ddl.BuildElements(a.ChangingColumn, a.ChangingIdxs)
 		}
 	})
 

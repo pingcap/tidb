@@ -78,7 +78,6 @@ const (
 	DropColumnIndexFlag   uint = 1 << 22 /* Internal: Used for indicate the column is being dropped with index */
 	GeneratedColumnFlag   uint = 1 << 23 /* Internal: TiFlash will check this flag and add a placeholder for this column */
 	UnderScoreCharsetFlag uint = 1 << 24 /* Internal: Indicate whether charset is specified by underscore like _latin1'abc' */
-	PreventTruncateFlag   uint = 1 << 25
 )
 
 // TypeInt24 bounds.
@@ -161,11 +160,6 @@ func HasIsBooleanFlag(flag uint) bool {
 // HasPreventNullInsertFlag checks if PreventNullInsertFlag is set.
 func HasPreventNullInsertFlag(flag uint) bool {
 	return (flag & PreventNullInsertFlag) > 0
-}
-
-// HasPreventTruncateFlag checks if PreventTruncateFlag is set.
-func HasPreventTruncateFlag(flag uint) bool {
-	return (flag & PreventTruncateFlag) > 0
 }
 
 // HasEnumSetAsIntFlag checks if EnumSetAsIntFlag is set.

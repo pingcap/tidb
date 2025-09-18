@@ -280,23 +280,26 @@ func initTableIndices(t *TableCommon) error {
 	return nil
 }
 
-func checkDataWithModifyColumn(ctx expression.BuildContext, columns []*table.Column, col *table.Column, newData []types.Datum) (types.Datum, error) {
-	// For meta-only modify column, we should check if the old value can be casted to the new type in strict mode
-	depCol := columns[col.DependencyColumnOffset].ColumnInfo
-	if mysql.HasPreventTruncateFlag(depCol.GetFlag()) {
-		strictCtx := exprstatic.NewExprContext(
-			exprstatic.WithEvalCtx(
-				exprstatic.NewEvalContext(
-					exprstatic.WithSQLMode(
-						mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
-		if _, err := table.CastColumnValue(strictCtx, newData[col.DependencyColumnOffset], col.ColumnInfo, false, false); err != nil {
-			return types.Datum{}, err
-		}
+func checkDataWithModifyColumn(data types.Datum, changingType *types.FieldType) error {
+	// For meta-only modify column, we should check if the old value can be casted to the new type
+	strictCtx := exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(
+			exprstatic.NewEvalContext(
+				exprstatic.WithSQLMode(
+					mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
+	dummyCol := &model.ColumnInfo{
+		FieldType: *changingType,
+	}
+	value, err := table.CastColumnValue(strictCtx, data, dummyCol, false, false)
+	if err != nil {
+		return err
 	}
 
-	// TODO: Check overflow or ignoreTruncate.
-	value, err := table.CastColumnValue(ctx, newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
-	return value, errors.Trace(err)
+	// It's for the case from VARCHAR -> CHAR, but not used currently.
+	if value.GetString() != data.GetString() {
+		return errors.New("data truncation error during modify column")
+	}
+	return nil
 }
 
 // asIndex casts a table.Index to *index which is the actual type of index in TableCommon.
@@ -459,10 +462,21 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	checkRowBuffer := mutateBuffers.GetCheckRowBufferWithCap(numColsCap)
 
 	for _, col := range t.Columns {
-		var value types.Datum
+		var (
+			value types.Datum
+			err   error
+		)
+
+		if col.ChangingFieldType != nil {
+			if err := checkDataWithModifyColumn(newData[col.Offset], col.ChangingFieldType); err != nil {
+				return err
+			}
+		}
+
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
-				value, err := checkDataWithModifyColumn(sctx.GetExprCtx(), t.Columns, col, oldData)
+				// TODO: Check overflow or ignoreTruncate.
+				value, err = table.CastColumnValue(sctx.GetExprCtx(), oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
 					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
@@ -479,7 +493,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 			// TODO: Use newData directly.
 			value = oldData[col.Offset]
 			if col.ChangeStateInfo != nil {
-				value, err := checkDataWithModifyColumn(sctx.GetExprCtx(), t.Columns, col, newData)
+				// TODO: Check overflow or ignoreTruncate.
+				value, err = table.CastColumnValue(sctx.GetExprCtx(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
 					return err
 				}
@@ -783,6 +798,12 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	defer memBuffer.Cleanup(sh)
 
 	for _, col := range t.Columns {
+		if col.ChangingFieldType != nil {
+			if err := checkDataWithModifyColumn(r[col.Offset], col.ChangingFieldType); err != nil {
+				return nil, err
+			}
+		}
+
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
@@ -790,7 +811,8 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		// In column type change, since we have set the origin default value for changing col, but
 		// for the new insert statement, we should use the casted value of relative column to insert.
 		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
-			value, err := checkDataWithModifyColumn(sctx.GetExprCtx(), t.Columns, col, r)
+			// TODO: Check overflow or ignoreTruncate.
+			value, err = table.CastColumnValue(sctx.GetExprCtx(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 			if err != nil {
 				return nil, err
 			}
@@ -1141,10 +1163,13 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	// This if block is for the INSERT and UPDATE.
 	// And, only DELETE will make opt.HasIndexesLayout() to be true currently.
 	if !opt.HasIndexesLayout() && len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
-		value, err := checkDataWithModifyColumn(ctx.GetExprCtx(), t.Columns, t.Columns[len(r)], r)
+		// The changing column datum derived from related column should be casted here.
+		// Otherwise, the existed changing indexes will not be deleted.
+		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
+		value, err := table.CastColumnValue(ctx.GetExprCtx(), relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
 		if err != nil {
 			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
-				zap.String("handle", h.String()), zap.Error(err))
+				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
 			return err
 		}
 		r = append(r, value)
