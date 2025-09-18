@@ -114,7 +114,7 @@ func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.Physic
 	dual.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
-	rt := &RootTask{}
+	rt := &physicalop.RootTask{}
 	rt.SetPlan(dual)
 	return rt, 1, nil
 }
@@ -131,7 +131,7 @@ func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalPro
 	pShow := physicalop.PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	planCounter.Dec(1)
-	rt := &RootTask{}
+	rt := &physicalop.RootTask{}
 	rt.SetPlan(pShow)
 	return rt, 1, nil
 }
@@ -148,7 +148,7 @@ func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.Phys
 	pShow := physicalop.PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	planCounter.Dec(1)
-	rt := &RootTask{}
+	rt := &physicalop.RootTask{}
 	rt.SetPlan(pShow)
 	return rt, 1, nil
 }
@@ -272,7 +272,7 @@ func enumeratePhysicalPlans4Task(
 		}
 
 		// An optimal task could not satisfy the property, so it should be converted here.
-		if _, ok := curTask.(*RootTask); !ok && prop.TaskTp == property.RootTaskType {
+		if _, ok := curTask.(*physicalop.RootTask); !ok && prop.TaskTp == property.RootTaskType {
 			curTask = curTask.ConvertToRootTask(baseLP.SCtx())
 		}
 
@@ -287,7 +287,7 @@ func enumeratePhysicalPlans4Task(
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
-		if _, isMpp := curTask.(*MppTask); !isMpp && prop.IsSortItemEmpty() {
+		if _, isMpp := curTask.(*physicalop.MppTask); !isMpp && prop.IsSortItemEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
 			curTask = optimizeByShuffle(curTask, baseLP.Plan.SCtx())
 		}
@@ -340,9 +340,9 @@ func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.T
 		// to make sure let it walk through the following logic.
 		return true
 	}
-	_, isRoot := childTask.(*RootTask)
-	_, isCop := childTask.(*CopTask)
-	_, isMpp := childTask.(*MppTask)
+	_, isRoot := childTask.(*physicalop.RootTask)
+	_, isCop := childTask.(*physicalop.CopTask)
+	_, isMpp := childTask.(*physicalop.MppTask)
 	switch propRequired.TaskTp {
 	case property.RootTaskType:
 		// If the required property is root task type, root, cop, and mpp task are all satisfied.
@@ -475,7 +475,7 @@ func iterateChildPlan4LogicalSequenceGE(
 		if childTask != nil && childTask.Invalid() {
 			return nil, 0, nil, nil
 		}
-		_, isMpp := childTask.(*MppTask)
+		_, isMpp := childTask.(*physicalop.MppTask)
 		if !isMpp && prop.IsFlashProp() {
 			break
 		}
@@ -501,7 +501,7 @@ func iterateChildPlan4LogicalSequenceGE(
 		return nil, 0, nil, nil
 	}
 
-	if _, ok := lastChildTask.(*MppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
+	if _, ok := lastChildTask.(*physicalop.MppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
 		return nil, 0, nil, nil
 	}
 
@@ -540,7 +540,7 @@ func iterateChildPlan4LogicalSequence(
 		if childTask != nil && childTask.Invalid() {
 			return nil, 0, nil, nil
 		}
-		_, isMpp := childTask.(*MppTask)
+		_, isMpp := childTask.(*physicalop.MppTask)
 		if !isMpp && prop.IsFlashProp() {
 			break
 		}
@@ -565,7 +565,7 @@ func iterateChildPlan4LogicalSequence(
 		return nil, 0, nil, nil
 	}
 
-	if _, ok := lastChildTask.(*MppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
+	if _, ok := lastChildTask.(*physicalop.MppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
 		return nil, 0, nil, nil
 	}
 
@@ -605,23 +605,23 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 		indexPartialCost float64
 	)
 	switch t.(type) {
-	case *RootTask:
+	case *physicalop.RootTask:
 		taskType = property.RootTaskType
-	case *CopTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
-		cop := t.(*CopTask)
-		if cop.indexPlan != nil && cop.tablePlan != nil { // handle IndexLookup specially
+	case *physicalop.CopTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
+		cop := t.(*physicalop.CopTask)
+		if cop.IndexPlan != nil && cop.TablePlan != nil { // handle IndexLookup specially
 			taskType = property.CopMultiReadTaskType
 			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
-			if !cop.indexPlanFinished { // only consider index cost in this case
-				idxCost, err := getPlanCost(cop.indexPlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+			if !cop.IndexPlanFinished { // only consider index cost in this case
+				idxCost, err := getPlanCost(cop.IndexPlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
 				return idxCost, false, err
 			}
 			// consider both sides
-			idxCost, err := getPlanCost(cop.indexPlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+			idxCost, err := getPlanCost(cop.IndexPlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
 			if err != nil {
 				return 0, false, err
 			}
-			tblCost, err := getPlanCost(cop.tablePlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
+			tblCost, err := getPlanCost(cop.TablePlan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
 			if err != nil {
 				return 0, false, err
 			}
@@ -631,8 +631,8 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 		taskType = property.CopSingleReadTaskType
 
 		// TiFlash can run cop task as well, check whether this cop task will run on TiKV or TiFlash.
-		if cop.tablePlan != nil {
-			leafNode := cop.tablePlan
+		if cop.TablePlan != nil {
+			leafNode := cop.TablePlan
 			for len(leafNode.Children()) > 0 {
 				leafNode = leafNode.Children()[0]
 			}
@@ -645,8 +645,8 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 		// for cop task with {indexPlan=nil, tablePlan=xxx, idxMergePartPlans=[x,x,x], indexPlanFinished=true} we should
 		// plus the partial index plan cost into the final cost. Because t.plan() the below code used only calculate the
 		// cost about table plan.
-		if cop.indexPlanFinished && len(cop.idxMergePartPlans) != 0 {
-			for _, partialScan := range cop.idxMergePartPlans {
+		if cop.IndexPlanFinished && len(cop.IdxMergePartPlans) != 0 {
+			for _, partialScan := range cop.IdxMergePartPlans {
 				partialCost, err := getPlanCost(partialScan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
 				if err != nil {
 					return 0, false, err
@@ -654,7 +654,7 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 				indexPartialCost += partialCost
 			}
 		}
-	case *MppTask:
+	case *physicalop.MppTask:
 		taskType = property.MppTaskType
 	default:
 		return 0, false, errors.New("unknown task type")
@@ -663,8 +663,8 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 		// It's a very special case for index merge case.
 		// t.plan() == nil in index merge COP case, it means indexPlanFinished is false in other words.
 		cost := 0.0
-		copTsk := t.(*CopTask)
-		for _, partialScan := range copTsk.idxMergePartPlans {
+		copTsk := t.(*physicalop.CopTask)
+		for _, partialScan := range copTsk.IdxMergePartPlans {
 			partialCost, err := getPlanCost(partialScan, taskType, optimizetrace.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
 			if err != nil {
 				return 0, false, err
@@ -955,7 +955,7 @@ func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.Physica
 	memTable.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	appendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
-	rt := &RootTask{}
+	rt := &physicalop.RootTask{}
 	rt.SetPlan(memTable)
 	return rt, 1, nil
 }
@@ -971,7 +971,7 @@ func tryToGetDualTask(ds *logicalop.DataSource) (base.Task, error) {
 			if !result {
 				dual := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
 				dual.SetSchema(ds.Schema())
-				rt := &RootTask{}
+				rt := &physicalop.RootTask{}
 				rt.SetPlan(dual)
 				return rt, nil
 			}
@@ -1904,7 +1904,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			dual.SetSchema(ds.Schema())
 			cntPlan++
 			planCounter.Dec(1)
-			t := &RootTask{}
+			t := &physicalop.RootTask{}
 			t.SetPlan(dual)
 			appendCandidate(ds, t, prop, opt)
 			return t, cntPlan, nil
@@ -2095,11 +2095,11 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	})
 	path := candidate.path
 	scans := make([]base.PhysicalPlan, 0, len(path.PartialIndexPaths))
-	cop := &CopTask{
-		indexPlanFinished: false,
-		tblColHists:       ds.TblColHists,
+	cop := &physicalop.CopTask{
+		IndexPlanFinished: false,
+		TblColHists:       ds.TblColHists,
 	}
-	cop.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
+	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
 		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
@@ -2120,7 +2120,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 			scan = convertToPartialTableScan(ds, prop, partPath, candidate.isMatchProp, byItems)
 		} else {
 			var remainingFilters []expression.Expression
-			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
+			scan, remainingFilters, err = physicalop.ConvertToPartialIndexScan(ds, cop.PhysPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
 			if err != nil {
 				return base.InvalidTask, err
 			}
@@ -2144,17 +2144,17 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		return base.InvalidTask, nil
 	}
 	globalRemainingFilters = append(globalRemainingFilters, remainingFilters2...)
-	cop.keepOrder = candidate.isMatchProp
-	cop.tablePlan = ts
-	cop.idxMergePartPlans = scans
-	cop.idxMergeIsIntersection = path.IndexMergeIsIntersection
-	cop.idxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
+	cop.KeepOrder = candidate.isMatchProp
+	cop.TablePlan = ts
+	cop.IdxMergePartPlans = scans
+	cop.IdxMergeIsIntersection = path.IndexMergeIsIntersection
+	cop.IdxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
 	if moreColumn {
-		cop.needExtraProj = true
-		cop.originSchema = ds.Schema()
+		cop.NeedExtraProj = true
+		cop.OriginSchema = ds.Schema()
 	}
 	if len(globalRemainingFilters) != 0 {
-		cop.rootTaskConds = globalRemainingFilters
+		cop.RootTaskConds = globalRemainingFilters
 	}
 	// after we lift the limitation of intersection and cop-type task in the code in this
 	// function above, we could set its index plan finished as true once we found its table
@@ -2162,12 +2162,12 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	// And this will cause cost underestimation when we estimate the cost of the entire cop
 	// task plan in function `getTaskPlanCost`.
 	if prop.TaskTp == property.RootTaskType {
-		cop.indexPlanFinished = true
+		cop.IndexPlanFinished = true
 		task = cop.ConvertToRootTask(ds.SCtx())
 	} else {
 		_, pureTableScan := ts.(*physicalop.PhysicalTableScan)
 		if !pureTableScan {
-			cop.indexPlanFinished = true
+			cop.IndexPlanFinished = true
 		}
 		task = cop
 	}
@@ -2383,13 +2383,13 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	path := candidate.path
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
-	cop := &CopTask{
-		indexPlan:   is,
-		tblColHists: ds.TblColHists,
-		tblCols:     ds.TblCols,
-		expectCnt:   uint64(prop.ExpectedCnt),
+	cop := &physicalop.CopTask{
+		IndexPlan:   is,
+		TblColHists: ds.TblColHists,
+		TblCols:     ds.TblCols,
+		ExpectCnt:   uint64(prop.ExpectedCnt),
 	}
-	cop.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
+	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
 		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
@@ -2416,27 +2416,27 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if usedStats != nil && usedStats.GetUsedInfo(ts.PhysicalTableID) != nil {
 			ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
 		}
-		cop.tablePlan = ts
+		cop.TablePlan = ts
 	}
 	task = cop
-	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
-		cop.commonHandleCols = ds.CommonHandleCols
+	if cop.TablePlan != nil && ds.TableInfo.IsCommonHandle {
+		cop.CommonHandleCols = ds.CommonHandleCols
 		commonHandle := ds.HandleCols.(*util.CommonHandleCols)
 		for _, col := range commonHandle.GetColumns() {
 			if ds.Schema().ColumnIndex(col) == -1 {
-				ts := cop.tablePlan.(*physicalop.PhysicalTableScan)
+				ts := cop.TablePlan.(*physicalop.PhysicalTableScan)
 				ts.Schema().Append(col)
 				ts.Columns = append(ts.Columns, col.ToInfo())
-				cop.needExtraProj = true
+				cop.NeedExtraProj = true
 			}
 		}
 	}
 	if candidate.isMatchProp {
-		cop.keepOrder = true
-		if cop.tablePlan != nil && !ds.TableInfo.IsCommonHandle {
-			col, isNew := cop.tablePlan.(*physicalop.PhysicalTableScan).AppendExtraHandleCol(ds)
-			cop.extraHandleCol = col
-			cop.needExtraProj = cop.needExtraProj || isNew
+		cop.KeepOrder = true
+		if cop.TablePlan != nil && !ds.TableInfo.IsCommonHandle {
+			col, isNew := cop.TablePlan.(*physicalop.PhysicalTableScan).AppendExtraHandleCol(ds)
+			cop.ExtraHandleCol = col
+			cop.NeedExtraProj = cop.NeedExtraProj || isNew
 		}
 
 		if ds.TableInfo.GetPartitionInfo() != nil {
@@ -2449,25 +2449,25 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 						Desc: si.Desc,
 					})
 				}
-				cop.indexPlan.(*physicalop.PhysicalIndexScan).ByItems = byItems
+				cop.IndexPlan.(*physicalop.PhysicalIndexScan).ByItems = byItems
 			}
-			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			if cop.TablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
 					tmpColumns, tmpSchema, _ := physicalop.AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
 					is.Columns = tmpColumns
 					is.SetSchema(tmpSchema)
 				}
 				// global index for tableScan with keepOrder also need PhysicalTblID
-				ts := cop.tablePlan.(*physicalop.PhysicalTableScan)
+				ts := cop.TablePlan.(*physicalop.PhysicalTableScan)
 				tmpColumns, tmpSchema, succ := physicalop.AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.Schema())
 				ts.Columns = tmpColumns
 				ts.SetSchema(tmpSchema)
-				cop.needExtraProj = cop.needExtraProj || succ
+				cop.NeedExtraProj = cop.NeedExtraProj || succ
 			}
 		}
 	}
-	if cop.needExtraProj {
-		cop.originSchema = ds.Schema()
+	if cop.NeedExtraProj {
+		cop.OriginSchema = ds.Schema()
 	}
 	// prop.IsSortItemEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of AddPushedDownSelection.
@@ -2477,29 +2477,29 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
-	} else if _, ok := task.(*RootTask); ok {
+	} else if _, ok := task.(*physicalop.RootTask); ok {
 		return base.InvalidTask, nil
 	}
 	return task, nil
 }
 
 // addPushedDownSelection is to add pushdown selection
-func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, copTask *CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
+func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, copTask *physicalop.CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
-	tableConds, copTask.rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+	tableConds, copTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
 
 	var newRootConds []expression.Expression
 	pctx := util.GetPushDownCtx(is.SCtx())
 	indexConds, newRootConds = expression.PushDownExprs(pctx, indexConds, kv.TiKV)
-	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+	copTask.RootTaskConds = append(copTask.RootTaskConds, newRootConds...)
 
 	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, kv.TiKV)
-	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+	copTask.RootTaskConds = append(copTask.RootTaskConds, newRootConds...)
 
 	// Add a `Selection` for `IndexScan` with global index.
 	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
-	indexConds, err := is.AddSelectionConditionForGlobalIndex(p, copTask.physPlanPartInfo, indexConds)
+	indexConds, err := is.AddSelectionConditionForGlobalIndex(p, copTask.PhysPlanPartInfo, indexConds)
 	if err != nil {
 		return err
 	}
@@ -2513,21 +2513,21 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 		stats := p.TableStats.ScaleByExpectCnt(p.SCtx().GetSessionVars(), count)
 		indexSel := physicalop.PhysicalSelection{Conditions: indexConds}.Init(is.SCtx(), stats, is.QueryBlockOffset())
 		indexSel.SetChildren(is)
-		copTask.indexPlan = indexSel
+		copTask.IndexPlan = indexSel
 	}
 	if len(tableConds) > 0 {
-		copTask.finishIndexPlan()
+		copTask.FinishIndexPlan()
 		tableSel := physicalop.PhysicalSelection{Conditions: tableConds}.Init(is.SCtx(), finalStats, is.QueryBlockOffset())
-		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := cardinality.Selectivity(is.SCtx(), copTask.tblColHists, tableConds, nil)
+		if len(copTask.RootTaskConds) != 0 {
+			selectivity, _, err := cardinality.Selectivity(is.SCtx(), copTask.TblColHists, tableConds, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
 			}
 			tableSel.SetStats(copTask.Plan().StatsInfo().Scale(is.SCtx().GetSessionVars(), selectivity))
 		}
-		tableSel.SetChildren(copTask.tablePlan)
-		copTask.tablePlan = tableSel
+		tableSel.SetChildren(copTask.TablePlan)
+		copTask.TablePlan = tableSel
 	}
 	return nil
 }
@@ -2677,11 +2677,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			return base.InvalidTask, nil
 		}
 		// ********************************** future deprecated end **************************/
-		mppTask := &MppTask{
-			p:           ts,
-			partTp:      property.AnyType,
-			tblColHists: ds.TblColHists,
-		}
+		mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
 		ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
 			PruningConds:   ds.AllConds,
 			PartitionNames: ds.PartitionNames,
@@ -2691,7 +2687,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
 		var task base.Task = mppTask
 		if !mppTask.Invalid() {
-			if prop.TaskTp == property.MppTaskType && len(mppTask.rootTaskConds) > 0 {
+			if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
 				// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
 				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
 				task = base.InvalidTask
@@ -2708,21 +2704,21 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return task, nil
 	}
 	// Cop task
-	copTask := &CopTask{
-		tablePlan:         ts,
-		indexPlanFinished: true,
-		tblColHists:       ds.TblColHists,
+	copTask := &physicalop.CopTask{
+		TablePlan:         ts,
+		IndexPlanFinished: true,
+		TblColHists:       ds.TblColHists,
 	}
-	copTask.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
+	copTask.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
 		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
 	}
-	ts.PlanPartInfo = copTask.physPlanPartInfo
+	ts.PlanPartInfo = copTask.PhysPlanPartInfo
 	var task base.Task = copTask
 	if candidate.isMatchProp {
-		copTask.keepOrder = true
+		copTask.KeepOrder = true
 		if ds.TableInfo.GetPartitionInfo() != nil {
 			// Add sort items for table scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
@@ -2736,12 +2732,12 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		}
 	}
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
-	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
+	if prop.IsFlashProp() && len(copTask.RootTaskConds) != 0 {
 		return base.InvalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
-	} else if _, ok := task.(*RootTask); ok {
+	} else if _, ok := task.(*physicalop.RootTask); ok {
 		return base.InvalidTask, nil
 	}
 	return task, nil
@@ -2766,7 +2762,7 @@ func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		Desc:            candidate.isMatchProp && prop.SortItems[0].Desc,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	p.SetSchema(ds.Schema())
-	rt := &RootTask{}
+	rt := &physicalop.RootTask{}
 	rt.SetPlan(p)
 	return rt, nil
 }
@@ -2799,7 +2795,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
 	pointGetPlan.PartitionNames = ds.PartitionNames
-	rTsk := &RootTask{}
+	rTsk := &physicalop.RootTask{}
 	rTsk.SetPlan(pointGetPlan)
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
@@ -2873,7 +2869,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
-	rTsk := &RootTask{}
+	rTsk := &physicalop.RootTask{}
 	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
@@ -2934,40 +2930,40 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	return rTsk
 }
 
-func addPushedDownSelectionToMppTask4PhysicalTableScan(ts *physicalop.PhysicalTableScan, mpp *MppTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) *MppTask {
+func addPushedDownSelectionToMppTask4PhysicalTableScan(ts *physicalop.PhysicalTableScan, mpp *physicalop.MppTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) *physicalop.MppTask {
 	filterCondition, rootTaskConds := physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
 	var newRootConds []expression.Expression
 	filterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), filterCondition, ts.StoreType)
-	mpp.rootTaskConds = append(rootTaskConds, newRootConds...)
+	mpp.RootTaskConds = append(rootTaskConds, newRootConds...)
 
 	ts.FilterCondition = filterCondition
 	// Add filter condition to table plan now.
 	if len(ts.FilterCondition) > 0 {
 		if sel := ts.BuildPushedDownSelection(stats, indexHints); sel != nil {
 			sel.SetChildren(ts)
-			mpp.p = sel
+			mpp.SetPlan(sel)
 		} else {
-			mpp.p = ts
+			mpp.SetPlan(ts)
 		}
 	}
 	return mpp
 }
 
-func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, copTask *CopTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) {
-	ts.FilterCondition, copTask.rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
+func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, copTask *physicalop.CopTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) {
+	ts.FilterCondition, copTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
 	var newRootConds []expression.Expression
 	ts.FilterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), ts.FilterCondition, ts.StoreType)
-	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+	copTask.RootTaskConds = append(copTask.RootTaskConds, newRootConds...)
 
 	// Add filter condition to table plan now.
 	if len(ts.FilterCondition) > 0 {
 		sel := ts.BuildPushedDownSelection(stats, indexHints)
 		if sel == nil {
-			copTask.tablePlan = ts
+			copTask.TablePlan = ts
 			return
 		}
-		if len(copTask.rootTaskConds) != 0 {
-			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, sel.Conditions, nil)
+		if len(copTask.RootTaskConds) != 0 {
+			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.TblColHists, sel.Conditions, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
@@ -2975,7 +2971,7 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 			sel.SetStats(ts.StatsInfo().Scale(ts.SCtx().GetSessionVars(), selectivity))
 		}
 		sel.SetChildren(ts)
-		copTask.tablePlan = sel
+		copTask.TablePlan = sel
 	}
 }
 
@@ -3010,14 +3006,9 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, 1, nil
 		}
-		t = &MppTask{
-			p:           pcte,
-			partTp:      prop.MPPPartitionTp,
-			hashCols:    prop.MPPPartitionCols,
-			tblColHists: p.StatsInfo().HistColl,
-		}
+		t = physicalop.NewMppTask(pcte, prop.MPPPartitionTp, prop.MPPPartitionCols, p.StatsInfo().HistColl, nil)
 	} else {
-		rt := &RootTask{}
+		rt := &physicalop.RootTask{}
 		rt.SetPlan(pcte)
 		t = rt
 	}
@@ -3039,7 +3030,7 @@ func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.Physica
 
 	pcteTable := physicalop.PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
 	pcteTable.SetSchema(p.Schema())
-	rt := &RootTask{}
+	rt := &physicalop.RootTask{}
 	rt.SetPlan(pcteTable)
 	t = rt
 	return t, 1, nil
