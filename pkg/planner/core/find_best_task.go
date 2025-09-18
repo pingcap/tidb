@@ -101,7 +101,7 @@ func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.Physic
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := base.GetGEAndLogical[*logicalop.LogicalTableDual](super)
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalTableDual](super)
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -124,7 +124,7 @@ func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalPro
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := base.GetGEAndLogical[*logicalop.LogicalShow](super)
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShow](super)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -141,7 +141,7 @@ func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.Phys
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := base.GetGEAndLogical[*logicalop.LogicalShowDDLJobs](super)
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShowDDLJobs](super)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -906,7 +906,7 @@ func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.Physica
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := base.GetGEAndLogical[*logicalop.LogicalMemTable](super)
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalMemTable](super)
 	if prop.MPPPartitionTp != property.AnyType {
 		return base.InvalidTask, 0, nil
 	}
@@ -1725,7 +1725,7 @@ func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.PhysicalProperty,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	// get the possible group expression and logical operator from common lp pointer.
-	ge, ds := base.GetGEAndLogical[*logicalop.DataSource](super)
+	ge, ds := base.GetGEAndLogicalOp[*logicalop.DataSource](super)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -2985,7 +2985,7 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 		return base.InvalidTask, 0, nil
 	}
 	var childLen int
-	ge, p := base.GetGEAndLogical[*logicalop.LogicalCTE](super)
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTE](super)
 	if ge != nil {
 		childLen = ge.InputsLen()
 	} else {
@@ -3032,7 +3032,7 @@ func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.Physica
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := base.GetGEAndLogical[*logicalop.LogicalCTETable](super)
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTETable](super)
 	if !prop.IsSortItemEmpty() {
 		return base.InvalidTask, 0, nil
 	}

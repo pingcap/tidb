@@ -97,7 +97,7 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 }
 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
-	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
 	}
@@ -698,7 +698,7 @@ func constructIndexHashJoin(
 
 // enumerateIndexJoinByOuterIdx will enumerate temporary index joins by index join prop required for its inner child.
 func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
-	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	stats0, stats1, schema0, schema1 := getJoinChildStatsAndSchema(ge, p)
 	var outerSchema *expression.Schema
 	var outerStats *property.StatsInfo
@@ -1799,7 +1799,7 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 // tryToEnumerateIndexJoin returns all available index join plans, which will require inner indexJoinProp downside
 // compared with original tryToGetIndexJoin.
 func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	_, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
@@ -2391,7 +2391,7 @@ func getJoinChildStatsAndSchema(ge base.GroupExpression, p base.LogicalPlan) (st
 
 // If we can use mpp broadcast join, that's our first choice.
 func preferMppBCJ(super base.LogicalPlan) bool {
-	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	if len(p.EqualConditions) == 0 && p.SCtx().GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
@@ -2455,7 +2455,7 @@ func canExprsInJoinPushdown(p *logicalop.LogicalJoin, storeType kv.StoreType) bo
 }
 
 func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty, useBCJ bool) []base.PhysicalPlan {
-	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -2660,7 +2660,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	ge, p := base.GetGEAndLogical[*logicalop.LogicalJoin](super)
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 			indexJoins, _ := tryToGetIndexJoin(p, prop)
@@ -2959,7 +2959,7 @@ func GetHashJoin(ge base.GroupExpression, la *logicalop.LogicalApply, prop *prop
 
 // exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
 func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	ge, la := base.GetGEAndLogical[*logicalop.LogicalApply](super)
+	ge, la := base.GetGEAndLogicalOp[*logicalop.LogicalApply](super)
 	_, _, schema0, _ := getJoinChildStatsAndSchema(ge, la)
 	if !prop.AllColsFromSchema(schema0) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -3296,7 +3296,7 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 }
 
 func exhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	g, ls := base.GetGEAndLogical[*logicalop.LogicalSequence](super)
+	g, ls := base.GetGEAndLogicalOp[*logicalop.LogicalSequence](super)
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
 	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true,
 		CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
