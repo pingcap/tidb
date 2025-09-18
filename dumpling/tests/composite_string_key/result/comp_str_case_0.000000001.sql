@@ -1,3 +1,5 @@
+/*!40014 SET FOREIGN_KEY_CHECKS=0*/;
+/*!40101 SET NAMES binary*/;
 INSERT INTO `comp_str_case_0` VALUES
 ('tenant_b','user_003','Frank Miller','frank@tenant-b.com','2023-01-20 08:45:00'),
 ('tenant_c','user_001','Grace Taylor','grace@tenant-c.com','2023-01-21 13:10:00'),

@@ -1,3 +1,5 @@
+/*!40014 SET FOREIGN_KEY_CHECKS=0*/;
+/*!40101 SET NAMES binary*/;
 INSERT INTO `comp_str_case_1` VALUES
 ('sports','item_001','Basketball',29.99),
 ('sports','item_002','Tennis Racket',79.50),

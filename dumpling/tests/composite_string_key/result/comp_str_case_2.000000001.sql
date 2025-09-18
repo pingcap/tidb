@@ -1,3 +1,5 @@
+/*!40014 SET FOREIGN_KEY_CHECKS=0*/;
+/*!40101 SET NAMES binary*/;
 INSERT INTO `comp_str_case_2` VALUES
 ('europe','germany','berlin',3669000,891.85),
 ('europe','italy','rome',2873000,1285.31),
