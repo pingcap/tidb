@@ -1106,6 +1106,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
+	EnableSemiJoinRewrite bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
@@ -2131,6 +2134,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		EnableSemiJoinRewrite:         DefOptEnableSemiJoinRewrite,
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
