@@ -1892,6 +1892,102 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	}
 }
 
+func TestTiDBAnalyzeDefaultOptions(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// Test TiDBAnalyzeDefaultNumBuckets
+	bucketsVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumBuckets)
+	require.NotNil(t, bucketsVar)
+
+	// Test setting valid values
+	err := bucketsVar.SetGlobalFromHook(ctx, vars, "100", false)
+	require.NoError(t, err)
+	require.Equal(t, uint64(100), vardef.AnalyzeDefaultNumBuckets.Load())
+
+	// Test getting the value
+	val, err := bucketsVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "100", val)
+
+	// Test validation - value too small
+	_, err = bucketsVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.Error(t, err)
+
+	// Test validation - value too large
+	_, err = bucketsVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.Error(t, err)
+
+	// Test TiDBAnalyzeDefaultNumTopN
+	topnVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumTopN)
+	require.NotNil(t, topnVar)
+
+	// Test setting valid values
+	err = topnVar.SetGlobalFromHook(ctx, vars, "50", false)
+	require.NoError(t, err)
+	require.Equal(t, uint64(50), vardef.AnalyzeDefaultNumTopN.Load())
+
+	// Test getting the value
+	val, err = topnVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "50", val)
+
+	// Test validation - minimum allowed value (0)
+	_, err = topnVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+
+	// Test validation - value too large
+	_, err = topnVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.Error(t, err)
+
+	// Test TiDBAnalyzeDefaultCMSketchWidth
+	cmWidthVar := GetSysVar(vardef.TiDBAnalyzeDefaultCMSketchWidth)
+	require.NotNil(t, cmWidthVar)
+
+	err = cmWidthVar.SetGlobalFromHook(ctx, vars, "4096", false)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4096), vardef.AnalyzeDefaultCMSketchWidth.Load())
+
+	val, err = cmWidthVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "4096", val)
+
+	// Test TiDBAnalyzeDefaultCMSketchDepth
+	cmDepthVar := GetSysVar(vardef.TiDBAnalyzeDefaultCMSketchDepth)
+	require.NotNil(t, cmDepthVar)
+
+	err = cmDepthVar.SetGlobalFromHook(ctx, vars, "10", false)
+	require.NoError(t, err)
+	require.Equal(t, uint64(10), vardef.AnalyzeDefaultCMSketchDepth.Load())
+
+	val, err = cmDepthVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
+
+	// Test TiDBAnalyzeDefaultNumSamples
+	samplesVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumSamples)
+	require.NotNil(t, samplesVar)
+
+	err = samplesVar.SetGlobalFromHook(ctx, vars, "20000", false)
+	require.NoError(t, err)
+	require.Equal(t, uint64(20000), vardef.AnalyzeDefaultNumSamples.Load())
+
+	val, err = samplesVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "20000", val)
+
+	// Test validation - minimum allowed value for samples (0)
+	_, err = samplesVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+
+	// Test validation - value too large for samples
+	_, err = samplesVar.Validate(vars, "5000001", vardef.ScopeGlobal)
+	require.Error(t, err)
+}
+
 func TestTiDBOptSelectivityFactor(t *testing.T) {
 	ctx := context.Background()
 	vars := NewSessionVars(nil)

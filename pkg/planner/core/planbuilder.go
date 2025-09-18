@@ -3036,20 +3036,23 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptSampleRate:    math.Float64bits(0),
 }
 
+// analyzeOptionDefaultV2 returns the default analyze options for version 2.
 // TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
 // 100 is more inline with other databases. 100-256 is also common for NumBuckets with other databases.
-var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    statistics.DefaultHistogramBuckets,
-	ast.AnalyzeOptNumTopN:       statistics.DefaultTopNValue,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    0,
-	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+func analyzeOptionDefaultV2() map[ast.AnalyzeOptionType]uint64 {
+	return map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumBuckets:    vardef.AnalyzeDefaultNumBuckets.Load(),
+		ast.AnalyzeOptNumTopN:       vardef.AnalyzeDefaultNumTopN.Load(),
+		ast.AnalyzeOptCMSketchWidth: vardef.AnalyzeDefaultCMSketchWidth.Load(),
+		ast.AnalyzeOptCMSketchDepth: vardef.AnalyzeDefaultCMSketchDepth.Load(),
+		ast.AnalyzeOptNumSamples:    vardef.AnalyzeDefaultNumSamples.Load(),
+		ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+	}
 }
 
 // GetAnalyzeOptionDefaultV2ForTest returns the default analyze options for test.
 func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
-	return analyzeOptionDefaultV2
+	return analyzeOptionDefaultV2()
 }
 
 // This function very similar to handleAnalyzeOptions, but it's used for analyze version 2.
@@ -3098,7 +3101,8 @@ func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]ui
 
 func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
 	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-	for key, defaultVal := range analyzeOptionDefaultV2 {
+	defaultV2 := analyzeOptionDefaultV2()
+	for key, defaultVal := range defaultV2 {
 		if val, ok := optMap[key]; ok {
 			filledMap[key] = val
 		} else {
@@ -3113,7 +3117,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 	if statsVer == statistics.Version1 {
 		maps.Copy(optMap, analyzeOptionDefault)
 	} else {
-		maps.Copy(optMap, analyzeOptionDefaultV2)
+		maps.Copy(optMap, analyzeOptionDefaultV2())
 	}
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {

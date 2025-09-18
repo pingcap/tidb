@@ -1090,6 +1090,16 @@ const (
 	// `PREDICATE`: Analyze only the columns that are used in the predicates of the query.
 	// `ALL`: Analyze all columns in the table.
 	TiDBAnalyzeColumnOptions = "tidb_analyze_column_options"
+	// TiDBAnalyzeDefaultNumBuckets sets the default number of histogram buckets for analyze operations
+	TiDBAnalyzeDefaultNumBuckets = "tidb_analyze_default_num_buckets"
+	// TiDBAnalyzeDefaultNumTopN sets the default number of TopN entries for analyze operations
+	TiDBAnalyzeDefaultNumTopN = "tidb_analyze_default_num_topn"
+	// TiDBAnalyzeDefaultCMSketchWidth sets the default CMSketch width for analyze operations
+	TiDBAnalyzeDefaultCMSketchWidth = "tidb_analyze_default_cmsketch_width"
+	// TiDBAnalyzeDefaultCMSketchDepth sets the default CMSketch depth for analyze operations
+	TiDBAnalyzeDefaultCMSketchDepth = "tidb_analyze_default_cmsketch_depth"
+	// TiDBAnalyzeDefaultNumSamples sets the default number of samples for analyze operations
+	TiDBAnalyzeDefaultNumSamples = "tidb_analyze_default_num_samples"
 	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
 	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
 	// It doesn't have cache in memory, and we directly get/set the variable value from/to mysql.tidb.
@@ -1570,6 +1580,11 @@ const (
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
 	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBAnalyzeDefaultNumBuckets                   = 256
+	DefTiDBAnalyzeDefaultNumTopN                      = 100
+	DefTiDBAnalyzeDefaultCMSketchWidth                = 2048
+	DefTiDBAnalyzeDefaultCMSketchDepth                = 5
+	DefTiDBAnalyzeDefaultNumSamples                   = 0
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 1
@@ -1728,19 +1743,29 @@ var (
 	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
 	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
 	//    whether to analyze all columns or just the predicate columns.
-	AnalyzeColumnOptions          = atomic.NewString(DefTiDBAnalyzeColumnOptions)
-	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU             = atomic.NewBool(false)
-	EnableBatchDML                = atomic.NewBool(false)
-	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	DDLReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
-	DDLReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
-	DDLFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
-	DDLErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
-	DDLReorgRowFormat       int64 = DefTiDBRowFormatV2
-	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
-	MaxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
+	AnalyzeColumnOptions = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	// AnalyzeDefaultNumBuckets is the global default number of histogram buckets for analyze operations
+	AnalyzeDefaultNumBuckets = atomic.NewUint64(DefTiDBAnalyzeDefaultNumBuckets)
+	// AnalyzeDefaultNumTopN is the global default number of TopN entries for analyze operations
+	AnalyzeDefaultNumTopN = atomic.NewUint64(DefTiDBAnalyzeDefaultNumTopN)
+	// AnalyzeDefaultCMSketchWidth is the global default CMSketch width for analyze operations
+	AnalyzeDefaultCMSketchWidth = atomic.NewUint64(DefTiDBAnalyzeDefaultCMSketchWidth)
+	// AnalyzeDefaultCMSketchDepth is the global default CMSketch depth for analyze operations
+	AnalyzeDefaultCMSketchDepth = atomic.NewUint64(DefTiDBAnalyzeDefaultCMSketchDepth)
+	// AnalyzeDefaultNumSamples is the global default number of samples for analyze operations
+	AnalyzeDefaultNumSamples       = atomic.NewUint64(DefTiDBAnalyzeDefaultNumSamples)
+	GlobalLogMaxDays               = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                 = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU              = atomic.NewBool(false)
+	EnableBatchDML                 = atomic.NewBool(false)
+	EnableTmpStorageOnOOM          = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	DDLReorgWorkerCounter    int32 = DefTiDBDDLReorgWorkerCount
+	DDLReorgBatchSize        int32 = DefTiDBDDLReorgBatchSize
+	DDLFlashbackConcurrency  int32 = DefTiDBDDLFlashbackConcurrency
+	DDLErrorCountLimit       int64 = DefTiDBDDLErrorCountLimit
+	DDLReorgRowFormat        int64 = DefTiDBRowFormatV2
+	DDLReorgMaxWriteSpeed          = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
+	MaxDeltaSchemaCount      int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                        = int32(DefTiDBForcePriority)

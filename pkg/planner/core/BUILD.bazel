@@ -206,6 +206,7 @@ go_test(
     name = "core_test",
     timeout = "short",
     srcs = [
+        "analyze_defaults_test.go",
         "binary_plan_test.go",
         "cbo_test.go",
         "common_plans_test.go",
