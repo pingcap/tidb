@@ -133,24 +133,24 @@ func (c *testTimeCollector) Record(d time.Duration) {
 	c.data = append(c.data, d)
 }
 
-func calculateStats(durations []time.Duration) (avg, min, max time.Duration) {
+func calculateStats(durations []time.Duration) (avg, minVal, maxVal time.Duration) {
 	if len(durations) == 0 {
 		return 0, 0, 0
 	}
 	var sum time.Duration
-	min = durations[0]
-	max = durations[0]
+	minVal = durations[0]
+	maxVal = durations[0]
 	for _, d := range durations {
 		sum += d
-		if d < min {
-			min = d
+		if d < minVal {
+			minVal = d
 		}
-		if d > max {
-			max = d
+		if d > maxVal {
+			maxVal = d
 		}
 	}
 	avg = time.Duration(int64(sum) / int64(len(durations)))
-	return avg, min, max
+	return avg, minVal, maxVal
 }
 
 func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
@@ -237,7 +237,7 @@ func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 	for g := 0; g < goroutines; g++ {
 		goroutineTimes[g] = <-elapsedCh
 	}
-	avg, min, max := calculateStats(goroutineTimes)
+	avg, minVal, maxVal := calculateStats(goroutineTimes)
 
 	// verify only the intended subset updated: match exact UTC bumpTS via CONVERT_TZ
 	totalUpdated := 0
@@ -256,7 +256,7 @@ func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 	// one consolidated summary line combining per-goroutine and collector stats
 	tc.mu.Lock()
 	batches := len(tc.data)
-	colAvg, colMin, colMax := calculateStats(tc.data)
+	colAvg, colMinVal, colMaxVal := calculateStats(tc.data)
 	tc.mu.Unlock()
-	t.Logf("DumpColStatsUsage concurrent: goroutines=%d tables=%d cols/table=%d per-g: avg=%s min=%s max=%s; updated=%d/%d; batches=%d per-batch: avg=%s min=%s max=%s", goroutines, tableCount, numCols, avg, min, max, totalUpdated, tableCount*numCols, batches, colAvg, colMin, colMax)
+	t.Logf("DumpColStatsUsage concurrent: goroutines=%d tables=%d cols/table=%d per-g: avg=%s min=%s max=%s; updated=%d/%d; batches=%d per-batch: avg=%s min=%s max=%s", goroutines, tableCount, numCols, avg, minVal, maxVal, totalUpdated, tableCount*numCols, batches, colAvg, colMinVal, colMaxVal)
 }
