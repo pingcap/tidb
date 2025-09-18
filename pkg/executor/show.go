@@ -672,8 +672,8 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	)
 
 	if e.Extractor != nil {
-		fieldPatternsLike = e.Extractor.FieldPatternLike()
 		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	for _, row := range rows {
@@ -977,7 +977,8 @@ func fetchColumnNDVs(ctx sessionctx.Context, tableID int64, columnIDs []string) 
 	if len(columnIDs) == 0 {
 		return ndvByColID, nil
 	}
-	rows, _, err := statsutil.ExecRows(ctx, selectNDVForColumnsQuery, tableID, columnIDs)
+	// use session pool instead of current session to avoid transaction conflicts
+	rows, _, err := statsutil.ExecWithOpts(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, selectNDVForColumnsQuery, tableID, columnIDs)
 	if err != nil {
 		return ndvByColID, err
 	}
