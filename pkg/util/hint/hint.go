@@ -1019,7 +1019,7 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		hintTableInfos = append(hintTableInfos, tableInfo)
 	}
 	if isInapplicable {
-		warnHandler.SetHintWarningFromError(fmt.Errorf("optimizer hint %s is inapplicable on specified partitions", Restore2JoinHint(hintName, hintTableInfos)))
+		warnHandler.SetHintWarningFromError(fmt.Errorf("Optimizer Hint %s is inapplicable on specified partitions", Restore2JoinHint(hintName, hintTableInfos)))
 		return nil
 	}
 	return hintTableInfos
