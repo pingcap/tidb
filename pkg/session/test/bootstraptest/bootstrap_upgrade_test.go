@@ -926,7 +926,7 @@ func TestUpgradeVersion245Primary(t *testing.T) {
 	newVer.Close()
 }
 
-func TestUpgradeVersion245SECONDARY(t *testing.T) {
+func TestUpgradeVersion245Secondary(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
