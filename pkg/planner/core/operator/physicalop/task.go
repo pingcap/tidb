@@ -188,6 +188,7 @@ func (t *CopTask) FinishIndexPlan() {
 	}
 }
 
+// GetStoreType gets the store type of the cop task.
 func (t *CopTask) GetStoreType() kv.StoreType {
 	if t.TablePlan == nil {
 		return kv.TiKV
