@@ -120,7 +120,6 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 	job := &backfillMeta.Job
 	logger.Info("on next subtasks batch")
-	storeWithPD := sch.d.store.(kv.StorageWithPD)
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
@@ -158,7 +157,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				storeWithPD,
+				sch.d.store.(kv.StorageWithPD),
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
