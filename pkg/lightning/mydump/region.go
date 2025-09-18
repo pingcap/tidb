@@ -369,7 +369,7 @@ func makeParquetFileRegion(
 	dataFile FileInfo,
 ) ([]*TableRegion, []float64, error) {
 	var (
-		numberRows = dataFile.FileMeta.Rows
+		numberRows int64
 		err        error
 	)
 	if !cfg.SkipParquetRowCount {
@@ -377,9 +377,7 @@ func makeParquetFileRegion(
 			return nil, nil, err
 		}
 	} else {
-		if numberRows <= 0 {
-			numberRows = dataFile.FileMeta.FileSize
-		}
+		numberRows = dataFile.FileMeta.FileSize
 
 		failpoint.Inject("mockParquetRowCount", func(val failpoint.Value) {
 			if v, ok := val.(int); ok {
