@@ -77,6 +77,8 @@ const (
 	RewriteModeKeyspace
 )
 
+var DebugToken bool = false
+
 type storeTokenChannelMap struct {
 	sync.RWMutex
 	tokens map[uint64]chan struct{}
@@ -132,6 +134,119 @@ func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeToke
 	return storeTokenChannelMap
 }
 
+type waitVal struct {
+	taken int
+	wait  int
+}
+
+type tokenStats struct {
+	downloadLock  sync.Mutex
+	downloadCount map[uint64]waitVal
+	ingestLock    sync.Mutex
+	ingestCount   map[uint64]waitVal
+}
+
+func newTokenStats() *tokenStats {
+	return &tokenStats{
+		downloadCount: make(map[uint64]waitVal),
+		ingestCount:   make(map[uint64]waitVal),
+	}
+}
+
+func (s *tokenStats) waitForTokenStatsD(storeID uint64) {
+	if !DebugToken {
+		return
+	}
+	s.downloadLock.Lock()
+	defer s.downloadLock.Unlock()
+	c := s.downloadCount[storeID]
+	c.wait += 1
+	s.downloadCount[storeID] = c
+}
+
+func (s *tokenStats) takenForTokenStatsD(storeID uint64) {
+	if !DebugToken {
+		return
+	}
+	s.downloadLock.Lock()
+	defer s.downloadLock.Unlock()
+	c := s.downloadCount[storeID]
+	c.wait -= 1
+	c.taken += 1
+	s.downloadCount[storeID] = c
+}
+
+func (s *tokenStats) releaseForTokenStatsD(storeID uint64) {
+	if !DebugToken {
+		return
+	}
+	s.downloadLock.Lock()
+	defer s.downloadLock.Unlock()
+	c := s.downloadCount[storeID]
+	c.taken -= 1
+	s.downloadCount[storeID] = c
+}
+
+func (s *tokenStats) waitForTokenStatsI(storeID uint64) {
+	if !DebugToken {
+		return
+	}
+	s.ingestLock.Lock()
+	defer s.ingestLock.Unlock()
+	c := s.ingestCount[storeID]
+	c.wait += 1
+	s.ingestCount[storeID] = c
+}
+
+func (s *tokenStats) takenForTokenStatsI(storeID uint64) {
+	if !DebugToken {
+		return
+	}
+	s.ingestLock.Lock()
+	defer s.ingestLock.Unlock()
+	c := s.ingestCount[storeID]
+	c.wait -= 1
+	c.taken += 1
+	s.ingestCount[storeID] = c
+}
+
+func (s *tokenStats) releaseForTokenStatsI(storeID uint64) {
+	if !DebugToken {
+		return
+	}
+	s.ingestLock.Lock()
+	defer s.ingestLock.Unlock()
+	c := s.ingestCount[storeID]
+	c.taken -= 1
+	s.ingestCount[storeID] = c
+}
+
+func (s *tokenStats) print() {
+	downloadStr := s.printDownloadStr()
+	ingestStr := s.printIngestStr()
+	log.Info("print token info", zap.String("download", downloadStr), zap.String("ingest", ingestStr))
+}
+
+func (s *tokenStats) printDownloadStr() string {
+	s.downloadLock.Lock()
+	var b strings.Builder
+	for storeId, d := range s.downloadCount {
+		b.WriteString(fmt.Sprintf("[%d:%d/%d]", storeId, d.taken, d.wait))
+	}
+	s.downloadLock.Unlock()
+	return b.String()
+}
+
+func (s *tokenStats) printIngestStr() string {
+	s.ingestLock.Lock()
+	var b strings.Builder
+	for storeId, d := range s.ingestCount {
+		b.WriteString(fmt.Sprintf("[%d:%d/%d]", storeId, d.taken, d.wait))
+	}
+	s.ingestLock.Unlock()
+	return b.String()
+}
+
 type SnapFileImporter struct {
 	cipher     *backuppb.CipherInfo
 	apiVersion kvrpcpb.APIVersion
@@ -155,6 +270,8 @@ type SnapFileImporter struct {
 
 	cacheKey string
 	cond     *sync.Cond
+
+	stats *tokenStats
 }
 
 type SnapFileImporterOptions struct {
@@ -234,6 +351,7 @@ func NewSnapFileImporter(
 		concurrencyPerStore: options.concurrencyPerStore,
 		cond:                sync.NewCond(new(sync.Mutex)),
 		closeCallbacks:      options.closeCallbacks,
+		stats:               newTokenStats(),
 	}
 
 	for _, f := range options.createCallBacks {
@@ -242,7 +360,26 @@ func NewSnapFileImporter(
 			return nil, errors.Trace(err)
 		}
 	}
+
+	if DebugToken {
+		go fileImporter.print(ctx)
+	}
+
 	return fileImporter, nil
+}
+
+func (importer *SnapFileImporter) print(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-ticker.C:
+			importer.stats.print()
+		}
+	}
 }
 
 func (importer *SnapFileImporter) PauseForBackpressure() {
@@ -677,14 +814,18 @@ func (importer *SnapFileImporter) downloadSST(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
+			peerStoreId := peer.GetStoreId()
+			tokenCh := importer.downloadTokensMap.acquireTokenCh(peerStoreId, importer.concurrencyPerStore)
+			importer.stats.waitForTokenStatsD(peerStoreId)
 			select {
 			case <-ectx.Done():
 				return ectx.Err()
 			case <-tokenCh:
+				importer.stats.takenForTokenStatsD(peerStoreId)
 			}
 			defer func() {
 				importer.releaseToken(tokenCh)
+				importer.stats.releaseForTokenStatsD(peerStoreId)
 			}()
 			for fileName, req := range downloadReqsMap {
 				var err error
@@ -829,14 +970,18 @@ func (importer *SnapFileImporter) ingest(
 	if len(downloadMetas) == 0 {
 		return nil
 	}
-	tokenCh := importer.ingestTokensMap.acquireTokenCh(info.Leader.GetStoreId(), importer.concurrencyPerStore)
+	leaderStoreId := info.Leader.GetStoreId()
+	tokenCh := importer.ingestTokensMap.acquireTokenCh(leaderStoreId, importer.concurrencyPerStore)
+	importer.stats.waitForTokenStatsI(leaderStoreId)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-tokenCh:
+		importer.stats.takenForTokenStatsI(leaderStoreId)
 	}
 	defer func() {
 		importer.releaseToken(tokenCh)
+		importer.stats.releaseForTokenStatsI(leaderStoreId)
 	}()
 	for {
 		ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)

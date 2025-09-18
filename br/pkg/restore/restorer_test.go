@@ -42,6 +42,10 @@ func (f *fakeImporter) Close() error {
 	return nil
 }
 
+func (f *fakeImporter) PauseForBackpressure() {
+
+}
+
 func TestSimpleRestorerImportAndProgress(t *testing.T) {
 	ctx := context.Background()
 	files := createTestFiles()

@@ -156,13 +156,13 @@ type SimpleRestorer struct {
 	eg               *errgroup.Group
 	ectx             context.Context
 	workerPool       *util.WorkerPool
-	fileImporter     FileImporter
+	fileImporter     BalancedFileImporter
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
 func NewSimpleSstRestorer(
 	ctx context.Context,
-	fileImporter FileImporter,
+	fileImporter BalancedFileImporter,
 	workerPool *util.WorkerPool,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 ) SstRestorer {
@@ -185,14 +185,19 @@ func (s *SimpleRestorer) WaitUntilFinish() error {
 }
 
 func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
+	id := 0
 	for _, sets := range batchFileSets {
 		for _, set := range sets {
+			id += 1
+			taskId := id
+			s.fileImporter.PauseForBackpressure()
 			s.workerPool.ApplyOnErrorGroup(s.eg,
 				func() (restoreErr error) {
+					log.Info("start to import sst files", zap.Int("task id", taskId))
 					fileStart := time.Now()
 					defer func() {
 						if restoreErr == nil {
-							log.Info("import sst files done", logutil.Files(set.SSTFiles),
+							log.Info("import sst files done", zap.Int("task id", taskId), logutil.Files(set.SSTFiles),
 								zap.Duration("take", time.Since(fileStart)))
 							for _, f := range set.SSTFiles {
 								onProgress(int64(f.TotalKvs))

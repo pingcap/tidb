@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -1449,6 +1450,7 @@ func RunStreamRestore(
 
 	cfg.adjustRestoreConfigForStreamRestore()
 	cfg.tiflashRecorder = tiflashrec.New()
+	snapclient.DebugToken = true
 	logClient, err := createLogClient(ctx, g, cfg, mgr)
 	if err != nil {
 		return errors.Trace(err)
