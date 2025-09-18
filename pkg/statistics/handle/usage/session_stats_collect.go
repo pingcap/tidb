@@ -365,7 +365,7 @@ func DumpColStatsUsageEntries(pool util.DestroyableSessionPool, entries []ColSta
 			thresholdMinutes := int(colStatsUsageUpdateInterval / time.Minute)
 			sql := new(strings.Builder)
 			sqlescape.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
-			for j := range len(batch) {
+			for j := range batch {
 				// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
 				// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
 				sqlescape.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", batch[j].TableID, batch[j].ColumnID, batch[j].LastUsedAt)
