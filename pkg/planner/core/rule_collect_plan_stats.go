@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -40,14 +41,8 @@ type CollectPredicateColumnsPoint struct{}
 // Optimize implements LogicalOptRule.<0th> interface.
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-<<<<<<< HEAD
-	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return plan, planChanged, nil
-	}
-=======
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
 		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL), "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
->>>>>>> e54fe94984f (planner: TTL scan can trigger sync/async load/generateRuntimeFilter (#62616))
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	syncLoadEnabled := syncWait > 0
 	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan)
@@ -227,14 +222,8 @@ type SyncWaitStatsLoadPoint struct{}
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-<<<<<<< HEAD
-	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return plan, planChanged, nil
-	}
-=======
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
 		(plan.SCtx().GetSessionVars().InRestrictedSQL && plan.SCtx().GetSessionVars().InternalSQLScanUserTable), "SyncWaitStatsLoadPoint should not be called in restricted SQL mode")
->>>>>>> e54fe94984f (planner: TTL scan can trigger sync/async load/generateRuntimeFilter (#62616))
 	if plan.SCtx().GetSessionVars().StmtCtx.IsSyncStatsFailed {
 		return plan, planChanged, nil
 	}
