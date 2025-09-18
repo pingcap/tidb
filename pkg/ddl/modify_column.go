@@ -61,6 +61,11 @@ func (w *worker) tryMetaOnlyModifyColumn(
 		return true, 0, nil
 	}
 
+	if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
+		job.State = model.JobStateCancelled
+		return false, ver, errors.Trace(err)
+	}
+
 	isFirstTimeCheck := oldCol.ChangingFieldType == nil
 
 	checked, err := checkModifyColumnCanSkipReorg(
@@ -78,11 +83,15 @@ func (w *worker) tryMetaOnlyModifyColumn(
 		return false, ver, errors.Trace(err)
 	}
 
+	failpoint.InjectCall("beforeModifyColumnAddFlag")
+
 	// For first time check, we add the flag and wait for the next loop.
 	if isFirstTimeCheck {
 		ver, err := updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		return false, ver, errors.Trace(err)
 	}
+
+	failpoint.InjectCall("afterFirstModifyColumnCheck")
 
 	// For multi schema change, mark non-revertible and wait for the next loop.
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
@@ -92,13 +101,22 @@ func (w *worker) tryMetaOnlyModifyColumn(
 		return false, ver, err
 	}
 
+	oldColName := oldCol.Name
 	oldCol.FieldType = args.Column.FieldType
 	oldCol.Name = args.Column.Name
 	oldCol.ChangingFieldType = nil
 	oldCol.DelFlag(mysql.PreventNullInsertFlag)
 	moveChangingColumnInfoToDest(tblInfo, oldCol, oldCol, args.Position)
+	updateNewIdxColsNameOffset(tblInfo.Indices, oldColName, oldCol)
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
-	return false, ver, errors.Trace(err)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
+	job.FillFinishedArgs(&model.ModifyColumnArgs{})
+	return false, ver, nil
 }
 
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -134,17 +152,17 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// We only need to check column existence once for reorg job.
-	if args.ChangingColumn == nil {
+
+	if !needChangeColumnData(oldCol, args.Column) {
 		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-	}
-
-	if !needChangeColumnData(oldCol, args.Column) {
 		return w.doModifyColumn(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
 	}
+
+	// Below part ensures that no foreign key exists on the column to be changed.
+	// TODO(joechenrh): maybe we can enhance it to support modify column with foreign key.
 
 	// Do checks only necessary for jobs with reorg.
 	if isGeneratedRelatedColumn(tblInfo, args.Column, oldCol) {
@@ -176,6 +194,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	// We need to initialize temp column and indexes.
 	changingCol := args.ChangingColumn
 	if changingCol == nil {
+		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
 		changingCol = args.Column.Clone()
 		changingCol.Name = ast.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}

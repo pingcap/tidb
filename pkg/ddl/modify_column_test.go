@@ -596,3 +596,56 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 		"3 3 c",
 		"4 4 d"))
 }
+
+func TestMultiSchemaModifyColumnWithSkipReorg(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(16), b bigint, c bigint, index i1(a), index i2(b), index i3(c), index i4(a, b))")
+	tk.MustExec("insert into t values ('a  ', 1, 1), ('b  ', 2, 2), ('c ', 3, 3)")
+	oldMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	tk.MustExec("alter table t modify column a char(8) after b, modify column b int after a")
+	tk.MustExec("admin check table t")
+	newMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// the offset and ID of b should be unchanged
+	require.Equal(t, oldMeta.Columns[1].ID, newMeta.Columns[1].ID)
+}
+
+func TestModifyColumnWithSkipReorg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx_b(b))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+
+	oldMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// insert should fail by new column type check
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterFirstModifyColumnCheck", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		_, err := tk2.Exec("insert into t values (2147483648, 2147483648)")
+		require.Error(t, err)
+	})
+
+	tk.MustExec("alter table t modify column b mediumint not null")
+	newMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+
+	// ID should be the same.
+	require.Equal(t, oldMeta.Columns[1].ID, newMeta.Columns[1].ID)
+	require.Nil(t, newMeta.Columns[1].ChangingFieldType)
+	tk.MustExec("admin check table t")
+
+	// insert should succeed before adding flag, and this will make modify column fail.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeModifyColumnAddFlag", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("insert into t values (512, 512)")
+	})
+	tk.MustExecToErr("alter table t modify column b tinyint not null")
+	tk.MustExec("admin check table t")
+}
