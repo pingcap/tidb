@@ -1325,6 +1325,14 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		if err != nil {
 			return property.PropNotMatched
 		}
+		// Multiple ranges can be put into one cop task. But when we group them, they are forced to be split into
+		// multiple cop tasks. This can cause large overhead besides the merge sort operation itself.
+		// After some performance tests, we set a threshold here to limit the max number of groups to prevent this
+		// overhead becomes too large unexpectedly.
+		const maxGroupCount = 2048
+		if len(groups) > maxGroupCount {
+			return property.PropNotMatched
+		}
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
