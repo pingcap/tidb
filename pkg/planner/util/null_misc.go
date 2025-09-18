@@ -119,7 +119,8 @@ func referencesAnyInner(e expression.Expression, inner *expression.Schema) bool 
 // These functions (like collation/charset/coercibility) should not be used as "NULL propagation" evidence
 // to drive outer join elimination, otherwise expressions like `where collation(t2.c) = 'utf8mb4_bin'`
 // would be incorrectly judged as allowing LEFT JOIN to be converted to INNER JOIN.
-// Approach: The structural judgment phase relies on isNullPropagatingWRTInner (treating them as "potentially masking NULL"),
+// Approach: The structural judgment phase relies on isNullPropagatingWRTInner
+// (treating them as "potentially masking NULL"),
 // while in the fallback (inner-only case) we do another contains check as a safety net.
 var opaqueInfoFuncSet = map[string]struct{}{
 	ast.Collation:    {},
@@ -348,7 +349,8 @@ func isNullPropagatingWRTInner(e expression.Expression, inner *expression.Schema
 			// (via short-circuiting or branch substitution), so at the structural
 			// phase we cannot assert "must propagate NULL".
 			return false
-		// Info functions: treat them as "potentially masking NULL" so they are not used as structural NULL propagation evidence
+		// Info functions: treat them as "potentially masking NULL" so they are not used
+		// as structural NULL propagation evidence
 		case ast.Collation, ast.Charset, ast.Coercibility:
 			return false
 		}
