@@ -67,7 +67,7 @@ func (*mergeTempIndexExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (e *mergeTempIndexExecutor) initializeByMeta(ctx context.Context, meta *BackfillSubTaskMeta) error {
+func (e *mergeTempIndexExecutor) initializeByMeta(meta *BackfillSubTaskMeta) error {
 	physicalID := tablecodec.DecodeTableID(meta.StartKey)
 	idxInfo, err := findIndexInfoByDecodingKey(e.ptbl.Indices(), meta.StartKey)
 	if err != nil {
@@ -98,7 +98,7 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.initializeByMeta(ctx, &meta)
+	err = e.initializeByMeta(&meta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -142,7 +142,7 @@ type mergeTempIndexCollector struct {
 	scanCount int
 }
 
-func (m *mergeTempIndexCollector) Processed(bytes, rows int64) {
+func (m *mergeTempIndexCollector) Processed(_, rows int64) {
 	m.addCount += int(rows)
 	m.scanCount += int(rows)
 }

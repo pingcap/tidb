@@ -951,8 +951,8 @@ func (*indexWriteResultSink) String() string {
 	return "indexWriteResultSink"
 }
 
-// TempIndexScanTask contains the start key and end key of a temp index region.
-type TempIndexScanTask struct {
+// tempIndexScanTask contains the start key and end key of a temp index region.
+type tempIndexScanTask struct {
 	ID    int
 	Start kv.Key
 	End   kv.Key
@@ -961,14 +961,14 @@ type TempIndexScanTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t TempIndexScanTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+func (t tempIndexScanTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return metrics.LblAddIndex, "RecoverArgs", func() {
 		t.ctx.onError(dbterror.ErrReorgPanic)
 	}, false
 }
 
 // String implement fmt.Stringer interface.
-func (t TempIndexScanTask) String() string {
+func (t tempIndexScanTask) String() string {
 	return fmt.Sprintf("TempIndexScanTask: id=%d, startKey=%s, endKey=%s",
 		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
 }
@@ -978,7 +978,7 @@ type TempIndexScanTaskSource struct {
 	ctx *OperatorCtx
 
 	errGroup errgroup.Group
-	sink     operator.DataChannel[TempIndexScanTask]
+	sink     operator.DataChannel[tempIndexScanTask]
 
 	tbl      table.PhysicalTable
 	store    kv.Storage
@@ -1005,7 +1005,7 @@ func NewTempIndexScanTaskSource(
 }
 
 // SetSink implements WithSink interface.
-func (src *TempIndexScanTaskSource) SetSink(sink operator.DataChannel[TempIndexScanTask]) {
+func (src *TempIndexScanTaskSource) SetSink(sink operator.DataChannel[tempIndexScanTask]) {
 	src.sink = sink
 }
 
@@ -1066,8 +1066,8 @@ func (src *TempIndexScanTaskSource) generateTasks() error {
 func (src *TempIndexScanTaskSource) getBatchTableScanTask(
 	kvRanges []kv.KeyRange,
 	taskIDAlloc *taskIDAllocator,
-) []TempIndexScanTask {
-	batchTasks := make([]TempIndexScanTask, 0, len(kvRanges))
+) []tempIndexScanTask {
+	batchTasks := make([]tempIndexScanTask, 0, len(kvRanges))
 	prefix := tablecodec.GenTableIndexPrefix(src.tbl.GetPhysicalID())
 
 	// Build reorg tasks.
@@ -1082,7 +1082,7 @@ func (src *TempIndexScanTaskSource) getBatchTableScanTask(
 			endKey = prefix.PrefixNext()
 		}
 
-		task := TempIndexScanTask{
+		task := tempIndexScanTask{
 			ID:    taskID,
 			Start: startKey,
 			End:   endKey,
@@ -1093,14 +1093,14 @@ func (src *TempIndexScanTaskSource) getBatchTableScanTask(
 	return batchTasks
 }
 
-type TempIndexResult struct {
+type tempIndexResult struct {
 	ID    int
 	Added int
 }
 
-// TableScanOperator scans table records in given key ranges from kv store.
+// MergeTempIndexOperator merges the temporary index records into the original index.
 type MergeTempIndexOperator struct {
-	*operator.AsyncOperator[TempIndexScanTask, TempIndexResult]
+	*operator.AsyncOperator[tempIndexScanTask, tempIndexResult]
 	logger     *zap.Logger
 	totalCount *atomic.Int64
 }
@@ -1121,7 +1121,7 @@ func NewMergeTempIndexOperator(
 		"MergeTempIndexOperator",
 		util.DDL,
 		concurrency,
-		func() workerpool.Worker[TempIndexScanTask, TempIndexResult] {
+		func() workerpool.Worker[tempIndexScanTask, tempIndexResult] {
 			return &mergeTempIndexWorker{
 				ctx:        ctx,
 				store:      store,
@@ -1162,50 +1162,50 @@ type mergeTempIndexWorker struct {
 	totalCount *atomic.Int64
 }
 
-func (w *mergeTempIndexWorker) HandleTask(task TempIndexScanTask, sender func(TempIndexResult)) {
+func (w *mergeTempIndexWorker) HandleTask(task tempIndexScanTask, sender func(tempIndexResult)) {
 	failpoint.Inject("injectPanicForTableScan", func() {
 		panic("mock panic")
 	})
 	w.handleOneRange(task, sender)
 }
 
-func (w *mergeTempIndexWorker) Close() {}
+func (*mergeTempIndexWorker) Close() {}
 
-func (e *mergeTempIndexWorker) handleOneRange(
-	task TempIndexScanTask,
-	sender func(TempIndexResult),
+func (w *mergeTempIndexWorker) handleOneRange(
+	task tempIndexScanTask,
+	sender func(tempIndexResult),
 ) {
 	var currentTxnStartTS uint64
 	oprStartTime := time.Now()
-	ctx := kv.WithInternalSourceAndTaskType(e.ctx, "ddl_merge_temp_index", kvutil.ExplicitTypeDDL)
-	originBatchCnt := e.batchCnt
+	ctx := kv.WithInternalSourceAndTaskType(w.ctx, "ddl_merge_temp_index", kvutil.ExplicitTypeDDL)
+	originBatchCnt := w.batchCnt
 	defer func() {
-		e.batchCnt = originBatchCnt
+		w.batchCnt = originBatchCnt
 	}()
 	jobCtx := NewReorgContext()
 	jobCtx.tp = "ddl_merge_temp_index"
 	jobCtx.getResourceGroupTaggerForTopSQL()
-	jobCtx.resourceGroupName = e.reorgMeta.ResourceGroupName
+	jobCtx.resourceGroupName = w.reorgMeta.ResourceGroupName
 
 	start, end := task.Start, task.End
 	attempts := 0
 	var result tempIdxResult
 	for {
 		attempts++
-		err := kv.RunInNewTxn(ctx, e.store, false, func(_ context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, w.store, false, func(_ context.Context, txn kv.Transaction) error {
 			currentTxnStartTS = txn.StartTS()
 			updateTxnEntrySizeLimitIfNeeded(txn)
-			rs, err := fetchTempIndexVals(jobCtx, e.store, e.ptbl, e.idxInfo, txn, start, end, e.batchCnt, e.buffers)
+			rs, err := fetchTempIndexVals(jobCtx, w.store, w.ptbl, w.idxInfo, txn, start, end, w.batchCnt, w.buffers)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			result = rs
-			err = batchCheckTemporaryUniqueKey(txn, e.ptbl, e.idxInfo, e.buffers.originIdxKeys, e.buffers.tmpIdxRecords)
+			err = batchCheckTemporaryUniqueKey(txn, w.ptbl, w.idxInfo, w.buffers.originIdxKeys, w.buffers.tmpIdxRecords)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			for i, idxRecord := range e.buffers.tmpIdxRecords {
+			for i, idxRecord := range w.buffers.tmpIdxRecords {
 				// The index is already exists, we skip it, no needs to backfill it.
 				// The following update, delete, insert on these rows, TiDB can handle it correctly.
 				// If all batch are skipped, update first index key to make txn commit to release lock.
@@ -1213,7 +1213,7 @@ func (e *mergeTempIndexWorker) handleOneRange(
 					continue
 				}
 
-				originIdxKey := e.buffers.originIdxKeys[i]
+				originIdxKey := w.buffers.originIdxKeys[i]
 				if idxRecord.delete {
 					err = txn.GetMemBuffer().Delete(originIdxKey)
 				} else {
@@ -1223,7 +1223,7 @@ func (e *mergeTempIndexWorker) handleOneRange(
 					return err
 				}
 
-				err = txn.GetMemBuffer().Delete(e.buffers.tmpIdxKeys[i])
+				err = txn.GetMemBuffer().Delete(w.buffers.tmpIdxKeys[i])
 				if err != nil {
 					return err
 				}
@@ -1236,26 +1236,26 @@ func (e *mergeTempIndexWorker) handleOneRange(
 		})
 		if err != nil {
 			if kv.IsTxnRetryableError(err) {
-				if e.batchCnt > 1 {
-					e.batchCnt /= 2
+				if w.batchCnt > 1 {
+					w.batchCnt /= 2
 				}
 				backoff := kv.BackOff(uint(attempts))
 				logutil.Logger(ctx).Warn("temp index merge worker retry",
-					zap.Int64("jobID", e.jobID),
-					zap.Int("batchCnt", e.batchCnt),
+					zap.Int64("jobID", w.jobID),
+					zap.Int("batchCnt", w.batchCnt),
 					zap.Int("attempts", attempts),
 					zap.Duration("backoff", time.Duration(backoff)),
 					zap.Uint64("startTS", currentTxnStartTS),
 					zap.Error(err))
 				continue
 			}
-			e.ctx.onError(err)
+			w.ctx.onError(err)
 			break
 		}
 		break
 	}
 
-	metrics.DDLSetTempIndexScanAndMerge(e.ptbl.GetPhysicalID(), uint64(result.scanCount), uint64(result.addCount))
+	metrics.DDLSetTempIndexScanAndMerge(w.ptbl.GetPhysicalID(), uint64(result.scanCount), uint64(result.addCount))
 	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionMerging != nil {
@@ -1263,10 +1263,11 @@ func (e *mergeTempIndexWorker) handleOneRange(
 		}
 	})
 	logSlowOperations(time.Since(oprStartTime), "mergeTempIndexExecutorHandleOneRange", 3000)
-	sender(TempIndexResult{
+	sender(tempIndexResult{
 		ID:    task.ID,
 		Added: result.addCount,
 	})
+	w.totalCount.Add(int64(result.scanCount))
 }
 
 type tempIndexResultSink struct {
@@ -1274,7 +1275,7 @@ type tempIndexResultSink struct {
 	tbl       table.PhysicalTable
 	collector execute.Collector
 	errGroup  errgroup.Group
-	source    operator.DataChannel[TempIndexResult]
+	source    operator.DataChannel[tempIndexResult]
 }
 
 func newTempIndexResultSink(
@@ -1290,7 +1291,7 @@ func newTempIndexResultSink(
 	}
 }
 
-func (s *tempIndexResultSink) SetSource(source operator.DataChannel[TempIndexResult]) {
+func (s *tempIndexResultSink) SetSource(source operator.DataChannel[tempIndexResult]) {
 	s.source = source
 }
 

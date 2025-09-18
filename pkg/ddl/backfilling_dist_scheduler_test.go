@@ -80,18 +80,6 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	// 1.2 test partition table OnNextSubtasksBatch after BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
-	require.Equal(t, proto.BackfillStepMergeTempIndex, task.Step)
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
-	require.NoError(t, err)
-	require.Len(t, metas, 4)
-	for i := range tblInfo.Partition.Definitions {
-		var subTask ddl.BackfillSubTaskMeta
-		require.NoError(t, json.Unmarshal(metas[i], &subTask))
-		require.NotNil(t, subTask.StartKey)
-		require.NotNil(t, subTask.EndKey)
-	}
-
-	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
 	require.NoError(t, err)
@@ -110,7 +98,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 	// 2.2 non empty table.
-	tk.MustExec("create table t2(id bigint auto_random primary key, key idx(id))")
+	tk.MustExec("create table t2(id bigint auto_random primary key)")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
@@ -125,16 +113,6 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 	// 2.2.2 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
-	task.Step = sch.GetNextStep(&task.TaskBase)
-	require.Equal(t, proto.BackfillStepMergeTempIndex, task.Step)
-	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
-	require.NoError(t, err)
-	require.Len(t, metas, 1)
-	var subTask ddl.BackfillSubTaskMeta
-	require.NoError(t, json.Unmarshal(metas[0], &subTask))
-	require.NotNil(t, subTask.StartKey)
-	require.NotNil(t, subTask.EndKey)
-
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
@@ -296,14 +274,24 @@ func TestGetNextStep(t *testing.T) {
 	ext := &ddl.LitBackfillScheduler{}
 
 	// 1. local mode
-	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeTempIndex, proto.StepDone} {
+	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.StepDone} {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
 	// 2. global sort mode
 	ext = &ddl.LitBackfillScheduler{GlobalSort: true}
 	task.Step = proto.StepInit
-	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest, proto.BackfillStepMergeTempIndex} {
+	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest} {
+		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
+		task.Step = nextStep
+	}
+
+	// 3. merge temp index
+	task = &proto.Task{
+		TaskBase: proto.TaskBase{Step: proto.StepInit},
+	}
+	ext = &ddl.LitBackfillScheduler{MergeTempIndex: true}
+	for _, nextStep := range []proto.Step{proto.BackfillStepMergeTempIndex, proto.StepDone} {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
