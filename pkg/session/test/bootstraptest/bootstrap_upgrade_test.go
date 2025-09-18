@@ -897,10 +897,6 @@ func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
 }
 
 func TestUpgradeVersion245Primary(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
-	}
-
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	seV244 := session.CreateSessionAndSetID(t, store)
@@ -927,10 +923,6 @@ func TestUpgradeVersion245Primary(t *testing.T) {
 }
 
 func TestUpgradeVersion245Secondary(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
-	}
-
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	seV244 := session.CreateSessionAndSetID(t, store)
