@@ -1132,7 +1132,6 @@ func TestQuickBinding(t *testing.T) {
 			rows := tk.MustQuery(fmt.Sprintf(
 				`select plan_digest from information_schema.statements_summary where digest='%v'`, sqlDigest)).Rows()
 			require.Greater(t, len(rows), 0)
-
 		}
 
 		// test with prepared / execute protocol
