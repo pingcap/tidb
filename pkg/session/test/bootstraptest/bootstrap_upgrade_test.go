@@ -922,7 +922,7 @@ func TestUpgradeVersion245Primary(t *testing.T) {
 	require.NoError(t, err)
 	ver, err = session.GetBootstrapVersion(seV244)
 	require.NoError(t, err)
-	require.Equal(t, int64(252), ver)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
 	newVer.Close()
 }
 
@@ -952,6 +952,6 @@ func TestUpgradeVersion245Secondary(t *testing.T) {
 	require.NoError(t, err)
 	ver, err = session.GetBootstrapVersion(seV244)
 	require.NoError(t, err)
-	require.Equal(t, int64(252), ver)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
 	newVer.Close()
 }
