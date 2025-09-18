@@ -21,14 +21,14 @@ func newSimplePlan(db, tbl string, offset int) *simplePlan {
 	return &simplePlan{dbName: db, tbl: tbl, offset: offset}
 }
 
-// simplyfied HintedTable
+// simplified HintedTable
 type simpleHintedTable struct {
 	DBName       string
 	TblName      string
 	SelectOffset int
 }
 
-// simplyfied findPlanByHintedTable
+// simplified findPlanByHintedTable
 func findPlanByHintedTable(plans []*simplePlan, hintedTbl *simpleHintedTable) (*simplePlan, int) {
 	for i, p := range plans {
 		if (hintedTbl.DBName == p.DBName() || hintedTbl.DBName == "*") &&
