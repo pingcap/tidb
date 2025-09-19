@@ -131,7 +131,6 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	err = pipe.Execute()
 	if err != nil {
 		cancel()
-		logutil.Logger(ctx).Error("merge temp index operator meet error", zap.Error(err))
 		return err
 	}
 	err = pipe.Close()
