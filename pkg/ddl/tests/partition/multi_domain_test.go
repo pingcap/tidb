@@ -587,12 +587,12 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			zap.String("owner index", tkO.MustQuery("select * from t use index(k_b)").Sort().String()),
 			zap.String("owner index id", tkO.MustQuery(indexIDSQL).String()),
 			zap.Int64("owner txn schema version", sessiontxn.GetTxnManager(tkO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
-			zap.Int64("owner domain schema version", tkO.Session().GetLatestInfoSchema().SchemaMetaVersion()),
+			zap.Int64("owner domain schema version", tkO.Session().GetDomainInfoSchema().SchemaMetaVersion()),
 			zap.String("non-owner table", tkNO.MustQuery("select * from t use index()").Sort().String()),
 			zap.String("non-owner index", tkNO.MustQuery("select * from t use index(k_b)").Sort().String()),
 			zap.String("non-owner index id", tkNO.MustQuery(indexIDSQL).String()),
 			zap.Int64("non-owner txn schema version", sessiontxn.GetTxnManager(tkNO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
-			zap.Int64("non-owner domain schema version", tkNO.Session().GetLatestInfoSchema().SchemaMetaVersion()),
+			zap.Int64("non-owner domain schema version", tkNO.Session().GetDomainInfoSchema().SchemaMetaVersion()),
 		)
 		tkO.MustExec("set @@sql_mode = default")
 		tkNO.MustExec("set @@sql_mode = default")
@@ -924,18 +924,12 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan *model.Job)
 	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		hookChan <- job
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 		<-hookChan
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
-<<<<<<< HEAD
-	}
-	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", hookFunc)
-=======
 	})
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
 	alterChan := make(chan error)
 	go func() {
 		if backfillDML != "" {

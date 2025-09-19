@@ -335,20 +335,7 @@ func removeChangingColAndIdxs(tblInfo *model.TableInfo, changingColID int64) {
 	tblInfo.Columns = restCols
 }
 
-<<<<<<< HEAD
-func replaceOldColumn(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
-	newName pmodel.CIStr) *model.ColumnInfo {
-	tblInfo.MoveColumnInfo(changingCol.Offset, len(tblInfo.Columns)-1)
-	changingCol = updateChangingCol(changingCol, newName, oldCol.Offset)
-	tblInfo.Columns[oldCol.Offset] = changingCol
-	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
-	return changingCol
-}
-
-func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo) {
-=======
 func removeOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo) {
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
 	// Remove the changing indexes.
 	for i, idx := range tblInfo.Indices {
 		for _, cIdx := range changingIdxs {
@@ -365,21 +352,6 @@ func removeOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo)
 		}
 	}
 	tblInfo.Indices = tmp
-<<<<<<< HEAD
-	// Replace the old indexes with changing indexes.
-	for _, cIdx := range changingIdxs {
-		// The index name should be changed from '_Idx$_name' to 'name'.
-		idxName := getChangingIndexOriginName(cIdx)
-		for i, idx := range tblInfo.Indices {
-			if strings.EqualFold(idxName, idx.Name.O) {
-				cIdx.Name = pmodel.NewCIStr(idxName)
-				tblInfo.Indices[i] = cIdx
-				break
-			}
-		}
-	}
-=======
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
 }
 
 // updateNewIdxColsNameOffset updates the name&offset of the index column.
@@ -394,37 +366,8 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 	}
 }
 
-<<<<<<< HEAD
-// filterIndexesToRemove filters out the indexes that can be removed.
-func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName pmodel.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
-	indexesToRemove := make([]*model.IndexInfo, 0, len(changingIdxs))
-	for _, idx := range changingIdxs {
-		var hasOtherChangingCol bool
-		for _, col := range idx.Columns {
-			if col.Name.L == colName.L {
-				continue // ignore the current modifying column.
-			}
-			if !hasOtherChangingCol {
-				hasOtherChangingCol = tblInfo.Columns[col.Offset].ChangeStateInfo != nil
-			}
-		}
-		// For the indexes that still contains other changing column, skip removing it now.
-		// We leave the removal work to the last modify column job.
-		if !hasOtherChangingCol {
-			indexesToRemove = append(indexesToRemove, idx)
-		}
-	}
-	return indexesToRemove
-}
-
-func updateChangingCol(col *model.ColumnInfo, newName pmodel.CIStr, newOffset int) *model.ColumnInfo {
-	col.Name = newName
-	col.ChangeStateInfo = nil
-	col.Offset = newOffset
-=======
 func updateModifyingCols(oldCol, changingCol *model.ColumnInfo) {
 	changingCol.ChangeStateInfo = nil
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
 	// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
 	// so that there is no error in getting the default value from OriginDefaultValue.
 	// Besides, nil data that was not backfilled in the "add column" is backfilled after the column is changed.
@@ -981,16 +924,16 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 	return nil
 }
 
-func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
+func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName pmodel.CIStr) {
 	publicName := newColName
-	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+	removingName := pmodel.NewCIStr(getRemovingObjName(oldCol.Name.O))
 
 	renameColumnTo(oldCol, oldIdxs, removingName)
 	renameColumnTo(changingCol, changingIdxs, publicName)
 	for i := range oldIdxs {
 		oldIdxName := oldIdxs[i].Name.O
-		publicName := ast.NewCIStr(getRemovingObjOriginName(oldIdxName))
-		removingName := ast.NewCIStr(getRemovingObjName(oldIdxName))
+		publicName := pmodel.NewCIStr(getRemovingObjOriginName(oldIdxName))
+		removingName := pmodel.NewCIStr(getRemovingObjName(oldIdxName))
 
 		changingIdxs[i].Name = publicName
 		oldIdxs[i].Name = removingName
@@ -1011,7 +954,7 @@ func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdx
 	return removedIdxIDs
 }
 
-func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName ast.CIStr) {
+func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName pmodel.CIStr) {
 	for _, idx := range idxInfos {
 		for _, idxCol := range idx.Columns {
 			if idxCol.Name.L == col.Name.L {

@@ -121,17 +121,13 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	changingCol := args.ChangingColumn
 	if changingCol == nil {
-<<<<<<< HEAD
-		newColName := pmodel.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
-=======
 		err := checkColumnAlreadyExists(tblInfo, args)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 
-		newColName := ast.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
+		newColName := pmodel.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
 			job.State = model.JobStateCancelled
 			msg := "this column has primary key flag"
@@ -210,11 +206,7 @@ func rollbackModifyColumnJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *
 }
 
 func getModifyColumnInfo(
-<<<<<<< HEAD
-	t *meta.Mutator, job *model.Job, oldColName pmodel.CIStr,
-=======
 	t *meta.Mutator, job *model.Job, args *model.ModifyColumnArgs,
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
 ) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
@@ -666,14 +658,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)
 			}, false)
-<<<<<<< HEAD
-		// Use old column name to generate less confusing error messages.
-		changingColCpy := changingCol.Clone()
-		changingColCpy.Name = oldCol.Name
 		return w.updateCurrentElement(jobCtx.stepCtx, tbl, reorgInfo)
-=======
-		return w.updateCurrentElement(jobCtx, tbl, reorgInfo)
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -698,36 +683,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 	return true, ver, nil
 }
 
-<<<<<<< HEAD
-func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
-	oldCol, changingCol *model.ColumnInfo, newName pmodel.CIStr, changingIdxs []*model.IndexInfo) (err error) {
-	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
-		// For cases like `modify column b after b`, it should report this error.
-		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
-	}
-	internalColName := changingCol.Name
-	changingCol = replaceOldColumn(tblInfo, oldCol, changingCol, newName)
-	if len(changingIdxs) > 0 {
-		updateNewIdxColsNameOffset(changingIdxs, internalColName, changingCol)
-		indexesToRemove := filterIndexesToRemove(changingIdxs, newName, tblInfo)
-		replaceOldIndexes(tblInfo, indexesToRemove)
-	}
-	if tblInfo.TTLInfo != nil {
-		updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, changingCol.Name)
-	}
-	// Move the new column to a correct offset.
-	destOffset, err := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
-	return nil
-}
-
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName pmodel.CIStr) error {
-=======
-func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName ast.CIStr) error {
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
 	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
 			continue
