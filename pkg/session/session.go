@@ -1412,6 +1412,21 @@ func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value st
 	return s.replaceGlobalVariablesTableValue(ctx, sv.Name, value, updateLocal)
 }
 
+// SetInstanceSysVar implements InstanceVarAccessor.SetInstanceSysVar interface.
+func (s *session) SetInstanceSysVar(ctx context.Context, name string, value string) (err error) {
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if value, err = sv.Validate(s.sessionVars, value, vardef.ScopeInstance); err != nil {
+		return err
+	}
+	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
+		return err
+	}
+	return nil
+}
+
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
 func (s *session) SetTiDBTableValue(name, value, comment string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)

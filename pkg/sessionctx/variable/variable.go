@@ -264,6 +264,9 @@ func (sv *SysVar) validateScope(scope vardef.ScopeFlag) error {
 	if scope == vardef.ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
 		return errLocalVariable.FastGenByArgs(sv.Name)
 	}
+	if scope == vardef.ScopeInstance && !sv.HasInstanceScope() {
+		return errLocalVariable.FastGenByArgs(sv.Name)
+	}
 	if scope == vardef.ScopeSession && !sv.HasSessionScope() {
 		return errGlobalVariable.FastGenByArgs(sv.Name)
 	}
@@ -570,6 +573,8 @@ type GlobalVarAccessor interface {
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
+	// SetInstanceSysVar sets the instance system variable name to value.
+	SetInstanceSysVar(ctx context.Context, name string, value string) error
 	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
 	SetGlobalSysVarOnly(ctx context.Context, name string, value string, updateLocal bool) error
 	// GetTiDBTableValue gets a value from mysql.tidb for the key 'name'
