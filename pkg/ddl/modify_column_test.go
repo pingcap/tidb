@@ -594,7 +594,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 				tk2.MustExec("use test")
 				tk2.MustExec("delete from t where id = 1;")
 			}()
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/afterLoadSchemaDiffs", func(int64) {
 				insertOnce.Do(func() {
 					tk3.MustExec("use test")
 					tk3.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
