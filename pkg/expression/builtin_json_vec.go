@@ -922,8 +922,8 @@ func (b *builtinJSONSumCRC32Sig) vectorized() bool {
 }
 
 func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	ft := b.tp.ArrayType()
-	f := convertJSON2Tp(ft.EvalType())
+	ft := b.arrayTp
+	f := convertJSON2String(ft.EvalType())
 	if f == nil {
 		return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
 	}
@@ -953,7 +953,8 @@ func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 			return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
 		}
 
-		var sum int64
+		// Deduplicate items since duplicated values should only generate one index entry.
+		s := make(map[int64]struct{}, jsonItem.GetElemCount())
 		for j := range jsonItem.GetElemCount() {
 			item, err := f(fakeSctx, jsonItem.ArrayGetElem(j), ft)
 			if err != nil {
@@ -962,7 +963,12 @@ func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 				}
 				return err
 			}
-			sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
+			s[int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))] = struct{}{}
+		}
+
+		sum := int64(0)
+		for k := range s {
+			sum += k % JSONCRC32Mod
 		}
 		i64s[i] = sum
 	}
