@@ -921,7 +921,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, histNDV int64, increaseFactor float64,
+	realtimeRowCount, modifyCount, histNDV int64, increaseFactor float64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -1064,9 +1064,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// searching for out of the range, rowCount may need to be adjusted.
 	if addedPct > totalPercent {
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
-		if histInvalid {
-			totalPercent = min(addedPct, 0.5)
-		}
 		// Attempt to account for the added rows - but not more than the totalPercent
 		outOfRangeAdded := addedRows * totalPercent
 		// Return the max of each estimate - with a minimum of one value.
