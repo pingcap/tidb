@@ -638,8 +638,6 @@ func TestOptimizerCostFactors(t *testing.T) {
 	tk.MustExec("set @@session.tidb_opt_index_merge_cost_factor=1")
 }
 
-<<<<<<< HEAD
-=======
 func TestIndexLookUpRowsLimit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -652,7 +650,6 @@ func TestIndexLookUpRowsLimit(t *testing.T) {
 	require.Equal(t, "(scan(20*logrowsize(48)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
 }
 
->>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
 func TestTiFlashCostFactors(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
