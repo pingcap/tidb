@@ -108,7 +108,7 @@ type litBackendCtx struct {
 	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
-	checkpointMgr   *CheckpointManager
+	checkpointMgr   CheckpointOperator
 	etcdClient      *clientv3.Client
 	initTS          uint64
 	importTS        uint64
@@ -360,7 +360,7 @@ func (bc *litBackendCtx) Close() {
 // NextStartKey implements CheckpointOperator interface.
 func (bc *litBackendCtx) NextStartKey() tikv.Key {
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.NextKeyToProcess()
+		return bc.checkpointMgr.NextStartKey()
 	}
 	return nil
 }
@@ -376,34 +376,43 @@ func (bc *litBackendCtx) TotalKeyCount() int {
 // AddChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) AddChunk(id int, endKey tikv.Key) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.Register(id, endKey)
+		bc.checkpointMgr.AddChunk(id, endKey)
 	}
 }
 
 // UpdateChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) UpdateChunk(id int, count int, done bool) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateTotalKeys(id, count, done)
+		bc.checkpointMgr.UpdateChunk(id, count, done)
 	}
 }
 
 // FinishChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) FinishChunk(id int, count int) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateWrittenKeys(id, count)
+		bc.checkpointMgr.FinishChunk(id, count)
 	}
 }
 
 // GetImportTS implements CheckpointOperator interface.
 func (bc *litBackendCtx) GetImportTS() uint64 {
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.GetTS()
+		return bc.checkpointMgr.GetImportTS()
 	}
 	return bc.importTS
 }
 
 // AdvanceWatermark implements CheckpointOperator interface.
-func (bc *litBackendCtx) AdvanceWatermark(imported bool) error {
+func (bc *litBackendCtx) AdvanceWatermark(imported bool) (err error) {
+	defer func() {
+		if err == nil {
+			failpoint.Inject("ddlIngestFailOnceAfterCheckpointUpdated", func() {
+				if imported {
+					err = errors.New("failpoint: ddlIngestFailOnceAfterCheckpointUpdated")
+				}
+			})
+		}
+	}()
 	if bc.checkpointMgr != nil {
 		return bc.checkpointMgr.AdvanceWatermark(imported)
 	}
