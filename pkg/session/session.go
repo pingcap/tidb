@@ -1421,10 +1421,7 @@ func (s *session) SetInstanceSysVar(ctx context.Context, name string, value stri
 	if value, err = sv.Validate(s.sessionVars, value, vardef.ScopeInstance); err != nil {
 		return err
 	}
-	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
-		return err
-	}
-	return nil
+	return sv.SetGlobalFromHook(ctx, s.sessionVars, value, false)
 }
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
