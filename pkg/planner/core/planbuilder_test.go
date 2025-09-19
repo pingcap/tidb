@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -584,7 +585,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 }
 
 func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
-	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
+	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2()), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
 
 	tests := []struct {
 		name        string
@@ -689,6 +690,68 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAnalyzeDefaultsFromGlobalVars(t *testing.T) {
+	// Save original values
+	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
+	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
+	origCMWidth := vardef.AnalyzeDefaultCMSketchWidth.Load()
+	origCMDepth := vardef.AnalyzeDefaultCMSketchDepth.Load()
+	origSamples := vardef.AnalyzeDefaultNumSamples.Load()
+
+	defer func() {
+		// Reset to original values
+		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
+		vardef.AnalyzeDefaultCMSketchWidth.Store(origCMWidth)
+		vardef.AnalyzeDefaultCMSketchDepth.Store(origCMDepth)
+		vardef.AnalyzeDefaultNumSamples.Store(origSamples)
+	}()
+
+	// Set custom values for the global variables
+	vardef.AnalyzeDefaultNumBuckets.Store(512)
+	vardef.AnalyzeDefaultNumTopN.Store(150)
+	vardef.AnalyzeDefaultCMSketchWidth.Store(4096)
+	vardef.AnalyzeDefaultCMSketchDepth.Store(10)
+	vardef.AnalyzeDefaultNumSamples.Store(20000)
+
+	// Test that handleAnalyzeOptions uses the global defaults for version 2
+	opts := []ast.AnalyzeOpt{} // empty options should use defaults
+	optMap, err := handleAnalyzeOptions(opts, 2)
+	require.NoError(t, err)
+	require.Equal(t, uint64(512), optMap[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), optMap[ast.AnalyzeOptNumTopN])
+	require.Equal(t, uint64(4096), optMap[ast.AnalyzeOptCMSketchWidth])
+	require.Equal(t, uint64(10), optMap[ast.AnalyzeOptCMSketchDepth])
+	require.Equal(t, uint64(20000), optMap[ast.AnalyzeOptNumSamples])
+
+	// Test that fillAnalyzeOptionsV2 uses the global defaults
+	emptyMap := make(map[ast.AnalyzeOptionType]uint64)
+	filledMap := fillAnalyzeOptionsV2(emptyMap)
+	require.Equal(t, uint64(512), filledMap[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
+	require.Equal(t, uint64(4096), filledMap[ast.AnalyzeOptCMSketchWidth])
+	require.Equal(t, uint64(10), filledMap[ast.AnalyzeOptCMSketchDepth])
+	require.Equal(t, uint64(20000), filledMap[ast.AnalyzeOptNumSamples])
+
+	// Test that GetAnalyzeOptionDefaultV2ForTest also uses global defaults
+	testDefaults := GetAnalyzeOptionDefaultV2ForTest()
+	require.Equal(t, uint64(512), testDefaults[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), testDefaults[ast.AnalyzeOptNumTopN])
+	require.Equal(t, uint64(4096), testDefaults[ast.AnalyzeOptCMSketchWidth])
+	require.Equal(t, uint64(10), testDefaults[ast.AnalyzeOptCMSketchDepth])
+	require.Equal(t, uint64(20000), testDefaults[ast.AnalyzeOptNumSamples])
+
+	// Test that version 1 still uses the hardcoded defaults
+	optMapV1, err := handleAnalyzeOptions(opts, 1)
+	require.NoError(t, err)
+	// Version 1 should still use the hardcoded defaults from analyzeOptionDefault
+	require.Equal(t, uint64(256), optMapV1[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(20), optMapV1[ast.AnalyzeOptNumTopN])
+	require.Equal(t, uint64(2048), optMapV1[ast.AnalyzeOptCMSketchWidth])
+	require.Equal(t, uint64(5), optMapV1[ast.AnalyzeOptCMSketchDepth])
+	require.Equal(t, uint64(10000), optMapV1[ast.AnalyzeOptNumSamples])
 }
 
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
