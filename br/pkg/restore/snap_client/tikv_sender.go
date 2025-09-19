@@ -15,6 +15,7 @@
 package snapclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -305,6 +307,10 @@ func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesCont
 		if err := rc.SplitPoints(ctx, sortedSplitKeys, updateCh.IncBy, false); err != nil {
 			return errors.Trace(err)
 		}
+		if bytes.Compare(rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey) >= 0 {
+			log.Warn("start key must be smaller than end key, so skip sending add partition range request", logutil.Key("start key", rtCtx.CompactProtectStartKey), logutil.Key("end key", rtCtx.CompactProtectEndKey))
+			return nil
+		}
 		log.Info("start to check and compact the restore range")
 		if err := rc.compactAndCheckSSTRange(ctx, rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey); err != nil {
 			return errors.Trace(err)
@@ -317,6 +323,10 @@ func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesCont
 	if err := glue.WithProgress(ctx, rtCtx.Glue, "Download&Ingest SST", int64(len(tableIDWithFilesGroup)), !rtCtx.LogProgress, func(updateCh glue.Progress) error {
 		if err := rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh.IncBy); err != nil {
 			return errors.Trace(err)
+		}
+		if bytes.Compare(rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey) >= 0 {
+			log.Warn("start key must be smaller than end key, so skip sending remove partition range request", logutil.Key("start key", rtCtx.CompactProtectStartKey), logutil.Key("end key", rtCtx.CompactProtectEndKey))
+			return nil
 		}
 		log.Info("start to remove the force partition restore range")
 		if err := rc.removeForcePartitionRange(ctx, rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey); err != nil {
