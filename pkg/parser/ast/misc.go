@@ -3936,6 +3936,12 @@ type HintTimeRange struct {
 	To   string
 }
 
+// LeadingList represents a nested structure in LEADING hints.
+// It could be *HintTable or LeadingList
+//
+//	eg: LEADING(a, (b, c), d)
+//	will be parsed into a LeadingList like:
+//	Items = [HintTable("a"), LeadingList{[HintTable("b"), HintTable("c")]}, HintTable("d")]
 type LeadingList struct {
 	Items []interface{}
 }
@@ -3953,12 +3959,15 @@ type HintTable struct {
 	QBName        CIStr
 	PartitionList []CIStr
 
+	// FormatStyle specifies how the query block name is written:
+	//   QBNameAfterTable:  t1@sel1
+	//   QBNameBeforeTable: @sel1 t1
 	FormatStyle int
 }
 
 const (
-	QBNameAfterTable  = iota // t1@sel1
-	QBNameBeforeTable        // @sel1 t1
+	QBNameAfterTable  = iota // e.g. "t1@sel1"
+	QBNameBeforeTable        // e.g. "@sel1 t1"
 )
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
