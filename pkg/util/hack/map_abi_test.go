@@ -100,7 +100,7 @@ func TestSwissTable(t *testing.T) {
 			delta += d
 			if d > 0 {
 				sz := m.RealBytes()
-				expMin := sz * 70 / 100
+				expMin := sz * 75 / 100
 				require.True(t, m.Bytes >= expMin, "ApproxSize %d, RealSize %d, index %d, expMin %d", m.Bytes, sz, i, expMin)
 				require.True(t, approxSizeV2(m.groupSize, uint64(m.Len())) >= expMin, "ApproxSize %d, RealSize %d, index %d, expMin %d", m.Bytes, sz, i, expMin)
 			}
