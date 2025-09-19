@@ -22,8 +22,10 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"net"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -52,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -84,6 +87,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pdHttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -2646,6 +2650,63 @@ func TaskKey(jobID int64) string {
 	return fmt.Sprintf("ddl/%s/%d", proto.Backfill, jobID)
 }
 
+func (w *worker) getSplitRangeFuncs(job *model.Job, tableID int64) (
+	addTableSplitRange func(), removeTableSplitRange func(), err error) {
+	jobSortPath, err := ingest.GenJobSortPath(job.ID, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg := ingest.GenConfig(w.workCtx, jobSortPath, ingest.LitMemRoot, false,
+		job.ReorgMeta.ResourceGroupName, w.store.GetKeyspace(), job.ReorgMeta.GetConcurrency(),
+		job.ReorgMeta.GetMaxWriteSpeed(), job.ReorgMeta.UseCloudStorage)
+
+	tidbCfg := config.GetGlobalConfig()
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort))),
+		nil, nil, nil,
+	)
+	if err != nil {
+		logutil.DDLLogger().Warn("fail to NewTLS", zap.Error(err))
+		return nil, nil, err
+	}
+
+	//nolint:forcetypeassert
+	store := w.store.(tikv.Storage)
+	pdCli := store.GetRegionCache().PDClient()
+	clients, pdCliForTiKV, err := local.PrepareClientsForNewBackend(w.workCtx, tls, *cfg, pdCli.GetServiceDiscovery())
+	if err != nil {
+		logutil.DDLLogger().Warn("fail to PrepareClientsForNewBackend", zap.Error(err))
+		return nil, nil, err
+	}
+	intest.Assert(pdCliForTiKV != nil)
+	closeClients := func() {
+		pdCliForTiKV.Close()
+		clients.Close()
+	}
+
+	startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
+		tablecodec.EncodeTablePrefix(tableID),
+		tablecodec.EncodeTablePrefix(tableID+1),
+	)
+	stores, err := clients.GetPDClient().GetAllStores(w.workCtx, opt.WithExcludeTombstone())
+	if err != nil {
+		logutil.DDLIngestLogger().Warn("GetAllStores failed",
+			zap.Int64("table id", tableID), zap.Error(err))
+		closeClients()
+		return nil, nil, err
+	}
+	addTableSplitRange, removeTableSplitRange = local.GetPartitionRangeForTableFuncs(w.workCtx,
+		startKey, endKey, stores, clients.GetImportClientFactory(),
+	)
+	return addTableSplitRange, func() {
+		removeTableSplitRange()
+		closeClients()
+	}, nil
+}
+
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
@@ -2677,6 +2738,19 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
 		return err
 	}
+
+	addTableSplitRange, removeTableSplitRange, err := w.getSplitRangeFuncs(reorgInfo.Job, t.Meta().ID)
+	if err != nil {
+		logutil.DDLLogger().Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
+	}
+	if addTableSplitRange != nil {
+		addTableSplitRange()
+	}
+	defer func() {
+		if removeTableSplitRange != nil {
+			removeTableSplitRange()
+		}
+	}()
 
 	var (
 		taskID                                            int64

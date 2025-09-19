@@ -592,7 +592,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	cleanupFunc, err := localBackend.AddPartitionRangeForTable(ctx, e.tableImporter.TableInfo.ID)
 	if err != nil {
-		logutil.Logger(ctx).Warn("add partition range for table failed",
+		logutil.Logger(ctx).Warn("get partition range functions for table failed",
 			zap.String("table", e.tableImporter.TableInfo.Name.L), zap.Error(err))
 	}
 	if cleanupFunc != nil {

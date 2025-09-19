@@ -509,12 +509,50 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
-// Backend is a local backend.
-type Backend struct {
+// Clients is the set of clients for creating a local backend
+type Clients struct {
 	pdCli     pd.Client
 	pdHTTPCli pdhttp.Client
-	splitCli  split.SplitClient
 	tikvCli   *tikvclient.KVStore
+	splitCli  split.SplitClient
+
+	importClientFactory importClientFactory
+	supportMultiIngest  bool
+
+	rpcCli  tikvclient.Client
+	pdAddrs []string
+}
+
+// GetImportClientFactory returns the importClientFactory
+func (c *Clients) GetImportClientFactory() importClientFactory {
+	return c.importClientFactory
+}
+
+// GetPDClient returns the pdClient
+func (c *Clients) GetPDClient() pd.Client {
+	return c.pdCli
+}
+
+// Close closes all inner clients
+func (c *Clients) Close() {
+	if c.importClientFactory != nil {
+		c.importClientFactory.close()
+	}
+	if c.tikvCli != nil {
+		_ = c.tikvCli.Close()
+	}
+	if c.pdHTTPCli != nil {
+		c.pdHTTPCli.Close()
+	}
+	if c.rpcCli != nil {
+		_ = c.rpcCli.Close()
+	}
+}
+
+// Backend is a local backend.
+type Backend struct {
+	Clients
+
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
 
@@ -522,9 +560,6 @@ type Backend struct {
 
 	BackendConfig
 	engineMgr *engineManager
-
-	supportMultiIngest  bool
-	importClientFactory importClientFactory
 
 	metrics       *metric.Common
 	writeLimiter  StoreWriteLimiter
@@ -556,15 +591,40 @@ func NewBackend(
 	config BackendConfig,
 	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
+	clients, pdCliForTiKV, err := PrepareClientsForNewBackend(ctx, tls, config, pdSvcDiscovery)
+	if err != nil {
+		return nil, err
+	}
+
+	return newBackendWithClients(
+		ctx,
+		tls,
+		config,
+		clients,
+		pdCliForTiKV,
+	)
+}
+
+// PrepareClientsForNewBackend prepares clients needed for a local backend
+func PrepareClientsForNewBackend(
+	ctx context.Context,
+	tls *common.TLS,
+	config BackendConfig,
+	pdSvcDiscovery sd.ServiceDiscovery,
+) (
+	clients Clients,
+	pdCliForTiKV *tikvclient.CodecPDClient,
+	err error,
+) {
 	var (
-		pdCli                pd.Client
-		spkv                 *tikvclient.EtcdSafePointKV
-		pdCliForTiKV         *tikvclient.CodecPDClient
-		rpcCli               tikvclient.Client
-		tikvCli              *tikvclient.KVStore
-		pdHTTPCli            pdhttp.Client
-		importClientFactory  *importClientFactoryImpl
-		multiIngestSupported bool
+		pdCli     pd.Client
+		pdHTTPCli pdhttp.Client
+		splitCli  split.SplitClient
+
+		importClientFactory *importClientFactoryImpl
+
+		rpcCli  tikvclient.Client
+		pdAddrs []string
 	)
 	defer func() {
 		if err == nil {
@@ -576,31 +636,26 @@ func NewBackend(
 		if pdHTTPCli != nil {
 			pdHTTPCli.Close()
 		}
-		if tikvCli != nil {
-			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
-			// close tikvCli will close all of them.
-			_ = tikvCli.Close()
-		} else {
-			if rpcCli != nil {
-				_ = rpcCli.Close()
-			}
-			if spkv != nil {
-				_ = spkv.Close()
-			}
-			// pdCliForTiKV wraps pdCli, so we only need close pdCli
-			if pdCli != nil {
-				pdCli.Close()
-			}
+		if rpcCli != nil {
+			_ = rpcCli.Close()
+		}
+		// pdCliForTiKV wraps pdCli, so we only need close pdCli
+		if pdCli != nil {
+			pdCli.Close()
 		}
 	}()
+
 	config.adjust()
-	var pdAddrs []string
 	if pdSvcDiscovery != nil {
 		pdAddrs = pdSvcDiscovery.GetServiceURLs()
 		// TODO(lance6716): if PD client can support creating a client with external
 		// service discovery, we can directly pass pdSvcDiscovery.
 	} else {
 		pdAddrs = strings.Split(config.PDAddr, ",")
+	}
+	if len(pdAddrs) == 0 {
+		err = common.NormalizeOrWrapErr(common.ErrCreatePDClient, errors.Errorf("can not get pdAddrs"))
+		return
 	}
 	pdCli, err = pd.NewClientWithContext(
 		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
@@ -610,13 +665,8 @@ func NewBackend(
 		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
-		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
-	}
-
-	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(pdAddrs, tls.TLSConfig())
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+		err = common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
+		return
 	}
 
 	if config.KeyspaceName == "" {
@@ -624,44 +674,92 @@ func NewBackend(
 	} else {
 		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, config.KeyspaceName)
 		if err != nil {
-			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
+			err = common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
+			return
 		}
 	}
 
-	tikvCodec := pdCliForTiKV.GetCodec()
-	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
-	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
+	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()),
+		tikvclient.WithCodec(pdCliForTiKV.GetCodec()))
 	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+		err = common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+		return
 	}
 	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
+	splitCli = split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
-	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
+	clients = Clients{
+		pdCli:     pdCli,
+		pdHTTPCli: pdHTTPCli,
+		splitCli:  splitCli,
+
+		importClientFactory: importClientFactory,
+
+		rpcCli:  rpcCli,
+		pdAddrs: pdAddrs,
+	}
+	return
+}
+
+func newBackendWithClients(
+	ctx context.Context,
+	tls *common.TLS,
+	config BackendConfig,
+	clients Clients,
+	pdCliForTiKV *tikvclient.CodecPDClient,
+) (b *Backend, err error) {
+	var (
+		spkv                 *tikvclient.EtcdSafePointKV
+		tikvCli              *tikvclient.KVStore
+		multiIngestSupported bool
+	)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if tikvCli != nil {
+			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
+			// close tikvCli will close all of them.
+			_ = tikvCli.Close()
+		} else {
+			if spkv != nil {
+				_ = spkv.Close()
+			}
+		}
+	}()
+	config.adjust()
+
+	// The following copies tikv.NewTxnClient without creating yet another pdClient.
+	spkv, err = tikvclient.NewEtcdSafePointKV(clients.pdAddrs, tls.TLSConfig())
+	if err != nil {
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+
+	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, clients.rpcCli)
+	if err != nil {
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, clients.pdCli, clients.importClientFactory)
 	if err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
 	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
+	clients.supportMultiIngest = multiIngestSupported
+	clients.tikvCli = tikvCli
 	local := &Backend{
-		pdCli:     pdCli,
-		pdHTTPCli: pdHTTPCli,
-		splitCli:  splitCli,
-		tikvCli:   tikvCli,
-		tls:       tls,
-		tikvCodec: tikvCodec,
-
+		Clients:       clients,
+		tls:           tls,
+		tikvCodec:     pdCliForTiKV.GetCodec(),
 		BackendConfig: config,
-
-		supportMultiIngest:  multiIngestSupported,
-		importClientFactory: importClientFactory,
-		writeLimiter:        writeLimiter,
-		logger:              log.Wrap(tidblogutil.Logger(ctx)),
+		writeLimiter:  writeLimiter,
+		logger:        log.Wrap(tidblogutil.Logger(ctx)),
 	}
 	local.engineMgr, err = newEngineManager(config, local, local.logger)
 	if err != nil {
@@ -837,8 +935,8 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 }
 
 // AddPartitionRangeForTable implements Backend interface
+// Deprecated: will be removed soon.
 func (local *Backend) AddPartitionRangeForTable(ctx context.Context, tableID int64) (func(), error) {
-	failpoint.InjectCall("AddPartitionRangeForTable")
 	tableStartKey := tablecodec.EncodeTablePrefix(tableID)
 	checkEndKey := tablecodec.EncodeTablePrefix(tableID + 1)
 
@@ -848,6 +946,10 @@ func (local *Backend) AddPartitionRangeForTable(ctx context.Context, tableID int
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	clients := make([]sst.ImportSSTClient, 0, len(stores))
+	storeAddrs := make([]string, 0, len(stores))
+	failpoint.InjectCall("AddPartitionRangeForTable")
 	checkReq := &sst.AddPartitionRangeRequest{
 		Range: &sst.Range{
 			Start: startKey,
@@ -855,8 +957,6 @@ func (local *Backend) AddPartitionRangeForTable(ctx context.Context, tableID int
 		},
 		Ttl: 3600,
 	}
-	clients := make([]sst.ImportSSTClient, 0, len(stores))
-	storeAddrs := make([]string, 0, len(stores))
 	for _, store := range stores {
 		if store.StatusAddress == "" || engine.IsTiFlash(store) {
 			continue
@@ -876,26 +976,87 @@ func (local *Backend) AddPartitionRangeForTable(ctx context.Context, tableID int
 			tidblogutil.Logger(ctx).Warn("AddForcePartitionRange failed", zap.Error(err), zap.String("store", store.StatusAddress))
 		}
 	}
-	var cleanupFunc func()
-	if len(clients) > 0 {
-		cleanupFunc = func() {
-			removeReq := &sst.RemovePartitionRangeRequest{
-				Range: &sst.Range{
-					Start: startKey,
-					End:   endKey,
-				},
-			}
-			for i, c := range clients {
-				_, err = c.RemoveForcePartitionRange(ctx, removeReq)
-				if err == nil {
-					tidblogutil.Logger(ctx).Info("RemoveForcePartitionRange success", zap.String("store", storeAddrs[i]))
-				} else {
-					tidblogutil.Logger(ctx).Warn("RemoveForcePartitionRange failed", zap.Error(err), zap.String("store", storeAddrs[i]))
-				}
+	cleanupFunc := func() {
+		removeReq := &sst.RemovePartitionRangeRequest{
+			Range: &sst.Range{
+				Start: startKey,
+				End:   endKey,
+			},
+		}
+		failpoint.InjectCall("RemovePartitionRangeRequest")
+		for i, c := range clients {
+			_, err = c.RemoveForcePartitionRange(ctx, removeReq)
+			if err == nil {
+				tidblogutil.Logger(ctx).Info("RemoveForcePartitionRange success", zap.String("store", storeAddrs[i]))
+			} else {
+				tidblogutil.Logger(ctx).Warn("RemoveForcePartitionRange failed", zap.Error(err), zap.String("store", storeAddrs[i]))
 			}
 		}
 	}
 	return cleanupFunc, nil
+}
+
+// GetPartitionRangeForTableFuncs gets two functions to turn on/off force_partition_range.
+// See https://github.com/tikv/tikv/pull/18866 for detail
+// NOTE: importClientFactory should not be closed earlier than calling removeTableSplitRange
+func GetPartitionRangeForTableFuncs(ctx context.Context,
+	startKey, endKey []byte, stores []*metapb.Store,
+	importClientFactory importClientFactory) (
+	addTableSplitRange func(),
+	removeTableSplitRange func()) {
+	clients := make([]sst.ImportSSTClient, 0, len(stores))
+	storeAddrs := make([]string, 0, len(stores))
+
+	addTableSplitRange = func() {
+		checkReq := &sst.AddPartitionRangeRequest{
+			Range: &sst.Range{
+				Start: startKey,
+				End:   endKey,
+			},
+			Ttl: 24 * 60 * 60, // seconds
+		}
+		for _, store := range stores {
+			if store.StatusAddress == "" || engine.IsTiFlash(store) {
+				continue
+			}
+			importCli, err := importClientFactory.create(ctx, store.Id)
+			if err != nil {
+				tidblogutil.Logger(ctx).Warn("create import client failed", zap.Error(err), zap.String("store", store.StatusAddress))
+				continue
+			}
+
+			_, err = importCli.AddForcePartitionRange(ctx, checkReq)
+			failpoint.InjectCall("AddPartitionRangeForTable")
+			if err == nil {
+				clients = append(clients, importCli)
+				storeAddrs = append(storeAddrs, store.StatusAddress)
+				tidblogutil.Logger(ctx).Info("AddForcePartitionRange success", zap.String("store", store.StatusAddress))
+			} else {
+				tidblogutil.Logger(ctx).Warn("AddForcePartitionRange failed", zap.Error(err), zap.String("store", store.StatusAddress))
+			}
+		}
+	}
+
+	removeTableSplitRange = func() {
+		removeReq := &sst.RemovePartitionRangeRequest{
+			Range: &sst.Range{
+				Start: startKey,
+				End:   endKey,
+			},
+		}
+		failpoint.InjectCall("RemovePartitionRangeRequest")
+		for i, c := range clients {
+			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
+			if err == nil {
+				tidblogutil.Logger(ctx).Info("RemoveForcePartitionRange success", zap.String("store", storeAddrs[i]))
+			} else {
+				tidblogutil.Logger(ctx).Warn("RemoveForcePartitionRange failed", zap.Error(err), zap.String("store", storeAddrs[i]))
+			}
+		}
+		importClientFactory.close()
+	}
+
+	return
 }
 
 func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {

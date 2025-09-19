@@ -35,7 +35,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -1066,12 +1065,14 @@ func TestMultiIngest(t *testing.T) {
 		}
 
 		local := &Backend{
-			pdCli: &mockPdClient{stores: stores},
-			importClientFactory: &mockImportClientFactory{
-				stores: allStores,
-				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-					importCli.store = store
-					return importCli
+			Clients: Clients{
+				pdCli: &mockPdClient{stores: stores},
+				importClientFactory: &mockImportClientFactory{
+					stores: allStores,
+					createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+						importCli.store = store
+						return importCli
+					},
 				},
 			},
 		}
@@ -1089,10 +1090,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 		t.Skip("skip this test on next-gen kernel")
 	}
 	bak := Backend{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)")
 	toCh := make(chan *regionJob, 1)
 	worker := bak.newRegionJobWorker(1, toCh, make(chan *regionJob, 1), nil, nil)
 
@@ -1210,29 +1208,32 @@ func TestCheckPeersBusy(t *testing.T) {
 
 	createTimeStore12 := 0
 	local := &Backend{
-		importClientFactory: &mockImportClientFactory{
-			stores: []*metapb.Store{
-				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
-				{Id: 21}, {Id: 22}, {Id: 23}, // region ["b", "")
-			},
-			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-				importCli := newMockImportClient()
-				importCli.store = store
-				importCli.apiInvokeRecorder = apiInvokeRecorder
-				if store.Id == 12 {
-					createTimeStore12++
-					// the second time is checkWriteStall, we mock a busy response
-					if createTimeStore12 == 2 {
-						importCli.retry = 1
-						importCli.resp = serverIsBusyResp
+		Clients: Clients{
+			importClientFactory: &mockImportClientFactory{
+				stores: []*metapb.Store{
+					{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
+					{Id: 21}, {Id: 22}, {Id: 23}, // region ["b", "")
+				},
+				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+					importCli := newMockImportClient()
+					importCli.store = store
+					importCli.apiInvokeRecorder = apiInvokeRecorder
+					if store.Id == 12 {
+						createTimeStore12++
+						// the second time is checkWriteStall, we mock a busy response
+						if createTimeStore12 == 2 {
+							importCli.retry = 1
+							importCli.resp = serverIsBusyResp
+						}
 					}
-				}
-				return importCli
+					return importCli
+				},
 			},
+			supportMultiIngest: true,
 		},
-		logger:             log.L(),
-		writeLimiter:       newStoreWriteLimiter(0),
-		supportMultiIngest: true,
+
+		logger:       log.L(),
+		writeLimiter: newStoreWriteLimiter(0),
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
 			LocalStoreDir:         path.Join(t.TempDir(), "sorted-kv"),
@@ -1341,26 +1342,29 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		}}
 
 	local := &Backend{
-		splitCli: initTestSplitClient3Replica([][]byte{{}, {'a'}, {}}, nil),
-		importClientFactory: &mockImportClientFactory{
-			stores: []*metapb.Store{
-				{Id: 1}, {Id: 2}, {Id: 3},
-				{Id: 11}, {Id: 12}, {Id: 13},
+		Clients: Clients{
+			splitCli: initTestSplitClient3Replica([][]byte{{}, {'a'}, {}}, nil),
+			importClientFactory: &mockImportClientFactory{
+				stores: []*metapb.Store{
+					{Id: 1}, {Id: 2}, {Id: 3},
+					{Id: 11}, {Id: 12}, {Id: 13},
+				},
+				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+					importCli := newMockImportClient()
+					importCli.store = store
+					importCli.apiInvokeRecorder = apiInvokeRecorder
+					if store.Id == 1 {
+						importCli.retry = 1
+						importCli.resp = notLeaderResp
+					}
+					return importCli
+				},
 			},
-			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-				importCli := newMockImportClient()
-				importCli.store = store
-				importCli.apiInvokeRecorder = apiInvokeRecorder
-				if store.Id == 1 {
-					importCli.retry = 1
-					importCli.resp = notLeaderResp
-				}
-				return importCli
-			},
+			supportMultiIngest: true,
 		},
-		logger:             log.L(),
-		writeLimiter:       newStoreWriteLimiter(0),
-		supportMultiIngest: true,
+
+		logger:       log.L(),
+		writeLimiter: newStoreWriteLimiter(0),
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
 			LocalStoreDir:         path.Join(t.TempDir(), "sorted-kv"),
@@ -1445,26 +1449,29 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 		}}
 
 	local := &Backend{
-		splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
-		importClientFactory: &mockImportClientFactory{
-			stores: []*metapb.Store{
-				{Id: 1}, {Id: 2}, {Id: 3},
+		Clients: Clients{
+			splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
+			importClientFactory: &mockImportClientFactory{
+				stores: []*metapb.Store{
+					{Id: 1}, {Id: 2}, {Id: 3},
+				},
+				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+					importCli := newMockImportClient()
+					importCli.store = store
+					importCli.apiInvokeRecorder = apiInvokeRecorder
+					if store.Id == 1 {
+						importCli.retry = 1
+						importCli.resp = notLeaderResp
+					}
+					return importCli
+				},
 			},
-			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-				importCli := newMockImportClient()
-				importCli.store = store
-				importCli.apiInvokeRecorder = apiInvokeRecorder
-				if store.Id == 1 {
-					importCli.retry = 1
-					importCli.resp = notLeaderResp
-				}
-				return importCli
-			},
+			supportMultiIngest: true,
 		},
-		logger:             log.L(),
-		writeLimiter:       newStoreWriteLimiter(0),
-		supportMultiIngest: true,
-		tikvCodec:          keyspace.CodecV1,
+
+		logger:       log.L(),
+		writeLimiter: newStoreWriteLimiter(0),
+		tikvCodec:    keyspace.CodecV1,
 		BackendConfig: BackendConfig{
 			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
 		},
@@ -1545,26 +1552,29 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	onceResp.Store(notLeaderResp)
 
 	local := &Backend{
-		splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
-		importClientFactory: &mockImportClientFactory{
-			stores: []*metapb.Store{
-				{Id: 1}, {Id: 2}, {Id: 3},
+		Clients: Clients{
+			splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
+			importClientFactory: &mockImportClientFactory{
+				stores: []*metapb.Store{
+					{Id: 1}, {Id: 2}, {Id: 3},
+				},
+				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+					importCli := newMockImportClient()
+					importCli.store = store
+					importCli.apiInvokeRecorder = apiInvokeRecorder
+					if store.Id == 1 {
+						importCli.retry = 1
+						importCli.onceResp = onceResp
+					}
+					return importCli
+				},
 			},
-			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-				importCli := newMockImportClient()
-				importCli.store = store
-				importCli.apiInvokeRecorder = apiInvokeRecorder
-				if store.Id == 1 {
-					importCli.retry = 1
-					importCli.onceResp = onceResp
-				}
-				return importCli
-			},
+			supportMultiIngest: true,
 		},
-		logger:             log.L(),
-		writeLimiter:       newStoreWriteLimiter(0),
-		supportMultiIngest: true,
-		tikvCodec:          keyspace.CodecV1,
+
+		logger:       log.L(),
+		writeLimiter: newStoreWriteLimiter(0),
+		tikvCodec:    keyspace.CodecV1,
 		BackendConfig: BackendConfig{
 			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
 		},
@@ -1709,10 +1719,12 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	})
 
 	local := &Backend{
-		splitCli: initTestSplitClient(
-			[][]byte{{1}, {11}},      // we have one big region
-			panicSplitRegionClient{}, // make sure no further split region
-		),
+		Clients: Clients{
+			splitCli: initTestSplitClient(
+				[][]byte{{1}, {11}},      // we have one big region
+				panicSplitRegionClient{}, // make sure no further split region
+			),
+		},
 	}
 	local.BackendConfig.WorkerConcurrency = 1
 	db, tmpPath := makePebbleDB(t, nil)
@@ -1774,10 +1786,12 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	}
 	ctx := context.Background()
 	local := &Backend{
-		splitCli: initTestSplitClient(
-			[][]byte{{1}, {11}},      // we have one big region
-			panicSplitRegionClient{}, // make sure no further split region
-		),
+		Clients: Clients{
+			splitCli: initTestSplitClient(
+				[][]byte{{1}, {11}},      // we have one big region
+				panicSplitRegionClient{}, // make sure no further split region
+			),
+		},
 	}
 	local.BackendConfig.WorkerConcurrency = 1
 
@@ -1879,12 +1893,8 @@ func TestDoImport(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 
 	// test that
 	// - one job need rescan when ingest
@@ -2122,12 +2132,8 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 
 	// test that job need rescan when ingest
 
@@ -2216,16 +2222,10 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
 
 	initRegionKeys := [][]byte{{'c'}, {'d'}, {'e'}}
 	fakeRegionJobs = map[[2]string]struct {
@@ -2273,16 +2273,10 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
 
 	initRegionKeys := [][]byte{{'c'}, {'d'}}
 
@@ -2291,10 +2285,12 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 1,
 		},
-		splitCli: initTestSplitClient(
-			[][]byte{{1}, {11}},
-			panicSplitRegionClient{},
-		),
+		Clients: Clients{
+			splitCli: initTestSplitClient(
+				[][]byte{{1}, {11}},
+				panicSplitRegionClient{},
+			),
+		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
 	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
@@ -2366,10 +2362,12 @@ func TestExternalEngine(t *testing.T) {
 			WorkerConcurrency: 2,
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
-		splitCli: initTestSplitClient([][]byte{
-			keys[0], keys[50], endKey,
-		}, hook),
-		pdCli: &mockPdClient{},
+		Clients: Clients{
+			splitCli: initTestSplitClient([][]byte{
+				keys[0], keys[50], endKey,
+			}, hook),
+			pdCli: &mockPdClient{},
+		},
 	}
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)

@@ -95,7 +95,7 @@ var BackendCounterForTest = atomic.Int64{}
 // Build builds a BackendCtx.
 func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (BackendCtx, error) {
 	ctx, store, job := b.ctx, b.store, b.job
-	jobSortPath, err := genJobSortPath(job.ID, b.checkDup)
+	jobSortPath, err := GenJobSortPath(job.ID, b.checkDup)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,8 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	return bCtx, nil
 }
 
-func genJobSortPath(jobID int64, checkDup bool) (string, error) {
+// GenJobSortPath generates sort path for adding index
+func GenJobSortPath(jobID int64, checkDup bool) (string, error) {
 	sortPath, err := GenIngestTempDataDir()
 	if err != nil {
 		return "", err
@@ -146,7 +147,7 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 // CreateLocalBackend creates a local backend for adding index.
 func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
 	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
-	jobSortPath, err := genJobSortPath(job.ID, checkDup)
+	jobSortPath, err := GenJobSortPath(job.ID, checkDup)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -161,7 +162,7 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, c
 	if err != nil {
 		return nil, nil, err
 	}
-	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
+	cfg := GenConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, store.GetKeyspace(), concurrency, maxWriteSpeed, job.ReorgMeta.UseCloudStorage)
 	if adjustedWorkerConcurrency > 0 {
 		cfg.WorkerConcurrency = adjustedWorkerConcurrency
 	}

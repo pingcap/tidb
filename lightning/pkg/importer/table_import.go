@@ -264,7 +264,7 @@ func (tr *TableImporter) importTable(
 
 	cleanupFunc, err := rc.backend.AddPartitionRangeForTable(ctx, tr.tableInfo.ID)
 	if err != nil {
-		tr.logger.Warn("add partition range for table failed", zap.String("table", tr.tableName), zap.Error(err))
+		tr.logger.Warn("get partition range functions for table failed", zap.String("table", tr.tableName), zap.Error(err))
 	}
 	if cleanupFunc != nil {
 		defer cleanupFunc()

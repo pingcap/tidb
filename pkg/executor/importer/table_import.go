@@ -532,7 +532,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	cleanupFunc, err := ti.backend.AddPartitionRangeForTable(ctx, ti.tableInfo.ID)
 	if err != nil {
-		ti.logger.Warn("add partition range for table failed",
+		ti.logger.Warn("get partition range functions for table failed",
 			zap.String("table", ti.tableInfo.Name), zap.Error(err))
 	}
 	if cleanupFunc != nil {
@@ -588,7 +588,7 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	}
 	cleanupFunc, err := ti.backend.AddPartitionRangeForTable(ctx, ti.tableInfo.ID)
 	if err != nil {
-		ti.logger.Warn("add partition range for table failed", zap.String("table", ti.tableInfo.Name), zap.Error(err))
+		ti.logger.Warn("get partition range functions for table failed", zap.String("table", ti.tableInfo.Name), zap.Error(err))
 	}
 	if cleanupFunc != nil {
 		defer cleanupFunc()
@@ -734,7 +734,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	})
 	cleanupFunc, err := ti.backend.AddPartitionRangeForTable(ctx, ti.tableInfo.ID)
 	if err != nil {
-		ti.logger.Warn("add partition range for table failed",
+		ti.logger.Warn("get partition range functions for table failed",
 			zap.String("table", ti.tableInfo.Name), zap.Error(err))
 	}
 	if cleanupFunc != nil {

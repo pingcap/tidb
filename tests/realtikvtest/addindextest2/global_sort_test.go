@@ -705,8 +705,7 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.Equal(t, bytes, 0)     // 0
 }
 
-func TestAddPartitionRangeForTable(t *testing.T) {
-	// Make sure that AddPartitionRangeForTable will be called before importing
+func TestPartitionRangeForTable(t *testing.T) {
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -731,17 +730,22 @@ func TestAddPartitionRangeForTable(t *testing.T) {
 		{"dxf ingest", "on", ""},
 		{"dxf global-sort", "on", cloudStorageURI},
 	}
-	var count int
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
-		count += 1
+	var addCnt, removeCnt int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt += 1
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt += 1
 	})
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
 			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
-			count = 0
+			addCnt = 0
+			removeCnt = 0
 			tk.MustExec("alter table t add index i(c)")
-			require.Greater(t, count, 0)
+			require.Equal(t, addCnt, 1)
+			require.Equal(t, removeCnt, 1)
 			tk.MustExec("alter table t drop index i")
 		})
 	}
