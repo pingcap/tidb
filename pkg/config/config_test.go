@@ -30,6 +30,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -1444,4 +1445,19 @@ func TestKeyspaceName(t *testing.T) {
 	require.NoError(t, conf.Valid())
 	conf.KeyspaceName = "a18446744073709551615"
 	require.ErrorContains(t, conf.Valid(), "invalid keyspace name")
+}
+
+func TestMetering(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("skip metering test in classic kernel")
+	}
+	conf := NewConfig()
+	conf.MeteringStorageURI = "s3://test-bucket/test-prefix?region-id=test-region"
+	require.NoError(t, conf.Valid())
+	mcfg, err := meter_config.NewFromURI(conf.MeteringStorageURI)
+	require.NoError(t, err)
+	require.Equal(t, "s3", string(mcfg.Type))
+	require.Equal(t, "test-bucket", mcfg.Bucket)
+	require.Equal(t, "test-prefix", mcfg.Prefix)
+	require.Equal(t, "test-region", mcfg.Region)
 }

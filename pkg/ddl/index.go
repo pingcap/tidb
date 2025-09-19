@@ -2396,26 +2396,28 @@ func writeOneKV(
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
 ) (int64, error) {
+	var kvBytes int64
 	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
-			return writer.WrittenBytes(), errors.Trace(err)
+			return kvBytes, errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
-			return writer.WrittenBytes(), errors.Trace(err)
+			return kvBytes, errors.Trace(err)
 		}
+		kvBytes += int64(len(key) + len(idxVal))
 		failpoint.Inject("mockLocalWriterError", func() {
 			failpoint.Return(0, errors.New("mock engine error"))
 		})
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal
 	}
-	return writer.WrittenBytes(), nil
+	return kvBytes, nil
 }
 
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,

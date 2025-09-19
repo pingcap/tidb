@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -179,6 +180,10 @@ func TestBootstrapWithError(t *testing.T) {
 		require.NoError(t, store.Close())
 	}()
 
+	// system tables are not created in `doDDLWorks` for next-gen.
+	if kerneltype.IsNextGen() {
+		require.NoError(t, bootstrapSchemas(store))
+	}
 	// bootstrap
 	{
 		se := &session{
@@ -2700,6 +2705,69 @@ func TestTiDBUpgradeToVer240(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
+}
+
+func TestTiDBUpgradeToVer252(t *testing.T) {
+	// NOTE: this case needed to be passed in both classic and next-gen kernel.
+	// in the first release of next-gen kernel, the version is 250.
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver250 := version250
+	seV250 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver250))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV250, ver250)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	getBindInfoSQLFn := func(se sessionapi.Session) string {
+		res := MustExecToRecodeSet(t, se, "show create table mysql.bind_info")
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+	createTblSQL := getBindInfoSQLFn(seV250)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(6)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
+	// revert it back to timestamp(3) for testing. we must set below fields to
+	// simulate the real session in upgrade process.
+	seV250.SetValue(sessionctx.Initing, true)
+	seV250.GetSessionVars().SQLMode = mysql.ModeNone
+	res := MustExecToRecodeSet(t, seV250, "select create_time,update_time from mysql.bind_info")
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	for i := range chk.NumRows() {
+		getTime := chk.GetRow(i).GetTime(0)
+		getTime = chk.GetRow(i).GetTime(1)
+		_ = getTime
+	}
+	mustExecute(seV250, "alter table mysql.bind_info modify create_time timestamp(3)")
+	mustExecute(seV250, "alter table mysql.bind_info modify update_time timestamp(3)")
+	createTblSQL = getBindInfoSQLFn(seV250)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(3)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(3)")
+
+	// do upgrade to latest version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	// check if the columns have been changed to timestamp(6)
+	createTblSQL = getBindInfoSQLFn(seCurVer)
+	require.Contains(t, createTblSQL, "`create_time` timestamp(6)")
+	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
 }
 
 func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {

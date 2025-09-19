@@ -690,7 +690,7 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.Equal(t, getReqCnt, 0)   // 0, because step 1 doesn't read s3
 	require.Equal(t, putReqCnt, 2)   // 2 times (data + stats)
 	require.Greater(t, readBytes, 0) // 143 bytes for reading table records
-	require.Equal(t, bytes, 0)       // Fixme(tangenta): should be greater than 0 but the writers are not flushed when recorded.
+	require.Greater(t, bytes, 0)     // 153 bytes for writing index records
 
 	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 2)
 	require.Equal(t, getReqCnt, 1) // 1, read s3
