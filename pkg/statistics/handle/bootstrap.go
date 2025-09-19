@@ -561,7 +561,7 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 	if !isPaging {
 		return selectPrefix + orderSuffix
 	}
-	rangeStartClause := " where table_id >= " + strconv.FormatInt(tableRange[0], 10)
+	rangeStartClause := " and table_id >= " + strconv.FormatInt(tableRange[0], 10)
 	rangeEndClause := " and table_id < " + strconv.FormatInt(tableRange[1], 10)
 	return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
 }
@@ -675,13 +675,15 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 // genInitStatsBucketsSQLForIndexes generates the SQL to load all stats_buckets records for indexes.
 // We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
 // The stats of the column is not loaded during the bootstrap process.
-func genInitStatsBucketsSQLForIndexes(isPaging bool) string {
+func genInitStatsBucketsSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1"
 	orderSuffix := " order by table_id"
 	if !isPaging {
 		return selectPrefix + orderSuffix
 	}
-	return selectPrefix + " and table_id >= %? and table_id < %?" + orderSuffix
+	rangeStartClause := " and table_id >= " + strconv.FormatInt(tableRange[0], 10)
+	rangeEndClause := " and table_id < " + strconv.FormatInt(tableRange[1], 10)
+	return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
 }
 
 func (h *Handle) initStatsBucketsAndCalcPreScalar(cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
@@ -715,8 +717,8 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := genInitStatsBucketsSQLForIndexes(true)
-	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
+	sql := genInitStatsBucketsSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
+	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
