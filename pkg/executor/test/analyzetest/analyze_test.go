@@ -349,6 +349,9 @@ func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 }
 
 func TestDefaultValForAnalyze(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version=1")
@@ -535,6 +538,9 @@ func TestAdjustSampleRateNote(t *testing.T) {
 }
 
 func TestAnalyzeIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the next-gen kernel does not support analyze version 1")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
