@@ -1704,8 +1704,8 @@ github.com/tenntenn/text/transform v0.0.0-20200319021203-7eef512accb3 h1:f+jULpR
 github.com/tenntenn/text/transform v0.0.0-20200319021203-7eef512accb3/go.mod h1:ON8b8w4BN/kE1EOhwT0o+d62W65a6aPw1nouo9LMgyY=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
-github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20250918115858-479b6d6ca5ac h1:PXlzrxKyPdJHPem1koWAA1b8CM9Di6UKxpN1u38dXag=
-github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20250918115858-479b6d6ca5ac/go.mod h1:5mywG89scAyV30i1B4Brhz6lOqmye0ArD6fah7U9paw=
+github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20250919123839-f2fc54aa98ed h1:Y4uG43IHeUfmTzeAQfL1uQEKLFCo+MF06tkM8XAgMzA=
+github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20250919123839-f2fc54aa98ed/go.mod h1:5mywG89scAyV30i1B4Brhz6lOqmye0ArD6fah7U9paw=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tiancaiamao/kvproto v0.0.0-20250911071333-a9599c2d6c5e h1:KrOaPMbgsys+SxilTLiwfqocYNKdPn2J9UQyo3xM+vA=

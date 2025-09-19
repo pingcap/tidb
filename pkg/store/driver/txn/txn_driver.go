@@ -52,6 +52,8 @@ type tikvTxn struct {
 	columnMapsCache    any
 	isCommitterWorking atomic.Bool
 	memBuffer          *memBuffer
+
+	skipNewerChange bool
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -66,6 +68,7 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	return &tikvTxn{
 		txn, make(map[int64]*model.TableInfo), nil, nil, atomic.Bool{},
 		newMemBuffer(txn.GetMemBuffer(), txn.IsPipelined()),
+		false,
 	}
 }
 
@@ -115,7 +118,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if intest.InTest {
 		txn.isCommitterWorking.Store(true)
 	}
-	err := txn.KVTxn.Commit(ctx)
+	var err error
+	if txn.skipNewerChange {
+		err = txn.KVTxn.DDLBackfillTxnCommit(ctx)
+	} else {
+		err = txn.KVTxn.Commit(ctx)
+	}
 	return txn.extractKeyErr(err)
 }
 
@@ -315,7 +323,10 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 	case kv.PrewriteEncounterLockPolicy:
 		txn.KVTxn.SetPrewriteEncounterLockPolicy(val.(transaction.PrewriteEncounterLockPolicy))
 	case kv.SkipNewerChange:
-		txn.KVTxn.SetSkipNewerChange()
+		// SetSkipNewerChanges sets a special flag for DDL backfill txn.
+		// When a mutation meets newer version change, the mutation is discard silently, and that
+		// case is not consider as conflict.
+		txn.skipNewerChange = true
 	}
 }
 

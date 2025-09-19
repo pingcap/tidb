@@ -341,4 +341,4 @@ replace (
 
 replace github.com/pingcap/kvproto => github.com/tiancaiamao/kvproto v0.0.0-20250911071333-a9599c2d6c5e
 
-replace github.com/tikv/client-go/v2 => github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20250918115858-479b6d6ca5ac
+replace github.com/tikv/client-go/v2 => github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20250919123839-f2fc54aa98ed

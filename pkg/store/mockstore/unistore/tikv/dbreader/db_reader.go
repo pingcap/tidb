@@ -29,7 +29,6 @@
 package dbreader
 
 import (
-	"fmt"
 	"bytes"
 	"math"
 	"slices"
@@ -216,6 +215,7 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 	if r.RcCheckTS || r.SkipNewerChange {
 		r.txn.SetReadTS(math.MaxUint64)
 	}
+	skipValue := proc.SkipValue()
 	iter := r.GetIter()
 	var cnt int
 	var err error
@@ -228,7 +228,6 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 		if r.SkipNewerChange {
 			// If the item has newer version, and skipNewerChange flag is set, skip this item.
 			userMeta := mvcc.DBUserMeta(item.UserMeta())
-			fmt.Println("key ==", key, "commitTS ==", userMeta.CommitTS(), "startTS ==", startTS)
 			if userMeta.CommitTS() > startTS {
 				continue
 			}
@@ -242,9 +241,11 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 			continue
 		}
 		var val []byte
-		val, err = item.Value()
-		if err != nil {
-			return errors.Trace(err)
+		if !skipValue {
+			val, err = item.Value()
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		err = proc.Process(key, val)
 		if err != nil {

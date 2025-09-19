@@ -17,11 +17,13 @@ package driver
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 )
 
 type mockErrInterceptor struct {
@@ -219,4 +221,73 @@ func TestTxnScan(t *testing.T) {
 	iter, err = txn.Iter(kv.Key("k1"), kv.Key("k2"))
 	require.Equal(t, errInterceptor.err, err)
 	require.Nil(t, iter)
+}
+
+func TestSkipNewerChangeScan(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	testSkipNewerChangeScan(t, store, true)
+	testSkipNewerChangeScan(t, store, false)
+}
+
+func testSkipNewerChangeScan(t *testing.T, store kv.Storage, setOption bool) {
+	clearStoreData(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	txn.Set(kv.Key("key1"), []byte("val1"))
+	txn.Set(kv.Key("key2"), []byte("val2"))
+	txn.Set(kv.Key("key3"), []byte("val3"))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	// key2 meets newer commit
+	txn, err = store.Begin()
+	ts := txn.StartTS()
+	snap := store.GetSnapshot(kv.Version{Ver: ts})
+	require.NoError(t, err)
+	txn.Set(kv.Key("key2"), []byte("val2-2"))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	// key3 meets newer lock
+	txn2, err := store.Begin()
+	lockCtx := tikvstore.NewLockCtx(txn2.StartTS(), 50*1000, time.Now())
+	err = txn2.LockKeys(context.Background(), lockCtx, kv.Key("key1"))
+	require.NoError(t, err)
+	defer txn2.Rollback()
+
+	checkResult := func(t *testing.T, snap kv.Snapshot, res ...string) {
+		key := kv.Key("key")
+		iter, err := snap.Iter(key, key.PrefixNext())
+		require.NoError(t, err)
+		defer iter.Close()
+
+		var i int
+		for i = 0; iter.Valid(); i += 2 {
+			require.Equal(t, string(iter.Key()), res[i])
+			require.Equal(t, string(iter.Value()), res[i+1])
+			iter.Next()
+		}
+		require.Equal(t, i, len(res))
+
+		// Again, with reverse scan (TODO)
+		// iter, err := snap.IterReverse(key.PrefixNext(), key)
+		// require.NoError(t, err)
+		// defer iter.Close()
+		// for i=len(res)-1; iter.Valid(); i-=2 {
+		// 	fmt.Println("==== ", iter.Key(), iter.Value(), res[i-1], res[i])
+		// 	require.Equal(t, string(iter.Value()), res[i])
+		// 	require.Equal(t, string(iter.Key()), res[i-1])
+		// 	iter.Next()
+		// }
+	}
+
+	if setOption {
+		snap.SetOption(kv.SkipNewerChange, nil)
+		checkResult(t, snap, "key1", "val1", "key3", "val3")
+	} else {
+		checkResult(t, snap, "key1", "val1", "key2", "val2", "key3", "val3")
+	}
 }

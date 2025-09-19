@@ -180,7 +180,11 @@ func PrewriteOptimisticWithAssertion(pk []byte, key []byte, value []byte, startT
 		Secondaries:    secondaries,
 		AssertionLevel: assertionLevel,
 	}
-	return store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	res := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	if res != nil {
+		return res.Err()
+	}
+	return nil
 }
 
 // PrewritePessimistic raises pessimistic prewrite requests
@@ -213,7 +217,11 @@ func PrewritePessimisticWithAssertion(pk []byte, key []byte, value []byte, start
 		ForUpdateTs:        forUpdateTs,
 		AssertionLevel:     assertionLevel,
 	}
-	return store.MvccStore.prewritePessimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	res := store.MvccStore.prewritePessimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	if res != nil {
+		return res.Err()
+	}
+	return nil
 }
 
 func MustCheckTxnStatus(pk []byte, lockTs uint64, callerStartTs uint64,
@@ -294,7 +302,7 @@ func MustPrewriteInsert(pk, key []byte, val []byte, startTs uint64, store *TestS
 		MinCommitTs:  startTs,
 	}
 	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
-	require.NoError(store.t, err)
+	require.Nil(store.t, err)
 }
 
 func MustPrewriteInsertAlreadyExists(pk, key []byte, val []byte, startTs uint64, store *TestStore) {
@@ -306,8 +314,8 @@ func MustPrewriteInsertAlreadyExists(pk, key []byte, val []byte, startTs uint64,
 		MinCommitTs:  startTs,
 	}
 	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
-	require.Error(store.t, err)
-	existErr := err.(*kverrors.ErrKeyAlreadyExists)
+	require.NotNil(store.t, err)
+	existErr := err.Err().(*kverrors.ErrKeyAlreadyExists)
 	require.NotNil(store.t, existErr)
 }
 
@@ -320,8 +328,8 @@ func MustPrewriteOpCheckExistAlreadyExist(pk, key []byte, startTs uint64, store 
 		MinCommitTs:  startTs,
 	}
 	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
-	require.Error(store.t, err)
-	existErr := err.(*kverrors.ErrKeyAlreadyExists)
+	require.NotNil(store.t, err)
+	existErr := err.Err().(*kverrors.ErrKeyAlreadyExists)
 	require.NotNil(store.t, existErr)
 }
 
@@ -334,7 +342,7 @@ func MustPrewriteOpCheckExistOk(pk, key []byte, startTs uint64, store *TestStore
 		MinCommitTs:  startTs,
 	}
 	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
-	require.NoError(store.t, err)
+	require.Nil(store.t, err)
 	var buf []byte
 	buf = store.MvccStore.lockStore.Get(key, buf)
 	require.Equal(store.t, 0, len(buf))
@@ -477,7 +485,7 @@ func MustPrewriteLock(pk []byte, key []byte, startTs uint64, store *TestStore) {
 		StartVersion: startTs,
 		LockTtl:      lockTTL,
 	})
-	require.NoError(store.t, err)
+	require.Nil(store.t, err)
 }
 
 func MustPrewriteLockErr(pk []byte, key []byte, startTs uint64, store *TestStore) {
@@ -487,7 +495,7 @@ func MustPrewriteLockErr(pk []byte, key []byte, startTs uint64, store *TestStore
 		StartVersion: startTs,
 		LockTtl:      lockTTL,
 	})
-	require.Error(store.t, err)
+	require.Error(store.t, err.Err())
 }
 
 func MustCleanup(key []byte, startTs, currentTs uint64, store *TestStore) {
@@ -917,13 +925,13 @@ func TestPrimaryKeyOpLock(t *testing.T) {
 	require.Equal(t, uint64(101), commitTS)
 
 	// prewrite 110 Op_Put
-	err = store.MvccStore.Prewrite(store.newReqCtx(), &kvrpcpb.PrewriteRequest{
+	res := store.MvccStore.Prewrite(store.newReqCtx(), &kvrpcpb.PrewriteRequest{
 		Mutations:    []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Put, pk(), val2)},
 		PrimaryLock:  pk(),
 		StartVersion: 110,
 		LockTtl:      100,
 	})
-	require.NoError(t, err)
+	require.Nil(t, res)
 	err = store.MvccStore.Commit(store.newReqCtx(), [][]byte{pk()}, 110, 111)
 	require.NoError(t, err)
 
@@ -1056,6 +1064,48 @@ func TestTxnPrewrite(t *testing.T) {
 	MustPrewriteDelete(k, k, 13, store)
 	MustRollbackKey(k, 13, store)
 	MustUnLocked(k, store)
+}
+
+func TestSkipNewerChangeCommit(t *testing.T) {
+	store := NewTestStore("TestSkipNewerChangeCommit", "TestSkipNewerChangeCommit", t)
+
+	kvs := []string{"aaa", "a1", "bbb", "b1", "ccc", "c1"}
+	for i := 0; i < len(kvs)-1; i += 2 {
+		MustPrewritePut([]byte(kvs[i]), []byte(kvs[i]), []byte(kvs[i+1]), 3, store)
+		MustCommit([]byte(kvs[i]), 3, 5, store)
+	}
+
+	MustPrewritePut([]byte("aaa"), []byte("aaa"), []byte("a2"), 7, store)
+	MustCommit([]byte("aaa"), 7, 9, store)
+
+	value := []byte("zzz")
+	m1 := newMutation(kvrpcpb.Op_Put, []byte("aaa"), value)
+	m2 := newMutation(kvrpcpb.Op_Put, []byte("bbb"), value)
+	m3 := newMutation(kvrpcpb.Op_Put, []byte("ccc"), value)
+	prewriteReq := &kvrpcpb.PrewriteRequest{
+		SkipNewerChange: true,
+		Mutations:       []*kvrpcpb.Mutation{m1, m2, m3},
+		PrimaryLock:     []byte("bbb"),
+		StartVersion:    6,
+		LockTtl:         lockTTL,
+	}
+
+	// When SkipNewerChange is set, the prewrite returns conflict but still write the data
+	res := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	require.NotNil(t, res)
+	keyErr, _ := res.ToPBErrors()
+	require.Len(t, keyErr, 1)
+	conflict := keyErr[0].GetConflict()
+	require.Equal(t, conflict.Key, []byte("aaa"))
+
+	// Commit skip the conflict keys and continue to commit the remain data
+	err := store.MvccStore.Commit(store.newReqCtx(), [][]byte{[]byte("bbb"), []byte("ccc")}, 6, 8)
+	require.NoError(t, err)
+
+	// Check the result, records with newer change are skipped, and other records are committed
+	MustGetVal([]byte("aaa"), []byte("a2"), 10, store)
+	MustGetVal([]byte("bbb"), []byte("zzz"), 10, store)
+	MustGetVal([]byte("ccc"), []byte("zzz"), 10, store)
 }
 
 func TestPrewriteInsert(t *testing.T) {
@@ -1880,4 +1930,83 @@ func TestRcReadCheckTS(t *testing.T) {
 	scanRes = store.MvccStore.Scan(reqCtx, scanReq)
 	conflictErr = getConflictErr(scanRes)
 	require.NotNil(t, conflictErr)
+}
+
+func TestSkipNewerChangeScan(t *testing.T) {
+	store := NewTestStore("TestSkipNewerChangeScan", "TestSkipNewerChangeScan", t)
+
+	// Prepare.
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	MustPrewriteOptimistic(k1, k1, v1, 1, 100, 0, store)
+	MustCommit(k1, 1, 2, store)
+
+	k2 := []byte("tk2")
+	v2 := []byte("v2")
+	MustPrewriteOptimistic(k2, k2, v2, 5, 100, 0, store)
+	MustCommit(k2, 5, 6, store)
+
+	k3 := []byte("tk3")
+	v3 := []byte("v3")
+	MustPrewriteOptimistic(k3, k3, v3, 10, 100, 0, store)
+
+	// Test point get with RcReadCheckTS.
+	reqCtx := store.newReqCtx()
+
+	// Test scan and reverse scan.
+	scanReq := &kvrpcpb.ScanRequest{
+		Context:         reqCtx.rpcCtx,
+		StartKey:        []byte("a"),
+		Limit:           100,
+		Version:         3,
+		EndKey:          []byte("z"),
+		SkipNewerChange: true,
+	}
+
+	// The error is reported from more recent version.
+	scanRes := store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr := getConflictErr(scanRes)
+	require.Nil(t, conflictErr)
+	require.Len(t, scanRes, 1)
+	require.Equal(t, scanRes[0].Key, []byte("tk1"))
+	require.Equal(t, scanRes[0].Value, []byte("v1"))
+
+	// The error is reported from lock.
+	scanReq.Version = 15
+	scanRes = store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr = getConflictErr(scanRes)
+	require.Nil(t, conflictErr)
+	require.Len(t, scanRes, 3)
+	require.Equal(t, scanRes[0].Key, []byte("tk1"))
+	require.Equal(t, scanRes[0].Value, []byte("v1"))
+	require.Equal(t, scanRes[1].Key, []byte("tk2"))
+	require.Equal(t, scanRes[1].Value, []byte("v2"))
+	require.Equal(t, scanRes[2].Key, []byte("tk3"))
+	locked := scanRes[2].Error.GetLocked()
+	require.NotNil(t, locked)
+
+	// Test reverse scan. (TODO)
+	// scanReq.Version = 3
+	// scanReq.Reverse = true
+	// scanRes := store.MvccStore.Scan(reqCtx, scanReq)
+	// conflictErr := getConflictErr(scanRes)
+	// require.Nil(t, conflictErr)
+	// require.Len(t, scanRes, 1)
+	// require.Equal(t, scanRes[0].Key, []byte("tk1"))
+	// require.Equal(t, scanRes[0].Value, []byte("v1"))
+
+	// scanReq.Version = 15
+	// scanRes := store.MvccStore.Scan(reqCtx, scanReq)
+	// for _, v := range scanRes {
+	// 	fmt.Println("===", v)
+	// }
+	// conflictErr := getConflictErr(scanRes)
+	// require.Nil(t, conflictErr)
+	// require.Equal(t, scanRes[0].Key, []byte("tk3"))
+	// locked := scanRes[0].Error.GetLocked()
+	// require.NotNil(t, locked)
+	// require.Equal(t, scanRes[1].Key, []byte("tk2"))
+	// require.Equal(t, scanRes[1].Value, []byte("v2"))
+	// require.Equal(t, scanRes[0].Key, []byte("tk1"))
+	// require.Equal(t, scanRes[0].Value, []byte("v1"))
 }

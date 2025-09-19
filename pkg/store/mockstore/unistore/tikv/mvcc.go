@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -792,10 +791,15 @@ func (store *MVCCStore) Prewrite(reqCtx *requestCtx, req *kvrpcpb.PrewriteReques
 
 type ToPBErrors interface {
 	ToPBErrors() ([]*kvrpcpb.KeyError, *errorpb.Error)
+	Err() error
 }
 
 type anyErr struct {
 	error
+}
+
+func (e anyErr) Err() error {
+	return e.error
 }
 
 func (e anyErr) ToPBErrors() ([]*kvrpcpb.KeyError, *errorpb.Error) {
@@ -821,6 +825,10 @@ func (e skipConflict) ToPBErrors() ([]*kvrpcpb.KeyError, *errorpb.Error) {
 		})
 	}
 	return ret, nil
+}
+
+func (e skipConflict) Err() error {
+	return e[0]
 }
 
 func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, req *kvrpcpb.PrewriteRequest) ToPBErrors {
@@ -868,9 +876,11 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 				}
 				if req.SkipNewerChange {
 					// Ignore the committed record directly, this is not taken as conflict.
-					conflicts = append(conflicts, conflict)
-					fmt.Println("skip conflict key ==", hex.EncodeToString(conflict.Key))
-					continue
+					// primary key is an exception, because we cannot ignore writting primary key.
+					if !bytes.Equal(conflict.Key, req.PrimaryLock) {
+						conflicts = append(conflicts, conflict)
+						continue
+					}
 				}
 				return anyErr{conflict}
 			}
@@ -1030,9 +1040,6 @@ func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpc
 		if m.Op == kvrpcpb.Op_CheckNotExists {
 			continue
 		}
-
-		fmt.Println("prewrite mutation ==", hex.EncodeToString(m.Key))
-
 		lock, err1 := store.buildPrewriteLock(reqCtx, m, items[i], req)
 		if err1 != nil {
 			return err1

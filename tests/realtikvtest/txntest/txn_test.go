@@ -776,10 +776,85 @@ func TestIssue62775(t *testing.T) {
 	)
 }
 
-
 func TestSkipNewerChange(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	t.Skip("remove this line when tikv is ready")
 
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	for i := 0; i < 10; i++ {
+		txn.Set(kv.Key(fmt.Sprintf("k%d", i)), []byte(fmt.Sprintf("v%d", i)))
+	}
+	require.NoError(t, txn.Commit(context.Background()))
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	txn.Set(kv.Key("k5"), []byte("v51"))
+
+	txn1, err := store.Begin()
+	require.NoError(t, err)
+	txn1.Set(kv.Key("k5"), []byte("v52"))
+	txn1.Set(kv.Key("jj"), []byte("bb"))
+	txn1.SetOption(kv.SkipNewerChange, nil)
+
+	require.NoError(t, txn.Commit(context.Background()))
+	err = txn1.Commit(context.Background())
+	// fmt.Println("should not meet error", err)
+
+	start := kv.Key("jj")
+	end := kv.Key("ll")
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	// snap := store.GetSnapshot(kv.Version{Ver: math.MaxInt64})
+	iter, err := txn.Iter(start, end)
+	require.NoError(t, err)
+	for iter.Valid() {
+		fmt.Println("key = ", iter.Key(), "val = ", iter.Value())
+		iter.Next()
+	}
+	txn.Rollback()
+}
+
+func TestSkipNewerChangeCommit(t *testing.T) {
+	t.Skip("remove this line when tikv is ready")
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("create table s2 (id int)")
+	tk.MustExec("create table t (id int primary key, c int, index(c))")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set c = c + 1 where id = 5")
+
+	tk1.MustExec("begin optimistic")
+	se := tk1.Session()
+	txn, err := se.Txn(false)
+	require.NoError(t, err)
+	txn.SetOption(kv.SkipNewerChange, nil)
+	tk1.MustExec("update t set c = 666 where id = 5")
+	tk1.MustExec("insert into s2 values (42)")
+
+	tk.MustExec("commit")
+	// Without kv.SkipNewerChange option, transaction conflicts and this line fails.
+	tk1.MustExec("commit")
+
+	// Check the result to see it's partially success.
+	tk1.MustQuery("select * from t where id = 5").Check(testkit.Rows("5 6"))
+	tk1.MustQuery("select * from s2").Check(testkit.Rows("42"))
+}
+
+func TestSkipNewerChangeScan(t *testing.T) {
+	t.Skip("remove this line when tikv is ready")
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	txn.Set(kv.Key("key1"), []byte("val1"))
@@ -788,7 +863,6 @@ func TestSkipNewerChange(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-
 	txn, err = store.Begin()
 	ts := txn.StartTS()
 	require.NoError(t, err)
@@ -796,9 +870,6 @@ func TestSkipNewerChange(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-
-	// txn1, err := store.Begin()
-	// snap := txn1.GetSnapshot()
 	snap := store.GetSnapshot(kv.Version{Ver: ts})
 	snap.SetOption(kv.SkipNewerChange, nil)
 
@@ -819,78 +890,3 @@ func TestSkipNewerChange(t *testing.T) {
 		iter.Next()
 	}
 }
-
-func TestXXX(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-
-
-	tk.MustExec("create table s2 (id int)")
-	tk.MustExec("create table t (id int primary key, c int, index(c))")
-	for i:=0; i<10; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
-	}
-
-	tk.MustExec("begin")
-	tk.MustExec("update t set c = c + 1 where id = 5")
-
-
-	tk1.MustExec("begin optimistic")
-	se := tk1.Session()
-	txn, err := se.Txn(false)
-	require.NoError(t, err)
-	txn.SetOption(kv.SkipNewerChange, nil)
-	tk1.MustExec("update t set c = 666 where id = 5")
-	tk1.MustExec("insert into s2 values (42)")
-
-	tk.MustExec("commit")
-	// Without kv.SkipNewerChange option, transaction conflicts and this line fails.
-	tk1.MustExec("commit")
-
-	// Check the result to see it's partially success.
-	tk1.MustQuery("select * from t where id = 5").Check(testkit.Rows("5 6"))
-	tk1.MustQuery("select * from s2").Check(testkit.Rows("42"))
-}
-
-
-// func TestXXX(t *testing.T) {
-// 	store := realtikvtest.CreateMockStoreAndSetup(t)
-// 	txn, err := store.Begin()
-// 	require.NoError(t, err)
-// 	for i:=0; i<10; i++ {
-// 		txn.Set(kv.Key(fmt.Sprintf("k%d", i)), []byte(fmt.Sprintf("v%d", i)))
-// 	}
-// 	require.NoError(t, txn.Commit(context.Background()))
-
-// 	txn, err = store.Begin()
-// 	require.NoError(t, err)
-// 	txn.Set(kv.Key("k5"), []byte("v51"))
-
-// 	txn1, err := store.Begin()
-// 	require.NoError(t, err)
-// 	txn1.Set(kv.Key("k5"), []byte("v52"))
-// 	txn1.Set(kv.Key("jj"), []byte("bb"))
-// 	txn1.SetOption(kv.SkipNewerChange, nil)
-
-// 	require.NoError(t, txn.Commit(context.Background()))
-// 	err = txn1.Commit(context.Background())
-// 	fmt.Println("should not meet error", err)
-
-
-// 	start := kv.Key("jj")
-// 	end := kv.Key("ll")
-// 	txn, err = store.Begin()
-// 	require.NoError(t, err)
-// 	// snap := store.GetSnapshot(kv.Version{Ver: math.MaxInt64})
-// 	iter, err := txn.Iter(start, end)
-// 	require.NoError(t, err)
-// 	for iter.Valid() {
-// 		fmt.Println("key = ", iter.Key(), "val = ", iter.Value())
-// 		iter.Next()
-// 	}
-// 	txn.Rollback()
-// }
