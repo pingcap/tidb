@@ -1058,15 +1058,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return min(rowCount, oneValue)
 	}
 
-<<<<<<< HEAD
-	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
-	// Assume at least 1/NDV is returned
-	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
-		rowCount = upperBound
-	} else if rowCount < upperBound {
-		// Adjust by increaseFactor if our estimate is low
-		rowCount *= increaseFactor
-=======
 	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
 	addedPct := addedRows / float64(realtimeRowCount)
 	// If the newly added rows is larger than the percentage that we've estimated that we're
@@ -1080,7 +1071,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		outOfRangeAdded := addedRows * totalPercent
 		// Return the max of each estimate - with a minimum of one value.
 		rowCount = max(rowCount, outOfRangeAdded, oneValue)
->>>>>>> ae830dc9af4 (planner: Adjust out of range for added rows (#59724))
 	}
 
 	// Use modifyCount as a final bound
