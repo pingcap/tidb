@@ -244,13 +244,13 @@ func mergeOrPredicateAndEqual(sctx base.PlanContext, predicates []expression.Exp
 				ithPredicate,
 				jthPredicate)
 			if iType == orPredicate && jType == equalPredicate {
-				predicates[i] = MergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
+				predicates[i] = mergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
 				if maybeOverOptimized4PlanCache {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("Or/Equal merged is triggered")
 				}
 				removeValues = append(removeValues, j)
 			} else if iType == equalPredicate && jType == orPredicate {
-				predicates[j] = MergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
+				predicates[j] = mergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
 				if maybeOverOptimized4PlanCache {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("Or/Equal merged is triggered")
 				}
@@ -270,7 +270,7 @@ func mergeOrPredicateAndEqual(sctx base.PlanContext, predicates []expression.Exp
 	return newValues
 }
 
-func MergeOrAndEqualPredicate(ctx base.PlanContext, orPredicate expression.Expression, equal expression.Expression) expression.Expression {
+func mergeOrAndEqualPredicate(ctx base.PlanContext, orPredicate expression.Expression, equal expression.Expression) expression.Expression {
 	orFunc := expression.SplitDNFItems(orPredicate)
 	for i, orItem := range orFunc {
 		andItem := expression.SplitCNFItems(orItem)
