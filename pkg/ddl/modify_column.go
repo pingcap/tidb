@@ -606,7 +606,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)
-			return ver, errors.Errorf(errMsg)
+			return ver, errors.New(errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
