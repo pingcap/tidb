@@ -866,7 +866,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableI
 	}
 	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
 
-	// If tableIDs is empty, it means we load all the tables' stats meta and histograms.
+	// If tableIDs is empty, it means we load all the tables' stats.
 	// So we can replace the global cache with the new cache.
 	if len(tableIDs) == 0 {
 		h.Replace(cache)
