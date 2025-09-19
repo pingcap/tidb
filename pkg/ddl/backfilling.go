@@ -858,9 +858,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			return
 		case <-ticker.C:
 			failpoint.InjectCall("onUpdateJobParam")
-			if reorgInfo != nil {
-				reorgInfo.UpdateConfigFromSysTbl(ctx)
-			}
+			reorgInfo.UpdateConfigFromSysTbl(ctx)
 			maxWriteSpeed := reorgInfo.ReorgMeta.GetMaxWriteSpeed()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
