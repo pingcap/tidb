@@ -183,17 +183,17 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 func applyPredicateSimplificationForJoin(sctx base.PlanContext, predicates []expression.Expression,
 	schema1, schema2 *expression.Schema,
 	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
-	return applyPredicateSimplificationHelper(sctx, predicates, schema1, schema2, true, propagateConstant, filter)
+	return applyPredicateSimplificationHelper(sctx, predicates, schema1, schema2, true, false, propagateConstant, filter)
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool,
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant, isSameTable bool,
 	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
 	return applyPredicateSimplificationHelper(sctx, predicates, nil, nil,
-		false, propagateConstant, vaildConstantPropagationExpressionFunc)
+		false, propagateConstant, isSameTable, vaildConstantPropagationExpressionFunc)
 }
 
 func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expression.Expression,
-	schema1, schema2 *expression.Schema, forJoin, propagateConstant bool,
+	schema1, schema2 *expression.Schema, forJoin, propagateConstant, isSameTable bool,
 	vaildConstantPropagationExpressionFunc expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
 	if len(predicates) == 0 {
 		return predicates
@@ -217,12 +217,67 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 			simplifiedPredicate = exprs
 		}
 	}
+	if isSameTable {
+		simplifiedPredicate = mergeOrPredicateAndEqual(sctx, simplifiedPredicate)
+	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
+}
+
+func mergeOrPredicateAndEqual(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	if len(predicates) <= 1 {
+		return predicates
+	}
+	removeValues := make([]int, 0, len(predicates)-1)
+	for i := range predicates {
+		for j := i + 1; j < len(predicates); j++ {
+			ithPredicate := predicates[i]
+			jthPredicate := predicates[j]
+			_, iType := FindPredicateType(sctx, ithPredicate)
+			_, jType := FindPredicateType(sctx, jthPredicate)
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
+				sctx.GetExprCtx(),
+				ithPredicate,
+				jthPredicate)
+			if iType == orPredicate && jType == equalPredicate {
+				predicates[i] = MergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
+				if maybeOverOptimized4PlanCache {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("Or/Equal merged is triggered")
+				}
+				removeValues = append(removeValues, j)
+			} else if iType == equalPredicate && jType == orPredicate {
+				predicates[j] = MergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
+				if maybeOverOptimized4PlanCache {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("Or/Equal merged is triggered")
+				}
+				removeValues = append(removeValues, i)
+			}
+		}
+	}
+	if len(removeValues) == 0 {
+		return predicates
+	}
+	newValues := make([]expression.Expression, 0, len(predicates))
+	for i, value := range predicates {
+		if !(slices.Contains(removeValues, i)) {
+			newValues = append(newValues, value)
+		}
+	}
+	return newValues
+}
+
+func MergeOrAndEqualPredicate(ctx base.PlanContext, orPredicate expression.Expression, equal expression.Expression) expression.Expression {
+	orFunc := expression.SplitDNFItems(orPredicate)
+	for i, orItem := range orFunc {
+		andItem := expression.SplitCNFItems(orItem)
+		andItem = append(andItem, equal.Clone())
+		orFunc[i] = expression.ComposeCNFCondition(ctx.GetExprCtx(), andItem...)
+	}
+	return expression.ComposeDNFCondition(ctx.GetExprCtx(), orFunc...)
 }
 
 func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
