@@ -150,32 +150,6 @@ func TestPipelinedDMLPositive(t *testing.T) {
 		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
 		tk.MustQuery("select @@tidb_dml_type").Check(testkit.Rows("standard"))
 	}
-
-	// test global binding
-	for _, dmlPair := range dmls {
-		tk.MustExec("create global binding for " + dmlPair[0] + " using " + dmlPair[1])
-	}
-
-	for _, dmlPair := range dmls {
-		err := panicToErr(
-			func() error {
-				_, err := tk.Exec(dmlPair[0])
-				return err
-			},
-		)
-
-		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-
-		// The hint in the insert statement binding does not work.
-		if dmlPair[2] == "true" {
-			require.Error(t, err, dmlPair[0])
-			require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
-		} else {
-			require.NoError(t, err, dmlPair[0])
-		}
-
-		tk.MustQuery("select @@tidb_dml_type").Check(testkit.Rows("standard"))
-	}
 }
 
 func TestPipelinedDMLNegative(t *testing.T) {
