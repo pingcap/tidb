@@ -24,7 +24,6 @@ func TestCloneColAndIdxExistenceMap(t *testing.T) {
 	m := NewColAndIndexExistenceMapWithoutSize()
 	m.InsertCol(1, true)
 	m.InsertIndex(1, true)
-	m.SetChecked()
 
 	m2 := m.Clone()
 	require.Equal(t, m, m2)
