@@ -2578,6 +2578,9 @@ func TestKeyspaceEtcdNamespace(t *testing.T) {
 }
 
 func TestNullKeyspaceEtcdNamespace(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("keyspace is required in next-gen kernel")
+	}
 	makeStore(t, nil, false)
 }
 
@@ -2591,9 +2594,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 			mockstore.WithStoreType(mockstore.EmbedUnistore),
 		)
 	} else {
-		store, err = mockstore.NewMockStore(
-			mockstore.WithStoreType(mockstore.EmbedUnistore),
-			mockstore.WithKeyspaceMeta(nil))
+		store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	}
 	require.NoError(t, err)
 	defer func() {
