@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -194,6 +195,10 @@ func TestLockUnchangedUniqueKeys(t *testing.T) {
 }
 
 func TestUpdateRowRetryAndThenDupKey(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewSteppedTestKit(t, store)
 	tk.MustExec("use test")

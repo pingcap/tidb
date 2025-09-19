@@ -88,3 +88,57 @@ func TestDXFScheduleAPI(t *testing.T) {
 		}
 	})
 }
+
+func TestDXFScheduleTuneAPI(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only supported in nextgen kernel and only available in the SYSTEM keyspace")
+	}
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	// no keyspace
+	resp, err := ts.FetchStatus("/dxf/schedule/tune")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "invalid or empty target keyspace")
+	require.NoError(t, resp.Body.Close())
+	// when not set, return default value
+	resp, err = ts.FetchStatus("/dxf/schedule/tune?keyspace=aaa")
+	require.NoError(t, err)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "failed to load keyspace")
+	require.NoError(t, resp.Body.Close())
+	// invalid value
+	for _, v := range []float64{0.9, 10.1} {
+		resp, err = ts.PostStatus(fmt.Sprintf("/dxf/schedule/tune?keyspace=SYSTEM&amplify_factor=%f", v), "", bytes.NewBuffer([]byte("")))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		body, err = io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Contains(t, string(body), "is out of range")
+		require.NoError(t, resp.Body.Close())
+	}
+	// success
+	resp, err = ts.PostStatus("/dxf/schedule/tune?keyspace=SYSTEM&amplify_factor=2&ttl=10h", "", bytes.NewBuffer([]byte("")))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	ttlFactors := &schstatus.TTLTuneFactors{}
+	require.NoError(t, json.Unmarshal(body, ttlFactors))
+	require.Equal(t, 10*time.Hour, ttlFactors.TTL)
+	require.EqualValues(t, 2.0, ttlFactors.AmplifyFactor)
+	// get again
+	resp, err = ts.FetchStatus("/dxf/schedule/tune?keyspace=SYSTEM")
+	require.NoError(t, err)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	factors := &schstatus.TuneFactors{}
+	require.NoError(t, json.Unmarshal(body, factors))
+	require.EqualValues(t, &schstatus.TuneFactors{AmplifyFactor: 2}, factors)
+	require.NoError(t, resp.Body.Close())
+}

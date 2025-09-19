@@ -96,29 +96,12 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalTableDual(super base.LogicalPlan) (ge *memo.GroupExpression, dual *logicalop.LogicalTableDual) {
-	switch x := super.(type) {
-	case *logicalop.LogicalTableDual:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		dual = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		dual = ge.GetWrappedLogicalPlan().(*logicalop.LogicalTableDual)
-	}
-	return ge, dual
-}
-
 func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalTableDual(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalTableDual](super)
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -136,29 +119,12 @@ func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.Physic
 	return rt, 1, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalShow(super base.LogicalPlan) (ge *memo.GroupExpression, show *logicalop.LogicalShow) {
-	switch x := super.(type) {
-	case *logicalop.LogicalShow:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		show = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		show = ge.GetWrappedLogicalPlan().(*logicalop.LogicalShow)
-	}
-	return ge, show
-}
-
 func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalShow(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalShow](super)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -170,29 +136,12 @@ func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalPro
 	return rt, 1, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalShowDDLJobs(super base.LogicalPlan) (ge *memo.GroupExpression, ddl *logicalop.LogicalShowDDLJobs) {
-	switch x := super.(type) {
-	case *logicalop.LogicalShowDDLJobs:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		ddl = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		ddl = ge.GetWrappedLogicalPlan().(*logicalop.LogicalShowDDLJobs)
-	}
-	return ge, ddl
-}
-
 func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalShowDDLJobs(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalShowDDLJobs](super)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -782,7 +731,7 @@ func getGEAndSelf(super base.LogicalPlan) (ge *memo.GroupExpression, self base.L
 		self = x.Self()
 	case *memo.GroupExpression:
 		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
+		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
 		// get the specific logical operator inside.
 		ge = x
 		self = ge.GetWrappedLogicalPlan()
@@ -858,7 +807,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 		exhaustObj = ge
 	}
 	// make sure call ExhaustPhysicalPlans over GE or Self, rather than the BaseLogicalPlan.
-	plansFitsProp, hintWorksWithProp, err = exhaustObj.ExhaustPhysicalPlans(newProp)
+	plansFitsProp, hintWorksWithProp, err = exhaustPhysicalPlans(exhaustObj, newProp)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -880,7 +829,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 		newProp.MPPPartitionCols = nil
 		newProp.MPPPartitionTp = property.AnyType
 		var hintCanWork bool
-		plansNeedEnforce, hintCanWork, err = self.ExhaustPhysicalPlans(newProp)
+		plansNeedEnforce, hintCanWork, err = exhaustPhysicalPlans(self, newProp)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -952,29 +901,12 @@ END:
 	return bestTask, cntPlan, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalMemTable(super base.LogicalPlan) (ge *memo.GroupExpression, mem *logicalop.LogicalMemTable) {
-	switch x := super.(type) {
-	case *logicalop.LogicalMemTable:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		mem = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		mem = ge.GetWrappedLogicalPlan().(*logicalop.LogicalMemTable)
-	}
-	return ge, mem
-}
-
 func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalMemTable(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalMemTable](super)
 	if prop.MPPPartitionTp != property.AnyType {
 		return base.InvalidTask, 0, nil
 	}
@@ -1276,38 +1208,42 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
-func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
+func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
-		return false
+		return property.PropNotMatched
 	}
 	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
 		if path.Index == nil || path.Index.VectorInfo == nil {
-			return false
+			return property.PropNotMatched
 		}
 		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
-			return false
+			return property.PropNotMatched
 		}
 
 		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
-			return false
+			return property.PropNotMatched
 		}
-		return true
+		return property.PropMatched
 	}
-	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.GetPKIsHandleCol()
-		if len(prop.SortItems) == 1 && pkCol != nil {
-			isMatchProp = prop.SortItems[0].Col.EqualColumn(pkCol)
-			if path.StoreType == kv.TiFlash {
-				isMatchProp = isMatchProp && !prop.SortItems[0].Desc
-			}
+		if len(prop.SortItems) != 1 || pkCol == nil {
+			return property.PropNotMatched
 		}
-		return isMatchProp
+		item := prop.SortItems[0]
+		if !item.Col.EqualColumn(pkCol) ||
+			path.StoreType == kv.TiFlash && item.Desc {
+			return property.PropNotMatched
+		}
+		return property.PropMatched
 	}
 	all, _ := prop.AllSameOrder()
-	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
+	if prop.IsSortItemEmpty() || !all || len(path.IdxCols) < len(prop.SortItems) {
+		return property.PropNotMatched
+	}
 
 	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then `isMatchProp` is true. However, we need to consider
 	// the situations when some columns of `path.IdxCols` are evaluated as constant. For example:
@@ -1320,28 +1256,26 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 	// ```
 	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order. In the last two `SELECT` statements, `idx_d_c_b_a`
 	// matches the sort order. Hence, we use `path.ConstCols` to deal with the above situations.
-	if !prop.IsSortItemEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
-		isMatchProp = true
-		i := 0
-		for _, sortItem := range prop.SortItems {
-			found := false
-			for ; i < len(path.IdxCols); i++ {
-				if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[i]) {
-					found = true
-					i++
-					break
-				}
-				if path.ConstCols == nil || i >= len(path.ConstCols) || !path.ConstCols[i] {
-					break
-				}
+	matchResult := property.PropMatched
+	colIdx := 0
+	for _, sortItem := range prop.SortItems {
+		found := false
+		for ; colIdx < len(path.IdxCols); colIdx++ {
+			if path.IdxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[colIdx]) {
+				found = true
+				colIdx++
+				break
 			}
-			if !found {
-				isMatchProp = false
+			if path.ConstCols == nil || colIdx >= len(path.ConstCols) || !path.ConstCols[colIdx] {
 				break
 			}
 		}
+		if !found {
+			matchResult = property.PropNotMatched
+			break
+		}
 	}
-	return isMatchProp
+	return matchResult
 }
 
 // matchPropForIndexMergeAlternatives will match the prop with inside PartialAlternativeIndexPaths, and choose
@@ -1426,7 +1360,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// if there is some sort items and this path doesn't match this prop, continue.
 			match := true
 			for _, oneAccessPath := range oneAlternative {
-				if !noSortItem && !isMatchProp(ds, oneAccessPath, prop) {
+				if !noSortItem && !matchProperty(ds, oneAccessPath, prop).Matched() {
 					match = false
 				}
 			}
@@ -1525,7 +1459,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 		return false
 	}
 	for _, partialPath := range path.PartialIndexPaths {
-		if !isMatchProp(ds, partialPath, prop) {
+		if !matchProperty(ds, partialPath, prop).Matched() {
 			return false
 		}
 	}
@@ -1534,14 +1468,14 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 
 func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	candidate.isMatchProp = isMatchProp(ds, path, prop)
+	candidate.isMatchProp = matchProperty(ds, path, prop).Matched()
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	return candidate
 }
 
 func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	candidate.isMatchProp = isMatchProp(ds, path, prop)
+	candidate.isMatchProp = matchProperty(ds, path, prop).Matched()
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	return candidate
@@ -2500,30 +2434,61 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 }
 
 func indexCoveringColumn(ds *logicalop.DataSource, column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
-		return true
-	}
-	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+	handleCoveringState := handleCoveringColumn(ds, column, ignoreLen)
+	// Original int pk can always cover the column.
+	if handleCoveringState == stateCoveredByIntHandle {
 		return true
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
-	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
-	if !coveredByPlainIndex && !coveredByClusteredIndex {
+	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
 		return false
 	}
 	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 		column.GetType(evalCtx).EvalType() == types.ETString &&
 		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
-	if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
+	if !coveredByPlainIndex && handleCoveringState == stateCoveredByCommonHandle && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
 		return false
 	}
 	return true
 }
 
+type handleCoverState uint8
+
+const (
+	stateNotCoveredByHandle handleCoverState = iota
+	stateCoveredByIntHandle
+	stateCoveredByCommonHandle
+)
+
+// handleCoveringColumn checks if the column is covered by the primary key or extra handle columns.
+func handleCoveringColumn(ds *logicalop.DataSource, column *expression.Column, ignoreLen bool) handleCoverState {
+	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
+		return stateCoveredByIntHandle
+	}
+	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+		return stateCoveredByIntHandle
+	}
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
+	if coveredByClusteredIndex {
+		return stateCoveredByCommonHandle
+	}
+	return stateNotCoveredByHandle
+}
+
 func isIndexCoveringColumns(ds *logicalop.DataSource, columns, indexColumns []*expression.Column, idxColLens []int) bool {
 	for _, col := range columns {
 		if !indexCoveringColumn(ds, col, indexColumns, idxColLens, false) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHandleCoveringColumns(ds *logicalop.DataSource, columns []*expression.Column) bool {
+	for _, col := range columns {
+		if pkCoveringState := handleCoveringColumn(ds, col, false); pkCoveringState == stateNotCoveredByHandle {
 			return false
 		}
 	}
@@ -3196,31 +3161,18 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 	}
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalCTE(super base.LogicalPlan) (ge *memo.GroupExpression, cte *logicalop.LogicalCTE, childLength int) {
-	switch x := super.(type) {
-	case *logicalop.LogicalCTE:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		cte = x
-		childLength = x.ChildLen()
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		cte = ge.GetWrappedLogicalPlan().(*logicalop.LogicalCTE)
-		childLength = len(ge.Inputs)
-	}
-	return ge, cte, childLength
-}
-
 func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p, childLen := getGEAndLogicalCTE(super)
+	var childLen int
+	ge, p := base.GetGEAndLogical[*logicalop.LogicalCTE](super)
+	if ge != nil {
+		childLen = ge.InputsLen()
+	} else {
+		childLen = p.ChildLen()
+	}
 	if childLen > 0 {
 		// pass the super here to iterate among ge or logical plan both.
 		return utilfuncp.FindBestTask4BaseLogicalPlan(super, prop, counter, pop)
@@ -3257,29 +3209,12 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 	return t, 1, nil
 }
 
-// get the possible group expression and logical operator from common super pointer.
-func getGEAndLogicalCTETable(super base.LogicalPlan) (ge *memo.GroupExpression, cteTable *logicalop.LogicalCTETable) {
-	switch x := super.(type) {
-	case *logicalop.LogicalCTETable:
-		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
-		// to downcast as the every specific logical operator.
-		cteTable = x
-	case *memo.GroupExpression:
-		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
-		// naturally can be referred as a LogicalPlan, and we need ot use GetWrappedLogicalPlan to
-		// get the specific logical operator inside.
-		ge = x
-		cteTable = ge.GetWrappedLogicalPlan().(*logicalop.LogicalCTETable)
-	}
-	return ge, cteTable
-}
-
 func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
 	}
-	_, p := getGEAndLogicalCTETable(super)
+	_, p := base.GetGEAndLogical[*logicalop.LogicalCTETable](super)
 	if !prop.IsSortItemEmpty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -3309,4 +3244,95 @@ func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) e
 		}
 	}
 	return nil
+}
+
+// mockLogicalPlan4Test is a LogicalPlan which is used for unit test.
+// The basic assumption:
+//  1. mockLogicalPlan4Test can generate tow kinds of physical plan: physicalPlan1 and
+//     physicalPlan2. physicalPlan1 can pass the property only when they are the same
+//     order; while physicalPlan2 cannot match any of the property(in other words, we can
+//     generate it only when then property is empty).
+//  2. We have a hint for physicalPlan2.
+//  3. If the property is empty, we still need to check `canGeneratePlan2` to decide
+//     whether it can generate physicalPlan2.
+type mockLogicalPlan4Test struct {
+	logicalop.BaseLogicalPlan
+	// hasHintForPlan2 indicates whether this mockPlan contains hint.
+	// This hint is used to generate physicalPlan2. See the implementation
+	// of ExhaustPhysicalPlans().
+	hasHintForPlan2 bool
+	// canGeneratePlan2 indicates whether this plan can generate physicalPlan2.
+	canGeneratePlan2 bool
+	// costOverflow indicates whether this plan will generate physical plan whose cost is overflowed.
+	costOverflow bool
+}
+
+func (p mockLogicalPlan4Test) Init(ctx base.PlanContext) *mockLogicalPlan4Test {
+	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, "mockPlan", &p, 0)
+	return &p
+}
+
+func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty) base.PhysicalPlan {
+	physicalPlan1 := mockPhysicalPlan4Test{planType: 1}.Init(p.SCtx())
+	physicalPlan1.SetStats(&property.StatsInfo{RowCount: 1})
+	physicalPlan1.SetChildrenReqProps(make([]*property.PhysicalProperty, 1))
+	physicalPlan1.SetXthChildReqProps(0, prop.CloneEssentialFields())
+	return physicalPlan1
+}
+
+func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty) base.PhysicalPlan {
+	physicalPlan2 := mockPhysicalPlan4Test{planType: 2}.Init(p.SCtx())
+	physicalPlan2.SetStats(&property.StatsInfo{RowCount: 1})
+	physicalPlan2.SetChildrenReqProps(make([]*property.PhysicalProperty, 1))
+	physicalPlan2.SetXthChildReqProps(0, property.NewPhysicalProperty(prop.TaskTp, nil, false, prop.ExpectedCnt, false))
+	return physicalPlan2
+}
+
+// ExhaustPhysicalPlans implements LogicalPlan interface.
+func (p *mockLogicalPlan4Test) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	plan1 := make([]base.PhysicalPlan, 0, 1)
+	plan2 := make([]base.PhysicalPlan, 0, 1)
+	if prop.IsSortItemEmpty() && p.canGeneratePlan2 {
+		// Generate PhysicalPlan2 when the property is empty.
+		plan2 = append(plan2, p.getPhysicalPlan2(prop))
+		if p.hasHintForPlan2 {
+			return plan2, true, nil
+		}
+	}
+	if all, _ := prop.AllSameOrder(); all {
+		// Generate PhysicalPlan1 when properties are the same order.
+		plan1 = append(plan1, p.getPhysicalPlan1(prop))
+	}
+	if p.hasHintForPlan2 {
+		// The hint cannot work.
+		if prop.IsSortItemEmpty() {
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("the hint is inapplicable for plan2"))
+		}
+		return plan1, false, nil
+	}
+	return append(plan1, plan2...), true, nil
+}
+
+type mockPhysicalPlan4Test struct {
+	physicalop.BasePhysicalPlan
+	// 1 or 2 for physicalPlan1 or physicalPlan2.
+	// See the comment of mockLogicalPlan4Test.
+	planType int
+}
+
+func (p mockPhysicalPlan4Test) Init(ctx base.PlanContext) *mockPhysicalPlan4Test {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, "mockPlan", &p, 0)
+	return &p
+}
+
+// Attach2Task implements the PhysicalPlan interface.
+func (p *mockPhysicalPlan4Test) Attach2Task(tasks ...base.Task) base.Task {
+	t := tasks[0].Copy()
+	attachPlan2Task(p, t)
+	return t
+}
+
+// MemoryUsage of mockPhysicalPlan4Test is only for testing
+func (*mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
+	return
 }

@@ -551,8 +551,18 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 	}, nil
 }
 
+// Option is used to set optional parameters for LoadDataController.
+type Option func(c *LoadDataController)
+
+// WithLogger sets the logger for LoadDataController.
+func WithLogger(logger *zap.Logger) Option {
+	return func(c *LoadDataController) {
+		c.logger = logger
+	}
+}
+
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
+func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs, options ...Option) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
@@ -562,6 +572,10 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		logger:          logger,
 		ExecuteNodesCnt: 1,
 	}
+	for _, opt := range options {
+		opt(c)
+	}
+
 	if err := c.checkFieldParams(); err != nil {
 		return nil, err
 	}
@@ -1309,22 +1323,42 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 
-	if kerneltype.IsNextGen() {
-		targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
-		if err != nil {
-			return err
-		}
-		failpoint.InjectCall("mockImportDataSize", &totalSize)
-		e.ThreadCnt = scheduler.CalcConcurrencyByDataSize(totalSize, targetNodeCPUCnt)
-		e.MaxNodeCnt = scheduler.CalcMaxNodeCountByDataSize(totalSize, targetNodeCPUCnt)
-		e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
-		e.logger.Info("auto calculate resource related params",
-			zap.Int("thread count", e.ThreadCnt),
-			zap.Int("max node count", e.MaxNodeCnt),
-			zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
-			zap.Int("target node cpu count", targetNodeCPUCnt),
-			zap.String("total file size", units.BytesSize(float64(totalSize))))
+	return nil
+}
+
+const indexSizeRatioPerIndex = 0.01
+
+// CalResourceParams calculates resource related parameters according to the total
+// file size and target node cpu count.
+func (e *LoadDataController) CalResourceParams(ctx context.Context) error {
+	targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return err
 	}
+	factors, err := handle.GetScheduleTuneFactors(ctx, e.Keyspace)
+	if err != nil {
+		return err
+	}
+	totalSize := e.TotalFileSize
+	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	// for row length = 4K, one simple index on bigint is about 1% of data KV size,
+	// we use 1% as default index size factor.
+	// TODO get the ratio by sampling the data files.
+	indexSizeRatio := float64(GetNumOfIndexGenKV(e.TableInfo)) * indexSizeRatioPerIndex
+	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
+	e.ThreadCnt = cal.CalcConcurrency()
+	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
+	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
+	e.logger.Info("auto calculate resource related params",
+		zap.Int("thread count", e.ThreadCnt),
+		zap.Int("max node count", e.MaxNodeCnt),
+		zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
+		zap.Int("target node cpu count", targetNodeCPUCnt),
+		zap.String("total file size", units.BytesSize(float64(totalSize))),
+		zap.Int("file count", len(e.dataFiles)),
+		zap.Float64("index size ratio", indexSizeRatio),
+		zap.Float64("amplify factor", factors.AmplifyFactor),
+	)
 	return nil
 }
 

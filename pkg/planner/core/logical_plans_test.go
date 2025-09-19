@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -2392,6 +2393,34 @@ func TestRemoveOrderbyInSubquery(t *testing.T) {
 	}
 }
 
+func TestAddLimitForCorrelatedExistsSubquery(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{ // First query should add LIMIT because it's an EXISTS subquery with NO_DECORRELATE
+			sql:  "select * from t t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Limit}->Projection",
+		},
+		{ // Second query should NOT add LIMIT because it is NOT an EXISTS subquery
+			sql:  "select * from t t1 where b in (select /*+ NO_DECORRELATE() */ b from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection",
+		},
+	}
+
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.GetParser().ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, ToString(p), comment)
+	}
+}
 func TestRollupExpand(t *testing.T) {
 	ctx := context.Background()
 	sql := "select count(a) from t group by a, b with rollup"
@@ -2503,7 +2532,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		require.NoError(t, err)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err)
-		deletePlan, ok := p.(*Delete)
+		deletePlan, ok := p.(*physicalop.Delete)
 		require.True(t, ok, comment)
 		var sb strings.Builder
 

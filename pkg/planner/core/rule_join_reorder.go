@@ -264,10 +264,10 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 		originalSchema := p.Schema()
 
 		// Not support outer join reorder when using the DP algorithm
-		isSupportDP := true
+		allInnerJoin := true
 		for _, joinType := range joinTypes {
 			if joinType.JoinType != base.InnerJoin {
-				isSupportDP = false
+				allInnerJoin = false
 				break
 			}
 		}
@@ -278,7 +278,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 		}
 
 		joinGroupNum := len(curJoinGroup)
-		useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
+		useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 
 		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
 		if hasDiffLeadingHint {
@@ -302,6 +302,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 		if useGreedy {
 			groupSolver := &joinReorderGreedySolver{
+				allInnerJoin:                   allInnerJoin,
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
 			p, err = groupSolver.solve(curJoinGroup, tracer)

@@ -24,16 +24,19 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // GetScheduleStatus returns the schedule status.
 func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	manager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -178,6 +181,7 @@ func GetScheduleFlags(ctx context.Context, manager *storage.TaskManager) (map[sc
 
 func getPauseScaleInFlag(ctx context.Context, manager *storage.TaskManager) (*schstatus.TTLFlag, error) {
 	flag := &schstatus.TTLFlag{}
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		rs, err2 := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `SELECT VARIABLE_VALUE from mysql.tidb WHERE VARIABLE_NAME = %?`,
 			tidbvar.DXFSchedulePauseScaleIn)

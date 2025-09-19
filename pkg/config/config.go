@@ -317,6 +317,9 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
+
+	// MeteringConfigURI is the URI for metering configuration.
+	MeteringStorageURI string `toml:"metering-storage-uri" json:"metering-storage-uri"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -531,6 +534,20 @@ type Instance struct {
 	// StmtSummaryFileMaxBackups indicates the maximum number of files written
 	// by stmtsummary when StmtSummaryEnablePersistent is true.
 	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
+	// StmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	StmtSummaryMaxStmtCount uint64 `toml:"tidb_stmt_summary_max_stmt_count" json:"tidb_stmt_summary_max_stmt_count"`
+	// ServerMemoryLimit indicates the memory limit of the tidb-server instance.
+	ServerMemoryLimit string `toml:"tidb_server_memory_limit" json:"tidb_server_memory_limit"`
+	// ServerMemoryLimitGCTrigger indicates the gc percentage of the ServerMemoryLimit.
+	ServerMemoryLimitGCTrigger string `toml:"tidb_server_memory_limit_gc_trigger" json:"tidb_server_memory_limit_gc_trigger"`
+	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
+	InstancePlanCacheMaxMemSize string `toml:"tidb_instance_plan_cache_max_size" json:"tidb_instance_plan_cache_max_size"`
+	// StatsCacheMemQuota records stats cache quota.
+	StatsCacheMemQuota uint64 `toml:"tidb_stats_cache_mem_quota" json:"tidb_stats_cache_mem_quota"`
+	// MemQuotaBindingCache indicates the memory quota for the bind cache.
+	MemQuotaBindingCache uint64 `toml:"tidb_mem_quota_binding_cache" json:"tidb_mem_quota_binding_cache"`
+	// SchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	SchemaCacheSize string `toml:"tidb_schema_cache_size" json:"tidb_schema_cache_size"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
@@ -735,6 +752,7 @@ type Performance struct {
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
+	// Deprecated: this config has been deprecated. It has no effect.
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 
 	// SkipInitStats determines whether to skip initializing statistics when TiDB starts.

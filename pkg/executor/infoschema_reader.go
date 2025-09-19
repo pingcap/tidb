@@ -1147,6 +1147,11 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 
 	cols, ordinalPos := e.extractor.ListColumns(tbl)
 	for i, col := range cols {
+		// Skip non-public columns
+		if col.State != model.StatePublic {
+			continue
+		}
+
 		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
@@ -2778,7 +2783,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 				for _, p := range pi.Definitions {
 					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
 					if err != nil {
-						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+						logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
 					}
 					progress += progressOfPartition
 				}
@@ -2787,7 +2792,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 				var err error
 				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
 				if err != nil {
-					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+					logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
 				}
 			}
 			progressString := types.TruncateFloatToString(progress, 2)
@@ -3523,6 +3528,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	targetTable := tiflashTargetTableName[e.table.Name.L]
 
 	var filters []string
+	// Add filter for keyspace_id if tidb is running in the keyspace mode.
 	if keyspace.GetKeyspaceNameBySettings() != "" {
 		keyspaceID := uint32(sctx.GetStore().GetCodec().GetKeyspaceID())
 		filters = append(filters, fmt.Sprintf("keyspace_id=%d", keyspaceID))
