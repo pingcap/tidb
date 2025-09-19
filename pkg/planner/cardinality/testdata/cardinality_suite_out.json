@@ -24,11 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-<<<<<<< HEAD
-        "Count": 791.004166655054
-=======
         "Count": 767.004166655054
->>>>>>> ae830dc9af4 (planner: Adjust out of range for added rows (#59724))
       },
       {
         "Start": 900,
@@ -83,11 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-<<<<<<< HEAD
-        "Count": 1249.196869573942
-=======
         "Count": 1225.196869573942
->>>>>>> ae830dc9af4 (planner: Adjust out of range for added rows (#59724))
       },
       {
         "Start": 900,
@@ -112,11 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-<<<<<<< HEAD
-        "Count": 1188.7788209899081
-=======
         "Count": 1231.5288209899081
->>>>>>> ae830dc9af4 (planner: Adjust out of range for added rows (#59724))
       },
       {
         "Start": 200,
@@ -4007,11 +3995,7 @@
                             "histR": 999,
                             "lPercent": 0.5613744375005636,
                             "rPercent": 0,
-<<<<<<< HEAD
-                            "rowCount": 555.760693125558
-=======
                             "rowCount": 392.8571428571429
->>>>>>> ae830dc9af4 (planner: Adjust out of range for added rows (#59724))
                           },
                           {
                             "Result": 100
