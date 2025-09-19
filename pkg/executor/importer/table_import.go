@@ -402,7 +402,6 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 // then table-importer handles data belongs to the subtask.
 func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[int32][]Chunk, err error) {
 	task := log.BeginTask(e.logger, "populate chunks")
-	return nil, errors.New("hjq mock error")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
