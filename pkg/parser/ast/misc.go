@@ -3936,6 +3936,10 @@ type HintTimeRange struct {
 	To   string
 }
 
+type LeadingList struct {
+	Items []interface{}
+}
+
 // HintSetVar is the payload of `SET_VAR` hint
 type HintSetVar struct {
 	VarName string
@@ -3948,23 +3952,36 @@ type HintTable struct {
 	TableName     CIStr
 	QBName        CIStr
 	PartitionList []CIStr
+
+	FormatStyle int
 }
 
+const (
+	QBNameAfterTable  = iota // t1@sel1
+	QBNameBeforeTable        // @sel1 t1
+)
+
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
-	if !ctx.Flags.HasWithoutSchemaNameFlag() {
-		if ht.DBName.L != "" {
-			ctx.WriteName(ht.DBName.String())
-			ctx.WriteKeyWord(".")
-		}
+	if ht.FormatStyle == QBNameBeforeTable && ht.QBName.L != "" {
+		ctx.WriteKeyWord("@")
+		ctx.WriteName(ht.QBName.String())
+		ctx.WritePlain(" ")
 	}
+
+	if !ctx.Flags.HasWithoutSchemaNameFlag() && ht.DBName.L != "" {
+		ctx.WriteName(ht.DBName.String())
+		ctx.WriteKeyWord(".")
+	}
+
 	ctx.WriteName(ht.TableName.String())
-	if ht.QBName.L != "" {
+
+	if ht.FormatStyle == QBNameAfterTable && ht.QBName.L != "" {
 		ctx.WriteKeyWord("@")
 		ctx.WriteName(ht.QBName.String())
 	}
+
 	if len(ht.PartitionList) > 0 {
-		ctx.WriteKeyWord(" PARTITION")
-		ctx.WritePlain("(")
+		ctx.WriteKeyWord(" PARTITION(")
 		for i, p := range ht.PartitionList {
 			if i > 0 {
 				ctx.WritePlain(", ")
@@ -3973,6 +3990,40 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 		}
 		ctx.WritePlain(")")
 	}
+}
+
+// Restore restores a LeadingList hint expression.
+func (lt *LeadingList) Restore(ctx *format.RestoreCtx, needParen bool) error {
+	if lt == nil || len(lt.Items) == 0 {
+		return nil
+	}
+
+	if needParen {
+		ctx.WritePlain("(")
+	}
+
+	for i, item := range lt.Items {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+
+		switch t := item.(type) {
+		case *HintTable:
+			t.Restore(ctx)
+		case *LeadingList:
+			if err := t.Restore(ctx, true); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unexpected type in LeadingList: %T", t)
+		}
+	}
+
+	if needParen {
+		ctx.WritePlain(")")
+	}
+
+	return nil
 }
 
 // Restore implements Node interface.
@@ -4006,8 +4057,21 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
+	case "leading":
+		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
+			if err := list.Restore(ctx, false); err != nil {
+				return err
+			}
+		} else {
+			for i, table := range n.Tables {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				table.Restore(ctx)
+			}
+		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
-		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",
 		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {

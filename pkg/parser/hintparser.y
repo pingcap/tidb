@@ -31,6 +31,8 @@ import (
 	hints []*ast.TableOptimizerHint
 	table 	ast.HintTable
 	modelIdents []ast.CIStr
+	leadingList *ast.LeadingList
+    leadingElement interface{} // Modified: Represents either *ast.HintTable or *ast.LeadingList
 }
 
 %token	<number>
@@ -185,6 +187,11 @@ import (
 	PartitionList    "partition name list in optimizer hint"
 	PartitionListOpt "optional partition name list in optimizer hint"
 
+%type	<leadingList>
+    LeadingTableList "leading table list"
+
+%type	<leadingElement>
+	LeadingTableElement "leading element (table or list)"
 
 %start	Start
 
@@ -230,6 +237,13 @@ TableOptimizerHintOpt:
 	{
 		parser.warnUnsupportedHint($1)
 		$$ = nil
+	}
+|	"LEADING" '(' LeadingTableList ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			HintData: $3,
+		}
 	}
 |	UnsupportedTableLevelOptimizerHintName '(' HintTableListOpt ')'
 	{
@@ -405,6 +419,48 @@ HintStorageTypeAndTable:
 		h.HintData = ast.NewCIStr($1)
 		$$ = h
 	}
+
+LeadingTableList:
+    LeadingTableElement
+    {
+        $$ = &ast.LeadingList{Items: []interface{}{$1}}
+	}
+|   LeadingTableList ',' LeadingTableElement
+    {
+        $$ = &ast.LeadingList{Items: append($1.Items, $3)}
+    }
+
+LeadingTableElement:
+    HintTable
+    {
+        tmp := $1
+		tmp.FormatStyle = ast.QBNameAfterTable
+		$$ = &tmp
+    }
+|   hintSingleAtIdentifier Identifier PartitionListOpt
+    {
+		tmp := ast.HintTable{
+			TableName:     ast.NewCIStr($2),
+            QBName:        ast.NewCIStr($1),
+            PartitionList: $3,
+			FormatStyle:   ast.QBNameBeforeTable,
+		}
+		$$ = &tmp
+	}
+|   hintSingleAtIdentifier Identifier '.' Identifier PartitionListOpt
+    {
+        tmp := ast.HintTable{
+            DBName:        ast.NewCIStr($2),
+            TableName:     ast.NewCIStr($4),
+            QBName:        ast.NewCIStr($1),
+            PartitionList: $5,
+        }
+        $$ = &tmp
+    }
+|   '(' LeadingTableList ')'
+    {
+        $$ = $2
+    }
 
 QueryBlockOpt:
 	/* empty */
@@ -645,7 +701,6 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_HASH_JOIN"
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
-|	"LEADING"
 |	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
