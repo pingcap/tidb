@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -2038,6 +2039,32 @@ type calcOnceMap struct {
 	calculated bool
 }
 
+// addColumnsWithVirtualExprs adds columns to cols.data and processes their virtual expressions recursively.
+// columnSelector is a function that determines which columns to include and their virtual expressions.
+func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *calcOnceMap, columnSelector func([]*expression.Column) []expression.Expression) error {
+	intest.Assert(cols.data != nil, "cols.data should not be nil before adding columns")
+	tblInfo := tbl.TableInfo
+	columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx.GetExprCtx(), tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
+	if err != nil {
+		return err
+	}
+
+	virtualExprs := columnSelector(columns)
+	relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
+	for len(virtualExprs) > 0 {
+		relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
+		virtualExprs = virtualExprs[:0]
+		for _, col := range relatedCols {
+			cols.data[col.ID] = struct{}{}
+			if col.VirtualExpr != nil {
+				virtualExprs = append(virtualExprs, col.VirtualExpr)
+			}
+		}
+		relatedCols = relatedCols[:0]
+	}
+	return nil
+}
+
 // getMustAnalyzedColumns puts the columns whose statistics must be collected into `cols` if `cols` has not been calculated.
 func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calcOnceMap) (map[int64]struct{}, error) {
 	if cols.calculated {
@@ -2048,34 +2075,24 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 	if len(tblInfo.Indices) > 0 {
 		// Add indexed columns.
 		// Some indexed columns are generated columns so we also need to add the columns that make up those generated columns.
-		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx.GetExprCtx(), tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
+		err := b.addColumnsWithVirtualExprs(tbl, cols, func(columns []*expression.Column) []expression.Expression {
+			virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
+			for _, idx := range tblInfo.Indices {
+				if idx.State != model.StatePublic || idx.MVIndex || idx.VectorInfo != nil {
+					continue
+				}
+				for _, idxCol := range idx.Columns {
+					colInfo := tblInfo.Columns[idxCol.Offset]
+					cols.data[colInfo.ID] = struct{}{}
+					if expr := columns[idxCol.Offset].VirtualExpr; expr != nil {
+						virtualExprs = append(virtualExprs, expr)
+					}
+				}
+			}
+			return virtualExprs
+		})
 		if err != nil {
 			return nil, err
-		}
-		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
-		for _, idx := range tblInfo.Indices {
-			if idx.State != model.StatePublic || idx.MVIndex || idx.VectorInfo != nil {
-				continue
-			}
-			for _, idxCol := range idx.Columns {
-				colInfo := tblInfo.Columns[idxCol.Offset]
-				cols.data[colInfo.ID] = struct{}{}
-				if expr := columns[idxCol.Offset].VirtualExpr; expr != nil {
-					virtualExprs = append(virtualExprs, expr)
-				}
-			}
-		}
-		relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
-		for len(virtualExprs) > 0 {
-			relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
-			virtualExprs = virtualExprs[:0]
-			for _, col := range relatedCols {
-				cols.data[col.ID] = struct{}{}
-				if col.VirtualExpr != nil {
-					virtualExprs = append(virtualExprs, col.VirtualExpr)
-				}
-			}
-			relatedCols = relatedCols[:0]
 		}
 	}
 	if tblInfo.PKIsHandle {
@@ -2122,8 +2139,30 @@ func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnc
 			),
 		)
 	} else {
-		for _, id := range colList {
-			cols.data[id] = struct{}{}
+		// Some predicate columns are generated columns so we also need to add the columns that make up those generated columns.
+		err := b.addColumnsWithVirtualExprs(tbl, cols, func(columns []*expression.Column) []expression.Expression {
+			virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
+			for _, id := range colList {
+				columnInfo := tblInfo.GetColumnByID(id)
+				intest.Assert(columnInfo != nil, "column %d not found in table %s.%s", id, tbl.Schema.L, tbl.Name.L)
+				if columnInfo == nil {
+					statslogutil.StatsLogger().Warn("Column not found in table while getting predicate columns",
+						zap.Int64("columnID", id),
+						zap.String("tableSchema", tbl.Schema.L),
+						zap.String("table", tblInfo.Name.O),
+					)
+					// This should not happen, but we handle it gracefully.
+					continue
+				}
+				cols.data[columnInfo.ID] = struct{}{}
+				if expr := columns[columnInfo.Offset].VirtualExpr; expr != nil {
+					virtualExprs = append(virtualExprs, expr)
+				}
+			}
+			return virtualExprs
+		})
+		if err != nil {
+			return nil, err
 		}
 	}
 	cols.calculated = true
@@ -2386,6 +2425,30 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 		}
 		result = append(result, colInfo)
 	}
+	skipColNameMap := make(map[string]struct{}, len(skipCol))
+	for _, colInfo := range skipCol {
+		skipColNameMap[colInfo.Name.L] = struct{}{}
+	}
+
+	// Filter out generated columns that depend on skipped columns
+	filteredResult := make([]*model.ColumnInfo, 0, len(result))
+	for _, colInfo := range result {
+		shouldSkip := false
+		if colInfo.IsGenerated() {
+			// Check if any dependency is in the skip list
+			for depName := range colInfo.Dependences {
+				if _, exists := skipColNameMap[depName]; exists {
+					skipCol = append(skipCol, colInfo)
+					shouldSkip = true
+					break
+				}
+			}
+		}
+		if !shouldSkip {
+			filteredResult = append(filteredResult, colInfo)
+		}
+	}
+	result = filteredResult
 	return
 }
 
