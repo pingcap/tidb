@@ -197,7 +197,9 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 				return nil
 			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
-			return pq.pushWithoutLock(job)
+			if err := pq.pushWithoutLock(job); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
