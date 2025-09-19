@@ -1613,11 +1613,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 					logutil.BgLogger().Warn("BindingHandle.UpdateBindingUsageInfoToStorage", zap.Error(err))
 				}
 				// randomize the next write interval to avoid thundering herd problem
-				// if there are many tidb servers. The next write interval is [5min, 30min].
+				// if there are many tidb servers. The next write interval is [3h, 6h].
 				writeBindingUsageTicker.Reset(
 					randomDuration(
-						5*60,  // 5min
-						30*60, // 30min
+						3*60*60, // 3h
+						6*60*60, // 6h
 					),
 				)
 			}
