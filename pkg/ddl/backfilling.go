@@ -1119,7 +1119,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int("current worker count", exec.currentWorkerSize()))
 					}
 				}
-				failpoint.InjectCall("checkReorgWorkerCnt", targetWorkerCnt)
+				failpoint.InjectCall("checkReorgWorkerCnt", reorgInfo.Job)
 			}
 		}
 		return nil

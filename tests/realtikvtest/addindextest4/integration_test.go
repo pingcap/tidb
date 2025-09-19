@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -105,14 +104,14 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 	}
 }
 
-func TestAdminAlterDDLJobAdjustConfigLocalIngest(t *testing.T) {
+func TestAdminAlterAddIndexLocalIngestDDLJob(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t (a int);")
 	tk1.MustExec("insert into t values (1);")
 	tk1.MustExec("set @@global.tidb_enable_dist_task=off;")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockStuckIndexIngestWorker", "return(false)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockStuckIndexIngestWorker", "return(false)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(100)")
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -148,6 +147,6 @@ func TestAdminAlterDDLJobAdjustConfigLocalIngest(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return realWorkerCnt == workerCnt && realBatchSize == batchSize && realMaxWriteSpeed == maxWriteSpeed
 	}, time.Second*5, time.Millisecond*100)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockStuckIndexIngestWorker", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockStuckIndexIngestWorker", "return(true)")
 	wg.Wait()
 }
