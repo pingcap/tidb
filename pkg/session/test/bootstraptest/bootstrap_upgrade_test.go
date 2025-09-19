@@ -714,6 +714,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	wg := sync.WaitGroup{}
 	execDDL := func(query string) {
 		tk := testkit.NewTestKit(t, store)
+		tk.Session().SetValue(sessionctx.Initing, true)
 		tk.MustExec("use test")
 		_, err := tk.ExecWithContext(context.Background(), query)
 		require.NoError(t, err)
@@ -725,6 +726,12 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			defer wg.Done()
 			ch <- struct{}{}
 			tk := testkit.NewTestKit(t, store)
+			// we are running DDL on user table, it's not possible in normal
+			// upgrade process, we only use it to mock that another instance
+			// submits a DDL job on user table.
+			// we have to set sessionctx.Initing to avoid nextgen calculate resource
+			// params for this DDL.
+			tk.Session().SetValue(sessionctx.Initing, true)
 			tk.MustExec("use test")
 			_, err := tk.ExecWithContext(context.Background(), query)
 			if err != nil {
