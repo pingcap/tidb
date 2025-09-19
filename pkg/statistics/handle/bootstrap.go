@@ -433,7 +433,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 
 type loadStrategy interface {
 	calcuateTotalTaskCnt() uint64
-	generateTasks(worker *initstats.RangeWorker)
+	generateAndSendTasks(worker *initstats.RangeWorker)
 }
 
 type maxTidStrategy struct {
@@ -455,7 +455,7 @@ func (maxTidStrategy) calcuateTotalTaskCnt() uint64 {
 	return uint64(totalTaskCnt)
 }
 
-func (m maxTidStrategy) generateTasks(worker *initstats.RangeWorker) {
+func (m maxTidStrategy) generateAndSendTasks(worker *initstats.RangeWorker) {
 	tid := int64(0)
 	for tid <= m.maxTid {
 		worker.SendTask(initstats.Task{
@@ -480,7 +480,7 @@ func (t tableListStrategy) calcuateTotalTaskCnt() uint64 {
 	return uint64(len(t.tableIDs))
 }
 
-func (t tableListStrategy) generateTasks(worker *initstats.RangeWorker) {
+func (t tableListStrategy) generateAndSendTasks(worker *initstats.RangeWorker) {
 	for _, tableID := range t.tableIDs {
 		worker.SendTask(initstats.Task{
 			StartTid: tableID,
@@ -507,7 +507,7 @@ func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	s.generateTasks(ls)
+	s.generateAndSendTasks(ls)
 	ls.Wait()
 	return nil
 }
@@ -624,7 +624,7 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	s.generateTasks(ls)
+	s.generateAndSendTasks(ls)
 	ls.Wait()
 	return nil
 }
@@ -759,7 +759,7 @@ func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, total
 		initStatsPercentageInterval,
 	)
 	ls.LoadStats()
-	s.generateTasks(ls)
+	s.generateAndSendTasks(ls)
 	ls.Wait()
 	return nil
 }
