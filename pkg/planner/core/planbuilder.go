@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -2049,9 +2050,9 @@ func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *
 	}
 
 	virtualExprs := columnSelector(columns)
-	relatedCols := make(map[int64]*expression.Column, len(tblInfo.Columns))
+	relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
 	for len(virtualExprs) > 0 {
-		expression.ExtractColumnsMapFromExpressionsWithReusedMap(relatedCols, nil, virtualExprs...)
+		relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
 		virtualExprs = virtualExprs[:0]
 		for _, col := range relatedCols {
 			cols.data[col.ID] = struct{}{}
@@ -2059,7 +2060,7 @@ func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *
 				virtualExprs = append(virtualExprs, col.VirtualExpr)
 			}
 		}
-		clear(relatedCols)
+		relatedCols = relatedCols[:0]
 	}
 	return nil
 }
