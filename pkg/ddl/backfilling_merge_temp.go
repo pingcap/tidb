@@ -36,10 +36,11 @@ import (
 
 type mergeTempIndexExecutor struct {
 	taskexecutor.BaseStepExecutor
-	job      *model.Job
-	store    kv.Storage
-	ptbl     table.PhysicalTable
-	batchCnt int
+	job           *model.Job
+	store         kv.Storage
+	parentTable   table.PhysicalTable // The parent table for partition table.
+	physicalTable table.PhysicalTable // The physical partition to merge temp index.
+	batchCnt      int
 
 	mergeCounter    prometheus.Counter
 	conflictCounter prometheus.Counter
@@ -50,13 +51,13 @@ type mergeTempIndexExecutor struct {
 	buffers   *tempIdxBuffers
 }
 
-func newMergeTempIndexExecutor(job *model.Job, store kv.Storage, ptbl table.PhysicalTable) (*mergeTempIndexExecutor, error) {
+func newMergeTempIndexExecutor(job *model.Job, store kv.Storage, tbl table.PhysicalTable) (*mergeTempIndexExecutor, error) {
 	batchCnt := job.ReorgMeta.GetBatchSize()
 	return &mergeTempIndexExecutor{
 		job:            job,
 		store:          store,
 		batchCnt:       batchCnt,
-		ptbl:           ptbl,
+		parentTable:    tbl,
 		SubtaskSummary: &execute.SubtaskSummary{},
 		buffers:        newTempIdxBuffers(batchCnt),
 	}, nil
@@ -67,26 +68,38 @@ func (*mergeTempIndexExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (e *mergeTempIndexExecutor) initializeByMeta(meta *BackfillSubTaskMeta) error {
+func (e *mergeTempIndexExecutor) initializeByMeta(subtask *proto.Subtask, meta *BackfillSubTaskMeta) error {
 	physicalID := tablecodec.DecodeTableID(meta.StartKey)
-	idxInfo, err := findIndexInfoByDecodingKey(e.ptbl.Indices(), meta.StartKey)
+	idxInfo, err := findIndexInfoByDecodingKey(e.parentTable.Indices(), meta.StartKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if e.ptbl.Meta().Partition != nil && !idxInfo.Global {
-		e.ptbl = e.ptbl.GetPartitionedTable().GetPartition(physicalID)
-		if e.ptbl == nil {
+	e.idxInfo = idxInfo
+	if e.parentTable.GetPartitionedTable() != nil && !idxInfo.Global {
+		e.physicalTable = e.parentTable.GetPartitionedTable().GetPartition(physicalID)
+		if e.physicalTable == nil {
 			return errors.Errorf("partitioned table %d not found for index %s", physicalID, idxInfo.Name.L)
 		}
+	} else {
+		e.physicalTable = e.parentTable
 	}
-	e.idxInfo = idxInfo
+	logutil.BgLogger().Info("initialize merge temp index executor by meta",
+		zap.Int64("jobID", e.job.ID),
+		zap.Int64("subtaskID", subtask.ID),
+		zap.String("index", e.idxInfo.Name.O),
+		zap.Int64("physicalID", e.physicalTable.GetPhysicalID()),
+		zap.Int64("taskPhysicalID", meta.PhysicalTableID),
+		zap.Bool("isPartition", e.parentTable.GetPartitionedTable() != nil),
+		zap.Bool("isGlobal", e.idxInfo.Global),
+	)
+	// init metrics
 
 	e.mergeCounter = metrics.GetBackfillTotalByLabel(
 		metrics.LblMergeTmpIdxRate,
-		e.job.SchemaName, e.ptbl.Meta().Name.String(), e.idxInfo.Name.L)
+		e.job.SchemaName, e.physicalTable.Meta().Name.String(), e.idxInfo.Name.L)
 	e.conflictCounter = metrics.GetBackfillTotalByLabel(
 		fmt.Sprintf("%s-conflict", metrics.LblMergeTmpIdxRate),
-		e.job.SchemaName, e.ptbl.Meta().Name.String(), e.idxInfo.Name.L)
+		e.job.SchemaName, e.physicalTable.Meta().Name.String(), e.idxInfo.Name.L)
 	return nil
 }
 
@@ -98,7 +111,7 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.initializeByMeta(&meta)
+	err = e.initializeByMeta(subtask, &meta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -107,9 +120,9 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	opCtx, cancel := NewDistTaskOperatorCtx(ctx)
 	collector := &mergeTempIndexCollector{}
 
-	srcOp := NewTempIndexScanTaskSource(opCtx, e.store, e.ptbl, meta.StartKey, meta.EndKey)
-	mergeOp := NewMergeTempIndexOperator(opCtx, e.store, e.ptbl, e.idxInfo, e.job.ID, subtask.Concurrency, e.batchCnt, e.job.ReorgMeta)
-	sinkOp := newTempIndexResultSink(opCtx, e.ptbl, collector)
+	srcOp := NewTempIndexScanTaskSource(opCtx, e.store, e.physicalTable, meta.StartKey, meta.EndKey)
+	mergeOp := NewMergeTempIndexOperator(opCtx, e.store, e.physicalTable, e.idxInfo, e.job.ID, subtask.Concurrency, e.batchCnt, e.job.ReorgMeta)
+	sinkOp := newTempIndexResultSink(opCtx, e.physicalTable, collector)
 
 	operator.Compose(srcOp, mergeOp)
 	operator.Compose(mergeOp, sinkOp)

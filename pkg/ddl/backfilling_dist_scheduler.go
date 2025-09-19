@@ -878,6 +878,7 @@ func genMergeTempPlanForOneIndex(
 
 		regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
 		logger.Info("calculate temp index region batch",
+			zap.Int64("physicalTableID", pid),
 			zap.Int("totalRegionCnt", len(regionMetas)),
 			zap.Int("regionBatch", regionBatch),
 			zap.Int("instanceCnt", nodeCnt),
@@ -887,7 +888,7 @@ func genMergeTempPlanForOneIndex(
 			endIdx := min(i+regionBatch, len(regionMetas))
 			batch := regionMetas[i:endIdx]
 			subTaskMeta := &BackfillSubTaskMeta{
-				PhysicalTableID: tbl.GetPhysicalID(),
+				PhysicalTableID: pid,
 				SortedKVMeta: external.SortedKVMeta{
 					StartKey: batch[0].StartKey(),
 					EndKey:   batch[len(batch)-1].EndKey(),
