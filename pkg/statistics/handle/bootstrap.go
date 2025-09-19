@@ -682,11 +682,11 @@ func genInitStatsBucketsSQLForIndexes(isPaging bool) string {
 	return selectPrefix + " and table_id >= %? and table_id < %?" + orderSuffix
 }
 
-func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint64, tableIDs ...int64) error {
+func (h *Handle) initStatsBucketsAndCalcPreScalar(cache statstypes.StatsCache, totalMemory uint64, concurrency int, tableIDs ...int64) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	err := h.initStatsBucketsConcurrently(cache, totalMemory, initstats.GetConcurrency(), tableIDs...)
+	err := h.initStatsBucketsConcurrently(cache, totalMemory, concurrency, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -860,7 +860,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableI
 	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
 
 	start = time.Now()
-	err = h.initStatsBuckets(cache, totalMemory, tableIDs...)
+	err = h.initStatsBucketsAndCalcPreScalar(cache, totalMemory, concurrency, tableIDs...)
 	if err != nil {
 		return errors.Trace(err)
 	}
