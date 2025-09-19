@@ -46,8 +46,6 @@ func (a *mockAllocator) freeAll() {
 }
 
 func TestGlobalMemoryTuner(t *testing.T) {
-	t.Skip("Skip when golang version >= 1.25.0")
-
 	require.True(t, intest.InTest)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/gctuner/testMemoryLimitTuner", "return(true)"))
 	defer func() {
@@ -129,8 +127,6 @@ func TestGlobalMemoryTuner(t *testing.T) {
 }
 
 func TestIssue48741(t *testing.T) {
-	t.Skip("Skip when golang version >= 1.25.0")
-
 	require.True(t, intest.InTest)
 	// Close GOGCTuner
 	gogcTuner := EnableGOGCTuner.Load()
