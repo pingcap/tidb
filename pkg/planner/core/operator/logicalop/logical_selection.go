@@ -99,7 +99,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
 	// Apply predicate simplification to the conditions. because propagateConstant has been dealed in the ConstantPropagationSolver
 	// so we don't need to do it again.
-	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, nil)
+	p.Conditions = ruleutil.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false, false, nil)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
@@ -111,7 +111,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 	retConditions = append(retConditions, canNotBePushDown...)
 	sctx := p.SCtx()
 	if len(retConditions) > 0 {
-		p.Conditions = ruleutil.ApplyPredicateSimplification(sctx, retConditions, true, nil)
+		p.Conditions = ruleutil.ApplyPredicateSimplification(sctx, retConditions, true, false, nil)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
@@ -196,7 +196,7 @@ func (p *LogicalSelection) PredicateSimplification() base.LogicalPlan {
 		for _, cond := range pp.Conditions {
 			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		actualExprs := ruleutil.ApplyPredicateSimplification(p.SCtx(), pp.Conditions, false, nil)
+		actualExprs := ruleutil.ApplyPredicateSimplification(p.SCtx(), pp.Conditions, false, false, nil)
 		actual := make([]string, 0, len(actualExprs))
 		for _, cond := range actualExprs {
 			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
