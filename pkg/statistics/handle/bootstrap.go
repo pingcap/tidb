@@ -866,7 +866,19 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema, tableI
 	}
 	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
 
-	h.Replace(cache)
+	// If tableIDs is empty, it means we load all the tables' stats meta and histograms.
+	// So we can replace the global cache with the new cache.
+	if len(tableIDs) == 0 {
+		h.Replace(cache)
+	} else {
+		tables := cache.Values()
+		for _, table := range tables {
+			intest.Assert(table != nil, "table should not be nil")
+			h.Put(table.PhysicalID, table)
+		}
+		// Do not forget to close the new cache. Otherwise it would cause the goroutine leak issue.
+		cache.Close()
+	}
 	return nil
 }
 
