@@ -229,7 +229,7 @@ func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
 	dom.Close()
 }
 
-func TestNonLiteInitStatsWithOnlyOneTable(t *testing.T) {
+func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer store.Close()
 	se := session.CreateSessionAndSetID(t, store)
