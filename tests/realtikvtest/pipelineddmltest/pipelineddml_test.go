@@ -127,18 +127,6 @@ func TestPipelinedDMLPositive(t *testing.T) {
 
 	// enable by hint
 	// Hint works for DELETE and UPDATE, but not for INSERT if the hint is in its select clause.
-<<<<<<< HEAD
-	tk.MustExec("set @@tidb_dml_type = standard")
-	err = panicToErr(
-		func() error {
-			_, err := tk.Exec("delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t")
-			// "insert into t select /*+ SET_VAR(tidb_dml_type=bulk) */ * from t" won't work
-			return err
-		},
-	)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
-=======
 	dmls := [][3]string{
 		{"update t set b = b + 1", "update /*+ SET_VAR(tidb_dml_type=bulk) */ t set b = b + 1", "true"},
 		{"insert into t select * from t", "insert /*+ SET_VAR(tidb_dml_type=bulk) */ into t select * from t", "false"},
@@ -188,7 +176,6 @@ func TestPipelinedDMLPositive(t *testing.T) {
 
 		tk.MustQuery("select @@tidb_dml_type").Check(testkit.Rows("standard"))
 	}
->>>>>>> fbf158686df (planner: Make SET_VAR query hints restore the original session variable values. (#61280))
 }
 
 func TestPipelinedDMLNegative(t *testing.T) {
