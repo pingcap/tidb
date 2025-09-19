@@ -51,7 +51,7 @@ func TestExecAutoAnalyzes(t *testing.T) {
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	tblStats := handle.GetTableStats(tbl.Meta())
+	tblStats := handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
 }
 

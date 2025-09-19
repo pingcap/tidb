@@ -1109,6 +1109,9 @@ type SessionVars struct {
 	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
 	EnableNoDecorrelateInSelect bool
 
+	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
+	EnableSemiJoinRewrite bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
@@ -1702,6 +1705,9 @@ type SessionVars struct {
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
+
+	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	InternalSQLScanUserTable bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2135,6 +2141,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		EnableSemiJoinRewrite:         DefOptEnableSemiJoinRewrite,
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
