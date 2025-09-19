@@ -101,11 +101,9 @@ func (b *Binding) UpdateUsageInfo() {
 	b.UsageInfo.Update()
 }
 
-// ResetUsageInfo is to reset the bindinfo usage info after writing into storage.
-func (b *Binding) ResetUsageInfo() {
-	ts := time.Now()
-	b.UsageInfo.LastSavedAt.Store(&ts)
-	b.UsageInfo.LastUsedAt.Store(nil)
+// UpdateSavedAt is to update the last saved time
+func (b *Binding) UpdateSavedAt(ts *time.Time) {
+	b.UsageInfo.LastSavedAt.Store(ts)
 }
 
 type bindingInfoUsageInfo struct {

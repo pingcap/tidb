@@ -189,9 +189,7 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 			continue
 		}
 		intest.Assert(lastUsed.Compare(*lastSaved) >= 0, " lastUsed should be later than or equal to lastSaved")
-		if time.Since(*lastSaved) > MaxWriteInterval ||
-			// if the last used time is updated for more than 1 hour, we also write it back to storage.
-			time.Since(*lastUsed) > 1*time.Hour {
+		if time.Since(*lastSaved) > MaxWriteInterval {
 			toWrite = append(toWrite, binding)
 		}
 		if len(toWrite) == UpdateBindingUsageInfoBatchSize {
@@ -229,8 +227,9 @@ func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, 
 		return nil
 	})
 	if err == nil {
+		ts := time.Now()
 		for _, binding := range bindings {
-			binding.ResetUsageInfo()
+			binding.UpdateSavedAt(&ts)
 		}
 	}
 	return err
