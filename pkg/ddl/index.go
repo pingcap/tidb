@@ -2499,6 +2499,7 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 			MockDMLExecution()
 		}
 	})
+	failpoint.InjectCall("mockAddIndexTxnWorkerStuck")
 	return
 }
 

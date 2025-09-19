@@ -614,9 +614,12 @@ func TestAdminAlterModifyColumnDDLJob(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t (a int);")
 	tk1.MustExec("insert into t values (1);")
-	wg := sync.WaitGroup{}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockStuckBackfillData", "return(false)")
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateColumnWorkerStuck", func() {
+		<-ch
+	})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(100)")
+	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -649,6 +652,6 @@ func TestAdminAlterModifyColumnDDLJob(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return realWorkerCnt == workerCnt && realBatchSize == batchSize && realMaxWriteSpeed == maxWriteSpeed
 	}, time.Second*5, time.Millisecond*100)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockStuckBackfillData", "return(true)")
+	close(ch)
 	wg.Wait()
 }

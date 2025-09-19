@@ -782,17 +782,7 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 	failpoint.Inject("injectPanicForIndexIngest", func() {
 		panic("mock panic")
 	})
-	if intest.InTest {
-		for {
-			stop := true
-			failpoint.Inject("mockStuckIndexIngestWorker", func(val failpoint.Value) {
-				stop = val.(bool)
-			})
-			if stop {
-				break
-			}
-		}
-	}
+	failpoint.InjectCall("mockIndexIngestWorkerStuck")
 
 	result := IndexWriteResult{
 		ID: ck.ID,
