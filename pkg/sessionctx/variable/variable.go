@@ -90,6 +90,8 @@ type SysVar struct {
 	skipInit bool
 	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
 	IsNoop bool
+	// IsInitedFromConfig defines if the sysvar is inited from the config file.
+	IsInitedFromConfig bool
 	// GlobalConfigName is the global config name of this global variable.
 	// If the global variable has the global config name,
 	// it should store the global config into PD(etcd) too when set global variable.
