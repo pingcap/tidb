@@ -26,7 +26,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 
 	"github.com/docker/go-units"
@@ -1281,36 +1280,30 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
-		start := time.Now()
-		e.logger.Info("hjq before walk dir", zap.String("path", fileNameKey),
-			zap.String("commonPrefix", commonPrefix),
-			zap.String("escapedPath", escapedPath))
 		allFiles := make([]mydump.RawFile, 0, 16)
 		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
-				// e.logger.Info("hjq match one file start", zap.String("remote path", remotePath))
-				// start2 := time.Now()
-				// defer e.logger.Info("hjq match one file finished", zap.String("remote path", remotePath), zap.Duration("duration", time.Since(start2)))
-				// we have checked in LoadDataExec.Next
-				//nolint: errcheck
-				match, _ := filepath.Match(escapedPath, remotePath)
-				if !match {
-					return nil
-				}
-				// pick arbitrary one file to detect the format.
-				e.detectAndUpdateFormat(remotePath)
-				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
-				totalSize += size
 				return nil
+
 			}); err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err), "failed to walk dir")
 		}
-		e.logger.Info("hjq finish walk dir", zap.Duration("duration", time.Since(start)), zap.Int("file number", len(allFiles)), zap.Int64("total size", totalSize))
 		var err error
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, f.Path)
+				if !match {
+					return nil, nil
+				}
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				e.detectAndUpdateFormat(path)
+				sourceType = e.getSourceType()
+				allFiles = append(allFiles, mydump.RawFile{Path: path, Size: size})
+				totalSize += size
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
