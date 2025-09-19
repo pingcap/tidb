@@ -555,13 +555,15 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 // genInitStatsTopNSQLForIndexes generates the SQL to load all stats_top_n records for indexes.
 // We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
 // The stats of the column is not loaded during the bootstrap process.
-func genInitStatsTopNSQLForIndexes(isPaging bool) string {
+func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_top_n,tbl) */ HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
 	orderSuffix := " order by table_id"
 	if !isPaging {
 		return selectPrefix + orderSuffix
 	}
-	return selectPrefix + " and table_id >= %? and table_id < %?" + orderSuffix
+	rangeStartClause := " where table_id >= " + strconv.FormatInt(tableRange[0], 10)
+	rangeEndClause := " and table_id < " + strconv.FormatInt(tableRange[1], 10)
+	return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
 }
 
 func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
@@ -578,8 +580,8 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := genInitStatsTopNSQLForIndexes(true)
-	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
+	sql := genInitStatsTopNSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
+	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
