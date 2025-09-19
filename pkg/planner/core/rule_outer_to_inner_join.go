@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -39,6 +40,9 @@ type ConvertOuterToInnerJoin struct {
 //     - For all other cases, do not pass ON clause.
 func (*ConvertOuterToInnerJoin) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	return p.ConvertOuterToInnerJoin(nil), planChanged, nil
 }
 
