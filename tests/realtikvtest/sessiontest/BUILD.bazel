@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "infoschema_test.go",
         "infoschema_v2_test.go",
+        "internal_session_test.go",
         "main_test.go",
         "paging_test.go",
         "session_fail_test.go",
@@ -16,12 +17,14 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/infoschema",
+        "//pkg/kv",
         "//pkg/meta",
         "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/testkit",
+        "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
