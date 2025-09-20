@@ -638,6 +638,24 @@ func TestOptimizerCostFactors(t *testing.T) {
 	tk.MustExec("set @@session.tidb_opt_index_merge_cost_factor=1")
 }
 
+func TestMergeJoinCostWithOtherConds(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t1 (id int, a int, b int, c int, primary key(id, a))`)
+		tk.MustExec(`create table t2 (id int, a int, b int, c int, primary key(id, a))`)
+		cost1Str := tk.MustQuery(`explain format='verbose' select /*+ merge_join(t1, t2) */ * from t1 join t2 on t1.id=t2.id`).Rows()[0][2].(string)
+		cost2Str := tk.MustQuery(`explain format='verbose' select /*+ merge_join(t1, t2) */ * from t1 join t2 on t1.id=t2.id and t1.a>t2.a`).Rows()[0][2].(string)
+
+		cost1, err := strconv.ParseFloat(cost1Str, 64)
+		require.Nil(t, err)
+		cost2, err := strconv.ParseFloat(cost2Str, 64)
+		require.Nil(t, err)
+
+		// cost2 should be larger than cost1 since it has an additional condition `t1.a>t2.a`
+		require.Less(t, cost1, cost2)
+	})
+}
+
 func TestTiFlashCostFactors(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
