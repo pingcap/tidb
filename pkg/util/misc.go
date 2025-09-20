@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
@@ -119,6 +120,11 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+	if intest.InTest {
+		if strings.Contains(fmt.Sprintf("%v", r), "assert failed") {
+			panic(r)
+		}
+	}
 
 	if recoverFn != nil {
 		recoverFn()
