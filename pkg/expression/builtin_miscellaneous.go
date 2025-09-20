@@ -342,7 +342,7 @@ func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	ft := args[0].GetType(ctx.GetEvalCtx()).Clone()
+	ft := args[0].GetType(ctx.GetEvalCtx()).DeepClone()
 	ft.AddFlag(bf.tp.GetFlag())
 	*bf.tp = *ft
 	var sig builtinFunc
