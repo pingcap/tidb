@@ -178,7 +178,10 @@
       "explain format = 'brief' select * from t",
       "explain format = 'brief' select * from t use index();",
       "explain format = 'brief' select /*+ use_index(t, idx)*/ * from t",
-      "explain format = 'brief' select /*+ use_index(t)*/ * from t"
+      "explain format = 'brief' select /*+ use_index(t)*/ * from t",
+      "explain format = 'brief' select /*+ use_index(t, idx_vec)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
+      "explain format = 'brief' select /*+ use_index(t, idx_v)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
+      "explain format = 'brief' select /*+ ignore_index(t, idx_vec)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;"
     ]
   },
   {
