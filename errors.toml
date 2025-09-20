@@ -2011,6 +2011,11 @@ error = '''
 Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
 '''
 
+["executor:8180"]
+error = '''
+Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

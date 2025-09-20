@@ -1755,6 +1755,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 		StorageKV:         stmtCtx.IsTiKV.Load(),
 		StorageMPP:        stmtCtx.IsTiFlash.Load(),
+
+		MemArbitration: stmtCtx.MemTracker.MemArbitration(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -2057,6 +2059,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
+	stmtExecInfo.MemArbitration = stmtCtx.MemTracker.MemArbitration()
+
 	stmtsummaryv2.Add(stmtExecInfo)
 }
 

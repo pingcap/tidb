@@ -1766,6 +1766,13 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
+	MemArbitrator struct {
+		WaitAverse    MemArbitratorWaitAverseMode
+		QueryReserved int64
+		TokenCnt      int64 // -1: invalid, 0: unknown, >0: valid
+	}
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -3727,3 +3734,21 @@ func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog 
 		return true
 	})
 }
+
+// MemArbitratorWaitAverseMode is the definition for global memory arbitrator to handle wait-averse mode.
+type MemArbitratorWaitAverseMode int
+
+// NoLimit indicates that the memory arbitrator will not control current session
+// Enable indicates that the session will be controlled by the wait-averse mode
+const (
+	MemArbitratorWaitAverseDisable MemArbitratorWaitAverseMode = iota
+	MemArbitratorWaitAverseEnable
+	MemArbitratorNolimit
+)
+
+// Error definitions for memory arbitrator session variables.
+var (
+	ErrTiDBMemArbitratorSoftLimit     = errors.New(vardef.TiDBMemArbitratorSoftLimit + ": 0 (default); (0, 1.0] float-rate * server-limit; (1, server-limit] integer bytes; auto;")
+	ErrTiDBMemArbitratorWaitAverse    = errors.New(vardef.TiDBMemArbitratorWaitAverse + ": 0 (disable); 1 (enable); nolimit;")
+	ErrTiDBMemArbitratorQueryReserved = errors.New(vardef.TiDBMemArbitratorQueryReserved + ": 0 (default); (1, server-limit] integer bytes;")
+)

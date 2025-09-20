@@ -65,14 +65,19 @@ func (smqh *Handle) SetSessionManager(sm sessmgr.Manager) *Handle {
 // When the corresponding SQL try to acquire more memory(next Tracker.Consume() call), it will trigger panic and exit.
 // When this goroutine detects the `needKill` SQL has exited successfully, it will immediately trigger runtime.GC() to release memory resources.
 func (smqh *Handle) Run() {
-	tickInterval := time.Millisecond * time.Duration(100)
+	tickInterval := time.Millisecond * time.Duration(50)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := smqh.sm.Load().(sessmgr.Manager)
 	sessionToBeKilled := &sessionToBeKilled{}
+	var gMemStats *runtime.MemStats
 	for {
 		select {
 		case <-ticker.C:
+			if s := memory.ReadMemStats(); s != gMemStats {
+				gMemStats = s
+				memory.HandleGlobalMemArbitratorRuntime(gMemStats)
+			}
 			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryLimit.Load(), sm)
 		case <-smqh.exitCh:
 			return
@@ -102,7 +107,7 @@ func (s *sessionToBeKilled) reset() {
 func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 	if s.isKilling {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
-			if info.Time == s.sqlStartTime {
+			if info.Time.Equal(s.sqlStartTime) {
 				if time.Since(s.lastLogTime) > 5*time.Second {
 					logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
 						time.Since(s.killStartTime)/time.Second),
@@ -136,6 +141,11 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 	if bt == 0 {
 		return
 	}
+
+	if memory.UsingGlobalMemArbitration() {
+		return
+	}
+
 	failpoint.Inject("issue42662_2", func(val failpoint.Value) {
 		if val.(bool) {
 			bt = 1
@@ -239,7 +249,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 			types.NewDatum(info.memoryCurrent), // MEMORY_CURRENT
 			info.processInfoDatum[0],           // PROCESSID
 			info.processInfoDatum[9],           // MEM
-			info.processInfoDatum[10],          // DISK
+			info.processInfoDatum[13],          // DISK
 			info.processInfoDatum[2],           // CLIENT
 			info.processInfoDatum[3],           // DB
 			info.processInfoDatum[1],           // USER
