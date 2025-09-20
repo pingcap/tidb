@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -800,15 +801,24 @@ func (t *Tracker) Reset() {
 	t.mu.children = nil
 }
 
-func (t *Tracker) getParent() *Tracker {
-	t.parMu.Lock()
-	defer t.parMu.Unlock()
-	return t.parMu.parent
+func (t *Tracker) getParent() (tracker *Tracker) {
+	mu := &t.parMu
+	addr := uintptr(unsafe.Pointer(mu))
+	mu.Lock()
+	defer func() {
+		if uintptr(unsafe.Pointer(&t.parMu)) != addr {
+			tracker = nil
+		}
+		mu.Unlock()
+	}()
+	tracker = t.parMu.parent
+	return
 }
 
 func (t *Tracker) setParent(parent *Tracker) {
-	t.parMu.Lock()
-	defer t.parMu.Unlock()
+	mu := &t.parMu
+	mu.Lock()
+	defer mu.Unlock()
 	t.parMu.parent = parent
 }
 
