@@ -652,6 +652,8 @@ type updateColumnWorker struct {
 
 	rowMap map[int64]types.Datum
 
+	encodeBuf []byte
+
 	checksumNeeded bool
 }
 
@@ -692,6 +694,7 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
 		rowDecoder:     rowDecoder,
+		encodeBuf:      make([]byte, 32),
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		checksumNeeded: vardef.EnableRowLevelChecksum.Load(),
 	}, nil
@@ -803,10 +806,28 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 			w.rowMap[w.oldColInfo.ID] = v
 		}
 	}
-	newColVal, err := table.CastColumnValue(w.exprCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
+	oldColVal := w.rowMap[w.oldColInfo.ID]
+	newColVal, err := table.CastColumnValue(w.exprCtx, oldColVal, w.newColInfo, false, false)
 	if err != nil {
 		return w.reformatErrors(err)
 	}
+
+	// Before writing the new row, compare the encoded value for old and new column.
+	// If they are the same, skip writing it.
+	oldEncoded, err := rowcodec.EncodeValueDatum(sysTZ, &oldColVal, w.encodeBuf[:0])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newEncoded, err := rowcodec.EncodeValueDatum(sysTZ, &newColVal, oldEncoded[len(oldEncoded):])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	w.encodeBuf = oldEncoded
+	if bytes.Equal(oldEncoded, newEncoded) {
+		w.cleanRowMap()
+		return nil
+	}
+
 	warn := w.warnings.GetWarnings()
 	if len(warn) != 0 {
 		//nolint:forcetypeassert

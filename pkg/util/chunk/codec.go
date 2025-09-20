@@ -238,6 +238,7 @@ type Decoder struct {
 	intermChk    *Chunk
 	codec        *Codec
 	remainedRows int
+	consumedRows int
 }
 
 // NewDecoder creates a new Decoder object for decode a Chunk.
@@ -251,9 +252,14 @@ func (c *Decoder) Decode(chk *Chunk) {
 	// Set the requiredRows to a multiple of 8.
 	requiredRows = min((requiredRows+7)>>3<<3, c.remainedRows)
 	for i := range chk.NumCols() {
-		c.decodeColumn(chk, i, requiredRows)
+		if len(chk.Deps) == 0 || chk.Deps[i] == 0 {
+			c.decodeColumn(chk, i, requiredRows)
+		} else {
+			c.decodeColumnWithDeps(chk, i, chk.Deps[i], requiredRows, c.consumedRows)
+		}
 	}
 	c.remainedRows -= requiredRows
+	c.consumedRows += requiredRows
 }
 
 // Reset decodes data and store the result in Decoder.intermChk. This decode phase uses pointer operations with less
@@ -261,6 +267,7 @@ func (c *Decoder) Decode(chk *Chunk) {
 func (c *Decoder) Reset(data []byte) {
 	c.codec.DecodeToChunk(data, c.intermChk)
 	c.remainedRows = c.intermChk.NumRows()
+	c.consumedRows = 0
 }
 
 // IsFinished indicates whether Decoder.intermChk has been dried up.
@@ -338,4 +345,41 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 
 	destCol.data = append(destCol.data, srcCol.data[:numDataBytes]...)
 	srcCol.data = srcCol.data[numDataBytes:]
+}
+
+func (c *Decoder) decodeColumnWithDeps(chk *Chunk, ordinal, depIdx int, requiredRows, consumedRows int) {
+	elemLen := getFixedLen(c.codec.colTypes[ordinal])
+
+	srcCol := c.intermChk.columns[ordinal]
+	depsCol := c.intermChk.columns[depIdx]
+	destCol := chk.columns[ordinal]
+
+	var targetCol *Column
+
+	destCol.appendMultiSameNullBitmap(false, requiredRows)
+	for i := range requiredRows {
+		srcIdx := consumedRows + i
+		destIdx := destCol.length + i
+		nullValue := srcCol.nullBitmap[srcIdx>>3] & (1 << uint(srcIdx&7))
+		if nullValue > 0 {
+			targetCol = srcCol
+		} else {
+			targetCol = depsCol
+			nullValue = depsCol.nullBitmap[srcIdx>>3] & (1 << uint(srcIdx&7))
+		}
+
+		if elemLen == VarElemLen {
+			startOffset, endOffset := targetCol.offsets[srcIdx], targetCol.offsets[srcIdx+1]
+			numDataBytes := endOffset - startOffset
+			destCol.offsets = append(destCol.offsets, destCol.offsets[len(destCol.offsets)-1]+numDataBytes)
+			destCol.data = append(destCol.data, targetCol.data[startOffset:endOffset]...)
+		} else {
+			startOffset, endOffset := srcIdx*elemLen, (srcIdx+1)*elemLen
+			destCol.data = append(destCol.data, targetCol.data[startOffset:endOffset]...)
+		}
+
+		destCol.nullBitmap[destIdx>>3] |= nullValue
+	}
+
+	destCol.length += requiredRows
 }

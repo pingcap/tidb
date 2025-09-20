@@ -163,6 +163,9 @@ type TableReaderExecutor struct {
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
+	depOffset []int
+	retTypes  []*types.FieldType
+
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
@@ -263,6 +266,33 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 
+	// rewrite dag
+	dependency := make(map[int64]*expression.Column, len(e.Schema().Columns))
+	e.depOffset = make([]int, len(e.Schema().Columns))
+	e.retTypes = exec.RetTypes(e)
+	for _, col := range e.Schema().Columns {
+		if col.PrevID != 0 {
+			dependency[col.ID] = col
+		}
+	}
+	for _, exec := range e.dagPB.Executors {
+		if exec.Tp != tipb.ExecType_TypeTableScan {
+			continue
+		}
+		existingCols := len(exec.TblScan.Columns)
+		for i, col := range exec.TblScan.Columns[:existingCols] {
+			if depCol, ok := dependency[col.ColumnId]; ok {
+				newCol := *col
+				newCol.ColumnId = depCol.PrevID
+				exec.TblScan.Columns = append(exec.TblScan.Columns, &newCol)
+
+				e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(len(exec.TblScan.Columns)-1))
+				e.depOffset[i] = len(exec.TblScan.Columns) - 1
+				e.retTypes = append(e.retTypes, depCol.RetType)
+			}
+		}
+	}
+
 	e.resultHandler = &tableResultHandler{}
 
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
@@ -317,6 +347,11 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Deps = e.depOffset
+	defer func() {
+		req.Deps = nil
+	}()
+
 	if e.dummy {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
@@ -371,7 +406,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			}
 			var results []distsql.SelectResult
 			for _, kvReq := range kvReqs {
-				result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+				result, err := e.SelectResult(ctx, e.dctx, kvReq, e.retTypes, getPhysicalPlanIDs(e.plans), e.ID())
 				if err != nil {
 					return nil, err
 				}
@@ -384,7 +419,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		if err != nil {
 			return nil, err
 		}
-		result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+		result, err := e.SelectResult(ctx, e.dctx, kvReq, e.retTypes, getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
 			return nil, err
 		}
@@ -399,7 +434,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		}
 		var results []distsql.SelectResult
 		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+			result, err := e.SelectResult(ctx, e.dctx, kvReq, e.retTypes, getPhysicalPlanIDs(e.plans), e.ID())
 			if err != nil {
 				return nil, err
 			}
@@ -420,7 +455,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	})
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
-	result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+	result, err := e.SelectResult(ctx, e.dctx, kvReq, e.retTypes, getPhysicalPlanIDs(e.plans), e.ID())
 	if err != nil {
 		return nil, err
 	}
