@@ -1282,11 +1282,15 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
+	indexLookUpPushDown := make(map[int]struct{})
 	if tableHints != nil {
 		for i, hint := range tableHints.IndexHintList {
 			if hint.Match(dbName, tblName) {
 				indexHints = append(indexHints, hint.IndexHint)
 				tableHints.IndexHintList[i].Matched = true
+				if hint.SupportIndexLookUpPushDown() {
+					indexLookUpPushDown[len(indexHints)-1] = struct{}{}
+				}
 			}
 		}
 	}
@@ -1309,6 +1313,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if path := getTablePath(publicPaths); path != nil {
 				hasUseOrForce = true
 				path.Forced = true
+				if i >= indexHintsLen {
+					_, path.IsIndexLookUpPushDown = indexLookUpPushDown[i]
+				}
 				available = append(available, path)
 			}
 		}
@@ -1350,6 +1357,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 			if hint.HintType == ast.HintNoOrderIndex {
 				path.ForceNoKeepOrder = true
+			}
+			if i >= indexHintsLen {
+				_, path.IsIndexLookUpPushDown = indexLookUpPushDown[i]
 			}
 			available = append(available, path)
 		}
