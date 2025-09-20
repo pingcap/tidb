@@ -366,6 +366,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
+	tk.MustExec("admin check table t")
 	tk.MustExec("drop table if exists t")
 }
 
