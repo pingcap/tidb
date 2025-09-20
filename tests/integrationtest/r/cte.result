@@ -776,6 +776,7 @@ insert into tt2 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
 insert into tt3 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
 insert into tt4 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
 insert into tt5 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
+<<<<<<< HEAD
 explain with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
 id	estRows	task	access object	operator info
 Sort_31	10000.00	root		cte1.tt2.c1
@@ -792,6 +793,27 @@ CTE_0	8001.00	root		Recursive CTE
   └─TableReader_30(Probe)	100000.00	root		data:Selection_29
     └─Selection_29	100000.00	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
       └─TableFullScan_28	100000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+=======
+explain format='plan_tree' with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
+id	task	access object	operator info
+Sort	root		cte1.tt2.c1
+└─Apply	root		CARTESIAN semi join, left side:TableReader
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+  └─Limit(Probe)	root		offset:0, count:1
+    └─Selection	root		eq(cte1.tt.c1, cte1.tt2.c1)
+      └─CTEFullScan	root	CTE:cte1	data:CTE_0
+CTE_0	root		Recursive CTE
+├─TableReader(Seed Part)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+└─Apply(Recursive Part)	root		CARTESIAN semi join, left side:CTETable
+  ├─CTETable(Build)	root		Scan on CTE_0
+  └─Limit(Probe)	root		offset:0, count:1
+    └─TableReader	root		data:Limit
+      └─Limit	cop[tikv]		offset:0, count:1
+        └─Selection	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
+          └─TableFullScan	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+>>>>>>> 5cb0037c0fc (planner: allow correlated exists subqueries to early-out (#63287))
 with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
 c1
 1
@@ -803,6 +825,7 @@ c1
 explain with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1))
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
+<<<<<<< HEAD
 id	estRows	task	access object	operator info
 Sort_58	32000.00	root		Column#28
 └─HashAgg_60	32000.00	root		group by:Column#28, funcs:firstrow(Column#28)->Column#28
@@ -835,6 +858,46 @@ CTE_0	8001.00	root		Recursive CTE
   └─TableReader_57(Probe)	100000.00	root		data:Selection_56
     └─Selection_56	100000.00	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
       └─TableFullScan_55	100000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+=======
+id	task	access object	operator info
+Sort	root		Column#28
+└─HashAgg	root		group by:Column#28, funcs:firstrow(Column#28)->Column#28
+  └─Union	root		
+    ├─Apply	root		CARTESIAN semi join, left side:TableReader
+    │ ├─TableReader(Build)	root		data:TableFullScan
+    │ │ └─TableFullScan	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+    │ └─Limit(Probe)	root		offset:0, count:1
+    │   └─Selection	root		eq(cte1.tt.c1, cte1.tt2.c1)
+    │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
+    ├─Apply	root		CARTESIAN semi join, left side:TableReader
+    │ ├─TableReader(Build)	root		data:TableFullScan
+    │ │ └─TableFullScan	cop[tikv]	table:tt3	keep order:false, stats:pseudo
+    │ └─Limit(Probe)	root		offset:0, count:1
+    │   └─Selection	root		eq(cte1.tt.c1, cte1.tt3.c1)
+    │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
+    ├─Apply	root		CARTESIAN semi join, left side:TableReader
+    │ ├─TableReader(Build)	root		data:TableFullScan
+    │ │ └─TableFullScan	cop[tikv]	table:tt4	keep order:false, stats:pseudo
+    │ └─Limit(Probe)	root		offset:0, count:1
+    │   └─Selection	root		eq(cte1.tt.c1, cte1.tt4.c1)
+    │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
+    └─Apply	root		CARTESIAN semi join, left side:TableReader
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:tt5	keep order:false, stats:pseudo
+      └─Limit(Probe)	root		offset:0, count:1
+        └─Selection	root		eq(cte1.tt.c1, cte1.tt5.c1)
+          └─CTEFullScan	root	CTE:cte1	data:CTE_0
+CTE_0	root		Recursive CTE
+├─TableReader(Seed Part)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+└─Apply(Recursive Part)	root		CARTESIAN semi join, left side:CTETable
+  ├─CTETable(Build)	root		Scan on CTE_0
+  └─Limit(Probe)	root		offset:0, count:1
+    └─TableReader	root		data:Limit
+      └─Limit	cop[tikv]		offset:0, count:1
+        └─Selection	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
+          └─TableFullScan	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+>>>>>>> 5cb0037c0fc (planner: allow correlated exists subqueries to early-out (#63287))
 with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1))
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
@@ -849,6 +912,7 @@ explain with cte1 as (with recursive cte2 as (select c1 from tt union all select
 select c1 from tt union select c1 from cte2 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte2.c1))
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
+<<<<<<< HEAD
 id	estRows	task	access object	operator info
 Sort_85	32000.00	root		Column#36
 └─HashAgg_87	32000.00	root		group by:Column#36, funcs:firstrow(Column#36)->Column#36
@@ -891,6 +955,58 @@ CTE_1	20000.00	root		Recursive CTE, limit(offset:0, count:300)
   └─TableReader_72(Probe)	100000.00	root		data:Selection_71
     └─Selection_71	100000.00	cop[tikv]		eq(cte1.tt1.c1, cte1.tt.c1)
       └─TableFullScan_70	100000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+=======
+id	task	access object	operator info
+Sort	root		Column#36
+└─HashAgg	root		group by:Column#36, funcs:firstrow(Column#36)->Column#36
+  └─Union	root		
+    ├─Apply	root		CARTESIAN semi join, left side:TableReader
+    │ ├─TableReader(Build)	root		data:TableFullScan
+    │ │ └─TableFullScan	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+    │ └─Limit(Probe)	root		offset:0, count:1
+    │   └─Selection	root		eq(Column#23, cte1.tt2.c1)
+    │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
+    ├─Apply	root		CARTESIAN semi join, left side:TableReader
+    │ ├─TableReader(Build)	root		data:TableFullScan
+    │ │ └─TableFullScan	cop[tikv]	table:tt3	keep order:false, stats:pseudo
+    │ └─Limit(Probe)	root		offset:0, count:1
+    │   └─Selection	root		eq(Column#27, cte1.tt3.c1)
+    │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
+    ├─Apply	root		CARTESIAN semi join, left side:TableReader
+    │ ├─TableReader(Build)	root		data:TableFullScan
+    │ │ └─TableFullScan	cop[tikv]	table:tt4	keep order:false, stats:pseudo
+    │ └─Limit(Probe)	root		offset:0, count:1
+    │   └─Selection	root		eq(Column#31, cte1.tt4.c1)
+    │     └─CTEFullScan	root	CTE:cte1	data:CTE_0
+    └─Apply	root		CARTESIAN semi join, left side:TableReader
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:tt5	keep order:false, stats:pseudo
+      └─Limit(Probe)	root		offset:0, count:1
+        └─Selection	root		eq(Column#35, cte1.tt5.c1)
+          └─CTEFullScan	root	CTE:cte1	data:CTE_0
+CTE_0	root		Non-Recursive CTE
+└─HashAgg(Seed Part)	root		group by:Column#19, funcs:firstrow(Column#19)->Column#19
+  └─Union	root		
+    ├─TableReader	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+    └─Apply	root		CARTESIAN semi join, left side:CTEFullScan
+      ├─CTEFullScan(Build)	root	CTE:cte2	data:CTE_1
+      └─Limit(Probe)	root		offset:0, count:1
+        └─TableReader	root		data:Limit
+          └─Limit	cop[tikv]		offset:0, count:1
+            └─Selection	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
+              └─TableFullScan	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+CTE_1	root		Recursive CTE, limit(offset:0, count:300)
+├─TableReader(Seed Part)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+└─Apply(Recursive Part)	root		CARTESIAN semi join, left side:CTETable
+  ├─CTETable(Build)	root		Scan on CTE_1
+  └─Limit(Probe)	root		offset:0, count:1
+    └─TableReader	root		data:Limit
+      └─Limit	cop[tikv]		offset:0, count:1
+        └─Selection	cop[tikv]		eq(cte1.tt1.c1, cte1.tt.c1)
+          └─TableFullScan	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+>>>>>>> 5cb0037c0fc (planner: allow correlated exists subqueries to early-out (#63287))
 with cte1 as (with recursive cte2 as (select c1 from tt union all select c1 from cte2 where exists(select /*+ no_decorrelate() */ c1 from tt1 where tt1.c1 = cte2.c1) limit 300)
 select c1 from tt union select c1 from cte2 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte2.c1))
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union

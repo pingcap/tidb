@@ -3273,6 +3273,7 @@ SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id 
 NAME	tb_sum_code
 show warnings;
 Level	Code	Message
+<<<<<<< HEAD
 explain format = 'brief' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	estRows	task	access object	operator info
 HashJoin	250.00	root		left outer join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
@@ -3290,10 +3291,32 @@ HashJoin	250.00	root		left outer join, equal:[eq(planner__core__casetest__physic
         ├─IndexRangeScan(Build)	99900.00	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)], keep order:false, stats:pseudo
         └─Selection(Probe)	79920.00	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
           └─TableRowIDScan	99900.00	cop[tikv]	table:tc	keep order:false, stats:pseudo
+=======
+explain format = 'plan_tree' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)]
+├─IndexLookUp(Build)	root		
+│ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+│ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+│ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
+└─HashAgg(Probe)	root		group by:Column#28, funcs:sum(Column#27)->Column#18, funcs:firstrow(Column#28)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#27, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#28
+    └─Apply	root		CARTESIAN semi join, left side:TableReader
+      ├─TableReader(Build)	root		data:Selection
+      │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
+      │   └─TableFullScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
+      └─Limit(Probe)	root		offset:0, count:1
+        └─IndexLookUp	root		
+          ├─IndexRangeScan(Build)	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)], keep order:false, stats:pseudo
+          └─Limit(Probe)	cop[tikv]		offset:0, count:1
+            └─Selection	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
+              └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
+>>>>>>> 5cb0037c0fc (planner: allow correlated exists subqueries to early-out (#63287))
 SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 NAME	tb_sum_code
 show warnings;
 Level	Code	Message
+<<<<<<< HEAD
 explain format = 'brief' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	estRows	task	access object	operator info
 Projection	250.00	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column#18
@@ -3313,6 +3336,29 @@ Projection	250.00	root		planner__core__casetest__physicalplantest__physical_plan
             ├─IndexRangeScan(Build)	25000.00	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)], keep order:false, stats:pseudo
             └─Selection(Probe)	20000.00	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
               └─TableRowIDScan	25000.00	cop[tikv]	table:tc	keep order:false, stats:pseudo
+=======
+explain format = 'plan_tree' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
+id	task	access object	operator info
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column#18
+└─Apply	root		CARTESIAN left outer join, left side:IndexLookUp
+  ├─IndexLookUp(Build)	root		
+  │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
+  │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+  │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
+  └─MaxOneRow(Probe)	root		
+    └─StreamAgg	root		funcs:sum(Column#23)->Column#18
+      └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#23
+        └─Apply	root		CARTESIAN semi join, left side:IndexLookUp
+          ├─IndexLookUp(Build)	root		
+          │ ├─IndexRangeScan(Build)	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo
+          │ └─TableRowIDScan(Probe)	cop[tikv]	table:tb	keep order:false, stats:pseudo
+          └─Limit(Probe)	root		offset:0, count:1
+            └─IndexLookUp	root		
+              ├─IndexRangeScan(Build)	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)], keep order:false, stats:pseudo
+              └─Limit(Probe)	cop[tikv]		offset:0, count:1
+                └─Selection	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
+                  └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
+>>>>>>> 5cb0037c0fc (planner: allow correlated exists subqueries to early-out (#63287))
 SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 NAME	tb_sum_code
 show warnings;
@@ -3422,6 +3468,7 @@ SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ semi_join_rewrite() */ 1 from tb
 NAME
 show warnings;
 Level	Code	Message
+<<<<<<< HEAD
 explain format = 'brief' SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ no_decorrelate() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.ta.name
@@ -3455,6 +3502,43 @@ Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_pl
             └─TopN(Probe)	2497.50	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.td.id:desc, offset:0, count:1
               └─Selection	2497.50	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.td.id), not(isnull(planner__core__casetest__physicalplantest__physical_plan.td.id))
                 └─TableRowIDScan	62500.00	cop[tikv]	table:td	keep order:false, stats:pseudo
+=======
+explain format = 'plan_tree' SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ no_decorrelate() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100;
+id	task	access object	operator info
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name
+└─Apply	root		CARTESIAN inner join
+  ├─Apply(Build)	root		CARTESIAN inner join
+  │ ├─Apply(Build)	root		CARTESIAN semi join, left side:TableReader
+  │ │ ├─TableReader(Build)	root		data:TableFullScan
+  │ │ │ └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
+  │ │ └─Limit(Probe)	root		offset:0, count:1
+  │ │   └─IndexLookUp	root		
+  │ │     ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92)
+  │ │     │ └─IndexRangeScan	cop[tikv]	table:tb, index:idx_tb_name(name)	range:["chad9","chad:"), keep order:false, stats:pseudo
+  │ │     └─Limit(Probe)	cop[tikv]		offset:0, count:1
+  │ │       └─Selection	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)
+  │ │         └─TableRowIDScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
+  │ └─Selection(Probe)	root		gt(Column#14, 100)
+  │   └─MaxOneRow	root		
+  │     └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column#14
+  │       └─TopN	root		planner__core__casetest__physicalplantest__physical_plan.tc.id:desc, offset:0, count:1
+  │         └─IndexLookUp	root		
+  │           ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.name, planner__core__casetest__physicalplantest__physical_plan.tc.name), like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
+  │           │ └─IndexRangeScan	cop[tikv]	table:tc, index:idx_tc_name(name)	range:["chad99","chad9:"), keep order:false, stats:pseudo
+  │           └─TopN(Probe)	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.tc.id:desc, offset:0, count:1
+  │             └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.id))
+  │               └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
+  └─Selection(Probe)	root		gt(Column#19, 100)
+    └─MaxOneRow	root		
+      └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.td.id)->Column#19
+        └─TopN	root		planner__core__casetest__physicalplantest__physical_plan.td.id:desc, offset:0, count:1
+          └─IndexLookUp	root		
+            ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.td.name, "chad999%", 92)
+            │ └─IndexRangeScan	cop[tikv]	table:td, index:idx_tc_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
+            └─TopN(Probe)	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.td.id:desc, offset:0, count:1
+              └─Selection	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.td.id), not(isnull(planner__core__casetest__physicalplantest__physical_plan.td.id))
+                └─TableRowIDScan	cop[tikv]	table:td	keep order:false, stats:pseudo
+>>>>>>> 5cb0037c0fc (planner: allow correlated exists subqueries to early-out (#63287))
 SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ no_decorrelate() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100;
 NAME
 show warnings;
