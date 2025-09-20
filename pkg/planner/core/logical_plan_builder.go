@@ -116,7 +116,7 @@ func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 
 func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	if v, ok := inNode.(*ast.PositionExpr); ok {
-		pos, isNull, err := expression.PosFromPositionExpr(a.ctx.GetExprCtx(), v)
+		pos, isNull, _, err := expression.PosFromPositionExpr(a.ctx.GetExprCtx(), v)
 		if err != nil {
 			a.err = err
 		}
@@ -2916,12 +2916,35 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 	case *ast.PositionExpr:
-		pos, isNull, err := expression.PosFromPositionExpr(g.ctx.GetExprCtx(), v)
+		pos, isNull, isParamMarkerExpr, err := expression.PosFromPositionExpr(g.ctx.GetExprCtx(), v)
 		if err != nil {
 			g.err = plannererrors.ErrUnknown.GenWithStackByArgs()
 		}
 		if err != nil || isNull {
 			return inNode, false
+		}
+		if pos == 0 && isParamMarkerExpr {
+			// In Spring ORM, sometimes such prepare statements are generated.
+			// prepare stmt from 'select name, ? from t1 group by name, ? order by name';
+			// set @a="0", @b="0";
+			// Grouping by 0 is illegal, but here it should be of string type.
+			// In fact, any string is valid here.
+			// So, we need to try to find the ParamMarkerExpr in the SELECT field and give its index to pos.
+			if len(g.fields) == 1 {
+				// for example:
+				// prepare stmt from 'select name from t1 group by name, ? order by name';
+				// set a=0;
+				// execute stmt using @b;
+				pos = 1
+			} else {
+				for idx, field := range g.fields {
+					if _, ok := field.Expr.(*driver.ParamMarkerExpr); ok {
+						// pos starts from 1 now.
+						pos = idx + 1
+						break
+					}
+				}
+			}
 		}
 		if pos < 1 || pos > len(g.fields) {
 			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", pos)
