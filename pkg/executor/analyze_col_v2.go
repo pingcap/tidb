@@ -438,7 +438,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, samplingStatsConcurrency int) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			totalResultCh <- analyzeIndexNDVTotalResult{
 				err: getAnalyzePanicErr(r),
@@ -497,7 +497,7 @@ func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, re
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: getAnalyzePanicErr(r),
@@ -594,7 +594,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	closeTheResultCh := index == 0
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- &samplingMergeResult{err: getAnalyzePanicErr(r)}
 		}
@@ -672,7 +672,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- getAnalyzePanicErr(r)
 		}

@@ -5082,7 +5082,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
-		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
+		logutil.BgLogger().Warn("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&
