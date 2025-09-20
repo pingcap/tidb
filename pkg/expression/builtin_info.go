@@ -170,7 +170,7 @@ func (b *builtinFoundRowsSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet
 // evalInt evals a builtinFoundRowsSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_found-rows
 // TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
-func (b *builtinFoundRowsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+func (b *builtinFoundRowsSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool, error) {
 	data, err := b.GetSessionVars(ctx)
 	if err != nil {
 		return 0, true, err
@@ -479,7 +479,7 @@ func (b *builtinLastInsertIDSig) RequiredOptionalEvalProps() OptionalEvalPropKey
 
 // evalInt evals LAST_INSERT_ID().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
-func (b *builtinLastInsertIDSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinLastInsertIDSig) evalInt(ctx EvalContext, _ chunk.Row) (res int64, isNull bool, err error) {
 	vars, err := b.GetSessionVars(ctx)
 	if err != nil {
 		return 0, true, err
@@ -552,7 +552,7 @@ func (b *builtinVersionSig) Clone() builtinFunc {
 
 // evalString evals a builtinVersionSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_version
-func (b *builtinVersionSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+func (*builtinVersionSig) evalString(_ EvalContext, _ chunk.Row) (string, bool, error) {
 	return mysql.ServerVersion, false, nil
 }
 
@@ -588,7 +588,7 @@ func (b *builtinTiDBVersionSig) Clone() builtinFunc {
 
 // evalString evals a builtinTiDBVersionSig.
 // This will show git hash and build time for tidb-server.
-func (b *builtinTiDBVersionSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+func (*builtinTiDBVersionSig) evalString(_ EvalContext, _ chunk.Row) (string, bool, error) {
 	return printer.GetTiDBInfo(), false, nil
 }
 
@@ -624,7 +624,7 @@ func (b *builtinTiDBIsDDLOwnerSig) RequiredOptionalEvalProps() OptionalEvalPropK
 }
 
 // evalInt evals a builtinTiDBIsDDLOwnerSig.
-func (b *builtinTiDBIsDDLOwnerSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinTiDBIsDDLOwnerSig) evalInt(ctx EvalContext, _ chunk.Row) (res int64, isNull bool, err error) {
 	isOwner, err := b.IsDDLOwner(ctx)
 	if err != nil {
 		return 0, true, err
@@ -799,7 +799,7 @@ func (b *builtinCharsetSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCharsetSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+func (b *builtinCharsetSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
 	return b.args[0].GetType(ctx).GetCharset(), false, nil
 }
 
@@ -827,7 +827,7 @@ type builtinCoercibilitySig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
-func (c *builtinCoercibilitySig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
+func (c *builtinCoercibilitySig) evalInt(ctx EvalContext, _ chunk.Row) (val int64, isNull bool, err error) {
 	return int64(c.args[0].Coercibility()), false, nil
 }
 
@@ -874,7 +874,7 @@ func (b *builtinCollationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCollationSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+func (b *builtinCollationSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
 	return b.args[0].GetType(ctx).GetCollate(), false, nil
 }
 
@@ -912,13 +912,12 @@ func (b *builtinRowCountSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet 
 
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
-func (b *builtinRowCountSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinRowCountSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool, error) {
 	vars, err := b.GetSessionVars(ctx)
 	if err != nil {
 		return 0, true, err
 	}
-	res = vars.StmtCtx.PrevAffectedRows
-	return res, false, nil
+	return vars.StmtCtx.PrevAffectedRows, false, nil
 }
 
 type tidbMVCCInfoFunctionClass struct {

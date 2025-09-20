@@ -48,7 +48,7 @@ func NewAdvisoryLockPropProvider(ctx AdvisoryLockContext) *AdvisoryLockPropProvi
 }
 
 // Desc returns the description for the property key.
-func (p *AdvisoryLockPropProvider) Desc() *exprctx.OptionalEvalPropDesc {
+func (*AdvisoryLockPropProvider) Desc() *exprctx.OptionalEvalPropDesc {
 	return exprctx.OptPropAdvisoryLock.Desc()
 }
 
@@ -56,11 +56,11 @@ func (p *AdvisoryLockPropProvider) Desc() *exprctx.OptionalEvalPropDesc {
 type AdvisoryLockPropReader struct{}
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (r AdvisoryLockPropReader) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
+func (AdvisoryLockPropReader) RequiredOptionalEvalProps() exprctx.OptionalEvalPropKeySet {
 	return exprctx.OptPropAdvisoryLock.AsPropKeySet()
 }
 
 // AdvisoryLockCtx returns the AdvisoryLockContext from the context
-func (r AdvisoryLockPropReader) AdvisoryLockCtx(ctx exprctx.EvalContext) (AdvisoryLockContext, error) {
+func (AdvisoryLockPropReader) AdvisoryLockCtx(ctx exprctx.EvalContext) (AdvisoryLockContext, error) {
 	return getPropProvider[*AdvisoryLockPropProvider](ctx, exprctx.OptPropAdvisoryLock)
 }
