@@ -837,7 +837,7 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 			return -1 // right wins
 		}
 	}
-	return 0, false // No winner (0). Do not return the pseudo result
+	return 0
 }
 
 // Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
