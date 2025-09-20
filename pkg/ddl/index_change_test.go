@@ -16,7 +16,9 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -431,4 +433,52 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 		}, 2*time.Minute, 60*time.Millisecond)
 	}()
 	tk.MustExec("alter table t add index idx(c2);")
+}
+
+func TestAdminAlterAddIndexTxnDDLJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t (a int);")
+	tk1.MustExec("insert into t values (1);")
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockAddIndexTxnWorkerStuck", func() {
+		<-ch
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(100)")
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk1.MustExec("alter table t add index idx(a);")
+	}()
+	realWorkerCnt := 0
+	realBatchSize := 0
+	realMaxWriteSpeed := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkReorgWorkerCnt", func(j *model.Job) {
+		realWorkerCnt = j.ReorgMeta.GetConcurrency()
+		realBatchSize = j.ReorgMeta.GetBatchSize()
+		realMaxWriteSpeed = j.ReorgMeta.GetMaxWriteSpeed()
+	})
+
+	jobID := ""
+	tk2 := testkit.NewTestKit(t, store)
+	for {
+		row := tk2.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+		if len(row) == 1 {
+			jobID = row[0][0].(string)
+			break
+		}
+	}
+	workerCnt := 7
+	batchSize := 89
+	maxWriteSpeed := 1011
+	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = %d", jobID, workerCnt))
+	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s batch_size = %d", jobID, batchSize))
+	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed = %d", jobID, maxWriteSpeed))
+	require.Eventually(t, func() bool {
+		return realWorkerCnt == workerCnt && realBatchSize == batchSize && realMaxWriteSpeed == maxWriteSpeed
+	}, time.Second*5, time.Millisecond*100)
+	close(ch)
+	wg.Wait()
 }
