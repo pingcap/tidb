@@ -837,7 +837,7 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 			return -1 // right wins
 		}
 	}
-	return 0
+	return 0, false // No winner (0). Do not return the pseudo result
 }
 
 // Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
@@ -1266,7 +1266,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.MVIndex) {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
@@ -1529,6 +1529,10 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
 			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+				continue
+			}
+			// prefer tikv, while current table path is tiflash, skip it.
+			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
 			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate, opt)
