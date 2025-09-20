@@ -2016,7 +2016,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
-			result: "PRIMARY_KEY,c_d_e,g,f_g",
+			result: "PRIMARY_KEY,c_d_e,f_g",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
