@@ -2349,21 +2349,21 @@
       },
       {
         "SQL": "SELECT COUNT(t) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t)->Sel([eq(test.t.a, test.t.a)]))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg",
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg",
         "Plan": [
           "HashAgg root  funcs:count(test.t.b)->Column#21",
           "└─Apply root  CARTESIAN left outer join, left side:IndexReader",
           "  ├─IndexReader(Build) root  index:IndexFullScan",
           "  │ └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "  └─Limit(Probe) root  offset:0, count:1",
-          "    └─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
-          "      ├─IndexReader(Build) root  index:Selection",
-          "      │ └─Selection cop[tikv]  eq(test.t.a, test.t.a)",
-          "      │   └─IndexFullScan cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
-          "      └─IndexLookUp(Probe) root  ",
-          "        ├─Selection(Build) cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-          "        │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
-          "        └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    └─IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
+          "      ├─IndexLookUp(Build) root  ",
+          "      │ ├─Selection(Build) cop[tikv]  eq(test.t.a, test.t.a)",
+          "      │ │ └─IndexFullScan cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
+          "      │ └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─IndexReader(Probe) root  index:Selection",
+          "        └─Selection cop[tikv]  not(isnull(test.t.a))",
+          "          └─IndexRangeScan cop[tikv] table:t3, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo"
         ]
       },
       {
