@@ -711,36 +711,11 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
-func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
-	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
+func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableInfo *model.TableInfo, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) { // Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
-		return 0
+		return 0, false
 	}
-<<<<<<< HEAD
-
-	// If one index has statistics and the other does not, choose the index with statistics if it
-	// has the same or higher number of equal/IN predicates.
-	lhsHasStatistics := statsTbl.Pseudo
-	if statsTbl != nil && lhs.path.Index != nil {
-		lhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true)
-	}
-	rhsHasStatistics := statsTbl.Pseudo
-	if statsTbl != nil && rhs.path.Index != nil {
-		rhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true)
-	}
-	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
-		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
-		(!lhsHasStatistics || !rhsHasStatistics) && // At least one index doesn't have statistics
-		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
-		lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
-		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
-		if lhsHasStatistics && lhsTotalEqual > 0 && lhsTotalEqual >= rhsTotalEqual {
-			return 1
-		}
-		if rhsHasStatistics && rhsTotalEqual > 0 && rhsTotalEqual >= lhsTotalEqual {
-			return -1
-=======
 	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
 	// rhsPseudo == rhs has pseudo (no) stats for the table or index for the rhs path.
 	//
@@ -751,13 +726,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
-	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
-	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
-	lhsFullMatch := !lhsFullScan && isFullIndexMatch(lhs)
-	rhsFullMatch := !rhsFullScan && isFullIndexMatch(rhs)
+	lhsFullMatch := isFullIndexMatch(lhs)
+	rhsFullMatch := isFullIndexMatch(rhs)
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
-		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
+		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
 	}
 	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
 	// globalResult: comparison result of global index vs local index preference (1=LHS better, -1=RHS better, 0=equal)
@@ -770,8 +743,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	//             This has the effect of allowing the table scan plan to not be pruned.
 	// comparable2: whether the index back scan characteristics are comparable between LHS and RHS
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
-	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
@@ -791,7 +762,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		}
 		if pseudoResult < 0 && totalSum <= 0 {
 			return pseudoResult, rhsPseudo
->>>>>>> 98a285f8857 (planner: refactor compareCandidates logic (#63349))
 		}
 	}
 
@@ -803,40 +773,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
 			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
-				return -1
+				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
 			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
-				return 1
+				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
 	}
 
-<<<<<<< HEAD
-	// Below compares the two candidate paths on three dimensions:
-	// (1): the set of columns that occurred in the access condition,
-	// (2): does it require a double scan,
-	// (3): whether or not it matches the physical property,
-	// (4): it's a global index path or not.
-	// If `x` is not worse than `y` at all factors,
-	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
-	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
-	if !comparable1 {
-		return 0
-	}
-	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	if !comparable2 {
-		return 0
-	}
-	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
-	sum := accessResult + scanResult + matchResult + globalResult
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
-		return 1
-	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
-		return -1
-	}
-	return 0
-=======
 	if !comparable1 && !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
@@ -849,17 +793,17 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	return 0, false // No winner (0). Do not return the pseudo result
 }
 
-func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
+func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-		if !lhsFullScan && lhs.path.Index != nil {
+		if lhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
 				lhsPseudo = false // We have statistics for the lhs index
 			} else {
 				lhsPseudo = true
 			}
 		}
-		if !rhsFullScan && rhs.path.Index != nil {
+		if rhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
 				rhsPseudo = false // We have statistics on the rhs index
 			} else {
@@ -926,7 +870,6 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 	}
 	// Check if the index covers all access conditions for non-DNF conditions
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
->>>>>>> 98a285f8857 (planner: refactor compareCandidates logic (#63349))
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
@@ -1245,6 +1188,9 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) []*candidatePath {
 	candidates := make([]*candidatePath, 0, 4)
+	idxMissingStats := false
+	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
@@ -1285,26 +1231,18 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-<<<<<<< HEAD
-			result := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate)
-=======
 			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
 			if missingStats {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
->>>>>>> 98a285f8857 (planner: refactor compareCandidates logic (#63349))
 			if result == 1 {
 				pruned = true
 				// We can break here because the current candidate lost to another plan.
 				// This means that we won't add it to the candidates below.
 				break
 			} else if result == -1 {
-<<<<<<< HEAD
-				candidates = append(candidates[:i], candidates[i+1:]...)
-=======
 				// The current candidate is better - so remove the old one from "candidates"
 				candidates = slices.Delete(candidates, i, i+1)
->>>>>>> 98a285f8857 (planner: refactor compareCandidates logic (#63349))
 			}
 		}
 		if !pruned {
@@ -1318,9 +1256,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
-	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
-	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() &&
-		(preferMerge || (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1))
+	if preferRange {
+		// Override preferRange with the following limitations to scope
+		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
+	}
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
@@ -1354,8 +1293,6 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	return candidates
 }
 
-<<<<<<< HEAD
-=======
 // hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form contain at least one equal predicate
 func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
@@ -1411,7 +1348,6 @@ func (c *candidatePath) equalPredicateCount() int {
 	return max(0, c.path.MinAccessCondsForDNFCond-1)
 }
 
->>>>>>> 98a285f8857 (planner: refactor compareCandidates logic (#63349))
 func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop *property.PhysicalProperty) string {
 	if len(candidates) == len(ds.PossibleAccessPaths) {
 		return ""

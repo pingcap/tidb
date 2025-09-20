@@ -2032,11 +2032,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-<<<<<<< HEAD
-			result: "b_c_global", // will prune `b_c`
-=======
 			result: "PRIMARY_KEY,b_c_global",
->>>>>>> 98a285f8857 (planner: refactor compareCandidates logic (#63349))
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
