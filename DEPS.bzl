@@ -6595,13 +6595,13 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "56809a50881ec0f1b54cd8bbd3b07b419e8a7eedcc1b87fdf5bafbb6f786db7b",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20250728031536-f08901d17bf4",
+        sha256 = "a36b09c94364f9741dce852a8a4052ebd3935786d72ea12a52b925ddaf50b4b3",
+        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20250915095348-efd5134a6d6c",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250728031536-f08901d17bf4.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250728031536-f08901d17bf4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250728031536-f08901d17bf4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250728031536-f08901d17bf4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250915095348-efd5134a6d6c.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250915095348-efd5134a6d6c.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250915095348-efd5134a6d6c.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20250915095348-efd5134a6d6c.zip",
         ],
     )
     go_repository(
