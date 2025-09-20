@@ -183,7 +183,7 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 func applyPredicateSimplificationForJoin(sctx base.PlanContext, predicates []expression.Expression,
 	schema1, schema2 *expression.Schema,
 	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression {
-	return applyPredicateSimplificationHelper(sctx, predicates, schema1, schema2, true, false, propagateConstant, filter)
+	return applyPredicateSimplificationHelper(sctx, predicates, schema1, schema2, true, propagateConstant, false, filter)
 }
 
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant, isSameTable bool,
@@ -217,13 +217,13 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 			simplifiedPredicate = exprs
 		}
 	}
+	if isSameTable {
+		simplifiedPredicate = mergeOrPredicateAndEqual(sctx, simplifiedPredicate)
+	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
-	if isSameTable {
-		//simplifiedPredicate = mergeOrPredicateAndEqual(sctx, simplifiedPredicate)
-	}
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -241,11 +241,11 @@ func mergeOrPredicateAndEqual(sctx base.PlanContext, predicates []expression.Exp
 			_, iType := FindPredicateType(sctx, ithPredicate)
 			_, jType := FindPredicateType(sctx, jthPredicate)
 			if iType == orPredicate && jType == equalPredicate {
-				//predicates[i] = mergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
-				//removeValues = append(removeValues, j)
+				predicates[i] = mergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
+				removeValues = append(removeValues, j)
 			} else if iType == equalPredicate && jType == orPredicate {
-				//predicates[j] = mergeOrAndEqualPredicate(sctx, jthPredicate, ithPredicate)
-				//removeValues = append(removeValues, i)
+				predicates[j] = mergeOrAndEqualPredicate(sctx, jthPredicate, ithPredicate)
+				removeValues = append(removeValues, i)
 			}
 		}
 	}
