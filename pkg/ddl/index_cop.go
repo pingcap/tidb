@@ -91,6 +91,7 @@ func fetchTableScanResult(
 	copCtx *copr.CopContextBase,
 	result distsql.SelectResult,
 	chk *chunk.Chunk,
+	task TableScanTask,
 ) (bool, error) {
 	err := result.Next(ctx, chk)
 	if err != nil {
@@ -106,12 +107,17 @@ func fetchTableScanResult(
 	}
 
 	firstRow := chk.GetRow(0)
+	firstHd, firstKey := encodeKeyFromRow(firstRow, copCtx)
 	lastRow := chk.GetRow(chk.NumRows() - 1)
+	lastHd, lastKey := encodeKeyFromRow(lastRow, copCtx)
 	logutil.BgLogger().Info("fetchTableScanResult",
 		zap.Int("rows", chk.NumRows()),
 		zap.Int("columns", chk.NumCols()),
-		zap.String("firstKey", hex.EncodeToString(encodeKeyFromRow(firstRow, copCtx))),
-		zap.String("lastKey", hex.EncodeToString(encodeKeyFromRow(lastRow, copCtx))),
+		zap.Int("taskID", task.ID),
+		zap.String("firstKey", hex.EncodeToString(firstKey)),
+		zap.Stringer("firstHd", firstHd),
+		zap.String("lastKey", hex.EncodeToString(lastKey)),
+		zap.Stringer("lastHd", lastHd),
 	)
 	err = table.FillVirtualColumnValue(
 		copCtx.VirtualColumnsFieldTypes, copCtx.VirtualColumnsOutputOffsets,
@@ -122,7 +128,7 @@ func fetchTableScanResult(
 func encodeKeyFromRow(
 	row chunk.Row,
 	c *copr.CopContextBase,
-) kv.Key {
+) (kv.Handle, kv.Key) {
 	evalCtx := c.ExprCtx.GetEvalCtx()
 	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
 	handleDataBuf = ExtractDatumByOffsets(evalCtx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
@@ -131,7 +137,7 @@ func encodeKeyFromRow(
 		logutil.BgLogger().Warn("build handle failed", zap.Error(err))
 	}
 	prefix := tablecodec.GenTableRecordPrefix(c.TableInfo.ID)
-	return tablecodec.EncodeRecordKey(prefix, h)
+	return h, tablecodec.EncodeRecordKey(prefix, h)
 }
 
 func completeErr(err error, idxInfo *model.IndexInfo) error {
