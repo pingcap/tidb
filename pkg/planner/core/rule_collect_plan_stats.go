@@ -275,11 +275,11 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
+			logutil.ErrVerboseLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("SyncWaitStatsLoad failed", zap.Error(err))
+		logutil.ErrVerboseLogger().Error("SyncWaitStatsLoad failed", zap.Error(err))
 		return err
 	}
 	return nil
