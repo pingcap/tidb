@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -26,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -165,6 +168,109 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
 		return nil
 	})
 	return
+}
+
+var (
+	// UpdateBindingUsageInfoBatchSize indicates the batch size when updating binding usage info to storage.
+	UpdateBindingUsageInfoBatchSize = 100
+	// MaxWriteInterval indicates the interval at which a write operation needs to be performed after a binding has not been read.
+	MaxWriteInterval = 6 * time.Hour
+)
+
+func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings []*Binding) error {
+	toWrite := make([]*Binding, 0, UpdateBindingUsageInfoBatchSize)
+	for _, binding := range bindings {
+		lastSaved := binding.UsageInfo.LastSavedAt.Load()
+		if lastSaved == nil {
+			continue
+		}
+		intest.AssertFunc(func() bool {
+			lastUsed := binding.UsageInfo.LastUsedAt.Load()
+			if lastUsed == nil {
+				return false
+			}
+			return lastUsed.Compare(*lastSaved) >= 0
+		}, " lastUsed should be later than or equal to lastSaved and lastSaved is not nil")
+		if time.Since(*lastSaved) > MaxWriteInterval {
+			toWrite = append(toWrite, binding)
+		}
+		if len(toWrite) == UpdateBindingUsageInfoBatchSize {
+			err := updateBindingUsageInfoToStorageInternal(sPool, toWrite)
+			if err != nil {
+				return err
+			}
+			toWrite = toWrite[:0]
+		}
+	}
+	if len(toWrite) > 0 {
+		err := updateBindingUsageInfoToStorageInternal(sPool, toWrite)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, bindings []*Binding) error {
+	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) (err error) {
+		if err = addLockForBinds(sctx, bindings); err != nil {
+			return errors.Trace(err)
+		}
+		for _, binding := range bindings {
+			lastUsed := binding.UsageInfo.LastUsedAt.Load()
+			intest.Assert(lastUsed != nil)
+			err = saveBindUsage(sctx, binding.SQLDigest, binding.PlanDigest, *lastUsed)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		ts := time.Now()
+		for _, binding := range bindings {
+			binding.UpdateSavedAt(&ts)
+		}
+	}
+	return err
+}
+
+func addLockForBinds(sctx sessionctx.Context, bindings []*Binding) error {
+	condition := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		sqlDigest := binding.SQLDigest
+		planDigest := binding.PlanDigest
+		sql := fmt.Sprintf("('%s'", sqlDigest)
+		if planDigest == "" {
+			sql += ",NULL)"
+		} else {
+			sql += fmt.Sprintf(",'%s')", planDigest)
+		}
+		condition = append(condition, sql)
+	}
+	locksql := "select 1 from mysql.bind_info use index(digest_index) where (plan_digest, sql_digest) in (" +
+		strings.Join(condition, " , ") + ") for update"
+	_, err := exec(sctx, locksql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func saveBindUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {
+	lastUsedTime := ts.UTC().Format(types.TimeFormat)
+	var sql = "UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) WHERE sql_digest = %?"
+	if planDigest == "" {
+		sql += " AND plan_digest IS NULL"
+	} else {
+		sql += fmt.Sprintf(" AND plan_digest = '%s'", planDigest)
+	}
+	_, err := exec(
+		sctx,
+		sql,
+		lastUsedTime, sqldigest,
+	)
+	return err
 }
 
 // newBindingFromStorage builds Bindings from a tuple in storage.
