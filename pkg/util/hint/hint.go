@@ -557,6 +557,7 @@ type PlanHints struct {
 	PreferLimitToCop bool // limit_to_cop
 	CTEMerge         bool // merge
 	TimeRangeHint    ast.HintTimeRange
+	LeadingList      *ast.LeadingList
 }
 
 // HintedTable indicates which table this hint should take effect on.
@@ -756,12 +757,13 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
 	)
+
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -877,10 +879,27 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			cteMerge = true
 		case HintLeading:
-			if leadingHintCnt == 0 {
-				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
-			}
 			leadingHintCnt++
+
+			if leadingHintCnt > 1 || straightJoinOrder {
+				if leadingHintCnt > 1 {
+					warnHandler.SetHintWarning("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
+				} else {
+					warnHandler.SetHintWarning("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid")
+				}
+				continue // Invalidate all leading hints and skip to next hint.
+			}
+
+			// The parser now returns an `ast.LeadingList` for the LEADING hint.
+			leadingListExpr, ok := hint.HintData.(*ast.LeadingList)
+			if !ok {
+				warnHandler.SetHintWarning("Internal error: leading hint data format is incorrect.")
+				continue
+			}
+
+			// Call the new helper function to flatten the list.
+			leadingJoinOrder = flattenLeadingList(leadingListExpr, currentDB, hintProcessor, currentLevel, warnHandler)
+
 		case HintSemiJoinRewrite:
 			if !handlingExistsSubquery && !handlingInSubquery {
 				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause.")
@@ -928,6 +947,29 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		HJBuild:            hjBuildTables,
 		HJProbe:            hjProbeTables,
 	}, subQueryHintFlags, nil
+}
+
+// flattenLeadingList is a recursive helper function to flatten a nested ast.LeadingList and convert all ast.HintTable nodes into a single slice of HintedTable.
+func flattenLeadingList(leadingList *ast.LeadingList, currentDB string, hintProcessor *QBHintHandler, currentLevel int, warnHandler hintWarnHandler) []HintedTable {
+	if leadingList == nil {
+		return nil
+	}
+
+	var tables []HintedTable
+	for _, item := range leadingList.Items {
+		switch t := item.(type) {
+		case *ast.HintTable:
+			// Found a leaf node (HintTable), convert it and append to the result.
+			hintTables := tableNames2HintTableInfo(currentDB, "leading", []ast.HintTable{*t}, hintProcessor, currentLevel, warnHandler)
+			tables = append(tables, hintTables...)
+		case *ast.LeadingList:
+			// Found an internal node (LeadingList), recursively flatten it.
+			subTables := flattenLeadingList(t, currentDB, hintProcessor, currentLevel, warnHandler)
+			tables = append(tables, subTables...)
+		}
+	}
+
+	return tables
 }
 
 // RemoveDuplicatedHints removes duplicated hints in this hit list.
