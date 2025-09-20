@@ -255,5 +255,11 @@
       // Should choose idx_b instead of idx_a, because idx_b would scan only 1 row.
       "explain format = 'brief' select * from t where a >= 999900 order by b limit 1"
     ]
+  },
+  {
+    "name": "TestIssue61792",
+    "cases": [
+      "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';"
+    ]
   }
 ]

@@ -429,6 +429,18 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
 	if histNDV <= 0 || (idx.IsFullLoad() && idx.Histogram.NotNullCount() == 0) {
+		// branch 1: all NDV's are in TopN, and no histograms
+		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
+		if histNDV > 0 && modifyCount == 0 {
+			topNMinCount := uint64(0)
+			if len(idx.TopN.TopN) > 0 {
+				topNMinCount = idx.TopN.TopN[0].Count
+				for _, item := range idx.TopN.TopN {
+					topNMinCount = min(topNMinCount, item.Count)
+				}
+			}
+			return max(float64(topNMinCount-1), 1)
+		}
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
 		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
 		//
@@ -449,6 +461,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		totalRowCount := min(idx.TotalRowCount(), float64(realtimeRowCount)-idx.TotalRowCount())
 		return max(1, totalRowCount/histNDV)
 	}
+	// branch 2: some NDV's are in histograms
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return idx.Histogram.NotNullCount() / histNDV
 }
