@@ -445,3 +445,22 @@ func SampleLoggerFactory(tick time.Duration, first int, fields ...zap.Field) fun
 		return logger
 	}
 }
+
+// SampleErrVerboseLoggerFactory returns a factory function that creates a sample logger with error verbose logging.
+// It works similarly to SampleLoggerFactory but ensures that error details are always logged,
+// regardless of the logging configuration.
+func SampleErrVerboseLoggerFactory(tick time.Duration, first int, fields ...zap.Field) func() *zap.Logger {
+	var (
+		once   sync.Once
+		logger *zap.Logger
+	)
+	return func() *zap.Logger {
+		once.Do(func() {
+			sampleCore := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+				return zapcore.NewSamplerWithOptions(core, tick, first, 0)
+			})
+			logger = ErrVerboseLogger().With(fields...).With(zap.String("sampled", "")).WithOptions(sampleCore)
+		})
+		return logger
+	}
+}

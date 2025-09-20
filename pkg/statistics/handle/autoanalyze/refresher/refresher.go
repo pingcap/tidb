@@ -128,7 +128,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	currentRunningJobs := r.worker.GetRunningJobs()
 	remainConcurrency := maxConcurrency - len(currentRunningJobs)
 	if remainConcurrency <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Info("No concurrency available")
+		statslogutil.StatsSampleLogger().Info("No concurrency available")
 		return false
 	}
 
@@ -150,7 +150,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			continue
 		}
 		if valid, failReason := job.ValidateAndPrepare(sctx); !valid {
-			statslogutil.SingletonStatsSamplerLogger().Info(
+			statslogutil.StatsSampleLogger().Info(
 				"Table not ready for analysis",
 				zap.String("reason", failReason),
 				zap.Stringer("job", job),
@@ -189,7 +189,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 		return true
 	}
 
-	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
+	statslogutil.StatsSampleLogger().Info("No tables to analyze")
 	return false
 }
 
