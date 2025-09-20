@@ -3971,6 +3971,33 @@ const (
 )
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		if ht.DBName.L != "" {
+			ctx.WriteName(ht.DBName.String())
+			ctx.WriteKeyWord(".")
+		}
+	}
+	ctx.WriteName(ht.TableName.String())
+	if ht.QBName.L != "" {
+		ctx.WriteKeyWord("@")
+		ctx.WriteName(ht.QBName.String())
+	}
+	if len(ht.PartitionList) > 0 {
+		ctx.WriteKeyWord(" PARTITION")
+		ctx.WritePlain("(")
+		for i, p := range ht.PartitionList {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(p.String())
+		}
+		ctx.WritePlain(")")
+	}
+}
+
+// RestoreInLeading is a variant of Restore, used specifically when printing inside LEADING hints.
+// It respects the FormatStyle (e.g. @qb table vs table@qb).
+func (ht *HintTable) RestoreInLeading(ctx *format.RestoreCtx) {
 	if ht.FormatStyle == QBNameBeforeTable && ht.QBName.L != "" {
 		ctx.WriteKeyWord("@")
 		ctx.WriteName(ht.QBName.String())
@@ -4018,7 +4045,7 @@ func (lt *LeadingList) Restore(ctx *format.RestoreCtx, needParen bool) error {
 
 		switch t := item.(type) {
 		case *HintTable:
-			t.Restore(ctx)
+			t.RestoreInLeading(ctx)
 		case *LeadingList:
 			if err := t.Restore(ctx, true); err != nil {
 				return err
@@ -4070,13 +4097,6 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
 			if err := list.Restore(ctx, false); err != nil {
 				return err
-			}
-		} else {
-			for i, table := range n.Tables {
-				if i != 0 {
-					ctx.WritePlain(", ")
-				}
-				table.Restore(ctx)
 			}
 		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
