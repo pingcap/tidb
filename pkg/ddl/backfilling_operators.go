@@ -570,7 +570,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for !done {
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
-			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
+			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk, task)
 			if err != nil || scanCtx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)

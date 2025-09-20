@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -36,9 +37,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
@@ -88,18 +91,53 @@ func fetchTableScanResult(
 	copCtx *copr.CopContextBase,
 	result distsql.SelectResult,
 	chk *chunk.Chunk,
+	task TableScanTask,
 ) (bool, error) {
 	err := result.Next(ctx, chk)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if chk.NumRows() == 0 {
+		err := result.Next(ctx, chk)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		logutil.BgLogger().Info("chunk returns zero count, try again...", zap.Int("second try", chk.NumRows()))
 		return true, nil
 	}
+
+	firstRow := chk.GetRow(0)
+	firstHd, firstKey := encodeKeyFromRow(firstRow, copCtx)
+	lastRow := chk.GetRow(chk.NumRows() - 1)
+	lastHd, lastKey := encodeKeyFromRow(lastRow, copCtx)
+	logutil.BgLogger().Info("fetchTableScanResult",
+		zap.Int("rows", chk.NumRows()),
+		zap.Int("columns", chk.NumCols()),
+		zap.Int("taskID", task.ID),
+		zap.String("firstKey", hex.EncodeToString(firstKey)),
+		zap.Stringer("firstHd", firstHd),
+		zap.String("lastKey", hex.EncodeToString(lastKey)),
+		zap.Stringer("lastHd", lastHd),
+	)
 	err = table.FillVirtualColumnValue(
 		copCtx.VirtualColumnsFieldTypes, copCtx.VirtualColumnsOutputOffsets,
 		copCtx.ExprColumnInfos, copCtx.ColumnInfos, copCtx.ExprCtx, chk)
 	return false, err
+}
+
+func encodeKeyFromRow(
+	row chunk.Row,
+	c *copr.CopContextBase,
+) (kv.Handle, kv.Key) {
+	evalCtx := c.ExprCtx.GetEvalCtx()
+	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
+	handleDataBuf = ExtractDatumByOffsets(evalCtx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+	h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, time.UTC, evalCtx.ErrCtx())
+	if err != nil {
+		logutil.BgLogger().Warn("build handle failed", zap.Error(err))
+	}
+	prefix := tablecodec.GenTableRecordPrefix(c.TableInfo.ID)
+	return h, tablecodec.EncodeRecordKey(prefix, h)
 }
 
 func completeErr(err error, idxInfo *model.IndexInfo) error {

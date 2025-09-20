@@ -2342,6 +2342,7 @@ func writeChunk(
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
+	var firstHd, lastHd kv.Handle
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
@@ -2353,6 +2354,9 @@ func writeChunk(
 		h, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
 		if err != nil {
 			return 0, totalBytes, errors.Trace(err)
+		}
+		if firstHd == nil {
+			firstHd = h
 		}
 		for i, index := range indexes {
 			idxID := index.Meta().ID
@@ -2370,7 +2374,15 @@ func writeChunk(
 			}
 			totalBytes += int(kvBytes)
 		}
+		lastHd = h
 		count++
+	}
+	if firstHd != nil && firstHd.IsInt() {
+		aligned := true
+		if int64(count) != lastHd.IntValue()-firstHd.IntValue()+int64(1) {
+			aligned = false
+		}
+		logutil.DDLLogger().Info("write chunk", zap.Stringer("first handle", firstHd), zap.Stringer("last handle", lastHd), zap.Int("count", count), zap.Bool("aligned", aligned))
 	}
 	return count, totalBytes, nil
 }
