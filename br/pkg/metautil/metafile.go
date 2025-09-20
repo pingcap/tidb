@@ -146,6 +146,7 @@ func walkLeafMetaFile(
 
 // Table wraps the schema and files of a table.
 type Table struct {
+<<<<<<< HEAD
 	DB              *model.DBInfo
 	Info            *model.TableInfo
 	Crc64Xor        uint64
@@ -154,6 +155,18 @@ type Table struct {
 	Files           []*backuppb.File
 	TiFlashReplicas int
 	Stats           *handle.JSONTable
+=======
+	DB               *model.DBInfo
+	Info             *model.TableInfo
+	Crc64Xor         uint64
+	TotalKvs         uint64
+	TotalBytes       uint64
+	Files            []*backuppb.File
+	TotalKvsMap      map[int64]uint64
+	TiFlashReplicas  int
+	Stats            *util.JSONTable
+	StatsFileIndexes []*backuppb.StatsFileIndex
+>>>>>>> e589efdb9a8 (br: fix stats meta count is zero if no checksum 8.5 (#63420))
 }
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
@@ -243,6 +256,14 @@ func (stats ChecksumStats) ChecksumExists() bool {
 	return true
 }
 
+func CalculateTotalKvsOnFiles(files []*backuppb.File) uint64 {
+	totalKvs := uint64(0)
+	for _, file := range files {
+		totalKvs += file.TotalKvs
+	}
+	return totalKvs
+}
+
 // CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
 func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
 	var stats ChecksumStats
@@ -325,6 +346,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	for {
 		// table ID -> *Table
 		tableMap := make(map[int64]*Table, MaxBatchSize)
+<<<<<<< HEAD
 		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item interface{}) error {
 			s := item.(*backuppb.Schema)
 			dbInfo := &model.DBInfo{}
@@ -365,6 +387,23 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 					for _, p := range tableInfo.Partition.Definitions {
 						if files, ok := fileMap[p.ID]; ok {
 							table.Files = append(table.Files, files...)
+=======
+		err := receiveBatch(cctx, errCh, ch, MaxBatchSize, func(item any) error {
+			table := item.(*Table)
+			if table.Info != nil {
+				if fileMap != nil {
+					if files, ok := fileMap[table.Info.ID]; ok {
+						table.TotalKvsMap[table.Info.ID] = CalculateTotalKvsOnFiles(files)
+						table.Files = append(table.Files, files...)
+					}
+					if table.Info.Partition != nil {
+						// Partition table can have many table IDs (partition IDs).
+						for _, p := range table.Info.Partition.Definitions {
+							if files, ok := fileMap[p.ID]; ok {
+								table.TotalKvsMap[p.ID] = CalculateTotalKvsOnFiles(files)
+								table.Files = append(table.Files, files...)
+							}
+>>>>>>> e589efdb9a8 (br: fix stats meta count is zero if no checksum 8.5 (#63420))
 						}
 					}
 				}
@@ -388,6 +427,47 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	}
 }
 
+<<<<<<< HEAD
+=======
+func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
+	dbInfo := &model.DBInfo{}
+	if err := json.Unmarshal(s.Db, dbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var tableInfo *model.TableInfo
+	if s.Table != nil {
+		tableInfo = &model.TableInfo{}
+		if err := json.Unmarshal(s.Table, tableInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var stats *util.JSONTable
+	if s.Stats != nil {
+		stats = &util.JSONTable{}
+		if err := json.Unmarshal(s.Stats, stats); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var statsFileIndexes []*backuppb.StatsFileIndex
+	if len(s.StatsIndex) > 0 {
+		statsFileIndexes = s.StatsIndex
+	}
+
+	return &Table{
+		DB:               dbInfo,
+		Info:             tableInfo,
+		Crc64Xor:         s.Crc64Xor,
+		TotalKvs:         s.TotalKvs,
+		TotalBytes:       s.TotalBytes,
+		TotalKvsMap:      make(map[int64]uint64),
+		TiFlashReplicas:  int(s.TiflashReplicas),
+		Stats:            stats,
+		StatsFileIndexes: statsFileIndexes,
+	}, nil
+}
+
+>>>>>>> e589efdb9a8 (br: fix stats meta count is zero if no checksum 8.5 (#63420))
 func receiveBatch(
 	ctx context.Context, errCh chan error, ch <-chan interface{}, maxBatchSize int,
 	collectItem func(interface{}) error,
