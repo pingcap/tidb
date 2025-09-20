@@ -175,7 +175,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
 	// or all values assumed to be contained within TopN.
 	rowEstimate := estimateRowCountWithUniformDistribution(sctx, c, realtimeRowCount, modifyCount)
-	return rowEstimate.Est, nil
+	return rowEstimate, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
