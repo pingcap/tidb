@@ -51,9 +51,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/pd/client/opt"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -262,16 +264,34 @@ func (tr *TableImporter) importTable(
 		}
 	}
 
-	cleanupFunc, err := rc.backend.AddPartitionRangeForTable(ctx, tr.tableInfo.ID)
-	if err != nil {
-		tr.logger.Warn("get partition range functions for table failed", zap.String("table", tr.tableName), zap.Error(err))
-	}
-	if cleanupFunc != nil {
-		defer cleanupFunc()
+	// turn on/off "force_partition_range" for table
+	if isLocalBackend(rc.cfg) {
+		localbackend := rc.backend.(*local.Backend)
+		startKey, endKey := localbackend.GetTiKVCodec().EncodeRange(
+			tablecodec.EncodeTablePrefix(tr.tableInfo.ID),
+			tablecodec.EncodeTablePrefix(tr.tableInfo.ID+1),
+		)
+		stores, err := localbackend.Clients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
+		if err != nil {
+			tr.logger.Warn("GetAllStores failed",
+				zap.String("table", tr.tableInfo.Name), zap.Error(err))
+		} else {
+			addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(ctx,
+				startKey, endKey, stores, localbackend.Clients.GetImportClientFactory(),
+			)
+			if addTableSplitRange != nil {
+				addTableSplitRange()
+			}
+			defer func() {
+				if removeTableSplitRange != nil {
+					removeTableSplitRange()
+				}
+			}()
+		}
 	}
 
 	// 4. Restore engines (if still needed)
-	err = tr.importEngines(ctx, rc, cp)
+	err := tr.importEngines(ctx, rc, cp)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

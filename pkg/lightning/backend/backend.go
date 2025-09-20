@@ -204,9 +204,6 @@ type Backend interface {
 
 	CloseEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
 
-	// AddPartitionRangeForTable add force_partition_range for table id
-	AddPartitionRangeForTable(ctx context.Context, tableID int64) (func(), error)
-
 	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
 	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
 	// It's safe to reset or cleanup this engine.

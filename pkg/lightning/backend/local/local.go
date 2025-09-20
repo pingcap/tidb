@@ -591,7 +591,7 @@ func NewBackend(
 	config BackendConfig,
 	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
-	clients, pdCliForTiKV, err := PrepareClientsForNewBackend(ctx, tls, config, pdSvcDiscovery)
+	clients, pdCliForTiKV, err := CreateClientsForNewBackend(ctx, tls, config, pdSvcDiscovery)
 	if err != nil {
 		return nil, err
 	}
@@ -605,8 +605,8 @@ func NewBackend(
 	)
 }
 
-// PrepareClientsForNewBackend prepares clients needed for a local backend
-func PrepareClientsForNewBackend(
+// CreateClientsForNewBackend prepares clients needed for a local backend
+func CreateClientsForNewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
@@ -932,68 +932,6 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 // CloseEngine closes backend engine by uuid.
 func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
-}
-
-// AddPartitionRangeForTable implements Backend interface
-// Deprecated: will be removed soon.
-func (local *Backend) AddPartitionRangeForTable(ctx context.Context, tableID int64) (func(), error) {
-	tableStartKey := tablecodec.EncodeTablePrefix(tableID)
-	checkEndKey := tablecodec.EncodeTablePrefix(tableID + 1)
-
-	startKey, endKey := local.tikvCodec.EncodeRange(tableStartKey, checkEndKey)
-
-	stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	clients := make([]sst.ImportSSTClient, 0, len(stores))
-	storeAddrs := make([]string, 0, len(stores))
-	failpoint.InjectCall("AddPartitionRangeForTable")
-	checkReq := &sst.AddPartitionRangeRequest{
-		Range: &sst.Range{
-			Start: startKey,
-			End:   endKey,
-		},
-		Ttl: 3600,
-	}
-	for _, store := range stores {
-		if store.StatusAddress == "" || engine.IsTiFlash(store) {
-			continue
-		}
-
-		importCli, err := local.importClientFactory.create(ctx, store.Id)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		_, err = importCli.AddForcePartitionRange(ctx, checkReq)
-		if err == nil {
-			clients = append(clients, importCli)
-			storeAddrs = append(storeAddrs, store.StatusAddress)
-			tidblogutil.Logger(ctx).Info("AddForcePartitionRange success", zap.String("store", store.StatusAddress))
-		} else {
-			tidblogutil.Logger(ctx).Warn("AddForcePartitionRange failed", zap.Error(err), zap.String("store", store.StatusAddress))
-		}
-	}
-	cleanupFunc := func() {
-		removeReq := &sst.RemovePartitionRangeRequest{
-			Range: &sst.Range{
-				Start: startKey,
-				End:   endKey,
-			},
-		}
-		failpoint.InjectCall("RemovePartitionRangeRequest")
-		for i, c := range clients {
-			_, err = c.RemoveForcePartitionRange(ctx, removeReq)
-			if err == nil {
-				tidblogutil.Logger(ctx).Info("RemoveForcePartitionRange success", zap.String("store", storeAddrs[i]))
-			} else {
-				tidblogutil.Logger(ctx).Warn("RemoveForcePartitionRange failed", zap.Error(err), zap.String("store", storeAddrs[i]))
-			}
-		}
-	}
-	return cleanupFunc, nil
 }
 
 // GetPartitionRangeForTableFuncs gets two functions to turn on/off force_partition_range.

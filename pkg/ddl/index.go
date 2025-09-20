@@ -2652,11 +2652,7 @@ func TaskKey(jobID int64) string {
 
 func (w *worker) getSplitRangeFuncs(job *model.Job, tableID int64) (
 	addTableSplitRange func(), removeTableSplitRange func(), err error) {
-	jobSortPath, err := ingest.GenJobSortPath(job.ID, false)
-	if err != nil {
-		return nil, nil, err
-	}
-	cfg := ingest.GenConfig(w.workCtx, jobSortPath, ingest.LitMemRoot, false,
+	cfg := ingest.GenConfig(w.workCtx, "", ingest.LitMemRoot, false,
 		job.ReorgMeta.ResourceGroupName, w.store.GetKeyspace(), job.ReorgMeta.GetConcurrency(),
 		job.ReorgMeta.GetMaxWriteSpeed(), job.ReorgMeta.UseCloudStorage)
 
@@ -2676,7 +2672,7 @@ func (w *worker) getSplitRangeFuncs(job *model.Job, tableID int64) (
 	//nolint:forcetypeassert
 	store := w.store.(tikv.Storage)
 	pdCli := store.GetRegionCache().PDClient()
-	clients, pdCliForTiKV, err := local.PrepareClientsForNewBackend(w.workCtx, tls, *cfg, pdCli.GetServiceDiscovery())
+	clients, pdCliForTiKV, err := local.CreateClientsForNewBackend(w.workCtx, tls, *cfg, pdCli.GetServiceDiscovery())
 	if err != nil {
 		logutil.DDLLogger().Warn("fail to PrepareClientsForNewBackend", zap.Error(err))
 		return nil, nil, err

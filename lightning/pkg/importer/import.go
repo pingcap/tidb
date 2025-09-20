@@ -376,7 +376,7 @@ func NewImportControllerWithPauser(
 			pdhttp.WithTLSConfig(tls.TLSConfig()),
 		).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 
-		if isLocalBackend(cfg) && cfg.Conflict.Strategy != config.NoneOnDup {
+		if cfg.Conflict.Strategy != config.NoneOnDup {
 			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForConflictStrategy, maxTiKVVersionForConflictStrategy); err != nil {
 				if !berrors.Is(err, berrors.ErrVersionMismatch) {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()

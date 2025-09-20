@@ -195,7 +195,7 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	backendConfig := e.getLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
+	backendConfig := e.GetLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
 	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
 	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
@@ -264,7 +264,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		return nil, err
 	}
 
-	backendConfig := e.getLocalBackendCfg("", tidbCfg.Path, dir)
+	backendConfig := e.GetLocalBackendCfg("", tidbCfg.Path, dir)
 	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
 	if err != nil {
 		return nil, err
@@ -530,14 +530,6 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 
 // ImportAndCleanup imports the engine and cleanup the engine data.
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
-	cleanupFunc, err := ti.backend.AddPartitionRangeForTable(ctx, ti.tableInfo.ID)
-	if err != nil {
-		ti.logger.Warn("get partition range functions for table failed",
-			zap.String("table", ti.tableInfo.Name), zap.Error(err))
-	}
-	if cleanupFunc != nil {
-		defer cleanupFunc()
-	}
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if common.ErrFoundDuplicateKeys.Equal(importErr) {
@@ -585,13 +577,6 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 			locker.Unlock()
 			locker = nil
 		}
-	}
-	cleanupFunc, err := ti.backend.AddPartitionRangeForTable(ctx, ti.tableInfo.ID)
-	if err != nil {
-		ti.logger.Warn("get partition range functions for table failed", zap.String("table", ti.tableInfo.Name), zap.Error(err))
-	}
-	if cleanupFunc != nil {
-		defer cleanupFunc()
 	}
 
 	defer unlockDiskQuota()
@@ -732,14 +717,6 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	failpoint.Inject("mockImportFromSelectErr", func() {
 		failpoint.Return(0, errors.New("mock import from select error"))
 	})
-	cleanupFunc, err := ti.backend.AddPartitionRangeForTable(ctx, ti.tableInfo.ID)
-	if err != nil {
-		ti.logger.Warn("get partition range functions for table failed",
-			zap.String("table", ti.tableInfo.Name), zap.Error(err))
-	}
-	if cleanupFunc != nil {
-		defer cleanupFunc()
-	}
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
