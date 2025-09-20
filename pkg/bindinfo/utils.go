@@ -172,7 +172,7 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
 
 var (
 	// UpdateBindingUsageInfoBatchSize indicates the batch size when updating binding usage info to storage.
-	UpdateBindingUsageInfoBatchSize = 20
+	UpdateBindingUsageInfoBatchSize = 100
 	// MaxWriteInterval indicates the interval at which a write operation needs to be performed after a binding has not been read.
 	MaxWriteInterval = 6 * time.Hour
 )
