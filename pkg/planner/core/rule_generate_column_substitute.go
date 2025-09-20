@@ -56,6 +56,7 @@ func (gc *GcSubstituter) Optimize(ctx context.Context, lp base.LogicalPlan, opt 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
+// TO-DO: ABC
 func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 	if _, ok := lp.(*logicalop.LogicalCTE); ok {
 		return
