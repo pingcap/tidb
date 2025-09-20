@@ -232,7 +232,6 @@ func mergeOrPredicateAndEqual(sctx base.PlanContext, predicates []expression.Exp
 	if len(predicates) <= 1 {
 		return predicates
 	}
-	return predicates
 	removeValues := make([]int, 0, len(predicates)-1)
 	for i := range predicates {
 		for j := i + 1; j < len(predicates); j++ {
