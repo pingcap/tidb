@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -2535,20 +2536,21 @@ func (w *worker) addTableIndex(
 	reorgInfo *reorgInfo,
 ) error {
 	ctx := jobCtx.stepCtx
-	// TODO: Support typeAddIndexMergeTmpWorker.
-	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := w.executeDistTask(jobCtx, t, reorgInfo)
-			if err != nil {
-				return err
-			}
-			if reorgInfo.ReorgMeta.UseCloudStorage {
-				// When adding unique index by global sort, it detects duplicate keys in each step.
-				// A duplicate key must be detected before, so we can skip the check bellow.
-				return nil
-			}
-			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
+	if reorgInfo.ReorgMeta.IsDistReorg && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		err := w.executeDistTask(jobCtx, t, reorgInfo)
+		if err != nil {
+			return err
 		}
+		if reorgInfo.ReorgMeta.UseCloudStorage {
+			// When adding unique index by global sort, it detects duplicate keys in each step.
+			// A duplicate key must be detected before, so we can skip the check bellow.
+			return nil
+		}
+		if reorgInfo.mergingTmpIdx {
+			// Merging temp index checks the duplicate keys in subtask executors.
+			return nil
+		}
+		return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
 	}
 
 	var err error
@@ -2637,33 +2639,74 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
+// TaskKeyBuilder is used to build task key for the backfill job.
+type TaskKeyBuilder struct {
+	keyspace       string
+	multiSchemaSeq int32
+	mergeTempIdx   bool
+	jobID          int64
+}
+
+// NewTaskKeyBuilder creates a new TaskKeyBuilder.
+func NewTaskKeyBuilder() *TaskKeyBuilder {
+	return &TaskKeyBuilder{multiSchemaSeq: -1}
+}
+
+// SetMergeTempIndex sets whether to merge the temporary index.
+func (b *TaskKeyBuilder) SetMergeTempIndex(flag bool) *TaskKeyBuilder {
+	b.mergeTempIdx = flag
+	return b
+}
+
+// SetMultiSchema sets the multi-schema change information.
+func (b *TaskKeyBuilder) SetMultiSchema(info *model.MultiSchemaInfo) *TaskKeyBuilder {
+	if info != nil {
+		b.multiSchemaSeq = info.Seq
+	}
+	return b
+}
+
+// Build builds the task key for the backfill job.
+func (b *TaskKeyBuilder) Build(jobID int64) string {
+	labels := make([]string, 0, 8)
+	if kerneltype.IsNextGen() {
+		labels = append(labels, keyspace.GetKeyspaceNameBySettings())
+	}
+	labels = append(labels, "ddl", proto.Backfill.String(), strconv.FormatInt(jobID, 10))
+	if b.multiSchemaSeq >= 0 {
+		labels = append(labels, strconv.Itoa(int(b.multiSchemaSeq)))
+	}
+	if b.mergeTempIdx {
+		labels = append(labels, "merge")
+	}
+	return strings.Join(labels, "/")
+}
+
 // TaskKey generates a task key for the backfill job.
-func TaskKey(jobID int64) string {
+func TaskKey(jobID int64, mergeTempIdx bool) string {
+	labels := make([]string, 0, 8)
 	if kerneltype.IsNextGen() {
 		ks := keyspace.GetKeyspaceNameBySettings()
-		return fmt.Sprintf("%s/ddl/%s/%d", ks, proto.Backfill, jobID)
+		labels = append(labels, ks)
 	}
-	return fmt.Sprintf("ddl/%s/%d", proto.Backfill, jobID)
+	labels = append(labels, "ddl", proto.Backfill.String(), strconv.FormatInt(jobID, 10))
+	if mergeTempIdx {
+		labels = append(labels, "merge")
+	}
+	return strings.Join(labels, "/")
 }
 
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
-	if reorgInfo.mergingTmpIdx {
-		return errors.New("do not support merge index")
-	}
-
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
-	taskKey := TaskKey(reorgInfo.Job.ID)
+	tkBuilder := NewTaskKeyBuilder().
+		SetMultiSchema(reorgInfo.Job.MultiSchemaInfo).
+		SetMergeTempIndex(reorgInfo.mergingTmpIdx)
+	taskKey := tkBuilder.Build(reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(w.workCtx)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 
 	done := make(chan struct{})
-
-	// generate taskKey for multi schema change.
-	if mInfo := reorgInfo.Job.MultiSchemaInfo; mInfo != nil {
-		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
-	}
-
 	// For resuming add index task.
 	// Need to fetch task by taskKey in tidb_global_task and tidb_global_task_history tables.
 	// When pausing the related ddl job, it is possible that the task with taskKey is succeed and in tidb_global_task_history.
@@ -2736,6 +2779,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+			MergeTempIndex:  reorgInfo.mergingTmpIdx,
 			EstimateRowSize: rowSize,
 			Version:         BackfillTaskMetaVersion1,
 		}
