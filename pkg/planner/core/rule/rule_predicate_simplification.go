@@ -239,21 +239,11 @@ func mergeOrPredicateAndEqual(sctx base.PlanContext, predicates []expression.Exp
 			jthPredicate := predicates[j]
 			_, iType := FindPredicateType(sctx, ithPredicate)
 			_, jType := FindPredicateType(sctx, jthPredicate)
-			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCache(
-				sctx.GetExprCtx(),
-				ithPredicate,
-				jthPredicate)
 			if iType == orPredicate && jType == equalPredicate {
 				predicates[i] = mergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
-				if maybeOverOptimized4PlanCache {
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("Or/Equal merged is triggered")
-				}
 				removeValues = append(removeValues, j)
 			} else if iType == equalPredicate && jType == orPredicate {
 				predicates[j] = mergeOrAndEqualPredicate(sctx, ithPredicate, jthPredicate)
-				if maybeOverOptimized4PlanCache {
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("Or/Equal merged is triggered")
-				}
 				removeValues = append(removeValues, i)
 			}
 		}
