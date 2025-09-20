@@ -776,7 +776,7 @@ func extractNotNullColumn(e expression.Expression) (*expression.Column, bool) {
 
 // Guarded predicate passing:
 //   - Always filter predicates by child's schema to avoid cross-scope captures.
-//   - If the child is an outer join, block pushing NOT IS NULL(col) onto the nullable side,
+//   - If the child is an outer join, block pushing NOT(IS NULL(col)) onto the nullable side,
 //     except when `col` is the child-side column of a parent equality (EQ / NullEQ) that
 //     crosses into this child. This whitelist allows null-rejecting join-key predicates
 //     (e.g. ta.a1 = tc.a1 at parent) to keep pushing down across nested outer-joins and

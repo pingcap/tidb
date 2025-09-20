@@ -24,18 +24,25 @@ import (
 // NullBehavior describes how a function interacts with SQL 3VL and NULL propagation.
 // Function null-behavior traits (centralized, easy to extend):
 //   - NullPreserving:   any NULL input (relevant arg) yields NULL output (e.g., +, -, *, comparisons, LIKE, REGEXP)
-//   - NullHiding:       may turn NULL into non-NULL or short-circuit to a non-NULL truth value (IF/CASE/COALESCE/IS .../AND/OR)
+//   - NullHiding:       may turn NULL into non-NULL or short-circuit to a non-NULL truth value
+//     (IF/CASE/COALESCE/IS .../AND/OR)
 //   - ShortCircuitBool: boolean operator with short-circuit semantics (AND/OR/XOR)
 //   - NullSafeEq:       NULL-safe equality (<=>)
 //   - NullTransparentWrapper: unary wrapper that is NULL-transparent and "structurally" transparent for our checks
 //     (e.g., CAST/CONVERT/WEIGHT_STRING). We peel these before reasoning.
 type NullBehavior uint8
 
+// NullBehavior constants define how functions interact with NULL values
 const (
+	// NullPreserving indicates any NULL input yields NULL output
 	NullPreserving NullBehavior = 1 << iota
+	// NullHiding indicates may turn NULL into non-NULL
 	NullHiding
+	// ShortCircuitBool indicates boolean operator with short-circuit semantics
 	ShortCircuitBool
+	// NullSafeEq indicates NULL-safe equality
 	NullSafeEq
+	// NullTransparentWrapper indicates unary wrapper that is NULL-transparent
 	NullTransparentWrapper
 )
 
