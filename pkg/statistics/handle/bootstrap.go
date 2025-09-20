@@ -611,6 +611,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(2) /*count*/, row.GetInt64(3) /*repeats*/, row.GetInt64(6) /*ndv*/)
 	}
 	if table != nil {
+		table.SetAllIndexFullLoadForBootstrap()
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 	if hasErr {
