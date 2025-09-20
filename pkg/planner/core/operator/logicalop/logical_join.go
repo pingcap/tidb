@@ -787,22 +787,17 @@ func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) [
 	// 1) Split predicates into inSchema and crossScopeEq
 	inSchema := make([]expression.Expression, 0, len(combined))
 	crossScopeEq := make([]expression.Expression, 0, 4)
+
 	for _, e := range combined {
-		cols := expression.ExtractColumns(e)
-		if len(cols) == 0 {
+		// Skip expressions with no columns (constants, etc.)
+		if len(expression.ExtractColumns(e)) == 0 {
 			continue
 		}
-		allIn := true
-		for _, c := range cols {
-			if !sch.Contains(c) {
-				allIn = false
-				break
-			}
-		}
-		if allIn {
+		if expression.ExprFromSchema(e, sch) {
 			inSchema = append(inSchema, e)
 			continue
 		}
+		// Check for cross-scope EQ/NullEQ conditions
 		if sf, ok := e.(*expression.ScalarFunction); ok &&
 			(sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.NullEQ) && len(sf.GetArgs()) == 2 {
 			lHas := expression.ExprFromSchema(sf.GetArgs()[0], sch)
@@ -829,15 +824,11 @@ func passPredsSafely(child base.LogicalPlan, combined []expression.Expression) [
 			sf := e.(*expression.ScalarFunction)
 			if expression.ExprFromSchema(sf.GetArgs()[0], sch) && !expression.ExprFromSchema(sf.GetArgs()[1], sch) {
 				for _, c := range expression.ExtractColumns(sf.GetArgs()[0]) {
-					if sch.Contains(c) {
-						eqColsInChild.Insert(int(c.UniqueID))
-					}
+					eqColsInChild.Insert(int(c.UniqueID))
 				}
 			} else if !expression.ExprFromSchema(sf.GetArgs()[0], sch) && expression.ExprFromSchema(sf.GetArgs()[1], sch) {
 				for _, c := range expression.ExtractColumns(sf.GetArgs()[1]) {
-					if sch.Contains(c) {
-						eqColsInChild.Insert(int(c.UniqueID))
-					}
+					eqColsInChild.Insert(int(c.UniqueID))
 				}
 			}
 		}
