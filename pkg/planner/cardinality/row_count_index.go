@@ -405,7 +405,7 @@ func estimateRowCountWithUniformDistribution(
 ) statistics.RowEstimate {
 	if stats == nil {
 		// Return a default estimate when stats are nil
-		return statistics.DefaultRowEst(1)
+		return 1
 	}
 	histogram := stats.GetHistogram()
 	topN := stats.GetTopN()
@@ -420,7 +420,7 @@ func estimateRowCountWithUniformDistribution(
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
-			return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
+			return max(float64(topN.MinCount()-1), 1)
 		}
 		// All values are in TopN (and TopN NDV is accurate).
 		// We need to derive a RowCount because the histogram is empty.
@@ -428,13 +428,13 @@ func estimateRowCountWithUniformDistribution(
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
 		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-		return statistics.DefaultRowEst(outOfRangeCnt)
+		return outOfRangeCnt
 	}
 	// branch 2: some NDV's are in histograms
 	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 	avgRowEstimate := notNullCount / histNDV
 
-	return statistics.DefaultRowEst(avgRowEstimate)
+	return avgRowEstimate
 }
 
 // equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
