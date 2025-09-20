@@ -1226,46 +1226,6 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 	return task
 }
 
-<<<<<<< HEAD
-=======
-func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask) {
-	var (
-		ctx    = e.workerCtx
-		region *trace.Region
-	)
-	if trace.IsEnabled() {
-		region = trace.StartRegion(ctx, "IndexLookUpTableTask"+strconv.Itoa(task.id))
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.Logger(ctx).Warn("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
-			err := util.GetRecoverError(r)
-			task.doneCh <- err
-		}
-		if region != nil {
-			region.End()
-		}
-	}()
-	tracker := memory.NewTracker(task.id, -1)
-	tracker.AttachTo(e.memTracker)
-	w := &tableWorker{
-		idxLookup:       e,
-		finished:        e.finished,
-		keepOrder:       e.keepOrder,
-		handleIdx:       e.handleIdx,
-		checkIndexValue: e.checkIndexValue,
-		memTracker:      tracker,
-	}
-	startTime := time.Now()
-	err := w.executeTask(ctx, task)
-	if e.stats != nil {
-		atomic.AddInt64(&e.stats.TableRowScan, int64(time.Since(startTime)))
-		atomic.AddInt64(&e.stats.TableTaskNum, 1)
-	}
-	task.doneCh <- err
-}
-
->>>>>>> 6e8336654e8 (executor: downgrade some error logs (#63494))
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
 	idxLookup *IndexLookUpExecutor
