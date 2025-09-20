@@ -472,6 +472,7 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 }
 
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	intest.Assert(r.iter == nil)
 	if r.iter != nil {
 		return errors.New("selectResult is invalid after IntoIter()")
 	}
@@ -501,6 +502,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (r *selectResult) IntoIter(intermediateFieldTypes [][]*types.FieldType) (SelectResultIter, error) {
+	intest.Assert(r.iter == nil)
 	if r.iter != nil {
 		return nil, errors.New("selectResult is invalid after IntoIter()")
 	}
@@ -509,6 +511,7 @@ func (r *selectResult) IntoIter(intermediateFieldTypes [][]*types.FieldType) (Se
 
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
+	intest.Assert(r.iter == nil)
 	failpoint.Inject("mockNextRawError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mockNextRawError"))
@@ -723,6 +726,7 @@ func (r *selectResult) memConsume(bytes int64) {
 
 // Close closes selectResult.
 func (r *selectResult) Close() error {
+	intest.Assert(r.iter == nil)
 	if r.iter != nil {
 		return errors.New("selectResult is invalid after IntoIter()")
 	}

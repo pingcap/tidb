@@ -20,12 +20,10 @@ import (
 	"maps"
 	"sort"
 	"strings"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/types"
@@ -204,10 +202,6 @@ const (
 	// PreferTiFlash indicates that the optimizer prefers to use TiFlash layer.
 	PreferTiFlash
 )
-
-// EnableIndexLookUpPushDownForTest is only used for testing to enable index lookup push down.
-// TODO: remove it when index lookup push down finished to dev
-var EnableIndexLookUpPushDownForTest atomic.Bool
 
 // StmtHints are hints that apply to the entire statement, like 'max_exec_time', 'memory_quota'.
 type StmtHints struct {
@@ -756,6 +750,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 	currentLevel int, currentDB string,
 	hintProcessor *QBHintHandler, straightJoinOrder bool,
 	handlingInSubquery, handlingExistsSubquery, notHandlingSubquery bool,
+	indexLookUpPushDownEnabled bool,
 	warnHandler hintWarnHandler) (p *PlanHints, subQueryHintFlags uint64, err error) {
 	var (
 		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []HintedTable
@@ -852,14 +847,19 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
 			case HintIndexLookUpPushDown:
-				if !EnableIndexLookUpPushDownForTest.Load() {
-					warnHandler.SetHintWarningFromError(parser.ErrWarnOptimizerHintUnsupportedHint.FastGenByArgs(hint.HintName.O))
+				inapplicableMsg := ""
+				switch {
+				case !indexLookUpPushDownEnabled:
+					inapplicableMsg = "the tidb_enable_index_lookup_pushdown is off"
+				case len(hint.Indexes) == 0:
+					inapplicableMsg = "the index names should be specified"
+				}
+
+				if inapplicableMsg != "" {
+					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, " + inapplicableMsg)
 					continue
 				}
-				if len(hint.Indexes) == 0 {
-					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified")
-					continue
-				}
+
 				hintType = ast.HintUse
 				pushDownLookUp = true
 			}

@@ -281,6 +281,9 @@ const (
 	// TiDBExplicitRequestSourceType indicates the source of the request, it's a complement of RequestSourceType.
 	// The value maybe "lightning", "br", "dumpling" etc.
 	TiDBExplicitRequestSourceType = "tidb_request_source_type"
+
+	// TiDBEnableIndexLookUpPushDown indicates whether to enable index lookup push down optimization.
+	TiDBEnableIndexLookUpPushDown = "tidb_enable_index_lookup_pushdown"
 )
 
 // TiDB system variable names that both in session and global scope.

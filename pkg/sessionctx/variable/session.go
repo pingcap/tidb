@@ -1766,6 +1766,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// EnableIndexLookUpPushDown indicates whether to enable index lookup push down
+	EnableIndexLookUpPushDown bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
