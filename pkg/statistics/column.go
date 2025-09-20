@@ -270,3 +270,13 @@ func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column 
 		IsHandle:   pkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 	}
 }
+
+// GetHistogram returns the histogram for this column.
+func (c *Column) GetHistogram() *Histogram {
+	return &c.Histogram
+}
+
+// GetTopN returns the TopN for this column.
+func (c *Column) GetTopN() *TopN {
+	return c.TopN
+}
