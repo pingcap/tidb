@@ -711,7 +711,7 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
-func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableInfo *model.TableInfo, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) { // Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
+func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) { // Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
@@ -1231,7 +1231,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
+			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate, preferRange)
 			if missingStats {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
