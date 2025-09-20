@@ -146,6 +146,7 @@ func walkLeafMetaFile(
 
 // Table wraps the schema and files of a table.
 type Table struct {
+<<<<<<< HEAD
 	DB              *model.DBInfo
 	Info            *model.TableInfo
 	Crc64Xor        uint64
@@ -159,6 +160,18 @@ type Table struct {
 // NoChecksum checks whether the table has a calculated checksum.
 func (tbl *Table) NoChecksum() bool {
 	return tbl.Crc64Xor == 0 && tbl.TotalKvs == 0 && tbl.TotalBytes == 0
+=======
+	DB               *model.DBInfo
+	Info             *model.TableInfo
+	Crc64Xor         uint64
+	TotalKvs         uint64
+	TotalBytes       uint64
+	Files            []*backuppb.File
+	TotalKvsMap      map[int64]uint64
+	TiFlashReplicas  int
+	Stats            *util.JSONTable
+	StatsFileIndexes []*backuppb.StatsFileIndex
+>>>>>>> e589efdb9a8 (br: fix stats meta count is zero if no checksum 8.5 (#63420))
 }
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
@@ -233,6 +246,41 @@ func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64
 	return total
 }
 
+<<<<<<< HEAD
+=======
+type ChecksumStats struct {
+	Crc64Xor   uint64
+	TotalKvs   uint64
+	TotalBytes uint64
+}
+
+func (stats ChecksumStats) ChecksumExists() bool {
+	if stats.Crc64Xor == 0 && stats.TotalKvs == 0 && stats.TotalBytes == 0 {
+		return false
+	}
+	return true
+}
+
+func CalculateTotalKvsOnFiles(files []*backuppb.File) uint64 {
+	totalKvs := uint64(0)
+	for _, file := range files {
+		totalKvs += file.TotalKvs
+	}
+	return totalKvs
+}
+
+// CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
+func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
+	var stats ChecksumStats
+	for _, file := range files {
+		stats.Crc64Xor ^= file.Crc64Xor
+		stats.TotalKvs += file.TotalKvs
+		stats.TotalBytes += file.TotalBytes
+	}
+	return stats
+}
+
+>>>>>>> e589efdb9a8 (br: fix stats meta count is zero if no checksum 8.5 (#63420))
 // ReadDDLs reads the ddls from the backupmeta.
 // This function is compatible with the old backupmeta.
 func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
@@ -363,13 +411,19 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			}
 			if tableInfo != nil {
 				if fileMap != nil {
+<<<<<<< HEAD
 					if files, ok := fileMap[tableInfo.ID]; ok {
+=======
+					if files, ok := fileMap[table.Info.ID]; ok {
+						table.TotalKvsMap[table.Info.ID] = CalculateTotalKvsOnFiles(files)
+>>>>>>> e589efdb9a8 (br: fix stats meta count is zero if no checksum 8.5 (#63420))
 						table.Files = append(table.Files, files...)
 					}
 					if tableInfo.Partition != nil {
 						// Partition table can have many table IDs (partition IDs).
 						for _, p := range tableInfo.Partition.Definitions {
 							if files, ok := fileMap[p.ID]; ok {
+								table.TotalKvsMap[p.ID] = CalculateTotalKvsOnFiles(files)
 								table.Files = append(table.Files, files...)
 							}
 						}
@@ -395,6 +449,47 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	}
 }
 
+<<<<<<< HEAD
+=======
+func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
+	dbInfo := &model.DBInfo{}
+	if err := json.Unmarshal(s.Db, dbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var tableInfo *model.TableInfo
+	if s.Table != nil {
+		tableInfo = &model.TableInfo{}
+		if err := json.Unmarshal(s.Table, tableInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var stats *util.JSONTable
+	if s.Stats != nil {
+		stats = &util.JSONTable{}
+		if err := json.Unmarshal(s.Stats, stats); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var statsFileIndexes []*backuppb.StatsFileIndex
+	if len(s.StatsIndex) > 0 {
+		statsFileIndexes = s.StatsIndex
+	}
+
+	return &Table{
+		DB:               dbInfo,
+		Info:             tableInfo,
+		Crc64Xor:         s.Crc64Xor,
+		TotalKvs:         s.TotalKvs,
+		TotalBytes:       s.TotalBytes,
+		TotalKvsMap:      make(map[int64]uint64),
+		TiFlashReplicas:  int(s.TiflashReplicas),
+		Stats:            stats,
+		StatsFileIndexes: statsFileIndexes,
+	}, nil
+}
+
+>>>>>>> e589efdb9a8 (br: fix stats meta count is zero if no checksum 8.5 (#63420))
 func receiveBatch(
 	ctx context.Context, errCh chan error, ch <-chan interface{}, maxBatchSize int,
 	collectItem func(interface{}) error,
