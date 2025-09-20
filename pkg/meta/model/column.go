@@ -61,6 +61,7 @@ type ColumnInfo struct {
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
 	FieldType           types.FieldType     `json:"type"`
+	ChangingFieldType   *types.FieldType    `json:"changing_type"`
 	State               SchemaState         `json:"state"`
 	Comment             string              `json:"comment"`
 	// A hidden column is used internally(expression index) and are not accessible by users.

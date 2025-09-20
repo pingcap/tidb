@@ -38,13 +38,13 @@ alter table t modify column a tinyint;
 drop table if exists t;
 create table t (a bigint);
 insert into t(a) values (9223372036854775807);
--- error 1690
+-- error 1265
 alter table t modify column a int;
--- error 1690
+-- error 1265
 alter table t modify column a mediumint;
--- error 1690
+-- error 1265
 alter table t modify column a smallint;
--- error 1690
+-- error 1265
 alter table t modify column a tinyint;
 admin check table t;
 

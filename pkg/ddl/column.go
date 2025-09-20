@@ -301,13 +301,8 @@ func onSetDefaultValue(jobCtx *jobContext, job *model.Job) (ver int64, _ error) 
 	return updateColumnDefaultValue(jobCtx, job, newCol, &newCol.Name)
 }
 
-func setIdxIDName(idxInfo *model.IndexInfo, newID int64, newName ast.CIStr) {
-	idxInfo.ID = newID
-	idxInfo.Name = newName
-}
-
-// SetIdxColNameOffset sets index column name and offset from changing ColumnInfo.
-func SetIdxColNameOffset(idxCol *model.IndexColumn, changingCol *model.ColumnInfo) {
+// UpdateIndexCol update index column's name and offset with changing ColumnInfo.
+func UpdateIndexCol(idxCol *model.IndexColumn, changingCol *model.ColumnInfo) {
 	idxCol.Name = changingCol.Name
 	idxCol.Offset = changingCol.Offset
 	canPrefix := types.IsTypePrefixable(changingCol.GetType())
@@ -354,12 +349,14 @@ func removeOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo)
 }
 
 // updateNewIdxColsNameOffset updates the name&offset of the index column.
-func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
-	oldName ast.CIStr, changingCol *model.ColumnInfo) {
+func updateNewIdxColsNameOffset(
+	changingIdxs []*model.IndexInfo,
+	oldName ast.CIStr, changingCol *model.ColumnInfo,
+) {
 	for _, idx := range changingIdxs {
 		for _, col := range idx.Columns {
 			if col.Name.L == oldName.L {
-				SetIdxColNameOffset(col, changingCol)
+				UpdateIndexCol(col, changingCol)
 			}
 		}
 	}
@@ -950,10 +947,7 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
 	_, err := LocateOffsetToMove(oldCol.Offset, pos, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
@@ -1280,12 +1274,6 @@ func modifyColsFromNull2NotNull(
 	defer w.sessPool.Put(sctx)
 
 	skipCheck := false
-	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			skipCheck = true
-		}
-	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = checkForNullValue(ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)
@@ -1382,35 +1370,35 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 }
 
 func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
-	suffix := 0
-	newColumnNamePrefix := fmt.Sprintf("%s%s", changingColumnPrefix, oldCol.Name.O)
-	newColumnLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
 	// Check whether the new column name is used.
 	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
 	for _, col := range tblInfo.Columns {
 		columnNameMap[col.Name.L] = true
 	}
-	for columnNameMap[newColumnLowerName] {
+
+	suffix := 0
+	newColumnName := fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
+	for columnNameMap[strings.ToLower(newColumnName)] {
 		suffix++
-		newColumnLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
+		newColumnName = fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
 	}
-	return fmt.Sprintf("%s_%d", newColumnNamePrefix, suffix)
+	return newColumnName
 }
 
 func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
-	suffix := 0
-	newIndexNamePrefix := fmt.Sprintf("%s%s", changingIndexPrefix, idxInfo.Name.O)
-	newIndexLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
 	// Check whether the new index name is used.
 	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
 		indexNameMap[idx.Name.L] = true
 	}
-	for indexNameMap[newIndexLowerName] {
+
+	suffix := 0
+	newIndexName := fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
+	for indexNameMap[strings.ToLower(newIndexName)] {
 		suffix++
-		newIndexLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
+		newIndexName = fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
 	}
-	return fmt.Sprintf("%s_%d", newIndexNamePrefix, suffix)
+	return newIndexName
 }
 
 func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
