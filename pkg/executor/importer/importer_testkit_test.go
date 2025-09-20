@@ -431,14 +431,14 @@ func TestCalResourceParams(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", handle.GetTargetScope()))
-	c := &importer.LoadDataController{Plan: &importer.Plan{TotalFileSize: 200 * units.TiB}}
+	c := &importer.LoadDataController{Plan: &importer.Plan{TotalFileSize: 200 * units.TiB, TableInfo: &model.TableInfo{}}}
 	importer.WithLogger(zap.NewNop())(c)
 	require.NoError(t, c.CalResourceParams(ctx))
 	require.Equal(t, 8, c.ThreadCnt)
 	require.Equal(t, 32, c.MaxNodeCnt)
 	require.Equal(t, 256, c.DistSQLScanConcurrency)
 
-	c = &importer.LoadDataController{Plan: &importer.Plan{TotalFileSize: 300 * units.GiB}}
+	c = &importer.LoadDataController{Plan: &importer.Plan{TotalFileSize: 300 * units.GiB, TableInfo: &model.TableInfo{}}}
 	importer.WithLogger(zap.NewNop())(c)
 	require.NoError(t, c.CalResourceParams(ctx))
 	require.Equal(t, 8, c.ThreadCnt)
