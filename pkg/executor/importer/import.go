@@ -1597,7 +1597,8 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
+// GetLocalBackendCfg gets BackendConfig for IMPORT INTO
+func (e *LoadDataController) GetLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,

@@ -37,7 +37,8 @@ import (
 // ImporterRangeConcurrencyForTest is only used for test.
 var ImporterRangeConcurrencyForTest *atomic.Int32
 
-func genConfig(
+// GenConfig generates BackendConfig for adding index
+func GenConfig(
 	ctx context.Context,
 	jobSortPath string,
 	memRoot MemRoot,
