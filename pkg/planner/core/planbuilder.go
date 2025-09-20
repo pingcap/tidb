@@ -1140,20 +1140,15 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
-<<<<<<< HEAD
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
-=======
-func isTiKVIndexByName(idxName string, tblInfo *model.TableInfo) bool {
-	for _, index := range tblInfo.Indices {
-		if index.Name.L == idxName {
-			return !index.IsColumnarIndex()
-		}
+func isTiKVIndexByName(idxName pmodel.CIStr, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	// when the PKIsHandle of table is true, the primary key is not in the indices list.
+	if idxName.L == "primary" && tblInfo.PKIsHandle {
+		return true
 	}
-	return false
+	return indexInfo != nil && !indexInfo.IsTiFlashLocalIndex()
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
->>>>>>> ad7da11f3f1 (planner: fix index hint when isolation read engines(value: 'tiflash') (#60878))
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1274,20 +1269,6 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 		hasScanHint = true
 
-<<<<<<< HEAD
-		if !isolationReadEnginesHasTiKV {
-			if hint.IndexNames != nil {
-				engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
-				err := fmt.Errorf("TiDB doesn't support index in the isolation read engines(value: '%v')", engineVals)
-				if i < indexHintsLen {
-					return nil, err
-				}
-				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			}
-			continue
-		}
-=======
->>>>>>> ad7da11f3f1 (planner: fix index hint when isolation read engines(value: 'tiflash') (#60878))
 		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
@@ -1317,9 +1298,8 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				ignored = append(ignored, path)
 				continue
 			}
-			if isTiKVIndexByName(idxName.L, tblInfo) && !isolationReadEnginesHasTiKV {
-				fmt.Println("TiKV is not supported in isolation read engines")
-				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
+			if isTiKVIndexByName(idxName, path.Index, tblInfo) && !isolationReadEnginesHasTiKV {
+				engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
 					return nil, err
