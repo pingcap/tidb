@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -161,4 +163,42 @@ func TestShowSessionStates(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk1.MustQuery("show session_states").CheckAt([]int{1}, testkit.Rows("<nil>"))
+}
+
+func TestShowIndexNDVStorageFallbackWithoutCachePollution(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, index ib(b, c))")
+	// insert values to ensure NDVs are > 0 for b and c
+	tk.MustExec("insert into t values (1,10,100),(2,20,200),(3,30,300),(4,40,400),(5,50,500)")
+	// analyze table to generate stats in storage
+	tk.MustExec("analyze table t")
+
+	// Clear stats cache to simulate missing-in-cache but present-in-storage
+	dom.StatsHandle().Clear()
+
+	// SHOW INDEX should show PK NDV and both index-column NDVs via storage fallback
+	rows := tk.MustQuery("show index from t").Rows()
+	require.GreaterOrEqual(t, len(rows), 3)
+	// Collect NDVs for PRIMARY(a) and ib(b,c)
+	ndvs := map[string]string{}
+	for _, r := range rows {
+		keyName := r[2].(string)
+		colName := r[4].(string)
+		card := r[6].(string)
+		ndvs[keyName+":"+colName] = card
+	}
+	require.NotEqual(t, "0", ndvs["PRIMARY:a"]) // pk
+	require.NotEqual(t, "0", ndvs["ib:b"])      // first column of composite index
+	require.NotEqual(t, "0", ndvs["ib:c"])      // second column of composite index
+
+	// Ensure cache remains pseudo (not populated) after SHOW INDEX
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.True(t, statsTbl.Pseudo)
 }
