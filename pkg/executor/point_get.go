@@ -600,7 +600,13 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 
 	if e.lock {
 		seVars := e.Ctx().GetSessionVars()
-		lockCtx, err := newLockCtx(e.Ctx(), e.lockWaitTime, 1)
+		lockWaitTime := e.lockWaitTime
+
+		if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+			return nil, err
+		}
+
+		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1)
 		if err != nil {
 			return nil, err
 		}
