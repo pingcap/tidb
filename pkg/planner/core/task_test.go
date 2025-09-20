@@ -66,30 +66,27 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	sel.SetChildren(proj)
 	proj.SetChildren(tableReader)
 
-	task := &RootTask{
-		p: sel,
-	}
-
+	task := &physicalop.RootTask{}
+	task.SetPlan(sel)
 	// mock a union-scan and attach to task.
 	unionScan := &physicalop.PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
 	unionScan.Attach2Task(task)
 
 	// assert the child task's p is unchanged.
-	require.Equal(t, task.p, sel)
-	require.Equal(t, task.p.Children()[0], proj)
-	require.Equal(t, task.p.Children()[0].Children()[0], tableReader)
-	require.Equal(t, task.p.Children()[0].Children()[0].(*physicalop.PhysicalTableReader).TablePlans[0], tableScan)
+	require.Equal(t, task.Plan(), sel)
+	require.Equal(t, task.Plan().Children()[0], proj)
+	require.Equal(t, task.Plan().Children()[0].Children()[0], tableReader)
+	require.Equal(t, task.Plan().Children()[0].Children()[0].(*physicalop.PhysicalTableReader).TablePlans[0], tableScan)
 
-	task2 := &RootTask{
-		p: proj,
-	}
+	task2 := &physicalop.RootTask{}
+	task2.SetPlan(proj)
 	// mock a union-scan and attach to task.
 	unionScan2 := &physicalop.PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
 	unionScan2.Self = unionScan2
 	unionScan2.Attach2Task(task2)
 
 	// assert the child task's p is unchanged.
-	require.Equal(t, task2.p, proj)
-	require.Equal(t, task2.p.Children()[0], tableReader)
-	require.Equal(t, task2.p.Children()[0].(*physicalop.PhysicalTableReader).TablePlans[0], tableScan)
+	require.Equal(t, task2.Plan(), proj)
+	require.Equal(t, task2.Plan().Children()[0], tableReader)
+	require.Equal(t, task2.Plan().Children()[0].(*physicalop.PhysicalTableReader).TablePlans[0], tableScan)
 }
