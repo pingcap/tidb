@@ -2326,7 +2326,22 @@
       },
       {
         "SQL": "SELECT COUNT(t) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t)->Sel([eq(test.t.a, test.t.a)]))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg"
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t)->Sel([eq(test.t.a, test.t.a)]))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(test.t.b)->Column#21",
+          "└─Apply 10000.00 root  CARTESIAN left outer join, left side:IndexReader",
+          "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 10000.00 root  offset:0, count:1",
+          "    └─IndexHashJoin 10000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
+          "      ├─IndexReader(Build) 8919.00 root  index:Selection",
+          "      │ └─Selection 8919.00 cop[tikv]  eq(test.t.a, test.t.a)",
+          "      │   └─IndexFullScan 8919000.00 cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
+          "      └─IndexLookUp(Probe) 11148.75 root  ",
+          "        ├─Selection(Build) 11148.75 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+          "        │ └─IndexRangeScan 11159909.91 cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
+          "        └─TableRowIDScan(Probe) 11148.75 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
       },
       {
         "SQL": "SELECT COUNT(a) FROM t t1 WHERE t1.a IN (SELECT t2.a FROM t t2, t t3 WHERE t2.b = t3.b)",

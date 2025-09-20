@@ -277,9 +277,14 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
+				stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					continue
+				}
+
 				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
+					stats,
 				)
 				err := pq.pushWithoutLock(job)
 				if err != nil {
@@ -295,7 +300,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 					partitionDefs = append(partitionDefs, def)
 				}
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, tblInfo, partitionDefs)
+			partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
 			// If the prune mode is static, we need to analyze every partition as a separate table.
 			if pruneMode == variable.Static {
 				for pIDAndName, stats := range partitionStats {
@@ -310,9 +315,13 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 					}
 				}
 			} else {
+				globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					continue
+				}
 				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
+					globalStats,
 					partitionStats,
 				)
 				err := pq.pushWithoutLock(job)
@@ -465,6 +474,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 	}
 	return pq.pushWithoutLock(job)
 }
+
 func (pq *AnalysisPriorityQueue) tryCreateJob(
 	is infoschema.InfoSchema,
 	stats *statistics.Table,
@@ -549,17 +559,23 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 					filteredPartitionDefs = append(filteredPartitionDefs, def)
 				}
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, filteredPartitionDefs)
+
+			// Get global stats for dynamic partitioned table.
+			globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableMeta.ID)
+			if !found {
+				return nil
+			}
+			partitionStats := GetPartitionStats(pq.statsHandle, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 				tableMeta,
-				// Get global stats for dynamic partitioned table.
-				pq.statsHandle.GetTableStatsForAutoAnalyze(tableMeta),
+				globalStats,
 				partitionStats,
 			)
 		}
 	}
 	return job
 }
+
 func (pq *AnalysisPriorityQueue) tryUpdateJob(
 	is infoschema.InfoSchema,
 	stats *statistics.Table,
@@ -587,7 +603,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		tableMeta := tableInfo.Meta()
 		partitionedTable := tableMeta.GetPartitionInfo()
 		partitionDefs := partitionedTable.Definitions
-		partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, partitionDefs)
+		partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
 		return jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 			tableMeta,
 			stats,
@@ -727,6 +743,7 @@ func (pq *AnalysisPriorityQueue) Push(job AnalysisJob) error {
 
 	return pq.pushWithoutLock(job)
 }
+
 func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	if job == nil {
 		return nil
@@ -757,7 +774,7 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
 	weight := pq.calculator.CalculateWeight(job)
 	if weight <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Warn(
+		statslogutil.StatsSampleLogger().Warn(
 			"Table gets a negative weight",
 			zap.Float64("weight", weight),
 			zap.Stringer("job", job),

@@ -3821,7 +3821,7 @@ set @@tidb_opt_range_max_size = 111;
 explain format='brief' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);
 id	estRows	task	access object	operator info
 TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		in(planner__core__integration.sbtest1.id, 1, 1, 1, 1, 1), in(planner__core__integration.sbtest1.pad, "1", "1", "1", "1", "1")
+└─Selection	8000.00	cop[tikv]		in(planner__core__integration.sbtest1.id, 1), in(planner__core__integration.sbtest1.pad, "1")
   └─TableFullScan	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	Memory capacity of 111 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen

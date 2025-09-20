@@ -8,3 +8,12 @@ insert into t values (2, 4), (3, 4) on duplicate key update a=2, b=5;
 select * from t use index (idx1) order by a desc;
 
 
+# Test global index + non-unique index
+drop table if exists t;
+create table t(a int, b int, index idx(a) global) partition by hash(b) partitions 5;
+insert into t values (1, 1), (1, 2), (2, 2);
+select * from t use index (idx);
+
+alter table t add index idx1(b) global;
+insert into t values (2, 4), (3, 4);
+select * from t use index (idx1) order by a desc, b;
