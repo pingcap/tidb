@@ -292,7 +292,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		if expression.ExprFromSchema(expr, outerTable.Schema()) {
 			continue
 		}
-		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, false)
+		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
 		if isOk {
 			canBeSimplified = true
 			break
