@@ -691,10 +691,6 @@ func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	if _, ok := p.Self().(*LogicalApply); ok {
-		// Do not convert outer join to inner join for LogicalApply.
-		return p
-	}
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]
 	switchChild := false
