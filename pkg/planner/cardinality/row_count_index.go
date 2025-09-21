@@ -398,7 +398,7 @@ type StatsProvider interface {
 // for values not covered by TopN or histograms. This function handles the common logic used by
 // both equalRowCountOnIndex and equalRowCountOnColumn.
 func estimateRowCountWithUniformDistribution(
-	sctx planctx.PlanContext,
+	_ planctx.PlanContext,
 	stats StatsProvider,
 	realtimeRowCount int64,
 	modifyCount int64,
