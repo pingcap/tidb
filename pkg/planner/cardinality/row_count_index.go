@@ -411,8 +411,6 @@ func estimateRowCountWithUniformDistribution(
 	topN := stats.GetTopN()
 	// Calculate histNDV excluding TopN from NDV
 	histNDV := float64(histogram.NDV - int64(topN.Num()))
-	totalRowCount := stats.TotalRowCount()
-	increaseFactor := stats.GetIncreaseFactor(realtimeRowCount)
 	notNullCount := histogram.NotNullCount()
 
 	// Branch 1: all NDV's are in TopN, and no histograms.
@@ -429,13 +427,25 @@ func estimateRowCountWithUniformDistribution(
 			}
 			return max(float64(topNMinCount-1), 1)
 		}
-		// All values are in TopN (and TopN NDV is accurate).
-		// We need to derive a RowCount because the histogram is empty.
-		if notNullCount <= 0 {
-			notNullCount = totalRowCount - float64(histogram.NullCount)
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
+		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
+		//
+		// If the table hasn't been modified, it's safe to return 0.
+		if modifyCount == 0 {
+			return 0
 		}
-		outOfRangeCnt := outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-		return outOfRangeCnt
+		// ELSE calculate an approximate estimate based upon newly inserted rows.
+		//
+		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
+		if stats.GetHistogram().NDV > 0 {
+			histNDV = float64(stats.GetHistogram().NDV)
+		} else {
+			histNDV = math.Sqrt(max(stats.TotalRowCount(), float64(realtimeRowCount)))
+		}
+		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
+		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
+		totalRowCount := min(stats.TotalRowCount(), float64(realtimeRowCount)-stats.TotalRowCount())
+		return max(1, totalRowCount/histNDV)
 	}
 	// branch 2: some NDV's are in histograms
 	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
