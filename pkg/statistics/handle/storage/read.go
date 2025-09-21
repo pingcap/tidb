@@ -868,24 +868,11 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			return errors.Trace(err)
 		}
 	}
-<<<<<<< HEAD
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
 		Info: idxInfo, StatsVer: statsVer,
 		Flag: flag, PhysicalID: idx.TableID,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
-=======
-	idxHist := &statistics.Index{
-		Histogram:         *hg,
-		CMSketch:          cms,
-		TopN:              topN,
-		FMSketch:          fms,
-		Info:              idxInfo,
-		StatsVer:          statsVer,
-		PhysicalID:        idx.TableID,
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-	}
->>>>>>> bc534e4a7b2 (statistics: add warnings for missing table, column, and histogram information during async loading (#60213))
 
 	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {
