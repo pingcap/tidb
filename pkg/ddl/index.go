@@ -2651,7 +2651,7 @@ func TaskKey(jobID int64) string {
 }
 
 func (w *worker) getSplitRangeFuncs(job *model.Job, tableID int64) (
-	addTableSplitRange func(), removeTableSplitRange func(), err error) {
+	addTableSplitRange func(), removeTableSplitRangeAndCloseClients func(), err error) {
 	cfg := ingest.GenConfig(w.workCtx, "", ingest.LitMemRoot, false,
 		job.ReorgMeta.ResourceGroupName, w.store.GetKeyspace(), job.ReorgMeta.GetConcurrency(),
 		job.ReorgMeta.GetMaxWriteSpeed(), job.ReorgMeta.UseCloudStorage)
@@ -2694,7 +2694,7 @@ func (w *worker) getSplitRangeFuncs(job *model.Job, tableID int64) (
 		closeClients()
 		return nil, nil, err
 	}
-	addTableSplitRange, removeTableSplitRange = local.GetPartitionRangeForTableFuncs(w.workCtx,
+	addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(w.workCtx,
 		startKey, endKey, stores, clients.GetImportClientFactory(),
 	)
 	return addTableSplitRange, func() {
@@ -2738,15 +2738,11 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	addTableSplitRange, removeTableSplitRange, err := w.getSplitRangeFuncs(reorgInfo.Job, t.Meta().ID)
 	if err != nil {
 		logutil.DDLLogger().Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
-	}
-	if addTableSplitRange != nil {
+	} else {
+		intest.Assert(addTableSplitRange != nil && removeTableSplitRange != nil)
 		addTableSplitRange()
+		defer removeTableSplitRange()
 	}
-	defer func() {
-		if removeTableSplitRange != nil {
-			removeTableSplitRange()
-		}
-	}()
 
 	var (
 		taskID                                            int64

@@ -596,13 +596,64 @@ func NewBackend(
 		return nil, err
 	}
 
-	return newBackendWithClients(
-		ctx,
-		tls,
-		config,
-		clients,
-		pdCliForTiKV,
+	var (
+		spkv                 *tikvclient.EtcdSafePointKV
+		tikvCli              *tikvclient.KVStore
+		multiIngestSupported bool
 	)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if tikvCli != nil {
+			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
+			// close tikvCli will close all of them.
+			_ = tikvCli.Close()
+		} else {
+			if spkv != nil {
+				_ = spkv.Close()
+			}
+		}
+	}()
+	config.adjust()
+
+	// The following copies tikv.NewTxnClient without creating yet another pdClient.
+	spkv, err = tikvclient.NewEtcdSafePointKV(clients.pdAddrs, tls.TLSConfig())
+	if err != nil {
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+
+	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, clients.rpcCli)
+	if err != nil {
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, clients.pdCli, clients.importClientFactory)
+	if err != nil {
+		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
+
+	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
+	clients.supportMultiIngest = multiIngestSupported
+	clients.tikvCli = tikvCli
+	local := &Backend{
+		Clients:       clients,
+		tls:           tls,
+		tikvCodec:     pdCliForTiKV.GetCodec(),
+		BackendConfig: config,
+		writeLimiter:  writeLimiter,
+		logger:        log.Wrap(tidblogutil.Logger(ctx)),
+	}
+	local.engineMgr, err = newEngineManager(config, local, local.logger)
+	if err != nil {
+		return nil, err
+	}
+	if m, ok := metric.GetCommonMetric(ctx); ok {
+		local.metrics = m
+	}
+	local.tikvSideCheckFreeSpace(ctx)
+
+	return local, nil
 }
 
 // CreateClientsForNewBackend prepares clients needed for a local backend
@@ -704,73 +755,6 @@ func CreateClientsForNewBackend(
 		pdAddrs: pdAddrs,
 	}
 	return
-}
-
-func newBackendWithClients(
-	ctx context.Context,
-	tls *common.TLS,
-	config BackendConfig,
-	clients Clients,
-	pdCliForTiKV *tikvclient.CodecPDClient,
-) (b *Backend, err error) {
-	var (
-		spkv                 *tikvclient.EtcdSafePointKV
-		tikvCli              *tikvclient.KVStore
-		multiIngestSupported bool
-	)
-	defer func() {
-		if err == nil {
-			return
-		}
-		if tikvCli != nil {
-			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
-			// close tikvCli will close all of them.
-			_ = tikvCli.Close()
-		} else {
-			if spkv != nil {
-				_ = spkv.Close()
-			}
-		}
-	}()
-	config.adjust()
-
-	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(clients.pdAddrs, tls.TLSConfig())
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
-
-	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, clients.rpcCli)
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
-
-	multiIngestSupported, err = checkMultiIngestSupport(ctx, clients.pdCli, clients.importClientFactory)
-	if err != nil {
-		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
-	}
-
-	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
-	clients.supportMultiIngest = multiIngestSupported
-	clients.tikvCli = tikvCli
-	local := &Backend{
-		Clients:       clients,
-		tls:           tls,
-		tikvCodec:     pdCliForTiKV.GetCodec(),
-		BackendConfig: config,
-		writeLimiter:  writeLimiter,
-		logger:        log.Wrap(tidblogutil.Logger(ctx)),
-	}
-	local.engineMgr, err = newEngineManager(config, local, local.logger)
-	if err != nil {
-		return nil, err
-	}
-	if m, ok := metric.GetCommonMetric(ctx); ok {
-		local.metrics = m
-	}
-	local.tikvSideCheckFreeSpace(ctx)
-
-	return local, nil
 }
 
 // NewBackendForTest creates a new Backend for test.

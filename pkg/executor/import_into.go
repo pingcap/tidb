@@ -271,7 +271,7 @@ func waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
 }
 
 func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
-	addTableSplitRange func(), removeTableSplitRange func(), err error) {
+	addTableSplitRange func(), removeTableSplitRangeAndCloseClients func(), err error) {
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
@@ -312,7 +312,7 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 		closeClients()
 		return nil, nil, err
 	}
-	addTableSplitRange, removeTableSplitRange = local.GetPartitionRangeForTableFuncs(ctx,
+	addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(ctx,
 		startKey, endKey, stores, clients.GetImportClientFactory(),
 	)
 	return addTableSplitRange, func() {
