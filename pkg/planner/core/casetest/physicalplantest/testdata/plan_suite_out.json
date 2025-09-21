@@ -446,23 +446,25 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a) eq(test.t.b, test.t.b)]",
+          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "      │     └─TableFullScan mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
+          "      │   └─Selection mpp[tiflash]  not(isnull(test.t.b))",
+          "      │     └─TableFullScan mpp[tiflash] table:t3 keep order:false, stats:pseudo",
           "      └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]",
-          "          └─HashJoin mpp[tiflash]  CARTESIAN inner join",
+          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
+          "          └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "            ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "            │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "            │   └─Selection mpp[tiflash]  not(isnull(test.t.b))",
-          "            │     └─TableFullScan mpp[tiflash] table:t3 keep order:false, stats:pseudo",
-          "            └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.a))",
-          "              └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "            │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "            │   └─Selection mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "            │     └─TableFullScan mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "            └─ExchangeReceiver(Probe) mpp[tiflash]  ",
+          "              └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "                └─Selection mpp[tiflash]  not(isnull(test.t.a))",
+          "                  └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+          "[planner:1815]Hint leading(t3, t1) is inapplicable. Please specify the table names in the arguments."
         ]
       },
       {
@@ -491,20 +493,22 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t.a))",
-          "      │     └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
+          "      │   └─Selection mpp[tiflash]  not(isnull(test.t.b))",
+          "      │     └─TableFullScan mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
           "        │     └─TableFullScan mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.b))",
-          "          └─TableFullScan mpp[tiflash] table:t3 keep order:false, stats:pseudo"
+          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.a))",
+          "          └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
+        ]
       },
       {
         "SQL": "select /*+ qb_name(qb, v), MPP_1PHASE_AGG(@qb) */ * from v",
@@ -2512,13 +2516,13 @@
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "merge_join(`test`.`t3`), leading(`test`.`t1`, `test`.`t2`, `test`.`t3`), inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
+        "Hints": "merge_join(`test`.`t3`), leading(), inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
         "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "merge_join(`test`.`t3`), leading(`test`.`t1`, `test`.`t2`, `test`.`t3`), inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
+        "Hints": "merge_join(`test`.`t3`), leading(), inl_join(`test`.`t1`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` ), order_index(@`sel_1` `test`.`t2` `primary`), use_index(@`sel_1` `test`.`t3` ), order_index(@`sel_1` `test`.`t3` `primary`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
