@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -845,14 +846,9 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 			addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(ctx,
 				startKey, endKey, stores, bd.Clients.GetImportClientFactory(),
 			)
-			if addTableSplitRange != nil {
-				addTableSplitRange()
-			}
-			defer func() {
-				if removeTableSplitRange != nil {
-					removeTableSplitRange()
-				}
-			}()
+			intest.Assert(addTableSplitRange != nil && removeTableSplitRange != nil)
+			addTableSplitRange()
+			defer removeTableSplitRange()
 		}
 	}
 

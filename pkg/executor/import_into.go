@@ -359,15 +359,11 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	addTableSplitRange, removeTableSplitRange, err := e.getSplitRangeFuncs(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
-	}
-	if addTableSplitRange != nil {
+	} else {
+		intest.Assert(addTableSplitRange != nil && removeTableSplitRange != nil)
 		addTableSplitRange()
+		defer removeTableSplitRange()
 	}
-	defer func() {
-		if removeTableSplitRange != nil {
-			removeTableSplitRange()
-		}
-	}()
 
 	var importedRows int64
 	eg, egCtx := errgroup.WithContext(ctx)

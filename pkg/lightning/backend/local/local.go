@@ -952,9 +952,9 @@ func GetPartitionRangeForTableFuncs(ctx context.Context,
 				clients = append(clients, importCli)
 				storeAddrs = append(storeAddrs, store.StatusAddress)
 				failpoint.InjectCall("AddPartitionRangeForTable")
-				tidblogutil.Logger(ctx).Info("AddForcePartitionRange success", zap.String("store", store.StatusAddress))
+				tidblogutil.Logger(ctx).Info("succeed to call AddForcePartitionRange", zap.String("store", store.StatusAddress))
 			} else {
-				tidblogutil.Logger(ctx).Warn("AddForcePartitionRange failed", zap.Error(err), zap.String("store", store.StatusAddress))
+				tidblogutil.Logger(ctx).Warn("fail to call AddForcePartitionRange", zap.Error(err), zap.String("store", store.StatusAddress))
 			}
 		}
 	}
@@ -970,9 +970,9 @@ func GetPartitionRangeForTableFuncs(ctx context.Context,
 			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
 			if err == nil {
 				failpoint.InjectCall("RemovePartitionRangeRequest")
-				tidblogutil.Logger(ctx).Info("RemoveForcePartitionRange success", zap.String("store", storeAddrs[i]))
+				tidblogutil.Logger(ctx).Info("succeed to call RemoveForcePartitionRange", zap.String("store", storeAddrs[i]))
 			} else {
-				tidblogutil.Logger(ctx).Warn("RemoveForcePartitionRange failed", zap.Error(err), zap.String("store", storeAddrs[i]))
+				tidblogutil.Logger(ctx).Warn("fail to call RemoveForcePartitionRange", zap.Error(err), zap.String("store", storeAddrs[i]))
 			}
 		}
 		importClientFactory.close()
