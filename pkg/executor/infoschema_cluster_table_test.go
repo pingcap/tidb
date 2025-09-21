@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
@@ -230,11 +231,12 @@ type mockStore struct {
 	host string
 }
 
-func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
-func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
-func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
-func (s *mockStore) Name() string                 { return "mockStore" }
-func (s *mockStore) Describe() string             { return "" }
+func (s *mockStore) GetPDAddrs() ([]string, error)               { return []string{s.host}, nil }
+func (s *mockStore) MetaServiceInfo() (*metaservice.Info, error) { panic("not implemented") }
+func (s *mockStore) TLSConfig() *tls.Config                      { panic("not implemented") }
+func (s *mockStore) StartGCWorker() error                        { panic("not implemented") }
+func (s *mockStore) Name() string                                { return "mockStore" }
+func (s *mockStore) Describe() string                            { return "" }
 
 func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
 	originIP := config.GetGlobalConfig().AdvertiseAddress

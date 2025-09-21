@@ -51,12 +51,12 @@ func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
 }
 
 // GetEtcdAddrs gets the etcd addrs from store if the store support it.
-func GetEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
-	etcdStore, ok := store.(kv.EtcdBackend)
+func GetEtcdAddrs(store kv.Storage) (kv.MetaServiceBackend, []string, error) {
+	etcdStore, ok := store.(kv.MetaServiceBackend)
 	if !ok {
 		return nil, nil, nil
 	}
-	addrs, err := etcdStore.EtcdAddrs()
+	addrs, err := etcdStore.GetPDAddrs()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -64,7 +64,7 @@ func GetEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
 }
 
 // NewEtcdCliWithAddrs creates a new clientv3.Client with specified addrs and etcd backend.
-func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
+func NewEtcdCliWithAddrs(addrs []string, ebd kv.MetaServiceBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)

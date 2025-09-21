@@ -454,6 +454,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
+        "//pkg/metaservice",
         "//pkg/metrics",
         "//pkg/objstore/s3like",
         "//pkg/objstore/storeapi",

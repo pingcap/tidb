@@ -2084,7 +2084,7 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 // GetPDServerInfo returns all PD nodes information of cluster
 func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
-	members, err := getEtcdMembers(ctx)
+	members, err := getPDMembers(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2167,7 +2167,7 @@ func GetSchedulingServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 }
 
 func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]ServerInfo, error) {
-	members, err := getEtcdMembers(ctx)
+	members, err := getPDMembers(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2233,13 +2233,13 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 	return servers, nil
 }
 
-func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
+func getPDMembers(ctx sessionctx.Context) ([]string, error) {
 	store := ctx.GetStore()
-	etcd, ok := store.(kv.EtcdBackend)
+	etcd, ok := store.(kv.MetaServiceBackend)
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	members, err := etcd.EtcdAddrs()
+	members, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

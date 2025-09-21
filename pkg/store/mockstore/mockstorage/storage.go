@@ -22,6 +22,7 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -40,7 +41,8 @@ type mockStorage struct {
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
 
-	keyspaceMeta *keyspacepb.KeyspaceMeta
+	keyspaceMeta    *keyspacepb.KeyspaceMeta
+	metaServiceInfo *metaservice.Info
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
@@ -70,8 +72,12 @@ func (s *mockStorage) SetOption(k, v any) {
 	}
 }
 
-func (s *mockStorage) EtcdAddrs() ([]string, error) {
+func (s *mockStorage) GetPDAddrs() ([]string, error) {
 	return nil, nil
+}
+
+func (s *mockStorage) MetaServiceInfo() (*metaservice.Info, error) {
+	return s.metaServiceInfo, nil
 }
 
 func (s *mockStorage) TLSConfig() *tls.Config {

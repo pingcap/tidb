@@ -1285,6 +1285,52 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	return exitCh, nil
 }
 
+func getEtcdCliByPDCli(pdCli pd.Client, tls *common.TLS, keyspaceName string) (*clientv3.Client, tidbkv.Storage, error) {
+	if pdCli == nil {
+		log.FromContext(context.Background()).Warn("pd client is nil, return nil", zap.String("keyspaceName", keyspaceName))
+		return nil, nil, nil
+	}
+	// Disable GC because TiDB enables GC already.
+	currentLeaderAddr := pdCli.GetLeaderURL()
+	// remove URL scheme
+	currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "http://")
+	currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "https://")
+
+	path := fmt.Sprintf("tikv://%s?disableGC=true", currentLeaderAddr)
+	if keyspaceName != "" {
+		path = fmt.Sprintf("%s&keyspaceName=%s", path, keyspaceName)
+	}
+	kvStore, err := (&driver.TiKVDriver{}).OpenWithOptions(
+		path,
+		driver.WithSecurity(tls.ToTiKVSecurityConfig()),
+	)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	// TODO use metaServiceClient
+	//metaServiceClient, err := etcd.NewEtcdMetaServiceClientWithKVStore(kvStore)
+	//if err != nil {
+	//	return nil, nil, errors.Trace(err)
+	//}
+	//etcdCli := metaServiceClient.GetKeyspaceEtcdCli()
+	//return etcdCli, kvStore, nil
+
+	ebd, ok := kvStore.(tidbkv.MetaServiceBackend)
+	if !ok {
+		return nil, nil, nil
+	}
+	etcdAddrs, err := ebd.GetPDAddrs()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	etcdCli, err := clientv3.New(clientv3.Config{
+		Endpoints:        etcdAddrs,
+		AutoSyncInterval: 30 * time.Second,
+		TLS:              tls.TLSConfig(),
+	})
+	return etcdCli, kvStore, nil
+}
 func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
 	defer rc.outputErrorSummary()
@@ -1366,30 +1412,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			}
 		}
 
-		// Disable GC because TiDB enables GC already.
-		urlsWithScheme := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
-		// remove URL scheme
-		urlsWithoutScheme := make([]string, 0, len(urlsWithScheme))
-		for _, u := range urlsWithScheme {
-			u = strings.TrimPrefix(u, "http://")
-			u = strings.TrimPrefix(u, "https://")
-			urlsWithoutScheme = append(urlsWithoutScheme, u)
-		}
-		kvStore, err = (&driver.TiKVDriver{}).OpenWithOptions(
-			fmt.Sprintf(
-				"tikv://%s?disableGC=true&keyspaceName=%s",
-				strings.Join(urlsWithoutScheme, ","), rc.keyspaceName,
-			),
-			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
-		)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		etcdCli, err = clientv3.New(clientv3.Config{
-			Endpoints:        urlsWithScheme,
-			AutoSyncInterval: 30 * time.Second,
-			TLS:              rc.tls.TLSConfig(),
-		})
+		etcdCli, kvStore, err = getEtcdCliByPDCli(rc.pdCli, rc.tls, rc.keyspaceName)
 		if err != nil {
 			return errors.Trace(err)
 		}

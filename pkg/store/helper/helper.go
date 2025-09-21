@@ -812,11 +812,11 @@ func bytesKeyToHex(key []byte) string {
 
 // GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
-	etcd, ok := h.Store.(kv.EtcdBackend)
+	etcd, ok := h.Store.(kv.MetaServiceBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs, err := etcd.EtcdAddrs()
+	pdAddrs, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, err
 	}

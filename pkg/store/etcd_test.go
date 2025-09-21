@@ -23,11 +23,11 @@ import (
 
 type mockEtcdBackend struct {
 	kv.Storage
-	kv.EtcdBackend
+	kv.MetaServiceBackend
 	pdAddrs []string
 }
 
-func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 

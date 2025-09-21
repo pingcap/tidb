@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -48,11 +49,14 @@ type mockStoreWithMultiPD struct {
 
 var hotRegionsResponses = make(map[string]*executor.HistoryHotRegions, 3)
 
-func (s *mockStoreWithMultiPD) EtcdAddrs() ([]string, error) { return s.hosts, nil }
-func (s *mockStoreWithMultiPD) TLSConfig() *tls.Config       { panic("not implemented") }
-func (s *mockStoreWithMultiPD) StartGCWorker() error         { panic("not implemented") }
-func (s *mockStoreWithMultiPD) Name() string                 { return "mockStore" }
-func (s *mockStoreWithMultiPD) Describe() string             { return "" }
+func (s *mockStoreWithMultiPD) GetPDAddrs() ([]string, error) { return s.hosts, nil }
+func (s *mockStoreWithMultiPD) MetaServiceInfo() (*metaservice.Info, error) {
+	panic("not implemented")
+}
+func (s *mockStoreWithMultiPD) TLSConfig() *tls.Config { panic("not implemented") }
+func (s *mockStoreWithMultiPD) StartGCWorker() error   { panic("not implemented") }
+func (s *mockStoreWithMultiPD) Name() string           { return "mockStore" }
+func (s *mockStoreWithMultiPD) Describe() string       { return "" }
 
 type hotRegionsHistoryTableSuite struct {
 	store       kv.Storage

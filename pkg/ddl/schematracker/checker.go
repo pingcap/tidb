@@ -585,7 +585,7 @@ func (d *Checker) InitFromIS(is infoschema.InfoSchema) {
 type storageAndMore interface {
 	kv.Storage
 	kv.StorageWithPD
-	kv.EtcdBackend
+	kv.MetaServiceBackend
 	helper.Storage
 }
 

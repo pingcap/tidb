@@ -29,6 +29,7 @@ go_library(
         "//pkg/errno",
         "//pkg/keyspace",
         "//pkg/meta/model",
+        "//pkg/metaservice",
         "//pkg/parser",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

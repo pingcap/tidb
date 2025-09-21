@@ -4541,7 +4541,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
-	if raw, ok := store.(kv.EtcdBackend); ok {
+	if raw, ok := store.(kv.MetaServiceBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
 			return nil, err

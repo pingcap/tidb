@@ -275,6 +275,19 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 }
 
 func (c *pdClient) GetAllMembers(ctx context.Context) (*pdpb.GetMembersResponse, error) {
+	if c.addrs != nil {
+		members := make([]*pdpb.Member, 0)
+		for _, addr := range c.addrs {
+			clientUrls := []string{addr}
+			members = append(members, &pdpb.Member{ClientUrls: clientUrls})
+		}
+		return &pdpb.GetMembersResponse{
+			Members:    members,
+			Leader:     members[0],
+			EtcdLeader: members[0],
+		}, nil
+	}
+
 	return nil, nil
 }
 

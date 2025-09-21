@@ -43,6 +43,7 @@ go_test(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/metaservice",
         "//pkg/parser/ast",
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/teststore",

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
@@ -110,6 +111,7 @@ type InfoSyncer struct {
 	infoCache             infoschemaMinTS
 	tikvCodec             tikv.Codec
 	svrInfoSyncer         *serverinfo.Syncer
+	metaServiceClient     metaservice.ServiceClient
 }
 
 // globalInfoSyncer stores the global infoSyncer.
@@ -174,6 +176,8 @@ func GlobalInfoSyncerInit(
 	if err != nil {
 		return nil, err
 	}
+
+	is.metaServiceClient = metaservice.NewEtcdMetaServiceClient(etcdCli, pdCli)
 	is.initLabelRuleManager()
 	is.initPlacementManager()
 	is.initScheduleManager()
