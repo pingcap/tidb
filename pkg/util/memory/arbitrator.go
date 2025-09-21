@@ -930,7 +930,7 @@ type wrapTimeSizeQuota struct {
 type statisticsTimedMapElement struct {
 	tsAlign atomic.Int64
 	slot    [defServerlimitMinUnitNum]uint32
-	num     atomic.Uint32
+	num     atomic.Uint64
 }
 
 type entryKillCancelCtx struct {
@@ -2092,7 +2092,7 @@ type DebugFields struct {
 // ConcurrentBudget represents a wrapped budget of the resource pool for concurrent usage
 type ConcurrentBudget struct {
 	Pool            *ResourcePool
-	Capacity        atomic.Int64
+	Capacity        int64
 	LastUsedTimeSec int64
 	sync.Mutex
 	_    holder64Bytes
@@ -2103,6 +2103,11 @@ type ConcurrentBudget struct {
 //go:norace
 func (b *ConcurrentBudget) setLastUsedTimeSec(t int64) {
 	b.LastUsedTimeSec = t
+}
+
+//go:norace
+func (b *ConcurrentBudget) approxCapacity() int64 {
+	return b.Capacity
 }
 
 func (b *ConcurrentBudget) getLastUsedTimeSec() int64 {
@@ -2120,7 +2125,8 @@ type TrackedConcurrentBudget struct {
 func (b *ConcurrentBudget) Clear() int64 {
 	b.Lock()
 
-	budgetCap := b.Capacity.Swap(0)
+	budgetCap := b.Capacity
+	b.Capacity = 0
 	b.Used.Store(0)
 	if budgetCap > 0 {
 		b.Pool.release(budgetCap)
@@ -2135,9 +2141,9 @@ func (b *ConcurrentBudget) Clear() int64 {
 func (b *ConcurrentBudget) Reserve(newCap int64) (err error) {
 	b.Lock()
 
-	extra := max(newCap, b.Used.Load(), b.Capacity.Load()) - b.Capacity.Load()
+	extra := max(newCap, b.Used.Load(), b.Capacity) - b.Capacity
 	if err = b.Pool.allocate(extra); err == nil {
-		b.Capacity.Add(extra)
+		b.Capacity += extra
 	}
 
 	b.Unlock()
@@ -2149,11 +2155,11 @@ func (b *ConcurrentBudget) Reserve(newCap int64) (err error) {
 func (b *ConcurrentBudget) PullFromUpstream() (err error) {
 	b.Lock()
 
-	delta := b.Used.Load() - b.Capacity.Load()
+	delta := b.Used.Load() - b.Capacity
 	if delta > 0 {
 		delta = b.Pool.roundSize(delta)
 		if err = b.Pool.allocate(delta); err == nil {
-			b.Capacity.Add(delta)
+			b.Capacity += delta
 		}
 	}
 
@@ -2246,10 +2252,9 @@ func (m *MemArbitrator) updateAvoidSize() {
 		for i := range len(m.awaitFree.budget.shards) {
 			idx := (m.avoidance.awaitFreeBudgetKickOutIdx + uint64(i) + 1) & m.awaitFree.budget.sizeMask
 			b := &m.awaitFree.budget.shards[idx]
-			if b.Capacity.Load() > 0 && b.TryLock() {
-				x := delta - reclaimed
-				x = min(x, b.Capacity.Load())
-				b.Capacity.Add(-x)
+			if b.approxCapacity() > 0 && b.TryLock() {
+				x := min(delta-reclaimed, b.Capacity)
+				b.Capacity -= x
 				reclaimed += x
 				b.Unlock()
 			}
@@ -2302,7 +2307,7 @@ func (m *MemArbitrator) updatePoolMediumCapacity(utimeMilli int64) {
 			tar2 = nil
 		}
 
-		total := uint32(0)
+		total := uint64(0)
 		if tar1 != nil {
 			tar1.RLock()
 			total += tar1.num.Load()
@@ -2314,15 +2319,15 @@ func (m *MemArbitrator) updatePoolMediumCapacity(utimeMilli int64) {
 
 		if total != 0 {
 			expect := max(1, (total+1)/2)
-			cnt := uint32(0)
+			cnt := uint64(0)
 			index := 0
 
 			for i := range defServerlimitMinUnitNum {
 				if tar1 != nil {
-					cnt += tar1.slot[i]
+					cnt += uint64(tar1.slot[i])
 				}
 				if tar2 != nil {
-					cnt += tar2.slot[i]
+					cnt += uint64(tar2.slot[i])
 				}
 				if cnt >= expect {
 					index = i
@@ -2649,21 +2654,21 @@ func (m *MemArbitrator) shrinkAwaitFreePool(minRemain int64, utimeMilli int64) {
 		b := &m.awaitFree.budget.shards[i]
 
 		if used := b.Used.Load(); used > 0 {
-			if b.Capacity.Load()-(used+minRemain) >= b.Pool.allocAlignSize && b.TryLock() {
+			if b.approxCapacity()-(used+minRemain) >= b.Pool.allocAlignSize && b.TryLock() {
 				if used = b.Used.Load(); used > 0 {
-					toReclaim := b.Capacity.Load() - (used + minRemain)
+					toReclaim := b.Capacity - (used + minRemain)
 
 					if toReclaim >= b.Pool.allocAlignSize {
-						b.Capacity.Add(-toReclaim)
+						b.Capacity -= toReclaim
 						reclaimed += toReclaim
 					}
 				}
 				b.Unlock()
 			}
 		} else {
-			if b.Capacity.Load() > 0 && b.getLastUsedTimeSec()*kilo+defAwaitFreePoolShrinkDurMilli <= utimeMilli && b.TryLock() {
-				if toReclaim := b.Capacity.Load(); b.Used.Load() <= 0 && toReclaim > 0 {
-					b.Capacity.Add(-toReclaim)
+			if b.approxCapacity() > 0 && b.getLastUsedTimeSec()*kilo+defAwaitFreePoolShrinkDurMilli <= utimeMilli && b.TryLock() {
+				if toReclaim := b.Capacity; b.Used.Load() <= 0 && toReclaim > 0 {
+					b.Capacity -= toReclaim
 					reclaimed += toReclaim
 				}
 				b.Unlock()
@@ -2685,6 +2690,7 @@ func (m *MemArbitrator) shrinkAwaitFreePool(minRemain int64, utimeMilli int64) {
 		atomic.AddInt64(&m.execMetrics.AwaitFree.Shrink, 1)
 		m.weakWake()
 	}
+
 	m.awaitFree.lastShrinkUtimeMilli.Store(utimeMilli)
 }
 
@@ -3136,7 +3142,7 @@ func (b *ConcurrentBudget) ConsumeQuota(utimeSec int64, req int64) error {
 		if b.getLastUsedTimeSec() != utimeSec {
 			b.setLastUsedTimeSec(utimeSec)
 		}
-		if b.Used.Add(req) > b.Capacity.Load() {
+		if b.Used.Add(req) > b.approxCapacity() {
 			if err := b.PullFromUpstream(); err != nil {
 				return err
 			}

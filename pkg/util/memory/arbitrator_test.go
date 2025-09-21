@@ -56,7 +56,7 @@ func (m *MemArbitrator) restartEntryForTest(entry *rootPoolEntry, ctx *Arbitrati
 func (m *MemArbitrator) checkAwaitFree() {
 	s := int64(0)
 	for i := range m.awaitFree.budget.shards {
-		s += m.awaitFree.budget.shards[i].Capacity.Load()
+		s += m.awaitFree.budget.shards[i].Capacity
 	}
 	require.True(testState, s == m.awaitFree.pool.allocated())
 }
@@ -1585,9 +1585,9 @@ func TestMemArbitrator(t *testing.T) {
 			if i%2 == 0 {
 				require.True(t, b.Used.Load() == 0)
 				if i == 0 {
-					require.True(t, b.Capacity.Load() != 0)
+					require.True(t, b.Capacity != 0)
 				} else {
-					require.True(t, b.Capacity.Load() == 0)
+					require.True(t, b.Capacity == 0)
 				}
 			} else {
 				require.True(t, b.Used.Load() == 1)
@@ -2749,7 +2749,7 @@ func TestBench(t *testing.T) {
 				b := ConcurrentBudget{Pool: root.entry.pool}
 
 				for j := 0; j < 200; j += 1 {
-					if b.Used.Add(m.limit()/150) > b.Capacity.Load() {
+					if b.Used.Add(m.limit()/150) > b.Capacity {
 						_ = b.PullFromUpstream()
 					}
 					if cancelEvent != 0 {
@@ -2840,7 +2840,7 @@ func TestBench(t *testing.T) {
 				b := ConcurrentBudget{Pool: root.entry.pool}
 
 				for j := 0; j < 200; j += 1 {
-					if b.Used.Add(m.limit()/150) > b.Capacity.Load() {
+					if b.Used.Add(m.limit()/150) > b.Capacity {
 						_ = b.PullFromUpstream()
 					}
 					if cancelEvent.Load() != 0 {

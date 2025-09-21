@@ -278,12 +278,15 @@ func CleanupGlobalMemArbitratorForTest() {
 	defer globalArbitrator.v.Unlock()
 
 	if globalArbitrator.v.baseDir == "" {
-		panic("`baseDir` of the global memory arbitrator is not set, please call `SetupGlobalMemArbitratorForTest` first")
+		panic("env of the global memory arbitrator is not set, please call `SetupGlobalMemArbitratorForTest` first")
 	}
-	if m := globalArbitrator.v.Load(); m != nil {
-		m.stop()
-		globalArbitrator.v.Store(nil)
+	m := globalArbitrator.v.Load()
+	if m == nil {
+		return
 	}
+	m.stop()
+	globalArbitrator.v.Store(nil)
+	_ = os.Remove(runtimeMemStateRecorderFilePath(globalArbitrator.v.baseDir))
 }
 
 // SetupGlobalMemArbitratorForTest sets up the global memory arbitrator for tests.
@@ -475,10 +478,14 @@ type runtimeMemStateRecorder struct {
 	filePath string
 }
 
+func runtimeMemStateRecorderFilePath(baseDir string) string {
+	return filepath.Join(baseDir, memStateStoreNamePrefix+memStateVer+memStateStoreNameSuffix)
+}
+
 func newMemStateRecorder(baseDir string) *runtimeMemStateRecorder {
 	return &runtimeMemStateRecorder{
 		baseDir:  baseDir,
-		filePath: filepath.Join(baseDir, memStateStoreNamePrefix+memStateVer+memStateStoreNameSuffix),
+		filePath: runtimeMemStateRecorderFilePath(baseDir),
 	}
 }
 

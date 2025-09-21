@@ -466,7 +466,7 @@ func (t *Tracker) Consume(bs int64) {
 					if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
 						b.setLastUsedTimeSec(t)
 					}
-					if b.Used.Load() > b.Capacity.Load() && b.PullFromUpstream() != nil {
+					if b.Used.Load() > b.approxCapacity() && b.PullFromUpstream() != nil {
 						goto initBigBudget
 					}
 					goto endUseBudget
@@ -983,7 +983,7 @@ func (m *memArbitrator) bigBudgetGrowThreshold() int64 {
 }
 
 func (m *memArbitrator) bigBudgetCap() int64 {
-	return m.bigBudget().Capacity.Load()
+	return m.bigBudget().approxCapacity()
 }
 
 func (m *memArbitrator) bigBudgetUsed() int64 {
@@ -994,8 +994,8 @@ func (m *memArbitrator) setBigBudgetGrowThreshold(x int64) {
 	m.bigBudget().Used.Store(x)
 }
 
-func (m *memArbitrator) setBigBudgetCap(x int64) {
-	m.bigBudget().Capacity.Store(x)
+func (m *memArbitrator) doSetBigBudgetCap(x int64) {
+	m.bigBudget().Capacity = x
 }
 
 func (m *memArbitrator) addBigBudgetUsed(d int64) int64 {
@@ -1063,7 +1063,7 @@ func (m *memArbitrator) growBigBudget() {
 			m.AwaitAlloc.Size = extra
 			if err := upper.Pool.allocate(extra); err == nil {
 				capacity += extra
-				m.setBigBudgetCap(capacity)
+				m.doSetBigBudgetCap(capacity)
 				m.setBigBudgetGrowThreshold(max(capacity*95/100, used))
 			}
 			duration = time.Now().UnixNano() - m.AwaitAlloc.StartUtime
@@ -1140,7 +1140,7 @@ func (m *memArbitrator) reserveBigBudget(newCap int64) {
 		m.AwaitAlloc.Size = extra
 		if err := upper.Pool.allocate(extra); err == nil {
 			capacity += extra
-			m.setBigBudgetCap(capacity)
+			m.doSetBigBudgetCap(capacity)
 			m.setBigBudgetGrowThreshold(capacity * 95 / 100)
 		}
 		duration = time.Now().UnixNano() - m.AwaitAlloc.StartUtime
