@@ -20,12 +20,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -39,12 +41,33 @@ import (
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
+// getKeyspaceAwareKey uses the actual store codec to encode keys properly
+// This ensures we use the single source of truth for keyspace encoding
+func getKeyspaceAwareKey(store kv.Storage, key []byte) []byte {
+	if !kerneltype.IsNextGen() {
+		return key
+	}
+
+	// Use the store's codec to encode the key - this is the single source of truth
+	codec := store.GetCodec()
+	return codec.EncodeKey(key)
+}
+
 func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+
+	// Get keyspace-aware region boundaries by creating a temp store to access codec
+	tempStore, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	g := getKeyspaceAwareKey(tempStore, []byte("g"))
+	n := getKeyspaceAwareKey(tempStore, []byte("n"))
+	tKey := getKeyspaceAwareKey(tempStore, []byte("t"))
+	tempStore.Close()
+
 	store, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithMultiRegions(c, []byte("g"), []byte("n"), []byte("t"))
+			mockstore.BootstrapWithMultiRegions(c, g, n, tKey)
 		}),
 	)
 	require.NoError(t, err)
@@ -116,9 +139,19 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	// Note: In NextGen mode, keys are keyspace-prefixed, so we need to adjust region boundaries
+
+	// Get keyspace-aware region boundaries by creating a temp store to access codec
+	tempStore, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	g := getKeyspaceAwareKey(tempStore, []byte("g"))
+	n := getKeyspaceAwareKey(tempStore, []byte("n"))
+	tKey := getKeyspaceAwareKey(tempStore, []byte("t"))
+	tempStore.Close()
+
 	store, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithMultiRegions(c, []byte("g"), []byte("n"), []byte("t"))
+			mockstore.BootstrapWithMultiRegions(c, g, n, tKey)
 		}),
 	)
 	require.NoError(t, err)
@@ -246,9 +279,18 @@ func (p *mockResourceGroupProvider) GetResourceGroup(ctx context.Context, name s
 func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+
+	// Get keyspace-aware region boundaries by creating a temp store to access codec
+	tempStore, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	g := getKeyspaceAwareKey(tempStore, []byte("g"))
+	n := getKeyspaceAwareKey(tempStore, []byte("n"))
+	tKey := getKeyspaceAwareKey(tempStore, []byte("t"))
+	tempStore.Close()
+
 	store, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithMultiRegions(c, []byte("g"), []byte("n"), []byte("t"))
+			mockstore.BootstrapWithMultiRegions(c, g, n, tKey)
 		}),
 	)
 	require.NoError(t, err)
@@ -337,13 +379,13 @@ func TestDMLWithLiteCopWorker(t *testing.T) {
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("2048"))
 	tk.MustQuery("split table t1 by (1025);").Check(testkit.Rows("1 1"))
 	tk.MustExec("set @@tidb_enable_paging = off")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(200)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow", `return(100)`))
-	start := time.Now()
+	var fallbackTriggered atomic.Bool
+	copr.SetLiteWorkerFallbackHookForTest(func() {
+		fallbackTriggered.Store(true)
+	})
+	defer copr.SetLiteWorkerFallbackHookForTest(nil)
 	tk.MustExec("update t1 set b=b+1 where id >= 0;")
-	require.Less(t, time.Since(start), time.Millisecond*800) // 3 * 200ms + 1 * 100ms
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow"))
+	require.True(t, fallbackTriggered.Load(), "lite worker fallback hook not triggered")
 
 	// Test select after split table.
 	tk.MustExec("truncate table t1;")

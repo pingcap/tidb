@@ -491,8 +491,8 @@ func TestAllocTableIDs(t *testing.T) {
 	}
 	userTableIDNotReusedWhenNeedCheck, err = client.AllocTableIDs(ctx, tables, false, true, &checkpoint.PreallocIDs{
 		Start:          1,
-		ReusableBorder: 10000,
-		End:            20000,
+		ReusableBorder: max(10000, userDownstreamTableID),
+		End:            max(20000, userDownstreamTableID+1),
 		Hash:           computeIDsHash([]int64{userDownstreamTableID, 100, 200, 300}),
 	})
 	require.NoError(t, err)

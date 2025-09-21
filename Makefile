@@ -89,6 +89,16 @@ lint:tools/bin/revive
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_resource_control.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_runtime.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/overview_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/performance_overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/performance_overview_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_resource_control_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_runtime_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_summary_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_with_keyspace_name.json
+	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_worker.json
 
 .PHONY: license
 license:
@@ -511,7 +521,8 @@ mock_s3iface: mockgen
 # mock interface for lightning and IMPORT INTO
 .PHONY: mock_lightning
 mock_lightning: mockgen
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/common ChunkFlushStatus > br/pkg/mock/common.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
 	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
@@ -659,6 +670,10 @@ bazel_test: failpoint-enable bazel_prepare ## Run all tests using Bazel
 
 .PHONY: bazel_coverage_test
 bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,nextgen \
+		-- //pkg/statistics/... //pkg/planner/... //pkg/bindinfo/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \

@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -73,17 +72,4 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 	str.WriteString("rows:")
 	str.WriteString(strconv.Itoa(p.RowCount))
 	return str.String()
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalTableDual) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableDual)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.names = util.CloneFieldNames(p.names)
-	return cloned, true
 }

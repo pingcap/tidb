@@ -314,6 +314,10 @@ func (em *engineManager) closeEngine(
 			}
 			ts = oracle.ComposeTS(physical, logical)
 		}
+		onClose := func(*external.ReaderSummary) {}
+		if externalCfg.OnReaderClose != nil {
+			onClose = externalCfg.OnReaderClose
+		}
 		externalEngine := external.NewExternalEngine(
 			ctx,
 			store,
@@ -331,6 +335,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.MemCapacity,
 			externalCfg.OnDup,
 			"",
+			onClose,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil

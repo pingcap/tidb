@@ -289,6 +289,7 @@ func (tr *TableImporter) Close() {
 func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
 	divideConfig := mydump.NewDataDivideConfig(rc.cfg, len(tr.tableInfo.Core.Columns), rc.ioWorkers, rc.store, tr.tableMeta)
+	divideConfig.SkipParquetRowCount = common.SkipReadRowCount(tr.tableInfo.Desired)
 	tableRegions, err := mydump.MakeTableRegions(ctx, divideConfig)
 	if err == nil {
 		timestamp := time.Now().Unix()
@@ -683,8 +684,8 @@ func (tr *TableImporter) preprocessEngine(
 	var chunkErr common.OnceError
 
 	type chunkFlushStatus struct {
-		dataStatus  backend.ChunkFlushStatus
-		indexStatus backend.ChunkFlushStatus
+		dataStatus  common.ChunkFlushStatus
+		indexStatus common.ChunkFlushStatus
 		chunkCp     *checkpoints.ChunkCheckpoint
 	}
 
@@ -807,7 +808,7 @@ ChunkLoop:
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
 			}
 			err := cr.process(ctx, tr, engineID, dataWriter, indexWriter, rc)
-			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
+			var dataFlushStatus, indexFlushStaus common.ChunkFlushStatus
 			if err == nil {
 				dataFlushStatus, err = dataWriter.Close(ctx)
 			}

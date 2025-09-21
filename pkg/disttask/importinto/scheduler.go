@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -68,6 +70,7 @@ type taskInfo struct {
 	// initialized lazily in register()
 	etcdClient   *clientv3.Client
 	taskRegister utils.TaskRegister
+	logger       *zap.Logger
 }
 
 func (t *taskInfo) register(ctx context.Context) {
@@ -78,7 +81,7 @@ func (t *taskInfo) register(ctx context.Context) {
 	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
+	logger := t.logger
 	if t.taskRegister == nil {
 		client, err := store.NewEtcdCli(t.store)
 		if err != nil {
@@ -102,7 +105,7 @@ func (t *taskInfo) register(ctx context.Context) {
 }
 
 func (t *taskInfo) close(ctx context.Context) {
-	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
+	logger := t.logger
 	if t.taskRegister != nil {
 		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
 		defer cancel()
@@ -239,7 +242,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 		return
 	}
 
-	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+	logger := sch.GetLogger()
 	// TODO: use the TLS object from TiDB server
 	tidbCfg := tidb.GetGlobalConfig()
 	tls, err := util.NewTLSConfig(
@@ -258,7 +261,7 @@ func (sch *importScheduler) switchTiKVMode(ctx context.Context, task *proto.Task
 }
 
 func (sch *importScheduler) registerTask(ctx context.Context, task *proto.Task) {
-	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID})
+	val, _ := sch.taskInfoMap.LoadOrStore(task.ID, &taskInfo{store: sch.store, taskID: task.ID, logger: sch.GetLogger()})
 	info := val.(*taskInfo)
 	info.register(ctx)
 }
@@ -285,18 +288,17 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		// available.
 		nodeCnt = task.MaxNodeCount
 	}
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
-		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
-		zap.Int("node-count", nodeCnt),
-	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logger := sch.GetLogger().With(
+		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
+		zap.Int("node-count", nodeCnt),
+		zap.Int64("table-id", taskMeta.Plan.TableInfo.ID),
+	)
 	logger.Info("on next subtasks batch")
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
@@ -371,7 +373,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		Store:                sch.store,
 		ThreadCnt:            task.Concurrency,
 	}
-	logicalPlan := &LogicalPlan{}
+	logicalPlan := &LogicalPlan{Logger: logger}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
 		return nil, err
 	}
@@ -394,11 +396,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 
 // OnDone implements scheduler.Extension interface.
 func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("step", proto.Step2Str(task.Type, task.Step)),
-	)
+	logger := sch.GetLogger().With(zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	logger.Info("task done", zap.Stringer("state", task.State), zap.Error(task.Error))
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)
@@ -592,19 +590,41 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 
 func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	task *proto.Task, taskMeta *TaskMeta) error {
-	// we have already switch import-mode when switch to post-process step.
+	// we have already switched import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
 	}
 
+	tableStatsDelta := &statsstorage.DeltaUpdate{
+		Delta: variable.TableDelta{
+			Delta:    taskMeta.Summary.ImportedRows,
+			Count:    taskMeta.Summary.ImportedRows,
+			InitTime: time.Now(),
+			TableID:  taskMeta.Plan.TableInfo.ID,
+		},
+		TableID: taskMeta.Plan.TableInfo.ID,
+	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, taskMeta.Summary.ImportedRows); err != nil {
+			return true, taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+				txn, err2 := se.Txn(true)
+				if err2 != nil {
+					return err2
+				}
+
+				// we only fill the delta change of the table when the task is
+				// done, and let auto-analyze to do analyzing. depending on the
+				// table size, analyze might take a long time, so we won't wait
+				// for it.
+				// auto analyze is triggered when the table have more than
+				// AutoAnalyzeMinCnt(1000) rows, and tidb_auto_analyze_ratio(0.5)
+				// portion of rows are changed, see NeedAnalyzeTable too.
+				// so if the table is small, there is no analyze triggered.
+				if err := statsstorage.UpdateStatsMeta(ctx, se, txn.StartTS(), tableStatsDelta); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()
