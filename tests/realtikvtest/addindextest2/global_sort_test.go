@@ -708,6 +708,9 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 }
 
 func TestPartitionRangeForTable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
+	}
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
