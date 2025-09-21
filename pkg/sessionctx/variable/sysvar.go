@@ -302,6 +302,10 @@ var defaultSysVars = []*SysVar{
 		s.OptimizerEnableNAAJ = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableSemiJoinRewrite, Value: BoolToOnOff(DefOptEnableSemiJoinRewrite), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSemiJoinRewrite = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBDDLReorgPriority, Value: "PRIORITY_LOW", Type: TypeEnum, skipInit: true, PossibleValues: []string{"PRIORITY_LOW", "PRIORITY_NORMAL", "PRIORITY_HIGH"}, SetSession: func(s *SessionVars, val string) error {
 		s.setDDLReorgPriority(val)
 		return nil
@@ -1936,6 +1940,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMPPStoreFailTTL, Type: TypeStr, Value: DefTiDBMPPStoreFailTTL, SetSession: func(s *SessionVars, val string) error {
 		s.MPPStoreFailTTL = val
 		return nil
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_mpp_store_fail_ttl is always 0s. This variable has been deprecated and will be removed in the future releases"))
+		return DefTiDBMPPStoreFailTTL, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashExchangeWithNewCollation, Type: TypeBool, Value: BoolToOnOff(DefTiDBHashExchangeWithNewCollation), SetSession: func(s *SessionVars, val string) error {
 		s.HashExchangeWithNewCollation = TiDBOptOn(val)

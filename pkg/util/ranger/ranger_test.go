@@ -141,7 +141,7 @@ func TestTableRange(t *testing.T) {
 		},
 		{
 			exprStr:     `a IN (8,8,81,45)`,
-			accessConds: "[in(test.t.a, 8, 8, 81, 45)]",
+			accessConds: "[in(test.t.a, 8, 81, 45)]",
 			filterConds: "[]",
 			resultStr:   `[[8,8] [45,45] [81,81]]`,
 		},
@@ -225,7 +225,7 @@ func TestTableRange(t *testing.T) {
 		},
 		{
 			exprStr:     "a in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
-			accessConds: "[in(test.t.a, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)]",
+			accessConds: "[in(test.t.a, 1, 2, 3, 4)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
 		},
@@ -663,7 +663,7 @@ func TestColumnRange(t *testing.T) {
 		{
 			colPos:      0,
 			exprStr:     `a IN (8,8,81,45)`,
-			accessConds: "[in(test.t.a, 8, 8, 81, 45)]",
+			accessConds: "[in(test.t.a, 8, 81, 45)]",
 			filterConds: "[]",
 			resultStr:   `[[8,8] [45,45] [81,81]]`,
 			length:      types.UnspecifiedLength,
@@ -1223,14 +1223,14 @@ create table t(
 		{
 			indexPos:    1,
 			exprStr:     `c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)`,
-			accessConds: "[in(test.t.c, 1.1, 1, 1.1) in(test.t.a, 1, a, <nil>)]",
+			accessConds: "[in(test.t.c, 1.1, 1) in(test.t.a, 1, a, <nil>)]",
 			filterConds: "[]",
 			resultStr:   "[[1 \"1\",1 \"1\"] [1 \"a\",1 \"a\"] [1.1 \"1\",1.1 \"1\"] [1.1 \"a\",1.1 \"a\"]]",
 		},
 		{
 			indexPos:    1,
 			exprStr:     "c in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
-			accessConds: "[in(test.t.c, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)]",
+			accessConds: "[in(test.t.c, 1, 2, 3, 4)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
 		},

@@ -30,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -432,6 +434,15 @@ func TestStmtCtxID(t *testing.T) {
 		require.Greater(t, ctxID, currentID)
 		currentID = ctxID
 	}
+}
+
+func TestIssue58600(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessionctx/stmtctx/afterAffectedRowsLocked", func(sc *stmtctx.StatementContext) {
+		// no panic when call sc.Reset()
+		assert.False(t, sc.Reset())
+	})
+	sc.AffectedRows()
 }
 
 func TestErrCtx(t *testing.T) {

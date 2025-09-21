@@ -697,6 +697,17 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
+// DistributeTable represents a distribute table plan.
+type DistributeTable struct {
+	baseSchemaProducer
+
+	TableInfo      *model.TableInfo
+	PartitionNames []pmodel.CIStr
+	Engine         string
+	Rule           string
+	Timeout        string
+}
+
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer

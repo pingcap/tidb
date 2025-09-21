@@ -96,7 +96,7 @@
       },
       {
         "SQL": "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
-        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]])->TopN([test.t.a],0,1)->Projection"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
