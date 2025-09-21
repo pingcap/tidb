@@ -804,41 +804,27 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	}
 	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
-<<<<<<< HEAD
+	start = time.Now()
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsHistogramsConcurrency(is, cache, totalMemory)
 	} else {
 		err = h.initStatsHistograms(is, cache)
 	}
-	statslogutil.StatsLogger().Info("complete to load the histogram")
+	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
 	if err != nil {
 		return errors.Trace(err)
 	}
+	start = time.Now()
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsTopNConcurrency(cache, totalMemory)
 	} else {
 		err = h.initStatsTopN(cache, totalMemory)
 	}
-	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
-	statslogutil.StatsLogger().Info("complete to load the topn")
-	if err != nil {
-		return err
-	}
-=======
-	start = time.Now()
-	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, initstats.GetConcurrency())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
-	start = time.Now()
-	err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
 	if err != nil {
 		return err
 	}
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
 	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
->>>>>>> 3b2d4b77476 (statistics: improve logging messages and add duration metrics for stats initialization (#60521))
 	if loadFMSketch {
 		start = time.Now()
 		err = h.initStatsFMSketch(cache)
