@@ -279,14 +279,8 @@ func (tr *TableImporter) importTable(
 			addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(ctx,
 				startKey, endKey, stores, localbackend.Clients.GetImportClientFactory(),
 			)
-			if addTableSplitRange != nil {
-				addTableSplitRange()
-			}
-			defer func() {
-				if removeTableSplitRange != nil {
-					removeTableSplitRange()
-				}
-			}()
+			addTableSplitRange()
+			defer removeTableSplitRange()
 		}
 	}
 
