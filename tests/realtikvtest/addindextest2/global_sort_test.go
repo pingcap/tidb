@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -52,6 +53,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
 )
 
 func init() {
@@ -708,9 +710,12 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 func TestPartitionRangeForTable(t *testing.T) {
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
+	require.NoError(t, err)
 
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
@@ -744,8 +749,8 @@ func TestPartitionRangeForTable(t *testing.T) {
 			addCnt = 0
 			removeCnt = 0
 			tk.MustExec("alter table t add index i(c)")
-			require.Equal(t, addCnt, 1)
-			require.Equal(t, removeCnt, 1)
+			require.Equal(t, addCnt, len(stores))
+			require.Equal(t, removeCnt, addCnt)
 			tk.MustExec("alter table t drop index i")
 		})
 	}

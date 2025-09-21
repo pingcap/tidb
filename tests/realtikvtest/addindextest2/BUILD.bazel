@@ -25,6 +25,7 @@ go_test(
         "//pkg/lightning/backend/external",
         "//pkg/lightning/backend/local",
         "//pkg/meta/model",
+        "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/tablecodec",
@@ -39,5 +40,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//opt",
     ],
 )

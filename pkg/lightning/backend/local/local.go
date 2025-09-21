@@ -948,10 +948,10 @@ func GetPartitionRangeForTableFuncs(ctx context.Context,
 			}
 
 			_, err = importCli.AddForcePartitionRange(ctx, checkReq)
-			failpoint.InjectCall("AddPartitionRangeForTable")
 			if err == nil {
 				clients = append(clients, importCli)
 				storeAddrs = append(storeAddrs, store.StatusAddress)
+				failpoint.InjectCall("AddPartitionRangeForTable")
 				tidblogutil.Logger(ctx).Info("AddForcePartitionRange success", zap.String("store", store.StatusAddress))
 			} else {
 				tidblogutil.Logger(ctx).Warn("AddForcePartitionRange failed", zap.Error(err), zap.String("store", store.StatusAddress))
@@ -966,10 +966,10 @@ func GetPartitionRangeForTableFuncs(ctx context.Context,
 				End:   endKey,
 			},
 		}
-		failpoint.InjectCall("RemovePartitionRangeRequest")
 		for i, c := range clients {
 			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
 			if err == nil {
+				failpoint.InjectCall("RemovePartitionRangeRequest")
 				tidblogutil.Logger(ctx).Info("RemoveForcePartitionRange success", zap.String("store", storeAddrs[i]))
 			} else {
 				tidblogutil.Logger(ctx).Warn("RemoveForcePartitionRange failed", zap.Error(err), zap.String("store", storeAddrs[i]))
