@@ -402,7 +402,7 @@ func estimateRowCountWithUniformDistribution(
 	stats StatsProvider,
 	realtimeRowCount int64,
 	modifyCount int64,
-) statistics.RowEstimate {
+) float64 {
 	if stats == nil {
 		// Return a default estimate when stats are nil
 		return 1
@@ -420,7 +420,14 @@ func estimateRowCountWithUniformDistribution(
 		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
-			return max(float64(topN.MinCount()-1), 1)
+			topNMinCount := uint64(0)
+			if len(topN.TopN) > 0 {
+				topNMinCount = topN.TopN[0].Count
+				for _, item := range topN.TopN {
+					topNMinCount = min(topNMinCount, item.Count)
+				}
+			}
+			return max(float64(topNMinCount-1), 1)
 		}
 		// All values are in TopN (and TopN NDV is accurate).
 		// We need to derive a RowCount because the histogram is empty.
@@ -438,7 +445,7 @@ func estimateRowCountWithUniformDistribution(
 }
 
 // equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
-func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate) {
+func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
