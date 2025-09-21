@@ -95,9 +95,22 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	})
 
+	var (
+		autoConc, autoMaxNode int
+		factorField           = zap.Skip()
+	)
+	if shouldCalResource {
+		factors, err := dxfhandle.GetScheduleTuneFactors(ctx, sctx.GetStore().GetKeyspace())
+		if err != nil {
+			return err
+		}
+		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
+		autoConc = calc.CalcConcurrency()
+		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
+		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
+	}
 	if setReorgParam {
 		if shouldCalResource && setDistTaskParam {
-			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes, cpuNum)
 			m.SetConcurrency(autoConc)
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
@@ -115,7 +128,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = dxfhandle.GetTargetScope()
 		if shouldCalResource {
-			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(tableSizeInBytes, cpuNum)
+			m.MaxNodeCount = autoMaxNode
 		} else {
 			if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
@@ -152,6 +165,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		zap.String("tableSizeInBytes", units.BytesSize(float64(tableSizeInBytes))),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
+		factorField,
 	)
 	return nil
 }
