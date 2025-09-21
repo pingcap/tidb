@@ -406,7 +406,7 @@ func TestIssue38205(t *testing.T) {
 
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustExec("execute stmt using @a, @b, @c")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestIssue49736(t *testing.T) {

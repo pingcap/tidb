@@ -5239,6 +5239,7 @@ func (b *PlanBuilder) buildMaxOneRow(p base.LogicalPlan) base.LogicalPlan {
 }
 
 func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCondition []expression.Expression, asScalar, not, forceRewrite bool) (*logicalop.LogicalJoin, error) {
+	x
 	joinPlan := logicalop.LogicalJoin{}.Init(b.ctx, b.getSelectOffset())
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
