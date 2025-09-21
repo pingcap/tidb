@@ -363,7 +363,7 @@ func specialNullRejectedCase1(ctx planctx.PlanContext, schema *expression.Schema
 	if orFunc == nil {
 		return false
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		andFunc := isFunc(orFunc.GetArgs()[i], ast.LogicAnd)
 		if andFunc == nil {
 			continue
