@@ -1065,14 +1065,12 @@ func TestMultiIngest(t *testing.T) {
 		}
 
 		local := &Backend{
-			BackendClients: BackendClients{
-				pdCli: &mockPdClient{stores: stores},
-				importClientFactory: &mockImportClientFactory{
-					stores: allStores,
-					createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-						importCli.store = store
-						return importCli
-					},
+			pdCli: &mockPdClient{stores: stores},
+			importClientFactory: &mockImportClientFactory{
+				stores: allStores,
+				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+					importCli.store = store
+					return importCli
 				},
 			},
 		}
@@ -1208,29 +1206,27 @@ func TestCheckPeersBusy(t *testing.T) {
 
 	createTimeStore12 := 0
 	local := &Backend{
-		BackendClients: BackendClients{
-			importClientFactory: &mockImportClientFactory{
-				stores: []*metapb.Store{
-					{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
-					{Id: 21}, {Id: 22}, {Id: 23}, // region ["b", "")
-				},
-				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-					importCli := newMockImportClient()
-					importCli.store = store
-					importCli.apiInvokeRecorder = apiInvokeRecorder
-					if store.Id == 12 {
-						createTimeStore12++
-						// the second time is checkWriteStall, we mock a busy response
-						if createTimeStore12 == 2 {
-							importCli.retry = 1
-							importCli.resp = serverIsBusyResp
-						}
-					}
-					return importCli
-				},
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
+				{Id: 21}, {Id: 22}, {Id: 23}, // region ["b", "")
 			},
-			supportMultiIngest: true,
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 12 {
+					createTimeStore12++
+					// the second time is checkWriteStall, we mock a busy response
+					if createTimeStore12 == 2 {
+						importCli.retry = 1
+						importCli.resp = serverIsBusyResp
+					}
+				}
+				return importCli
+			},
 		},
+		supportMultiIngest: true,
 
 		logger:       log.L(),
 		writeLimiter: newStoreWriteLimiter(0),
@@ -1342,26 +1338,24 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		}}
 
 	local := &Backend{
-		BackendClients: BackendClients{
-			splitCli: initTestSplitClient3Replica([][]byte{{}, {'a'}, {}}, nil),
-			importClientFactory: &mockImportClientFactory{
-				stores: []*metapb.Store{
-					{Id: 1}, {Id: 2}, {Id: 3},
-					{Id: 11}, {Id: 12}, {Id: 13},
-				},
-				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-					importCli := newMockImportClient()
-					importCli.store = store
-					importCli.apiInvokeRecorder = apiInvokeRecorder
-					if store.Id == 1 {
-						importCli.retry = 1
-						importCli.resp = notLeaderResp
-					}
-					return importCli
-				},
+		splitCli: initTestSplitClient3Replica([][]byte{{}, {'a'}, {}}, nil),
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 1}, {Id: 2}, {Id: 3},
+				{Id: 11}, {Id: 12}, {Id: 13},
 			},
-			supportMultiIngest: true,
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 1 {
+					importCli.retry = 1
+					importCli.resp = notLeaderResp
+				}
+				return importCli
+			},
 		},
+		supportMultiIngest: true,
 
 		logger:       log.L(),
 		writeLimiter: newStoreWriteLimiter(0),
@@ -1449,25 +1443,23 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 		}}
 
 	local := &Backend{
-		BackendClients: BackendClients{
-			splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
-			importClientFactory: &mockImportClientFactory{
-				stores: []*metapb.Store{
-					{Id: 1}, {Id: 2}, {Id: 3},
-				},
-				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-					importCli := newMockImportClient()
-					importCli.store = store
-					importCli.apiInvokeRecorder = apiInvokeRecorder
-					if store.Id == 1 {
-						importCli.retry = 1
-						importCli.resp = notLeaderResp
-					}
-					return importCli
-				},
+		splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 1}, {Id: 2}, {Id: 3},
 			},
-			supportMultiIngest: true,
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 1 {
+					importCli.retry = 1
+					importCli.resp = notLeaderResp
+				}
+				return importCli
+			},
 		},
+		supportMultiIngest: true,
 
 		logger:       log.L(),
 		writeLimiter: newStoreWriteLimiter(0),
@@ -1552,25 +1544,23 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	onceResp.Store(notLeaderResp)
 
 	local := &Backend{
-		BackendClients: BackendClients{
-			splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
-			importClientFactory: &mockImportClientFactory{
-				stores: []*metapb.Store{
-					{Id: 1}, {Id: 2}, {Id: 3},
-				},
-				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-					importCli := newMockImportClient()
-					importCli.store = store
-					importCli.apiInvokeRecorder = apiInvokeRecorder
-					if store.Id == 1 {
-						importCli.retry = 1
-						importCli.onceResp = onceResp
-					}
-					return importCli
-				},
+		splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 1}, {Id: 2}, {Id: 3},
 			},
-			supportMultiIngest: true,
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 1 {
+					importCli.retry = 1
+					importCli.onceResp = onceResp
+				}
+				return importCli
+			},
 		},
+		supportMultiIngest: true,
 
 		logger:       log.L(),
 		writeLimiter: newStoreWriteLimiter(0),
@@ -1719,12 +1709,10 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	})
 
 	local := &Backend{
-		BackendClients: BackendClients{
-			splitCli: initTestSplitClient(
-				[][]byte{{1}, {11}},      // we have one big region
-				panicSplitRegionClient{}, // make sure no further split region
-			),
-		},
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},      // we have one big region
+			panicSplitRegionClient{}, // make sure no further split region
+		),
 	}
 	local.BackendConfig.WorkerConcurrency = 1
 	db, tmpPath := makePebbleDB(t, nil)
@@ -1786,12 +1774,10 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	}
 	ctx := context.Background()
 	local := &Backend{
-		BackendClients: BackendClients{
-			splitCli: initTestSplitClient(
-				[][]byte{{1}, {11}},      // we have one big region
-				panicSplitRegionClient{}, // make sure no further split region
-			),
-		},
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},      // we have one big region
+			panicSplitRegionClient{}, // make sure no further split region
+		),
 	}
 	local.BackendConfig.WorkerConcurrency = 1
 
@@ -2285,12 +2271,10 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 1,
 		},
-		BackendClients: BackendClients{
-			splitCli: initTestSplitClient(
-				[][]byte{{1}, {11}},
-				panicSplitRegionClient{},
-			),
-		},
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},
+			panicSplitRegionClient{},
+		),
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
 	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
@@ -2362,12 +2346,10 @@ func TestExternalEngine(t *testing.T) {
 			WorkerConcurrency: 2,
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
-		BackendClients: BackendClients{
-			splitCli: initTestSplitClient([][]byte{
-				keys[0], keys[50], endKey,
-			}, hook),
-			pdCli: &mockPdClient{},
-		},
+		splitCli: initTestSplitClient([][]byte{
+			keys[0], keys[50], endKey,
+		}, hook),
+		pdCli: &mockPdClient{},
 	}
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)

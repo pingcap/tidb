@@ -510,50 +510,12 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
-// BackendClients is the set of clients needed for a local backend
-type BackendClients struct {
-	pdCli     pd.Client
-	pdHTTPCli pdhttp.Client
-	tikvCli   *tikvclient.KVStore
-	splitCli  split.SplitClient
-
-	importClientFactory importClientFactory
-	supportMultiIngest  bool
-
-	rpcCli  tikvclient.Client
-	pdAddrs []string
-}
-
-// GetImportClientFactory returns the importClientFactory
-func (c *BackendClients) GetImportClientFactory() importClientFactory {
-	return c.importClientFactory
-}
-
-// GetPDClient returns the pdClient
-func (c *BackendClients) GetPDClient() pd.Client {
-	return c.pdCli
-}
-
-// Close closes all inner clients
-func (c *BackendClients) Close() {
-	if c.importClientFactory != nil {
-		c.importClientFactory.close()
-	}
-	if c.tikvCli != nil {
-		_ = c.tikvCli.Close()
-	}
-	if c.pdHTTPCli != nil {
-		c.pdHTTPCli.Close()
-	}
-	if c.rpcCli != nil {
-		_ = c.rpcCli.Close()
-	}
-}
-
 // Backend is a local backend.
 type Backend struct {
-	BackendClients
-
+	pdCli     pd.Client
+	pdHTTPCli pdhttp.Client
+	splitCli  split.SplitClient
+	tikvCli   *tikvclient.KVStore
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
 
@@ -561,6 +523,9 @@ type Backend struct {
 
 	BackendConfig
 	engineMgr *engineManager
+
+	supportMultiIngest  bool
+	importClientFactory importClientFactory
 
 	metrics       *metric.Common
 	writeLimiter  StoreWriteLimiter
@@ -585,98 +550,21 @@ var (
 	}
 )
 
-// NewBackend creates new connections to tikv.
 func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
 	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
-	clients, pdCliForTiKV, err := CreateClientsForNewBackend(ctx, tls, config, pdSvcDiscovery)
-	if err != nil {
-		return nil, err
-	}
-
 	var (
+		pdCli                pd.Client
 		spkv                 *tikvclient.EtcdSafePointKV
+		pdCliForTiKV         *tikvclient.CodecPDClient
+		rpcCli               tikvclient.Client
 		tikvCli              *tikvclient.KVStore
+		pdHTTPCli            pdhttp.Client
+		importClientFactory  *importClientFactoryImpl
 		multiIngestSupported bool
-	)
-	defer func() {
-		if err == nil {
-			return
-		}
-		if tikvCli != nil {
-			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
-			// close tikvCli will close all of them.
-			_ = tikvCli.Close()
-		} else {
-			if spkv != nil {
-				_ = spkv.Close()
-			}
-		}
-	}()
-	config.adjust()
-
-	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(clients.pdAddrs, tls.TLSConfig())
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
-
-	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, clients.rpcCli)
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
-
-	multiIngestSupported, err = checkMultiIngestSupport(ctx, clients.pdCli, clients.importClientFactory)
-	if err != nil {
-		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
-	}
-
-	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
-	clients.supportMultiIngest = multiIngestSupported
-	clients.tikvCli = tikvCli
-	local := &Backend{
-		BackendClients: clients,
-		tls:            tls,
-		tikvCodec:      pdCliForTiKV.GetCodec(),
-		BackendConfig:  config,
-		writeLimiter:   writeLimiter,
-		logger:         log.Wrap(tidblogutil.Logger(ctx)),
-	}
-	local.engineMgr, err = newEngineManager(config, local, local.logger)
-	if err != nil {
-		return nil, err
-	}
-	if m, ok := metric.GetCommonMetric(ctx); ok {
-		local.metrics = m
-	}
-	local.tikvSideCheckFreeSpace(ctx)
-
-	return local, nil
-}
-
-// CreateClientsForNewBackend prepares clients needed for a local backend
-func CreateClientsForNewBackend(
-	ctx context.Context,
-	tls *common.TLS,
-	config BackendConfig,
-	pdSvcDiscovery sd.ServiceDiscovery,
-) (
-	clients BackendClients,
-	pdCliForTiKV *tikvclient.CodecPDClient,
-	err error,
-) {
-	var (
-		pdCli     pd.Client
-		pdHTTPCli pdhttp.Client
-		splitCli  split.SplitClient
-
-		importClientFactory *importClientFactoryImpl
-
-		rpcCli  tikvclient.Client
-		pdAddrs []string
 	)
 	defer func() {
 		if err == nil {
@@ -688,26 +576,31 @@ func CreateClientsForNewBackend(
 		if pdHTTPCli != nil {
 			pdHTTPCli.Close()
 		}
-		if rpcCli != nil {
-			_ = rpcCli.Close()
-		}
-		// pdCliForTiKV wraps pdCli, so we only need close pdCli
-		if pdCli != nil {
-			pdCli.Close()
+		if tikvCli != nil {
+			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
+			// close tikvCli will close all of them.
+			_ = tikvCli.Close()
+		} else {
+			if rpcCli != nil {
+				_ = rpcCli.Close()
+			}
+			if spkv != nil {
+				_ = spkv.Close()
+			}
+			// pdCliForTiKV wraps pdCli, so we only need close pdCli
+			if pdCli != nil {
+				pdCli.Close()
+			}
 		}
 	}()
-
 	config.adjust()
+	var pdAddrs []string
 	if pdSvcDiscovery != nil {
 		pdAddrs = pdSvcDiscovery.GetServiceURLs()
 		// TODO(lance6716): if PD client can support creating a client with external
 		// service discovery, we can directly pass pdSvcDiscovery.
 	} else {
 		pdAddrs = strings.Split(config.PDAddr, ",")
-	}
-	if len(pdAddrs) == 0 {
-		err = common.NormalizeOrWrapErr(common.ErrCreatePDClient, errors.Errorf("can not get pdAddrs"))
-		return
 	}
 	pdCli, err = pd.NewClientWithContext(
 		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
@@ -717,8 +610,13 @@ func CreateClientsForNewBackend(
 		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
-		err = common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
-		return
+		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
+	}
+
+	// The following copies tikv.NewTxnClient without creating yet another pdClient.
+	spkv, err = tikvclient.NewEtcdSafePointKV(pdAddrs, tls.TLSConfig())
+	if err != nil {
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
 	if config.KeyspaceName == "" {
@@ -726,36 +624,55 @@ func CreateClientsForNewBackend(
 	} else {
 		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, config.KeyspaceName)
 		if err != nil {
-			err = common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
-			return
+			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
-	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()),
-		tikvclient.WithCodec(pdCliForTiKV.GetCodec()))
+	tikvCodec := pdCliForTiKV.GetCodec()
+	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
+	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
-		err = common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-		return
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli = split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
+	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
-	clients = BackendClients{
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
+	if err != nil {
+		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
+
+	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
+	local := &Backend{
 		pdCli:     pdCli,
 		pdHTTPCli: pdHTTPCli,
 		splitCli:  splitCli,
+		tikvCli:   tikvCli,
+		tls:       tls,
+		tikvCodec: tikvCodec,
 
+		BackendConfig: config,
+
+		supportMultiIngest:  multiIngestSupported,
 		importClientFactory: importClientFactory,
-
-		rpcCli:  rpcCli,
-		pdAddrs: pdAddrs,
+		writeLimiter:        writeLimiter,
+		logger:              log.Wrap(tidblogutil.Logger(ctx)),
 	}
-	return
+	local.engineMgr, err = newEngineManager(config, local, local.logger)
+	if err != nil {
+		return nil, err
+	}
+	if m, ok := metric.GetCommonMetric(ctx); ok {
+		local.metrics = m
+	}
+	local.tikvSideCheckFreeSpace(ctx)
+
+	return local, nil
 }
 
 // NewBackendForTest creates a new Backend for test.
@@ -878,7 +795,6 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 
 // Close the local backend.
 func (local *Backend) Close() {
-	local.logger.Warn("close local backend")
 	local.engineMgr.close()
 	local.importClientFactory.close()
 

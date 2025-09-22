@@ -830,7 +830,6 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	if err != nil {
 		return err
 	}
-
 	err = executeAndClosePipeline(opCtx, pipe, job, bcCtx, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)

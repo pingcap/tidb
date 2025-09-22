@@ -137,8 +137,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 
 	if !e.controller.Detached {
-		err = waitTask(ctx, jobID, task)
-		if err != nil {
+		if err = e.waitTask(ctx, jobID, task); err != nil {
 			return err
 		}
 	}
@@ -233,7 +232,7 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 
 // waitTask waits for the task to finish.
 // NOTE: WaitTaskDoneOrPaused also return error when task fails.
-func waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
+func (*ImportIntoExec) waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
 	err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
 	// when user KILL the connection, the ctx will be canceled, we need to cancel the import job.
 	if errors.Cause(err) == context.Canceled {
