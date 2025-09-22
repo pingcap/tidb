@@ -145,7 +145,7 @@ func TestWriteCFValueShortValueOverflow(t *testing.T) {
 	buff2 = append(buff2, WriteTypePut)
 	buff2 = codec.EncodeUvarint(buff2, ts)
 	buff2 = append(buff2, flagShortValuePrefix)
-	buff2 = append(buff2, byte(10)) // vlen=10
+	buff2 = append(buff2, byte(10))           // vlen=10
 	buff2 = append(buff2, []byte("short")...) // Only 5 bytes, but need 10
 
 	v2 := new(RawWriteCFValue)
@@ -159,7 +159,7 @@ func TestWriteCFValueShortValueOverflow(t *testing.T) {
 	buff3 = append(buff3, WriteTypePut)
 	buff3 = codec.EncodeUvarint(buff3, ts)
 	buff3 = append(buff3, flagShortValuePrefix)
-	buff3 = append(buff3, byte(255)) // vlen=255
+	buff3 = append(buff3, byte(255))         // vlen=255
 	buff3 = append(buff3, []byte("test")...) // Only 4 bytes, but need 255
 
 	v3 := new(RawWriteCFValue)
