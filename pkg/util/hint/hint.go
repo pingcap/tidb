@@ -774,7 +774,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 		case HintLeading:
 			// Leading table information is in HintData, not in hint.Tables.
-			if len(hint.Tables) == 0 {
+			leading := hint.HintData.(*ast.LeadingList)
+			if len(leading.Items) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
 				if err := hint.Restore(ctx); err != nil {

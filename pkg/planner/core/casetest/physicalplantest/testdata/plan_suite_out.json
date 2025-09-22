@@ -463,9 +463,7 @@
           "                └─Selection mpp[tiflash]  not(isnull(test.t.a))",
           "                  └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Hint leading(t3, t1) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), straight_join() */ * from t t2, t t1, t t3 where t1.a=t2.a and t2.b=t3.b",
@@ -506,9 +504,7 @@
           "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.a))",
           "          └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ qb_name(qb, v), MPP_1PHASE_AGG(@qb) */ * from v",
