@@ -878,10 +878,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int, reorgInfo *reorgInfo) {
+func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, bcCtx ingest.BackendCtx, avgRowSize int, reorgInfo *reorgInfo) {
 	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
 	if opR == nil || opW == nil {
-		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
+		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", reorgInfo.ID))
 		return
 	}
 	reader, readerOk := opR.(*TableScanOperator)
@@ -889,7 +889,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 	if !readerOk || !writerOk {
 		logutil.DDLIngestLogger().Error(
 			"unexpected operator types, config can't be adjusted",
-			zap.Int64("jobID", job.ID),
+			zap.Int64("jobID", reorgInfo.ID),
 			zap.Bool("isReaderValid", readerOk),
 			zap.Bool("isWriterValid", writerOk),
 		)
@@ -904,7 +904,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 		case <-ticker.C:
 			failpoint.InjectCall("onUpdateJobParam")
 			reorgInfo.UpdateConfigFromSysTbl(ctx)
-			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+			maxWriteSpeed := reorgInfo.ReorgMeta.GetMaxWriteSpeedOrDefault()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
@@ -912,7 +912,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
 			}
 
-			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+			concurrency := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {

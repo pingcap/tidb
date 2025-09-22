@@ -642,9 +642,9 @@ func (r *reorgInfo) UpdateConfigFromSysTbl(ctx context.Context) {
 		return
 	}
 	if latestJob.State == model.JobStateRunning && latestJob.IsAlterable() {
-		r.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrency())
-		r.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSize())
-		r.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeed())
+		r.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
+		r.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+		r.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
 	}
 }
 
