@@ -36,10 +36,6 @@ func TestReplicaReadEffectScope(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableAsyncBatchGet = false
-	})
-
 	testCases := []struct {
 		name        string
 		sql         string
