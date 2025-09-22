@@ -37,6 +37,8 @@ import (
 	"sync"
 	"time"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
+	"github.com/emmansun/gmsm/smx509"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -395,6 +397,22 @@ func TLSCipher2String(n uint16) string {
 	return s
 }
 
+var (
+	// tlcpCipherSuites and tlcpCipherNames is the supported cipher suites for tlcp connection. DON'T CHANGE THIS!
+	tlcpCipherSuites []uint16
+	tlcpCipherNames  []string
+	tlcpCipherString = map[uint16]string{}
+)
+
+// TLCPCipher2String convert tlcp num to string.
+func TLCPCipher2String(n uint16) string {
+	s, ok := tlcpCipherString[n]
+	if !ok {
+		return ""
+	}
+	return s
+}
+
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
 func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
@@ -557,6 +575,59 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 	return
 }
 
+// LoadTLCPCertificates loads TLCP CA/KEY/CERT for special paths.
+func LoadTLCPCertificates(ca, sigKey, sigCert, encKey, encCert string) (tlcpConfig *tlcp.Config, err error) {
+	if len(sigKey) == 0 || len(sigCert) == 0 || len(encKey) == 0 || len(encCert) == 0 {
+		logutil.BgLogger().Warn("load TLCP Certificate failed, the cert or key is missed")
+		return
+	}
+	sigKeyCert, err := tlcp.LoadX509KeyPair(sigCert, sigKey)
+	if err != nil {
+		logutil.BgLogger().Warn("load tlcp signature cert-key pair failed", zap.Error(err))
+		err = errors.Trace(err)
+		return
+	}
+	encKeyCert, err := tlcp.LoadX509KeyPair(encCert, encKey)
+	if err != nil {
+		logutil.BgLogger().Warn("load tlcp encryption cert-key pair failed", zap.Error(err))
+		err = errors.Trace(err)
+		return
+	}
+
+	// Currently we only support one-way check and use NoClientCert as default.
+	clientAuthPolicy := tlcp.NoClientCert
+
+	pool := smx509.NewCertPool()
+	if len(ca) > 0 {
+		var caCert []byte
+		var rootCert *smx509.Certificate
+		caCert, err = os.ReadFile(ca)
+		if err != nil {
+			logutil.BgLogger().Warn("read file failed", zap.Error(err))
+			err = errors.Trace(err)
+			return
+		}
+		rootCert, err = smx509.ParseCertificatePEM(caCert)
+		if err != nil {
+			logutil.BgLogger().Warn("load ca cert failed", zap.Error(err))
+			err = errors.Trace(err)
+			return
+		}
+		pool.AddCert(rootCert)
+	}
+
+	// If use ECDHE cipher suites, client needs encryption cert and key file too.
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", tlcpCipherNames))
+
+	tlcpConfig = &tlcp.Config{
+		Certificates: []tlcp.Certificate{sigKeyCert, encKeyCert},
+		ClientAuth:   clientAuthPolicy,
+		ClientCAs:    pool,
+		CipherSuites: tlcpCipherSuites,
+	}
+	return
+}
+
 var (
 	internalClientInit sync.Once
 	internalHTTPClient *http.Client
@@ -713,4 +784,18 @@ func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreE
 // has the same flags as normal `INSERT INTO xxx`.
 func GetTypeFlagsForImportInto(baseFlags types.Flags, sqlMode mysql.SQLMode) types.Flags {
 	return GetTypeFlagsForInsert(baseFlags, sqlMode, false)
+}
+
+func init() {
+	for _, sc := range tlcp.CipherSuites() {
+		tlcpCipherNames = append(tlcpCipherNames, sc.Name)
+		tlcpCipherSuites = append(tlcpCipherSuites, sc.ID)
+		tlcpCipherString[sc.ID] = sc.Name
+		/*  Currently, tlcp support 4 types of cipher suites.
+		tlcp.TLCP_ECC_SM4_GCM_SM3: "ECC_SM4_GCM_SM3",
+		tlcp.TLCP_ECC_SM4_CBC_SM3: "ECC_SM4_CBC_SM3",
+		tlcp.TLCP_ECDHE_SM4_GCM_SM3: "ECDHE_SM4_GCM_SM3",
+		tlcp.TLCP_ECDHE_SM4_CBC_SM3: "ECDHE_SM4_CBC_SM3",
+		*/
+	}
 }

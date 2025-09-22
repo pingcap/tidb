@@ -557,6 +557,9 @@ type Instance struct {
 	TiDBRCReadCheckTS    bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 	// TiDBServiceScope indicates the role for tidb for distributed task framework.
 	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
+
+	// ServerID indicates the unique ID of the server.
+	ServerID int `toml:"server_id" json:"server_id"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -617,6 +620,16 @@ type Security struct {
 	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 	// Disconnect directly when the password is expired
 	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
+	// EnableWhiteListPlugin indicate whether enable whitelist plugin
+	EnableWhiteListPlugin bool `toml:"enable-whitelist-plugin" json:"enable-whitelist-plugin"`
+	// TidbEnableDutySeparationMode indicates if enable the mode of duty separation.
+	TidbEnableDutySeparationMode bool `toml:"tidb-enable-duty-separation-mode" json:"tidb-enable-duty-separation-mode"`
+	// TLCP config
+	TLCPCA      string `toml:"tlcp-ca" json:"tlcp-ca"`
+	TLCPSigCert string `toml:"tlcp-sig-cert" json:"tlcp-sig-cert"`
+	TLCPSigKey  string `toml:"tlcp-sig-key" json:"tlcp-sig-key"`
+	TLCPEncCert string `toml:"tlcp-enc-cert" json:"tlcp-enc-cert"`
+	TLCPEncKey  string `toml:"tlcp-enc-key" json:"tlcp-enc-key"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -888,6 +901,8 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+	// Whether enable create table as select
+	EnableCreateTableAsSelect bool `toml:"enable-create-table-as-select" json:"enable-create-table-as-select"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -1048,13 +1063,15 @@ var defaultConf = Config{
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
-		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
-		EnableSEM:                   false,
-		AutoTLS:                     false,
-		RSAKeySize:                  4096,
-		AuthTokenJWKS:               "",
-		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
-		DisconnectOnExpiredPassword: true,
+		SpilledFileEncryptionMethod:  SpilledFileEncryptionMethodPlaintext,
+		EnableSEM:                    false,
+		AutoTLS:                      false,
+		RSAKeySize:                   4096,
+		AuthTokenJWKS:                "",
+		AuthTokenRefreshInterval:     DefAuthTokenRefreshInterval.String(),
+		DisconnectOnExpiredPassword:  true,
+		TidbEnableDutySeparationMode: false,
+		EnableWhiteListPlugin:        false,
 	},
 	DeprecateIntegerDisplayWidth:         true,
 	EnableEnumLengthLimit:                true,
