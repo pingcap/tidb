@@ -854,14 +854,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			continue
 		}
 
-<<<<<<< HEAD
 		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
-			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
-=======
-		err = doGCPlacementRules(se, safePoint, r, &gcPlacementRuleCache)
-		if err != nil {
 			logutil.Logger(ctx).Warn("gc placement rules failed on range", zap.String("category", "gc worker"),
->>>>>>> 6725bc5633f (logs: downgrade some logs from ERROR to WARN and INFO (#62705))
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
