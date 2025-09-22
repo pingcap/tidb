@@ -2412,7 +2412,7 @@ func TestIssuenullreject(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test;")
 
-		// Case 1: NATURAL RIGHT JOIN inside NOT IN should keep right outer join
+		// Case 1: NATURAL RIGHT JOIN inside NOT IN should keep right outer join,close #60737
 		tk.MustExec("drop table if exists chqin, chqin2;")
 		tk.MustExec("create table chqin(id int, f1 date);")
 		tk.MustExec("insert into chqin values (1,null),(2,null),(3,null);")
@@ -2443,7 +2443,7 @@ func TestIssuenullreject(t *testing.T) {
 		// result check (should be empty)
 		tk.MustQuery(q1).Check(testkit.Rows())
 
-		// Case 2: RIGHT JOIN with subquery and APPLY should keep right outer join
+		// Case 2: RIGHT JOIN with subquery and APPLY should keep right outer join,close #60080
 		tk.MustExec("drop table if exists t0, t1, t2;")
 		tk.MustExec("create table t0(c0 int);")
 		tk.MustExec("insert into t0 values (61);")
@@ -2480,7 +2480,7 @@ func TestIssuenullreject(t *testing.T) {
 		// result should be empty
 		tk.MustQuery(q2).Check(testkit.Rows())
 
-		// Case 3: LEFT JOIN with projection constant column should keep left outer join
+		// Case 3: LEFT JOIN with projection constant column should keep left outer join,close #61327
 		tk.MustExec("drop table if exists t0, t2, t3;")
 		tk.MustExec("create table t0(c0 int);")
 		tk.MustExec("create table t2(c0 int);")
@@ -2504,7 +2504,7 @@ func TestIssuenullreject(t *testing.T) {
 		// expected row: 0, NULL, 3
 		tk.MustQuery(q3).Check(testkit.Rows("0 <nil> 3"))
 
-		// Case 4: RIGHT OUTER JOIN with boolean WHERE should keep right outer join
+		// Case 4: RIGHT OUTER JOIN with boolean WHERE should keep right outer join,close #59162
 		tk.MustExec("drop table if exists t0, t1;")
 		tk.MustExec("create table t0(c0 int);")
 		tk.MustExec("insert into t0 values (1);")
@@ -2523,5 +2523,30 @@ func TestIssuenullreject(t *testing.T) {
 		))
 		// expected row: NULL, 0
 		tk.MustQuery(q4).Check(testkit.Rows("<nil> 0"))
+
+		// Case 5: Complex subquery with view and null-rejecting conditions,close #60081
+		tk.MustExec("drop table if exists t0, t1,t2;")
+		tk.MustExec("create table t0(c0 int);")
+		tk.MustExec("insert into t0 values (1),(2),(3),(4),(5),(6),(7),(8);")
+		tk.MustExec("create table t1(c1 double);")
+		tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7),(8);")
+		tk.MustExec("create view t2(c_0, c_1, c_2) as " +
+			"select distinct ref_0.c0 as c_0, " +
+			"right('1>yQ', " +
+			"case when ((ref_0.c0) > (select distinct ref_0.c0 as c_0 from t0 " +
+			"where ((select c1 as c1 from t1 order by t1.c1 limit 2,1)) < " +
+			"((select c1 as c1 from t1 order by t1.c1 limit 1,1)) order by c_0 limit 1)) " +
+			"then (1) else (2) end) as c_1, " +
+			"(select sum(t1.c1) as sum_t1_c1 from t1) as c_2 " +
+			"from t0 as ref_0 " +
+			"order by c_0, c_1, c_2;")
+
+		q5 := "select distinct subq_0.c_0 as c_0 " +
+			"from (select (select c_2 from t2 order by t2.c_2 limit 1 offset 6) as c_0 " +
+			"from t2 as ref_0 " +
+			"where (ref_0.c_2) is not null " +
+			"order by c_0 desc) as subq_0 " +
+			"where ((subq_0.c_0) is null)"
+		tk.MustQuery(q5).Check(testkit.Rows())
 	})
 }
