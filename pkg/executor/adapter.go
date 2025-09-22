@@ -446,21 +446,6 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 	return planner.IsReadOnly(a.StmtNode, vars)
 }
 
-// isSelectStmt returns true if a statement is a SELECT statement.
-// Similar to IsReadOnly, it handles ExecuteStmt by checking the underlying prepared statement.
-func isSelectStmt(node ast.StmtNode, vars *variable.SessionVars) bool {
-	if _, ok := node.(*ast.SelectStmt); ok {
-		return true
-	}
-	if execStmt, ok := node.(*ast.ExecuteStmt); ok {
-		if prepStmt, err := plannercore.GetPreparedStmt(execStmt, vars); err == nil {
-			_, isSelect := prepStmt.PreparedAst.Stmt.(*ast.SelectStmt)
-			return isSelect
-		}
-	}
-	return false
-}
-
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
@@ -654,7 +639,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
 		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
-		if !isSelectStmt(a.StmtNode, a.Ctx.GetSessionVars()) {
+		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
