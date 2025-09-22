@@ -105,7 +105,7 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 	}
 }
 
-func TestFixAdminAlterDDLJos(t *testing.T) {
+func TestFixAdminAlterDDLJobs(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -118,7 +118,8 @@ func TestFixAdminAlterDDLJos(t *testing.T) {
 		stuckFp          string
 		checkReorgMetaFp string
 		sql              string
-		preCondition     string
+		setVars          string
+		revertVars       string
 	}{
 		{
 			stuckFp:          "github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerFault",
@@ -134,53 +135,60 @@ func TestFixAdminAlterDDLJos(t *testing.T) {
 			stuckFp:          "github.com/pingcap/tidb/pkg/ddl/mockAddIndexTxnWorkerStuck",
 			checkReorgMetaFp: "github.com/pingcap/tidb/pkg/ddl/checkReorgWorkerCnt",
 			sql:              "alter table t add index idx(a)",
-			preCondition:     "set @@global.tidb_ddl_enable_fast_reorg=off",
+			setVars:          "set @@global.tidb_ddl_enable_fast_reorg=off",
+			revertVars:       "set @@global.tidb_ddl_enable_fast_reorg=on",
 		},
 	}
 
 	for _, tc := range testCases {
-		if tc.preCondition != "" {
-			tk1.MustExec(tc.preCondition)
-		}
-
-		ch := make(chan struct{})
-		testfailpoint.EnableCall(t, tc.stuckFp, func() {
-			<-ch
-		})
-		var wg util.WaitGroupWrapper
-		wg.Run(func() {
-			tk1.MustExec(tc.sql)
-		})
-		var (
-			realWorkerCnt     atomic.Int64
-			realBatchSize     atomic.Int64
-			realMaxWriteSpeed atomic.Int64
-		)
-		testfailpoint.EnableCall(t, tc.checkReorgMetaFp, func(j *model.Job) {
-			realWorkerCnt.Store(int64(j.ReorgMeta.GetConcurrency()))
-			realBatchSize.Store(int64(j.ReorgMeta.GetBatchSize()))
-			realMaxWriteSpeed.Store(int64(j.ReorgMeta.GetMaxWriteSpeed()))
-		})
-
-		jobID := ""
-		tk2 := testkit.NewTestKit(t, store)
-		for {
-			row := tk2.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-			if len(row) == 1 {
-				jobID = row[0][0].(string)
-				break
+		t.Run(tc.stuckFp, func(t *testing.T) {
+			if tc.setVars != "" {
+				tk1.MustExec(tc.setVars)
 			}
-		}
-		workerCnt := int64(7)
-		batchSize := int64(89)
-		maxWriteSpeed := int64(1011)
-		tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = %d", jobID, workerCnt))
-		tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s batch_size = %d", jobID, batchSize))
-		tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed = %d", jobID, maxWriteSpeed))
-		require.Eventually(t, func() bool {
-			return realWorkerCnt.Load() == workerCnt && realBatchSize.Load() == batchSize && realMaxWriteSpeed.Load() == maxWriteSpeed
-		}, 30*time.Second, time.Millisecond*100)
-		close(ch)
-		wg.Wait()
+
+			ch := make(chan struct{})
+			testfailpoint.EnableCall(t, tc.stuckFp, func() {
+				<-ch
+			})
+			var wg util.WaitGroupWrapper
+			wg.Run(func() {
+				tk1.MustExec(tc.sql)
+			})
+			var (
+				realWorkerCnt     atomic.Int64
+				realBatchSize     atomic.Int64
+				realMaxWriteSpeed atomic.Int64
+			)
+			testfailpoint.EnableCall(t, tc.checkReorgMetaFp, func(j *model.Job) {
+				realWorkerCnt.Store(int64(j.ReorgMeta.GetConcurrency()))
+				realBatchSize.Store(int64(j.ReorgMeta.GetBatchSize()))
+				realMaxWriteSpeed.Store(int64(j.ReorgMeta.GetMaxWriteSpeed()))
+			})
+
+			jobID := ""
+			tk2 := testkit.NewTestKit(t, store)
+			for {
+				row := tk2.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+				if len(row) == 1 {
+					jobID = row[0][0].(string)
+					break
+				}
+			}
+			workerCnt := int64(7)
+			batchSize := int64(89)
+			maxWriteSpeed := int64(1011)
+			tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = %d", jobID, workerCnt))
+			tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s batch_size = %d", jobID, batchSize))
+			tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed = %d", jobID, maxWriteSpeed))
+			require.Eventually(t, func() bool {
+				return realWorkerCnt.Load() == workerCnt && realBatchSize.Load() == batchSize && realMaxWriteSpeed.Load() == maxWriteSpeed
+			}, 30*time.Second, time.Millisecond*100)
+			close(ch)
+			wg.Wait()
+			if tc.revertVars != "" {
+				tk1.MustExec(tc.revertVars)
+			}
+		})
 	}
+	tk1.MustExec("set @@global.tidb_enable_dist_task = on;")
 }
