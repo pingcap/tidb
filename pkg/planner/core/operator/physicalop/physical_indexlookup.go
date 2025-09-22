@@ -52,7 +52,7 @@ func buildPushDownIndexLookUpPlan(
 	}
 	resetPlanIDRecursively(ctx, tablePlan)
 
-	tableScanPlan, tableScanParent, err := detachRootTableScanPlan(tablePlan)
+	tableScanPlan, parentOfTableScan, err := detachRootTableScanPlan(tablePlan)
 	if err != nil {
 		return nil, err
 	}
@@ -74,8 +74,8 @@ func buildPushDownIndexLookUpPlan(
 		IndexHandleOffsets: []uint32{uint32(indexPlan.Schema().Len()) - 1},
 	}.Init(ctx, indexPlan, tableScanPlan, tablePlan.QueryBlockOffset())
 
-	if tableScanParent != nil {
-		tableScanParent.SetChildren(indexLookUpPlan)
+	if parentOfTableScan != nil {
+		parentOfTableScan.SetChildren(indexLookUpPlan)
 		indexLookUpPlan = tablePlan
 	}
 	return
