@@ -28,33 +28,23 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-<<<<<<< HEAD
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-=======
-	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/conn/util"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
-	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
-	"github.com/pingcap/tidb/br/pkg/restore/split"
-	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/summary"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
->>>>>>> 724cd2f1b69 (br: check and compact for br (#63419))
 )
 
 func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
@@ -299,7 +289,6 @@ func SortAndValidateFileRanges(
 	return sortedSplitKeys, tableIDWithFilesGroup, nil
 }
 
-<<<<<<< HEAD
 func (rc *SnapClient) RestoreTables(
 	ctx context.Context,
 	placementRuleManager PlacementRuleManager,
@@ -308,35 +297,11 @@ func (rc *SnapClient) RestoreTables(
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
+	compactProtectStartKey []byte,
+	compactProtectEndKey []byte,
 	updateCh glue.Progress,
 ) error {
 	if err := placementRuleManager.SetPlacementRule(ctx, createdTables); err != nil {
-=======
-type RestoreTablesContext struct {
-	// configuration
-	LogProgress    bool
-	SplitSizeBytes uint64
-	SplitKeyCount  uint64
-	SplitOnTable   bool
-	Online         bool
-
-	// data
-	CreatedTables            []*restoreutils.CreatedTable
-	CheckpointSetWithTableID map[int64]map[string]struct{}
-
-	CompactProtectStartKey []byte
-	CompactProtectEndKey   []byte
-	// tool client
-	Glue glue.Glue
-}
-
-func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesContext) error {
-	placementRuleManager, err := NewPlacementRuleManager(ctx, rc.pdClient, rc.pdHTTPClient, rc.tlsConf, rtCtx.Online)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := placementRuleManager.SetPlacementRule(ctx, rtCtx.CreatedTables); err != nil {
->>>>>>> 724cd2f1b69 (br: check and compact for br (#63419))
 		return errors.Trace(err)
 	}
 	defer func() {
@@ -359,51 +324,30 @@ func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesCont
 	}
 	log.Info("Restore Stage Duration", zap.String("stage", "split regions"), zap.Duration("take", time.Since(start)))
 
+	if bytes.Compare(compactProtectStartKey, compactProtectEndKey) < 0 {
+		log.Info("start to check and compact the restore range")
+		if err := rc.compactAndCheckSSTRange(ctx, compactProtectStartKey, compactProtectEndKey); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		log.Warn("start key must be smaller than end key, so skip sending add partition range request", logutil.Key("start key", compactProtectStartKey), logutil.Key("end key", compactProtectEndKey))
+	}
+
 	start = time.Now()
 	if err = rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh); err != nil {
 		return errors.Trace(err)
 	}
 	elapsed := time.Since(start)
-<<<<<<< HEAD
 	log.Info("Restore Stage Duration", zap.String("stage", "restore files"), zap.Duration("take", elapsed))
-=======
-	summary.CollectDuration("merge ranges", elapsed)
-	log.Info("Restore Stage Duration", zap.String("stage", "merge ranges"), zap.Duration("take", elapsed))
 
-	if err := glue.WithProgress(ctx, rtCtx.Glue, "Split&Scatter Regions", int64(len(sortedSplitKeys)), !rtCtx.LogProgress, func(updateCh glue.Progress) error {
-		if err := rc.SplitPoints(ctx, sortedSplitKeys, updateCh.IncBy, false); err != nil {
-			return errors.Trace(err)
-		}
-		if bytes.Compare(rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey) >= 0 {
-			log.Warn("start key must be smaller than end key, so skip sending add partition range request", logutil.Key("start key", rtCtx.CompactProtectStartKey), logutil.Key("end key", rtCtx.CompactProtectEndKey))
-			return nil
-		}
-		log.Info("start to check and compact the restore range")
-		if err := rc.compactAndCheckSSTRange(ctx, rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey); err != nil {
-			return errors.Trace(err)
-		}
-		return nil
-	}); err != nil {
-		return errors.Trace(err)
-	}
-
-	if err := glue.WithProgress(ctx, rtCtx.Glue, "Download&Ingest SST", int64(len(tableIDWithFilesGroup)), !rtCtx.LogProgress, func(updateCh glue.Progress) error {
-		if err := rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh.IncBy); err != nil {
-			return errors.Trace(err)
-		}
-		if bytes.Compare(rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey) >= 0 {
-			log.Warn("start key must be smaller than end key, so skip sending remove partition range request", logutil.Key("start key", rtCtx.CompactProtectStartKey), logutil.Key("end key", rtCtx.CompactProtectEndKey))
-			return nil
-		}
+	if bytes.Compare(compactProtectStartKey, compactProtectEndKey) < 0 {
 		log.Info("start to remove the force partition restore range")
-		if err := rc.removeForcePartitionRange(ctx, rtCtx.CompactProtectStartKey, rtCtx.CompactProtectEndKey); err != nil {
+		if err := rc.removeForcePartitionRange(ctx, compactProtectStartKey, compactProtectEndKey); err != nil {
 			return errors.Trace(err)
 		}
-		return nil
-	}); err != nil {
-		return errors.Trace(err)
+	} else {
+		log.Warn("start key must be smaller than end key, so skip sending remove partition range request", logutil.Key("start key", compactProtectStartKey), logutil.Key("end key", compactProtectEndKey))
 	}
->>>>>>> 724cd2f1b69 (br: check and compact for br (#63419))
 
 	summary.CollectSuccessUnit("files", len(allFiles), elapsed)
 	return nil
@@ -466,7 +410,7 @@ func (rc *SnapClient) sendRequestToStore(
 		}
 		storeId := store.GetId()
 		pool.ApplyOnErrorGroup(eg, func() error {
-			return sendFn(ectx, rc.importer.importClient, storeId)
+			return sendFn(ectx, rc.fileImporter.importClient, storeId)
 		})
 	}
 	return eg.Wait()

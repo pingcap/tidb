@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -897,37 +898,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-<<<<<<< HEAD
-	err = client.AllocTableIDs(ctx, tables)
-=======
-	if userTableIDNotReusedWhenNeedCheck, err := client.AllocTableIDs(ctx, tables, loadStatsPhysical, loadSysTablePhysical, reusePreallocIDs); err != nil {
-		return errors.Trace(err)
-	} else if userTableIDNotReusedWhenNeedCheck {
-		log.Warn("Cannot load stats physically because not all table ids are reused. Fallback to logically load stats.")
-		// Notice that it will break the pitr id tracker since log restore support system restore
-		tables = fallbackStatsTables(tables)
-		loadStatsPhysical = false
-	}
-	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
-	preAllocRange, err := client.GetPreAllocedTableIDRange()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	var restoreSchedulersFunc pdutil.UndoFunc
-	var schedulersConfig *pdutil.ClusterConfig
-	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
-		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
-	} else {
-		if isPiTR && cfg.tableMappingManager != nil {
-			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
-		}
-		keyRange := rewriteKeyRanges(preAllocRange)
-		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
-			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
-	}
->>>>>>> 724cd2f1b69 (br: check and compact for br (#63419))
+	idFrom, idEnd, err := client.AllocTableIDs(ctx, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1107,7 +1078,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-<<<<<<< HEAD
 	// Split/Scatter + Download/Ingest
 	progressLen := int64(rangeSize + len(files))
 	if cfg.Checksum {
@@ -1123,37 +1093,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), idFrom, idEnd)
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
-=======
-	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), preAllocRange)
-	rtCtx := snapclient.RestoreTablesContext{
-		LogProgress:    cfg.LogProgress,
-		SplitSizeBytes: kvConfigs.MergeRegionSize.Value,
-		SplitKeyCount:  kvConfigs.MergeRegionKeyCount.Value,
->>>>>>> 724cd2f1b69 (br: check and compact for br (#63419))
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
 		// If the command is from BRIE SQL, the ddl.EnableSplitTableRegion is TiDB config split-table.
 		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
 		// It's recommended to enable TiDB configure `split-table` instead.
-<<<<<<< HEAD
 		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
+		compactProtectStartKey, compactProtectEndKey,
 		updateCh,
 	); err != nil {
-=======
-		SplitOnTable: atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
-		Online:       cfg.Online,
-
-		CreatedTables:            createdTables,
-		CheckpointSetWithTableID: checkpointSetWithTableID,
-
-		CompactProtectStartKey: compactProtectStartKey,
-		CompactProtectEndKey:   compactProtectEndKey,
-
-		Glue: g,
-	}
-	if err := client.RestoreTables(ctx, rtCtx); err != nil {
->>>>>>> 724cd2f1b69 (br: check and compact for br (#63419))
 		return errors.Trace(err)
 	}
 
@@ -1663,25 +1613,12 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	return
 }
 
-<<<<<<< HEAD
-=======
-func encodeCompactAndCheckKey(codec tikv.Codec, preAlloced [2]int64) ([]byte, []byte) {
-	checkStartKey := tablecodec.EncodeTablePrefix(preAlloced[0])
-	checkEndKey := tablecodec.EncodeTablePrefix(preAlloced[1])
+func encodeCompactAndCheckKey(codec tikv.Codec, idFrom, idEnd int64) ([]byte, []byte) {
+	checkStartKey := tablecodec.EncodeTablePrefix(idFrom)
+	checkEndKey := tablecodec.EncodeTablePrefix(idEnd)
 	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
-func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {
-	if preAlloced == [2]int64{} {
-		return nil
-	}
-	startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[0]))
-	endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[1]))
-
-	return [][2]kv.Key{{startKey, endKey}}
-}
-
->>>>>>> 724cd2f1b69 (br: check and compact for br (#63419))
 type DDLJobFilterRule func(ddlJob *model.Job) bool
 
 var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
