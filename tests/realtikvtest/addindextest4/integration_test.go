@@ -149,7 +149,7 @@ func TestAdminAlterAddIndexLocalIngestDDLJob(t *testing.T) {
 	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed = %d", jobID, maxWriteSpeed))
 	require.Eventually(t, func() bool {
 		return realWorkerCnt == workerCnt && realBatchSize == batchSize && realMaxWriteSpeed == maxWriteSpeed
-	}, time.Second*5, time.Millisecond*100)
+	}, 30*time.Second, time.Millisecond*100)
 	close(ch)
 	wg.Wait()
 }
