@@ -467,8 +467,12 @@ const (
 
 	// version 252
 	// Update FSP of mysql.bind_info timestamp columns to microsecond precision and
-	// add last_used_date to mysql.bind_info
+	//
 	version252 = 252
+
+	// version253
+	// Add last_used_date to mysql.bind_info
+	version253 = 253
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -659,6 +663,7 @@ var (
 		{version: version250, fn: upgradeToVer250},
 		{version: version251, fn: upgradeToVer251},
 		{version: version252, fn: upgradeToVer252},
+		{version: version253, fn: upgradeToVer253},
 	}
 )
 
@@ -2028,5 +2033,8 @@ func upgradeToVer251(s sessionapi.Session, _ int64) {
 func upgradeToVer252(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info CHANGE create_time create_time TIMESTAMP(6)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info CHANGE update_time update_time TIMESTAMP(6)")
+}
+
+func upgradeToVer253(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN last_used_date DATE DEFAULT NULL AFTER `plan_digest`", infoschema.ErrColumnExists)
 }
