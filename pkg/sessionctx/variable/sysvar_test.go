@@ -1913,13 +1913,15 @@ func TestTiDBAnalyzeDefaultOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "100", val)
 
-	// Test validation - value too small
-	_, err = bucketsVar.Validate(vars, "0", vardef.ScopeGlobal)
-	require.Error(t, err)
+	// Test validation - value too small (should clamp to MinValue)
+	val, err = bucketsVar.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1", val) // Clamped to MinValue
 
-	// Test validation - value too large
-	_, err = bucketsVar.Validate(vars, "100001", vardef.ScopeGlobal)
-	require.Error(t, err)
+	// Test validation - value too large (should clamp to MaxValue)
+	val, err = bucketsVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "100000", val) // Clamped to MaxValue
 
 	// Test TiDBAnalyzeDefaultNumTopN
 	topnVar := GetSysVar(vardef.TiDBAnalyzeDefaultNumTopN)
@@ -1939,9 +1941,10 @@ func TestTiDBAnalyzeDefaultOptions(t *testing.T) {
 	_, err = topnVar.Validate(vars, "0", vardef.ScopeGlobal)
 	require.NoError(t, err)
 
-	// Test validation - value too large
-	_, err = topnVar.Validate(vars, "100001", vardef.ScopeGlobal)
-	require.Error(t, err)
+	// Test validation - value too large (should clamp to MaxValue)
+	val, err = topnVar.Validate(vars, "100001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "100000", val) // Clamped to MaxValue
 
 	// Test TiDBAnalyzeDefaultCMSketchWidth
 	cmWidthVar := GetSysVar(vardef.TiDBAnalyzeDefaultCMSketchWidth)
@@ -1983,9 +1986,10 @@ func TestTiDBAnalyzeDefaultOptions(t *testing.T) {
 	_, err = samplesVar.Validate(vars, "0", vardef.ScopeGlobal)
 	require.NoError(t, err)
 
-	// Test validation - value too large for samples
-	_, err = samplesVar.Validate(vars, "5000001", vardef.ScopeGlobal)
-	require.Error(t, err)
+	// Test validation - value too large for samples (should clamp to MaxValue)
+	val, err = samplesVar.Validate(vars, "5000001", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "5000000", val) // Clamped to MaxValue
 }
 
 func TestTiDBOptSelectivityFactor(t *testing.T) {
