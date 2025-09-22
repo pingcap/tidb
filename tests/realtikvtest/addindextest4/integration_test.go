@@ -16,7 +16,7 @@ package addindextest_test
 
 import (
 	"fmt"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,52 +105,82 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 	}
 }
 
-func TestAdminAlterAddIndexLocalIngestDDLJob(t *testing.T) {
+func TestFixAdminAlterDDLJos(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t (a int);")
 	tk1.MustExec("insert into t values (1);")
 	tk1.MustExec("set @@global.tidb_enable_dist_task=off;")
-	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerFault", func() {
-		<-ch
-	})
-
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(100)")
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		tk1.MustExec("alter table t add index idx_a(a);")
-	}()
-	realWorkerCnt := 0
-	realBatchSize := 0
-	realMaxWriteSpeed := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkReorgConcurrency", func(j *model.Job) {
-		realWorkerCnt = j.ReorgMeta.GetConcurrency()
-		realBatchSize = j.ReorgMeta.GetBatchSize()
-		realMaxWriteSpeed = j.ReorgMeta.GetMaxWriteSpeed()
-	})
 
-	jobID := ""
-	tk2 := testkit.NewTestKit(t, store)
-	for {
-		row := tk2.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-		if len(row) == 1 {
-			jobID = row[0][0].(string)
-			break
-		}
+	testCases := []struct {
+		stuckFp          string
+		checkReorgMetaFp string
+		sql              string
+		preCondition     string
+	}{
+		{
+			stuckFp:          "github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerFault",
+			checkReorgMetaFp: "github.com/pingcap/tidb/pkg/ddl/checkReorgConcurrency",
+			sql:              "alter table t add index idx_a(a)",
+		},
+		{
+			stuckFp:          "github.com/pingcap/tidb/pkg/ddl/mockUpdateColumnWorkerStuck",
+			checkReorgMetaFp: "github.com/pingcap/tidb/pkg/ddl/checkReorgWorkerCnt",
+			sql:              "alter table t modify a varchar(30)",
+		},
+		{
+			stuckFp:          "github.com/pingcap/tidb/pkg/ddl/mockAddIndexTxnWorkerStuck",
+			checkReorgMetaFp: "github.com/pingcap/tidb/pkg/ddl/checkReorgWorkerCnt",
+			sql:              "alter table t add index idx(a)",
+			preCondition:     "set @@global.tidb_ddl_enable_fast_reorg=off",
+		},
 	}
-	workerCnt := 7
-	batchSize := 89
-	maxWriteSpeed := 1011
-	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = %d", jobID, workerCnt))
-	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s batch_size = %d", jobID, batchSize))
-	tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed = %d", jobID, maxWriteSpeed))
-	require.Eventually(t, func() bool {
-		return realWorkerCnt == workerCnt && realBatchSize == batchSize && realMaxWriteSpeed == maxWriteSpeed
-	}, 30*time.Second, time.Millisecond*100)
-	close(ch)
-	wg.Wait()
+
+	for _, tc := range testCases {
+		if tc.preCondition != "" {
+			tk1.MustExec(tc.preCondition)
+		}
+
+		ch := make(chan struct{})
+		testfailpoint.EnableCall(t, tc.stuckFp, func() {
+			<-ch
+		})
+		var wg util.WaitGroupWrapper
+		wg.Run(func() {
+			tk1.MustExec(tc.sql)
+		})
+		var (
+			realWorkerCnt     atomic.Int64
+			realBatchSize     atomic.Int64
+			realMaxWriteSpeed atomic.Int64
+		)
+		testfailpoint.EnableCall(t, tc.checkReorgMetaFp, func(j *model.Job) {
+			realWorkerCnt.Store(int64(j.ReorgMeta.GetConcurrency()))
+			realBatchSize.Store(int64(j.ReorgMeta.GetBatchSize()))
+			realMaxWriteSpeed.Store(int64(j.ReorgMeta.GetMaxWriteSpeed()))
+		})
+
+		jobID := ""
+		tk2 := testkit.NewTestKit(t, store)
+		for {
+			row := tk2.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			if len(row) == 1 {
+				jobID = row[0][0].(string)
+				break
+			}
+		}
+		workerCnt := int64(7)
+		batchSize := int64(89)
+		maxWriteSpeed := int64(1011)
+		tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = %d", jobID, workerCnt))
+		tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s batch_size = %d", jobID, batchSize))
+		tk2.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed = %d", jobID, maxWriteSpeed))
+		require.Eventually(t, func() bool {
+			return realWorkerCnt.Load() == workerCnt && realBatchSize.Load() == batchSize && realMaxWriteSpeed.Load() == maxWriteSpeed
+		}, 30*time.Second, time.Millisecond*100)
+		close(ch)
+		wg.Wait()
+	}
 }
