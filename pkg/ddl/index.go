@@ -2650,8 +2650,9 @@ func TaskKey(jobID int64) string {
 	return fmt.Sprintf("ddl/%s/%d", proto.Backfill, jobID)
 }
 
-func (w *worker) getSplitRangeFuncs(job *model.Job, tableID int64) (
+func (w *worker) getSplitRangeFuncs(reorgInfo *reorgInfo, t table.Table) (
 	addTableSplitRange func(), removeTableSplitRangeAndCloseClients func(), err error) {
+	job := reorgInfo.Job
 	cfg := ingest.GenConfig(w.workCtx, "", ingest.LitMemRoot, false,
 		job.ReorgMeta.ResourceGroupName, w.store.GetKeyspace(), job.ReorgMeta.GetConcurrency(),
 		job.ReorgMeta.GetMaxWriteSpeed(), job.ReorgMeta.UseCloudStorage)
@@ -2683,19 +2684,30 @@ func (w *worker) getSplitRangeFuncs(job *model.Job, tableID int64) (
 		clients.Close()
 	}
 
-	startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
-		tablecodec.EncodeTablePrefix(tableID),
-		tablecodec.EncodeTablePrefix(tableID+1),
-	)
+	var startKeys, endKeys [][]byte
+	var pids []int64
+	if phyTbl, ok := t.(table.PartitionedTable); ok && phyTbl.Meta().ID != reorgInfo.PhysicalTableID {
+		pids = phyTbl.GetAllPartitionIDs()
+	} else {
+		pids = append(pids, t.Meta().ID)
+	}
+	for _, pid := range pids {
+		startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
+			tablecodec.EncodeTablePrefix(pid),
+			tablecodec.EncodeTablePrefix(pid+1),
+		)
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
 	stores, err := clients.GetPDClient().GetAllStores(w.workCtx, opt.WithExcludeTombstone())
 	if err != nil {
 		logutil.DDLIngestLogger().Warn("GetAllStores failed",
-			zap.Int64("table id", tableID), zap.Error(err))
+			zap.Int64("table id", t.Meta().ID), zap.Int64s("physical ids", pids), zap.Error(err))
 		closeClients()
 		return nil, nil, err
 	}
 	addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(w.workCtx,
-		startKey, endKey, stores, clients.GetImportClientFactory(),
+		startKeys, endKeys, stores, clients.GetImportClientFactory(),
 	)
 	return addTableSplitRange, func() {
 		removeTableSplitRange()
@@ -2735,7 +2747,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		return err
 	}
 
-	addTableSplitRange, removeTableSplitRange, err := w.getSplitRangeFuncs(reorgInfo.Job, t.Meta().ID)
+	addTableSplitRange, removeTableSplitRange, err := w.getSplitRangeFuncs(reorgInfo, t)
 	if err != nil {
 		logutil.DDLLogger().Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
 	} else {

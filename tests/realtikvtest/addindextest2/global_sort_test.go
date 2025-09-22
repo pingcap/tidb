@@ -707,7 +707,7 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.Equal(t, bytes, 0)     // 0
 }
 
-func TestPartitionRangeForTable(t *testing.T) {
+func TestSplitnRangeForTable(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
 	}
@@ -725,8 +725,10 @@ func TestPartitionRangeForTable(t *testing.T) {
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("CREATE TABLE t (c int)")
+	tk.MustExec("CREATE TABLE tp (id int primary key, c int) PARTITION BY HASH (id) PARTITIONS 2")
 	for i := range 1024 {
 		tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d)", i))
+		tk.MustExec(fmt.Sprintf("INSERT INTO tp VALUES (%d, %d)", i, i))
 	}
 
 	testcases := []struct {
@@ -749,12 +751,20 @@ func TestPartitionRangeForTable(t *testing.T) {
 		t.Run(tc.caseName, func(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
 			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
+
 			addCnt = 0
 			removeCnt = 0
 			tk.MustExec("alter table t add index i(c)")
 			require.Equal(t, addCnt, len(stores))
 			require.Equal(t, removeCnt, addCnt)
 			tk.MustExec("alter table t drop index i")
+
+			addCnt = 0
+			removeCnt = 0
+			tk.MustExec("alter table tp add index i(c)")
+			require.Equal(t, addCnt, 2*len(stores))
+			require.Equal(t, removeCnt, addCnt)
+			tk.MustExec("alter table tp drop index i")
 		})
 	}
 }

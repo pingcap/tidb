@@ -267,17 +267,29 @@ func (tr *TableImporter) importTable(
 	// turn on/off "force_partition_range" for table
 	if isLocalBackend(rc.cfg) {
 		localbackend := rc.backend.(*local.Backend)
-		startKey, endKey := localbackend.GetTiKVCodec().EncodeRange(
-			tablecodec.EncodeTablePrefix(tr.tableInfo.ID),
-			tablecodec.EncodeTablePrefix(tr.tableInfo.ID+1),
-		)
+		var startKeys, endKeys [][]byte
+		pids := []int64{tr.tableInfo.ID}
+		if tr.tableInfo.Core.Partition != nil {
+			defs := tr.tableInfo.Core.Partition.Definitions
+			for _, def := range defs {
+				pids = append(pids, def.ID)
+			}
+		}
+		for _, pid := range pids {
+			startKey, endKey := localbackend.GetTiKVCodec().EncodeRange(
+				tablecodec.EncodeTablePrefix(pid),
+				tablecodec.EncodeTablePrefix(pid+1),
+			)
+			startKeys = append(startKeys, startKey)
+			endKeys = append(endKeys, endKey)
+		}
 		stores, err := localbackend.BackendClients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 		if err != nil {
 			tr.logger.Warn("GetAllStores failed",
 				zap.String("table", tr.tableInfo.Name), zap.Error(err))
 		} else {
 			addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
-				startKey, endKey, stores, localbackend.BackendClients.GetImportClientFactory(),
+				startKeys, endKeys, stores, localbackend.BackendClients.GetImportClientFactory(),
 			)
 			addTableSplitRange()
 			defer removeTableSplitRange()

@@ -301,10 +301,19 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 		clients.Close()
 	}
 
-	startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
-		tablecodec.EncodeTablePrefix(e.controller.TableInfo.ID),
-		tablecodec.EncodeTablePrefix(e.controller.TableInfo.ID+1),
-	)
+	var startKeys, endKeys [][]byte
+	pids := []int64{e.tbl.Meta().ID}
+	if tbl, ok := e.tbl.(table.PartitionedTable); ok {
+		pids = append(pids, tbl.GetAllPartitionIDs()...)
+	}
+	for _, pid := range pids {
+		startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
+			tablecodec.EncodeTablePrefix(pid),
+			tablecodec.EncodeTablePrefix(pid+1),
+		)
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
 	stores, err := clients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		logutil.Logger(ctx).Warn("GetAllStores failed",
@@ -313,7 +322,7 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 		return nil, nil, err
 	}
 	addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
-		startKey, endKey, stores, clients.GetImportClientFactory(),
+		startKeys, endKeys, stores, clients.GetImportClientFactory(),
 	)
 	return addTableSplitRange, func() {
 		removeTableSplitRange()
