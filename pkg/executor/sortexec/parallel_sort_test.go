@@ -32,12 +32,12 @@ import (
 )
 
 // Test is successful if there is no hang
-func executeInFailpoint(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker) {
+func executeInFailpoint(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker, fileNamePrefixForTest string) {
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
 	exe.IsUnparallel = false
-	exe.InitInParallelModeForTest()
+	exe.InitInParallelModeForTest(fileNamePrefixForTest)
 
 	goRoutineWaiter := sync.WaitGroup{}
 	goRoutineWaiter.Add(1)
@@ -111,7 +111,7 @@ func failpointTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sort
 		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
-	executeInFailpoint(t, exe, 0, nil)
+	executeInFailpoint(t, exe, 0, nil, sortCase.FileNamePrefixForTest)
 }
 
 func TestParallelSort(t *testing.T) {

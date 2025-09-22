@@ -189,7 +189,8 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 // InitInParallelModeForTest is a function for test
 // After system variable is added, we can delete this function
-func (e *SortExec) InitInParallelModeForTest() {
+func (e *SortExec) InitInParallelModeForTest(fileNamePrefixForTest string) {
+	e.FileNamePrefixForTest = fileNamePrefixForTest
 	e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 	e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 	e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
@@ -197,7 +198,7 @@ func (e *SortExec) InitInParallelModeForTest() {
 	e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
 	e.Parallel.closeSync = make(chan struct{})
 	e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
-	e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
+	e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel, fileNamePrefixForTest)
 	e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 	for i := range e.Parallel.sortedRowsIters {
 		e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)

@@ -51,7 +51,7 @@ func inMemoryThenSpill(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, 
 		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
-	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit2, ctx.GetSessionVars().StmtCtx.MemTracker, true)
+	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit2, ctx.GetSessionVars().StmtCtx.MemTracker, true, sortCase.FileNamePrefixForTest)
 
 	require.True(t, exe.IsSpillTriggeredInParallelSortForTest())
 	require.Greater(t, int64(sortCase.Rows), exe.GetSpilledRowNumInParallelSortForTest())
@@ -66,7 +66,7 @@ func failpointNoMemoryDataTest(t *testing.T, ctx *mock.Context, exe *sortexec.So
 		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
-	executeInFailpoint(t, exe, 0, nil)
+	executeInFailpoint(t, exe, 0, nil, sortCase.FileNamePrefixForTest)
 }
 
 func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
@@ -74,7 +74,7 @@ func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *so
 		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
-	executeInFailpoint(t, exe, hardLimit2, ctx.GetSessionVars().MemTracker)
+	executeInFailpoint(t, exe, hardLimit2, ctx.GetSessionVars().MemTracker, sortCase.FileNamePrefixForTest)
 }
 
 func TestParallelSortSpillDisk(t *testing.T) {
