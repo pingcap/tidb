@@ -179,6 +179,13 @@ var (
 
 func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings []*Binding) error {
 	toWrite := make([]*Binding, 0, UpdateBindingUsageInfoBatchSize)
+	now := time.Now()
+	cnt := 0
+	defer func() {
+		if cnt > 0 {
+			bindingLogger().Info("update binding usage info to storage", zap.Int("count", cnt), zap.Duration("duration", time.Since(now)))
+		}
+	}()
 	for _, binding := range bindings {
 		lastSaved := binding.UsageInfo.LastSavedAt.Load()
 		if lastSaved == nil {
@@ -193,6 +200,7 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 		}, " lastUsed should be later than or equal to lastSaved and lastSaved is not nil")
 		if time.Since(*lastSaved) > MaxWriteInterval {
 			toWrite = append(toWrite, binding)
+			cnt += 1
 		}
 		if len(toWrite) == UpdateBindingUsageInfoBatchSize {
 			err := updateBindingUsageInfoToStorageInternal(sPool, toWrite)
