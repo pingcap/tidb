@@ -4098,6 +4098,13 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			if err := list.Restore(ctx, false); err != nil {
 				return err
 			}
+		} else {
+			for i, table := range n.Tables {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				table.RestoreInLeading(ctx)
+			}
 		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
 		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",

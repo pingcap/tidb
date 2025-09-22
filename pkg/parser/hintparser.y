@@ -31,7 +31,7 @@ import (
 	hints []*ast.TableOptimizerHint
 	table 	ast.HintTable
 	modelIdents []ast.CIStr
-	leadingList *ast.LeadingList
+    leadingList *ast.LeadingList
     leadingElement interface{} // Modified: Represents either *ast.HintTable or *ast.LeadingList
 }
 
@@ -82,7 +82,7 @@ import (
 	hintResourceGroup       "RESOURCE_GROUP"
 	hintQBName              "QB_NAME"
 	hintHypoIndex           "HYPO_INDEX"
-
+	
 	/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
@@ -125,7 +125,7 @@ import (
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
-
+	
 	/* Other keywords */
 	hintOLAP            "OLAP"
 	hintOLTP            "OLTP"
@@ -238,13 +238,6 @@ TableOptimizerHintOpt:
 		parser.warnUnsupportedHint($1)
 		$$ = nil
 	}
-|	"LEADING" '(' LeadingTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{
-			HintName: ast.NewCIStr($1),
-			HintData: $3,
-		}
-	}
 |	UnsupportedTableLevelOptimizerHintName '(' HintTableListOpt ')'
 	{
 		parser.warnUnsupportedHint($1)
@@ -255,6 +248,13 @@ TableOptimizerHintOpt:
 		h := $3
 		h.HintName = ast.NewCIStr($1)
 		$$ = h
+	}
+|	"LEADING" '(' LeadingTableList ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			HintData: $3,
+		}
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{
@@ -704,7 +704,7 @@ SupportedTableLevelOptimizerHintName:
 |	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
-	"INDEX_MERGE"
+"INDEX_MERGE"
 /* NO_INDEX_MERGE is currently a nullary hint in TiDB */
 |	"MRR"
 |	"NO_MRR"
