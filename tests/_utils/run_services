@@ -143,9 +143,10 @@ kv_outage() {
 }
 
 debug_tikv() {
-    i=$1
-    echo "Debug TiKV($i)..."
-    run_curl "https://$TIKV_STATUS_ADDR$i/debug/dup-key/disable" ""
+    for i in $(seq $TIKV_COUNT); do
+        echo "Debug TiKV($i)..."
+        run_curl "https://$TIKV_STATUS_ADDR$i/debug/dup-key/disable" ""
+    done    
 }
 
 start_tikv() {
