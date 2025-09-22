@@ -6,6 +6,11 @@ go_test(
     srcs = [
         "isolation_test.go",
         "main_test.go",
+<<<<<<< HEAD
+=======
+        "replica_read_test.go",
+        "stale_read_test.go",
+>>>>>>> a7400e539ea (txn: follower read only affect read-only statements (#62852))
         "txn_state_test.go",
         "txn_test.go",
     ],
@@ -26,6 +31,12 @@ go_test(
         "//tests/realtikvtest",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+<<<<<<< HEAD
+=======
+        "@com_github_pingcap_kvproto//pkg/coprocessor",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+>>>>>>> a7400e539ea (txn: follower read only affect read-only statements (#62852))
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@io_opencensus_go//stats/view",

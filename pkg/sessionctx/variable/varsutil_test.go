@@ -372,19 +372,29 @@ func TestVarsutil(t *testing.T) {
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "follower", val)
+<<<<<<< HEAD
 	require.Equal(t, kv.ReplicaReadFollower, v.GetReplicaRead())
 	err = v.SetSystemVar(TiDBReplicaRead, "leader")
+=======
+	require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
+	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader")
+>>>>>>> a7400e539ea (txn: follower read only affect read-only statements (#62852))
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader", val)
+<<<<<<< HEAD
 	require.Equal(t, kv.ReplicaReadLeader, v.GetReplicaRead())
 	err = v.SetSystemVar(TiDBReplicaRead, "leader-and-follower")
+=======
+	require.Equal(t, kv.ReplicaReadLeader, v.replicaRead)
+	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader-and-follower")
+>>>>>>> a7400e539ea (txn: follower read only affect read-only statements (#62852))
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader-and-follower", val)
-	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
+	require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
 
 	for _, c := range []struct {
 		a string
