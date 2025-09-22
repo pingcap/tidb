@@ -96,6 +96,18 @@ func checkFileName(s string) bool {
 	return false
 }
 
+func TestIssue38756(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustQuery("SELECT SQRT(1) FROM t").Check(testkit.Rows("1", "1", "1"))
+	tk.MustQuery("(SELECT DISTINCT SQRT(1) FROM t)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT DISTINCT cast(1 as double) FROM t").Check(testkit.Rows("1"))
+}
+
 func TestPessimisticSelectForUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4985,6 +4997,14 @@ func TestIsPointGet(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, result, ret)
 	}
+}
+
+func TestPointGetOrderby(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key)")
+	require.Equal(t, tk.ExecToErr("select * from t where i = 1 order by j limit 10;").Error(), "[planner:1054]Unknown column 'j' in 'order clause'")
 }
 
 func TestClusteredIndexIsPointGet(t *testing.T) {

@@ -250,6 +250,8 @@ type PdController struct {
 
 	// control the pause schedulers goroutine
 	schedulerPauseCh chan struct{}
+	// control the ttl of pausing schedulers
+	SchedulerPauseTTL time.Duration
 }
 
 // NewPdController creates a new PdController.
@@ -445,7 +447,7 @@ func (p *PdController) getStoreInfoWith(
 
 func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []string, post pdHTTPRequest) ([]string, error) {
 	// pause this scheduler with 300 seconds
-	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout.Seconds())})
+	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(p.ttlOfPausing().Seconds())})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -454,9 +456,11 @@ func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []strin
 	for _, scheduler := range schedulers {
 		prefix := fmt.Sprintf("%s/%s", schedulerPrefix, scheduler)
 		for _, addr := range p.getAllPDAddrs() {
+			var resp []byte
 			_, err = post(ctx, addr, prefix, p.cli, http.MethodPost, body)
 			if err == nil {
 				removedSchedulers = append(removedSchedulers, scheduler)
+				log.Info("Paused scheduler.", zap.String("response", string(resp)), zap.String("on", addr))
 				break
 			}
 		}
@@ -491,7 +495,7 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 	}
 
 	go func() {
-		tick := time.NewTicker(pauseTimeout / 3)
+		tick := time.NewTicker(p.ttlOfPausing() / 3)
 		defer tick.Stop()
 
 		for {
@@ -637,7 +641,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
-	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", configPrefix, pauseTimeout.Seconds())
+	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", configPrefix, p.ttlOfPausing().Seconds())
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
 }
 
@@ -1073,6 +1077,13 @@ func (p *PdController) Close() {
 	if p.schedulerPauseCh != nil {
 		close(p.schedulerPauseCh)
 	}
+}
+
+func (p *PdController) ttlOfPausing() time.Duration {
+	if p.SchedulerPauseTTL > 0 {
+		return p.SchedulerPauseTTL
+	}
+	return pauseTimeout
 }
 
 // FetchPDVersion get pd version

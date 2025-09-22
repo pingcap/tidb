@@ -797,3 +797,26 @@ func TestIssue33231(t *testing.T) {
 		Sort().
 		Check(testkit.Rows("6 beautiful curran 6 vigorous rhodes", "7 affectionate curie 7 sweet aryabhata", "7 epic kalam 7 sweet aryabhata"))
 }
+
+func TestIssue50082(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint unsigned)" +
+		"PARTITION BY RANGE (`a`)" +
+		"(PARTITION `p0` VALUES LESS THAN (5086706)," +
+		" PARTITION `p1` VALUES LESS THAN (7268292)," +
+		" PARTITION `p2` VALUES LESS THAN (16545422)," +
+		" PARTITION `p3` VALUES LESS THAN (9223372036854775810));")
+	require.True(t, tk.HasNoPlan("select * from t where a BETWEEN -6895222 AND 3125507;", "TableDual"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint)" +
+		"PARTITION BY RANGE (`a`)" +
+		"(PARTITION `p0` VALUES LESS THAN (5086706)," +
+		" PARTITION `p1` VALUES LESS THAN (7268292)," +
+		" PARTITION `p2` VALUES LESS THAN (16545422)," +
+		" PARTITION `p3` VALUES LESS THAN (9223372036854775807));")
+	require.True(t, tk.HasNoPlan("select * from t where a BETWEEN -6895222 AND 3125507;", "TableDual"))
+}

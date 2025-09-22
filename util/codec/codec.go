@@ -886,6 +886,9 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 	case uvarintFlag:
 		// Datetime can be encoded as Uvarint
 		b, v, err = DecodeUvarint(b)
+	case NilFlag:
+		// null value should also be decoded out.
+		return b, d, nil
 
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)

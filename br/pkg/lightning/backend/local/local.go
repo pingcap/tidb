@@ -1531,19 +1531,18 @@ loopWrite:
 					continue
 				}
 			}
+			if err != nil {
+				log.FromContext(ctx).Warn("batch ingest fail after retry, will retry import full range", log.ShortError(err),
+					logutil.Region(region.Region), zap.Reflect("meta", ingestMetas))
+				return errors.Trace(err)
+			}
 		}
 
-		if err != nil {
-			log.FromContext(ctx).Warn("write and ingest region, will retry import full range", log.ShortError(err),
-				logutil.Region(region.Region), logutil.Key("start", start),
-				logutil.Key("end", end))
-		} else {
-			engine.importedKVSize.Add(rangeStats.totalBytes)
-			engine.importedKVCount.Add(rangeStats.count)
-			engine.finishedRanges.add(finishedRange)
-			if local.metrics != nil {
-				local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
-			}
+		engine.importedKVSize.Add(rangeStats.totalBytes)
+		engine.importedKVCount.Add(rangeStats.count)
+		engine.finishedRanges.add(finishedRange)
+		if local.metrics != nil {
+			local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
 		}
 		return errors.Trace(err)
 	}
@@ -1693,6 +1692,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 			needSplit = true
 		})
+
+		backOffTime := 10 * time.Second
+		maxbackoffTime := 120 * time.Second
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, needSplit, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
@@ -1701,6 +1703,16 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 
 			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
 				log.ShortError(err), zap.Int("retry", i))
+
+			select {
+			case <-time.After(backOffTime):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			backOffTime *= 2
+			if backOffTime > maxbackoffTime {
+				backOffTime = maxbackoffTime
+			}
 		}
 		if err != nil {
 			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))

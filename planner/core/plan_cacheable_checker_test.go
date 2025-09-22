@@ -77,9 +77,7 @@ func TestCacheable(t *testing.T) {
 
 	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
 	// test InsertStmt
-	stmt = &ast.InsertStmt{Table: tableRefsClause} // insert-values-stmt
-	require.False(t, core.Cacheable(stmt, is))
-	stmt = &ast.InsertStmt{Table: tableRefsClause, Select: &ast.SelectStmt{}} // insert-select-stmt
+	stmt = &ast.InsertStmt{Table: tableRefsClause}
 	require.True(t, core.Cacheable(stmt, is))
 
 	// test DeleteStmt
@@ -271,6 +269,14 @@ func TestCacheable(t *testing.T) {
 		},
 	}
 	require.True(t, core.Cacheable(stmt, is))
+}
+
+func TestIssue49166(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c int)`)
+	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
 }
 
 func TestGeneralPlanCacheable(t *testing.T) {
