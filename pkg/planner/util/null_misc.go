@@ -29,7 +29,7 @@ import (
 //   - ShortCircuitBool: boolean operator with short-circuit semantics (AND/OR/XOR)
 //   - NullSafeEq:       NULL-safe equality (<=>)
 //   - NullTransparentWrapper: unary wrapper that is NULL-transparent and "structurally" transparent for our checks
-//     (e.g., CAST/CONVERT/WEIGHT_STRING). We peel these before reasoning.
+//     (e.g., CAST/CONVERT/WEIGHT_STRING、UNARY + / UNARY -). We peel these before reasoning.
 type NullBehavior uint8
 
 // NullBehavior constants define how functions interact with NULL values
@@ -84,6 +84,8 @@ var fnTraits = map[string]NullBehavior{
 	ast.Cast:         NullTransparentWrapper,
 	ast.Convert:      NullTransparentWrapper,
 	ast.WeightString: NullTransparentWrapper,
+	ast.UnaryPlus:    NullTransparentWrapper,
+	ast.UnaryMinus:   NullTransparentWrapper,
 
 	// Arithmetic / bit ops (all NULL-preserving)
 	ast.Plus:       NullPreserving,
@@ -97,8 +99,6 @@ var fnTraits = map[string]NullBehavior{
 	ast.Xor:        NullPreserving, // bitxor
 	ast.LeftShift:  NullPreserving,
 	ast.RightShift: NullPreserving,
-	ast.UnaryPlus:  NullPreserving,
-	ast.UnaryMinus: NullPreserving,
 	ast.BitNeg:     NullPreserving,
 
 	// N-ary math helpers that propagate NULL if any arg is NULL
@@ -465,8 +465,10 @@ func isNullPropagatingWRTInner(e expression.Expression, inner *expression.Schema
 		if isOpaqueInfoFuncName(x.FuncName.L) {
 			return false
 		}
-		// NullHiding ⇒ may mask inner NULL (IF/CASE/COALESCE/IS.../AND/OR)
-		if has(t, NullHiding) {
+		// NullHiding / NullSafeEq can potentially "consume/handle" NULL:
+		// - IF/CASE/COALESCE/IS.../AND/OR may mask NULL values
+		// - `<=>` is NULL-safe (NULL <=> NULL returns TRUE), should not be treated as "always propagating NULL"
+		if has(t, NullHiding) || has(t, NullSafeEq) {
 			return false
 		}
 		for _, a := range x.GetArgs() {
