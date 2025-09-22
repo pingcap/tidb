@@ -381,6 +381,80 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
+// StatsProvider defines the interface for statistics that can provide the necessary
+// information for row count estimation with uniform distribution.
+type StatsProvider interface {
+	// GetHistogram returns the histogram for this stats object
+	GetHistogram() *statistics.Histogram
+	// GetTopN returns the TopN for this stats object
+	GetTopN() *statistics.TopN
+	// TotalRowCount returns the total row count
+	TotalRowCount() float64
+	// GetIncreaseFactor returns the increase factor for the given realtime row count
+	GetIncreaseFactor(realtimeRowCount int64) float64
+}
+
+// estimateRowCountWithUniformDistribution estimates row count using uniform distribution assumption
+// for values not covered by TopN or histograms. This function handles the common logic used by
+// both equalRowCountOnIndex and equalRowCountOnColumn.
+func estimateRowCountWithUniformDistribution(
+	_ planctx.PlanContext,
+	stats StatsProvider,
+	realtimeRowCount int64,
+	modifyCount int64,
+) float64 {
+	if stats == nil {
+		// Return a default estimate when stats are nil
+		return 1
+	}
+	histogram := stats.GetHistogram()
+	topN := stats.GetTopN()
+	// Calculate histNDV excluding TopN from NDV
+	histNDV := float64(histogram.NDV - int64(topN.Num()))
+	notNullCount := histogram.NotNullCount()
+
+	// Branch 1: all NDV's are in TopN, and no histograms.
+	if histNDV <= 0 || notNullCount == 0 {
+		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
+		// This can happen when sampling collects fewer than all NDV.
+		if histNDV > 0 && modifyCount == 0 {
+			topNMinCount := uint64(0)
+			if len(topN.TopN) > 0 {
+				topNMinCount = topN.TopN[0].Count
+				for _, item := range topN.TopN {
+					topNMinCount = min(topNMinCount, item.Count)
+				}
+			}
+			return max(float64(topNMinCount-1), 1)
+		}
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
+		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
+		//
+		// If the table hasn't been modified, it's safe to return 0.
+		if modifyCount == 0 {
+			return 0
+		}
+		// ELSE calculate an approximate estimate based upon newly inserted rows.
+		//
+		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
+		if stats.GetHistogram().NDV > 0 {
+			histNDV = float64(stats.GetHistogram().NDV)
+		} else {
+			histNDV = math.Sqrt(max(stats.TotalRowCount(), float64(realtimeRowCount)))
+		}
+		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
+		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
+		totalRowCount := min(stats.TotalRowCount(), float64(realtimeRowCount)-stats.TotalRowCount())
+		return max(1, totalRowCount/histNDV)
+	}
+	// branch 2: some NDV's are in histograms
+	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+	avgRowEstimate := notNullCount / histNDV
+
+	return avgRowEstimate
+}
+
+// equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
 func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -428,29 +502,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	if histNDV <= 0 || (idx.IsFullLoad() && idx.Histogram.NotNullCount() == 0) {
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
-		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
-		//
-		// If the table hasn't been modified, it's safe to return 0.
-		if modifyCount == 0 {
-			return 0
-		}
-		// ELSE calculate an approximate estimate based upon newly inserted rows.
-		//
-		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
-		if idx.Histogram.NDV > 0 {
-			histNDV = float64(idx.Histogram.NDV)
-		} else {
-			histNDV = math.Sqrt(max(idx.TotalRowCount(), float64(realtimeRowCount)))
-		}
-		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
-		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
-		totalRowCount := min(idx.TotalRowCount(), float64(realtimeRowCount)-idx.TotalRowCount())
-		return max(1, totalRowCount/histNDV)
-	}
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return idx.Histogram.NotNullCount() / histNDV
+	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.

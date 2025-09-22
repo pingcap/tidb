@@ -1219,7 +1219,10 @@ func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
 	if sc.SetVarHintRestore == nil {
 		sc.SetVarHintRestore = make(map[string]string)
 	}
-	sc.SetVarHintRestore[name] = val
+
+	if _, found := sc.SetVarHintRestore[name]; !found {
+		sc.SetVarHintRestore[name] = val
+	}
 }
 
 // GetUsedStatsInfo returns the map for recording the used stats during query.

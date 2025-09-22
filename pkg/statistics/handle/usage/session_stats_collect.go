@@ -101,7 +101,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
 	if time.Since(start) > tooSlowThreshold {
-		statslogutil.SingletonStatsSamplerLogger().Warn("Sweeping session list is too slow",
+		statslogutil.StatsSampleLogger().Warn("Sweeping session list is too slow",
 			zap.Int("tableCount", len(deltaMap)),
 			zap.Duration("duration", time.Since(start)))
 	}
@@ -138,7 +138,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
 			}
 			if time.Since(batchStart) > tooSlowThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Warn("Collecting batch updates is too slow",
+				statslogutil.StatsSampleLogger().Warn("Collecting batch updates is too slow",
 					zap.Int("tableCount", len(batchUpdates)),
 					zap.Duration("duration", time.Since(batchStart)))
 			}
@@ -173,7 +173,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			}
 
 			if time.Since(batchStart) > tooSlowThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Warn("Dumping batch updates is too slow",
+				statslogutil.StatsSampleLogger().Warn("Dumping batch updates is too slow",
 					zap.Int("tableCount", len(batchUpdates)),
 					zap.Duration("duration", time.Since(batchStart)))
 			}
@@ -196,7 +196,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
 		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
 		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
-			statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
+			statslogutil.StatsSampleLogger().Warn("Recording historical stats meta is too slow",
 				zap.Int("tableCount", len(batchUpdates)),
 				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
 		}

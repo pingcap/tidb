@@ -1106,6 +1106,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
+	EnableNoDecorrelateInSelect bool
+
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
@@ -2135,9 +2138,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
-		EnableSemiJoinRewrite:         DefOptEnableSemiJoinRewrite,
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
