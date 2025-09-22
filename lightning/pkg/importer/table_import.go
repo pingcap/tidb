@@ -274,15 +274,13 @@ func (tr *TableImporter) importTable(
 				pids = append(pids, def.ID)
 			}
 		}
-		startKeys := make([][]byte, 0, len(pids))
-		endKeys := make([][]byte, 0, len(pids))
+		keyRanges := make([]tidbkv.KeyRange, 0, len(pids))
 		for _, pid := range pids {
 			startKey, endKey := localbackend.GetTiKVCodec().EncodeRange(
 				tablecodec.EncodeTablePrefix(pid),
 				tablecodec.EncodeTablePrefix(pid+1),
 			)
-			startKeys = append(startKeys, startKey)
-			endKeys = append(endKeys, endKey)
+			keyRanges = append(keyRanges, tidbkv.KeyRange{StartKey: startKey, EndKey: endKey})
 		}
 		stores, err := localbackend.BackendClients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 		if err != nil {
@@ -290,7 +288,7 @@ func (tr *TableImporter) importTable(
 				zap.String("table", tr.tableInfo.Name), zap.Error(err))
 		} else {
 			addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
-				startKeys, endKeys, stores, localbackend.BackendClients.GetImportClientFactory(),
+				keyRanges, stores, localbackend.BackendClients.GetImportClientFactory(),
 			)
 			addTableSplitRange()
 			defer removeTableSplitRange()

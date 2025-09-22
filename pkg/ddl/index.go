@@ -2690,15 +2690,13 @@ func (w *worker) getSplitRangeFuncs(reorgInfo *reorgInfo, t table.Table) (
 	} else {
 		pids = append(pids, t.Meta().ID)
 	}
-	startKeys := make([][]byte, 0, len(pids))
-	endKeys := make([][]byte, 0, len(pids))
+	keyRanges := make([]kv.KeyRange, 0, len(pids))
 	for _, pid := range pids {
 		startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
 			tablecodec.EncodeTablePrefix(pid),
 			tablecodec.EncodeTablePrefix(pid+1),
 		)
-		startKeys = append(startKeys, startKey)
-		endKeys = append(endKeys, endKey)
+		keyRanges = append(keyRanges, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	stores, err := clients.GetPDClient().GetAllStores(w.workCtx, opt.WithExcludeTombstone())
 	if err != nil {
@@ -2708,7 +2706,7 @@ func (w *worker) getSplitRangeFuncs(reorgInfo *reorgInfo, t table.Table) (
 		return nil, nil, err
 	}
 	addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(w.workCtx,
-		startKeys, endKeys, stores, clients.GetImportClientFactory(),
+		keyRanges, stores, clients.GetImportClientFactory(),
 	)
 	return addTableSplitRange, func() {
 		removeTableSplitRange()

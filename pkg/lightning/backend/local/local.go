@@ -43,10 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
@@ -259,13 +260,13 @@ func NewEncodingBuilder(ctx context.Context) encode.EncodingBuilder {
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
 func (b *encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return kv.NewTableKVEncoder(config, b.metrics)
+	return backendkv.NewTableKVEncoder(config, b.metrics)
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
 func (*encodingBuilder) MakeEmptyRows() encode.Rows {
-	return kv.MakeRowsFromKvPairs(nil)
+	return backendkv.MakeRowsFromKvPairs(nil)
 }
 
 type targetInfoGetter struct {
@@ -922,24 +923,22 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 // See https://github.com/tikv/tikv/pull/18866 for detail
 // NOTE: importClientFactory should not be closed earlier than calling removeTableSplitRange
 func GetTableSplitRangeFuncs(ctx context.Context,
-	startKeys, endKeys [][]byte, stores []*metapb.Store,
+	keyRanges []kv.KeyRange, stores []*metapb.Store,
 	importClientFactory importClientFactory) (
 	addTableSplitRange func(),
 	removeTableSplitRange func()) {
 	clients := make([]sst.ImportSSTClient, 0, len(stores))
 	storeAddrs := make([]string, 0, len(stores))
-	keyPairNum := len(startKeys)
-	intest.Assert(len(startKeys) == len(endKeys))
+	intest.Assert(len(keyRanges) > 0)
 
 	addTableSplitRange = func() {
-		reqs := make([]*sst.AddPartitionRangeRequest, 0, keyPairNum)
-		for i := range keyPairNum {
+		reqs := make([]*sst.AddPartitionRangeRequest, 0, len(keyRanges))
+		for i := range len(keyRanges) {
 			reqs = append(reqs, &sst.AddPartitionRangeRequest{
 				Range: &sst.Range{
-					Start: startKeys[i],
-					End:   endKeys[i],
+					Start: keyRanges[i].StartKey,
+					End:   keyRanges[i].EndKey,
 				},
-				Ttl: 24 * 60 * 60, // seconds
 			})
 		}
 		for _, store := range stores {
@@ -967,12 +966,12 @@ func GetTableSplitRangeFuncs(ctx context.Context,
 	}
 
 	removeTableSplitRange = func() {
-		reqs := make([]*sst.RemovePartitionRangeRequest, 0, keyPairNum)
-		for i := range keyPairNum {
+		reqs := make([]*sst.RemovePartitionRangeRequest, 0, len(keyRanges))
+		for i := range len(keyRanges) {
 			reqs = append(reqs, &sst.RemovePartitionRangeRequest{
 				Range: &sst.Range{
-					Start: startKeys[i],
-					End:   endKeys[i],
+					Start: keyRanges[i].StartKey,
+					End:   keyRanges[i].EndKey,
 				},
 			})
 		}
@@ -987,7 +986,6 @@ func GetTableSplitRangeFuncs(ctx context.Context,
 				}
 			}
 		}
-		importClientFactory.close()
 	}
 
 	return
@@ -1343,8 +1341,9 @@ func (local *Backend) ImportEngine(
 	if err != nil {
 		return err
 	}
+	intest.Assert(len(splitKeys) > 0)
 
-	if len(splitKeys) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+	if local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		tidblogutil.Logger(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()

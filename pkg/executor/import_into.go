@@ -305,15 +305,13 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 	if tbl, ok := e.tbl.(table.PartitionedTable); ok {
 		pids = append(pids, tbl.GetAllPartitionIDs()...)
 	}
-	startKeys := make([][]byte, 0, len(pids))
-	endKeys := make([][]byte, 0, len(pids))
+	keyRanges := make([]kv.KeyRange, 0, len(pids))
 	for _, pid := range pids {
 		startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
 			tablecodec.EncodeTablePrefix(pid),
 			tablecodec.EncodeTablePrefix(pid+1),
 		)
-		startKeys = append(startKeys, startKey)
-		endKeys = append(endKeys, endKey)
+		keyRanges = append(keyRanges, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	stores, err := clients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
@@ -323,7 +321,7 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 		return nil, nil, err
 	}
 	addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
-		startKeys, endKeys, stores, clients.GetImportClientFactory(),
+		keyRanges, stores, clients.GetImportClientFactory(),
 	)
 	return addTableSplitRange, func() {
 		removeTableSplitRange()

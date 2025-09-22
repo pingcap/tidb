@@ -844,7 +844,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 				zap.String("table", t.Meta().Name.L), zap.Error(err))
 		} else {
 			addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
-				[][]byte{startKey}, [][]byte{endKey}, stores, bd.BackendClients.GetImportClientFactory(),
+				[]kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, stores, bd.BackendClients.GetImportClientFactory(),
 			)
 			intest.Assert(addTableSplitRange != nil && removeTableSplitRange != nil)
 			addTableSplitRange()
