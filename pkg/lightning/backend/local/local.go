@@ -550,6 +550,7 @@ var (
 	}
 )
 
+// NewBackend creates new connections to tikv.
 func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
@@ -839,9 +840,8 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 // forceTableSplitRange turns on force_partition_range for importing.
 // See https://github.com/tikv/tikv/pull/18866 for detail.
 // It returns a resetter to turn off.
-// NOTE: importClientFactory should not be closed earlier than calling removeTableSplitRange
-func forceTableSplitRange(ctx context.Context, keyRange kv.KeyRange,
-	stores []*metapb.Store, importClientFactory importClientFactory) (resetter func()) {
+func (local *Backend) forceTableSplitRange(ctx context.Context, keyRange kv.KeyRange,
+	stores []*metapb.Store) (resetter func()) {
 	clients := make([]sst.ImportSSTClient, 0, len(stores))
 	storeAddrs := make([]string, 0, len(stores))
 	ctx, cancel := context.WithCancel(ctx)
@@ -857,7 +857,7 @@ func forceTableSplitRange(ctx context.Context, keyRange kv.KeyRange,
 			if store.StatusAddress == "" || engine.IsTiFlash(store) {
 				continue
 			}
-			importCli, err := importClientFactory.create(ctx, store.Id)
+			importCli, err := local.importClientFactory.create(ctx, store.Id)
 			if err != nil {
 				tidblogutil.Logger(ctx).Warn("create import client failed", zap.Error(err), zap.String("store", store.StatusAddress))
 				continue
@@ -1269,10 +1269,8 @@ func (local *Backend) ImportEngine(
 		if err != nil {
 			return err
 		}
-		removeTableSplitRange := forceTableSplitRange(ctx,
-			kv.KeyRange{StartKey: startKey, EndKey: endKey},
-			stores,
-			local.importClientFactory)
+		removeTableSplitRange := local.forceTableSplitRange(ctx,
+			kv.KeyRange{StartKey: startKey, EndKey: endKey}, stores)
 		defer removeTableSplitRange()
 	}
 

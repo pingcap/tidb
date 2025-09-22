@@ -1226,10 +1226,9 @@ func TestCheckPeersBusy(t *testing.T) {
 				return importCli
 			},
 		},
+		logger:             log.L(),
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
-
-		logger:       log.L(),
-		writeLimiter: newStoreWriteLimiter(0),
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
 			LocalStoreDir:         path.Join(t.TempDir(), "sorted-kv"),
@@ -1355,10 +1354,9 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 				return importCli
 			},
 		},
+		logger:             log.L(),
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
-
-		logger:       log.L(),
-		writeLimiter: newStoreWriteLimiter(0),
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
 			LocalStoreDir:         path.Join(t.TempDir(), "sorted-kv"),
@@ -1459,11 +1457,10 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 				return importCli
 			},
 		},
+		logger:             log.L(),
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
-
-		logger:       log.L(),
-		writeLimiter: newStoreWriteLimiter(0),
-		tikvCodec:    keyspace.CodecV1,
+		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
 			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
 		},
@@ -1560,11 +1557,10 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 				return importCli
 			},
 		},
+		logger:             log.L(),
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
-
-		logger:       log.L(),
-		writeLimiter: newStoreWriteLimiter(0),
-		tikvCodec:    keyspace.CodecV1,
+		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
 			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
 		},
