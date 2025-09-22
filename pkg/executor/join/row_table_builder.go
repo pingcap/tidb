@@ -56,6 +56,9 @@ type rowTableBuilder struct {
 	bitMap []byte
 
 	partitionNumber uint
+
+	memoryUsagePerRowBuffer []int64
+	isFirst                 bool // Show if it's the first time to pre-alloc for `serializedKeyVectorBuffer`
 }
 
 type preAllocHelper struct {
@@ -74,6 +77,7 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 		keepFilteredRows:              keepFilteredRows,
 		partitionNumber:               partitionNumber,
 		bitMap:                        make([]byte, nullMapLength),
+		isFirst:                       true,
 	}
 	return builder
 }
@@ -134,7 +138,9 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 	// 1. split partition
-	codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer)
+	codec.PreAllocForSerializedKeyBuffer(b.buildKeyIndex, chk, b.buildKeyTypes, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes, b.serializedKeyVectorBuffer, b.isFirst, &(b.memoryUsagePerRowBuffer))
+	b.isFirst = false
+
 	for index, colIdx := range b.buildKeyIndex {
 		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
 		if err != nil {
@@ -383,7 +389,7 @@ func estimateFillRowData(rowTableMeta *joinTableMeta, row *chunk.Row) int64 {
 }
 
 func estimateFillFake(rowLength int64) int64 {
-	return (8-rowLength%8)%8
+	return (8 - rowLength%8) % 8
 }
 
 func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) {

@@ -426,12 +426,30 @@ const (
 
 // TODO refine
 // PreAllocForSerializedKeyBuffer estimates key length
-func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte) {
+func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps []*types.FieldType, usedRows []int, filterVector []bool, nullVector []bool, serializeModes []SerializeMode, serializedKeysVectorBuffer [][]byte, isFirst bool, memoryUsagePerRow *[]int64) {
 	maxLen := int64(0)
+	if !isFirst {
+		rowNum := len(usedRows)
+		if cap((*memoryUsagePerRow)) < rowNum {
+			(*memoryUsagePerRow) = make([]int64, rowNum)
+		} else {
+			(*memoryUsagePerRow) = (*memoryUsagePerRow)[:rowNum]
+			for i := range rowNum {
+				(*memoryUsagePerRow)[i] = 0
+			}
+		}
+	}
+
 	for i, idx := range buildKeyIndex {
 		switch tps[i].GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			maxLen += size.SizeOfByte + 8
+			if isFirst {
+				maxLen += size.SizeOfByte + 8
+			} else {
+				for j := range *memoryUsagePerRow {
+					(*memoryUsagePerRow)[j] += size.SizeOfByte + 8
+				}
+			}
 		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			column := chk.Column(idx)
 			canSkip := func(index int) bool {
@@ -442,7 +460,7 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 			}
 
 			maxStringLen := int64(0)
-			for _, physicalRowIndex := range usedRows {
+			for j, physicalRowIndex := range usedRows {
 				if canSkip(physicalRowIndex) {
 					continue
 				}
@@ -450,7 +468,12 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 				if serializeModes[i] == KeepVarColumnLength {
 					strLen += int64(sizeUint32)
 				}
-				maxStringLen = max(maxStringLen, strLen)
+
+				if isFirst {
+					maxStringLen = max(maxStringLen, strLen)
+				} else {
+					(*memoryUsagePerRow)[j] += strLen
+				}
 			}
 
 			maxLen += maxStringLen
@@ -459,9 +482,18 @@ func PreAllocForSerializedKeyBuffer(buildKeyIndex []int, chk *chunk.Chunk, tps [
 		}
 	}
 
-	for i := range serializedKeysVectorBuffer {
-		if cap(serializedKeysVectorBuffer[i]) < int(maxLen) {
-			serializedKeysVectorBuffer[i] = make([]byte, 0, maxLen)
+	if isFirst {
+		continuousMem := make([]byte, maxLen*int64(len(usedRows)))
+		start := int64(0)
+		for i := range serializedKeysVectorBuffer {
+			serializedKeysVectorBuffer[i] = continuousMem[start:start:start+maxLen]
+			start += maxLen
+		}
+	} else {
+		for i := range serializedKeysVectorBuffer {
+			if int64(cap(serializedKeysVectorBuffer[i])) < (*memoryUsagePerRow)[i] {
+				serializedKeysVectorBuffer[i] = make([]byte, 0, (*memoryUsagePerRow)[i])
+			}
 		}
 	}
 }
