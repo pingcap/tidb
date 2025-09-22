@@ -87,7 +87,7 @@ type Tracker struct {
 		sync.Mutex
 	}
 	parMu struct {
-		parent *Tracker // The parent memory tracker.
+		parent atomic.Pointer[Tracker] // The parent memory tracker.
 		sync.Mutex
 	}
 	label int // Label of this "Tracker".
@@ -145,7 +145,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.mu.children = nil
 	t.actionMuForHardLimit.actionOnExceed = action
 	t.actionMuForSoftLimit.actionOnExceed = nil
-	t.parMu.parent = nil
+	t.parMu.parent.Store(nil)
 
 	t.label = label
 	if bytesLimit <= 0 {
@@ -811,7 +811,7 @@ func (t *Tracker) getParent() (tracker *Tracker) {
 		}
 		mu.Unlock()
 	}()
-	tracker = t.parMu.parent
+	tracker = t.parMu.parent.Load()
 	return
 }
 
@@ -819,7 +819,7 @@ func (t *Tracker) setParent(parent *Tracker) {
 	mu := &t.parMu
 	mu.Lock()
 	defer mu.Unlock()
-	t.parMu.parent = parent
+	t.parMu.parent.Store(parent)
 }
 
 // CountAllChildrenMemUse return memory used tree for the tracker
