@@ -435,7 +435,7 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 	tk.MustExec("alter table t add index idx(c2);")
 }
 
-func TestAdminAlterAddIndexTxnDDLJob(t *testing.T) {
+func TestAlterAddIndexInTxnMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
