@@ -221,7 +221,7 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 
 func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, bindings []*Binding) error {
 	err := callWithSCtx(sPool, true, func(sctx sessionctx.Context) (err error) {
-		if err = addLockForBinds(sctx, bindings); err != nil {
+		if err = lockBindInfoTable(sctx); err != nil {
 			return errors.Trace(err)
 		}
 		for _, binding := range bindings {
@@ -241,28 +241,6 @@ func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, 
 		}
 	}
 	return err
-}
-
-func addLockForBinds(sctx sessionctx.Context, bindings []*Binding) error {
-	condition := make([]string, 0, len(bindings))
-	for _, binding := range bindings {
-		sqlDigest := binding.SQLDigest
-		planDigest := binding.PlanDigest
-		sql := fmt.Sprintf("('%s'", sqlDigest)
-		if planDigest == "" {
-			sql += ",NULL)"
-		} else {
-			sql += fmt.Sprintf(",'%s')", planDigest)
-		}
-		condition = append(condition, sql)
-	}
-	locksql := "select 1 from mysql.bind_info use index(digest_index) where (plan_digest, sql_digest) in (" +
-		strings.Join(condition, " , ") + ") for update"
-	_, err := exec(sctx, locksql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
 }
 
 func saveBindUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {
