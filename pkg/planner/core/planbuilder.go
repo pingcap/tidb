@@ -1192,7 +1192,7 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	}
 
 	if unSupportedReason != "" {
-		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("The hint INDEX_LOOKUP_PUSHDOWN cannot be applied: %s", unSupportedReason))
+		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
 		return false
 	}
 	return true
@@ -1341,12 +1341,6 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if path := getTablePath(publicPaths); path != nil {
 				hasUseOrForce = true
 				path.Forced = true
-				if i >= indexHintsLen {
-					_, path.IsIndexLookUpPushDown = indexLookUpPushDownHints[i]
-				}
-				if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo) {
-					continue
-				}
 				available = append(available, path)
 			}
 		}
@@ -1390,10 +1384,12 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				path.ForceNoKeepOrder = true
 			}
 			if i >= indexHintsLen {
+				// Currently we only support to hint the index look up push down for comment-style sql hints.
+				// So only i >= indexHintsLen may have the hints here.
 				_, path.IsIndexLookUpPushDown = indexLookUpPushDownHints[i]
-			}
-			if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo) {
-				continue
+				if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo) {
+					continue
+				}
 			}
 			available = append(available, path)
 		}

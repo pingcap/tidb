@@ -138,13 +138,16 @@ func detachRootTableScanPlan(p base.PhysicalPlan) (root *PhysicalTableScan, root
 		if l := len(children); l == 0 {
 			var ok bool
 			if root, ok = p.(*PhysicalTableScan); !ok {
-				return nil, nil, errors.New("the root is not a PhysicalTableScan")
+				return nil, nil, errors.Errorf(
+					"the tablePlan root is expected to be PhysicalTableScan, but got %T", p,
+				)
 			}
 			rootParent = currentParent
 			break
 		} else if l > 1 {
-			return nil, nil, errors.New(
-				"some execution of in table plan has multiple children which is not supported yet, plan: " + p.TP(),
+			return nil, nil, errors.Errorf(
+				"the tablePlan is expected to have one child for each node, but %T has multiple children: %T, %T",
+				p, children[0], children[1],
 			)
 		}
 

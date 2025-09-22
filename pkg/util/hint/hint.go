@@ -856,6 +856,10 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					warnHandler.SetHintWarningFromError(parser.ErrWarnOptimizerHintUnsupportedHint.FastGenByArgs(hint.HintName.O))
 					continue
 				}
+				if len(hint.Indexes) == 0 {
+					warnHandler.SetHintWarning("hint INDEX_LOOKUP_PUSH_DOWN is inapplicable, the index names should be specified")
+					continue
+				}
 				hintType = ast.HintUse
 				pushDownLookUp = true
 			}

@@ -239,13 +239,14 @@ func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
 	intest.Assert(!p.IndexLookUpPushDown)
 	if p.KeepOrder {
 		// If keep order is required, we cannot push down the index lookup.
-		ctx.GetSessionVars().StmtCtx.SetHintWarning("The hint INDEX_LOOKUP_PUSHDOWN cannot be applied: keep order is not supported.")
+		ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
 		return
 	}
 
 	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.IndexPlan, p.TablePlan)
 	if err != nil {
 		// This should not happen, but if it happens, we just log a warning and continue to use the original plan.
+		intest.AssertNoError(err)
 		logutil.BgLogger().Warn("try to push down index lookup failed", zap.Error(err))
 		return
 	}
