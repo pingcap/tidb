@@ -23,7 +23,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -86,11 +85,8 @@ type Tracker struct {
 		children map[int][]*Tracker
 		sync.Mutex
 	}
-	parMu struct {
-		parent atomic.Pointer[Tracker] // The parent memory tracker.
-		sync.Mutex
-	}
-	label int // Label of this "Tracker".
+	parent atomic.Pointer[Tracker] // The parent memory tracker.
+	label  int                     // Label of this "Tracker".
 	// following fields are used with atomic operations, so make them 64-byte aligned.
 	bytesConsumed       int64             // Consumed bytes.
 	bytesReleased       int64             // Released bytes.
@@ -145,7 +141,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.mu.children = nil
 	t.actionMuForHardLimit.actionOnExceed = action
 	t.actionMuForSoftLimit.actionOnExceed = nil
-	t.parMu.parent.Store(nil)
+	t.parent.Store(nil)
 
 	t.label = label
 	if bytesLimit <= 0 {
@@ -802,24 +798,11 @@ func (t *Tracker) Reset() {
 }
 
 func (t *Tracker) getParent() (tracker *Tracker) {
-	mu := &t.parMu
-	addr := uintptr(unsafe.Pointer(mu))
-	mu.Lock()
-	defer func() {
-		if uintptr(unsafe.Pointer(&t.parMu)) != addr {
-			tracker = nil
-		}
-		mu.Unlock()
-	}()
-	tracker = t.parMu.parent.Load()
-	return
+	return t.parent.Load()
 }
 
 func (t *Tracker) setParent(parent *Tracker) {
-	mu := &t.parMu
-	mu.Lock()
-	defer mu.Unlock()
-	t.parMu.parent.Store(parent)
+	t.parent.Store(parent)
 }
 
 // CountAllChildrenMemUse return memory used tree for the tracker
