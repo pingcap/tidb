@@ -191,4 +191,5 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 		})
 	}
 	tk1.MustExec("set @@global.tidb_enable_dist_task = on;")
+	tk1.MustExec("drop table t;")
 }
