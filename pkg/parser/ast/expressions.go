@@ -1269,6 +1269,8 @@ type VariableExpr struct {
 	Name string
 	// IsGlobal indicates whether this variable is global.
 	IsGlobal bool
+	// IsInstance indicates whether this variable is instance.
+	IsInstance bool
 	// IsSystem indicates whether this variable is a system variable in current session.
 	IsSystem bool
 	// ExplicitScope indicates whether this variable scope is set explicitly.
@@ -1284,6 +1286,8 @@ func (n *VariableExpr) Restore(ctx *format.RestoreCtx) error {
 		if n.ExplicitScope {
 			if n.IsGlobal {
 				ctx.WriteKeyWord("GLOBAL")
+			} else if n.IsInstance {
+				ctx.WriteKeyWord("INSTANCE")
 			} else {
 				ctx.WriteKeyWord("SESSION")
 			}
