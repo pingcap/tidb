@@ -46,15 +46,16 @@ var (
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = 5 * time.Minute
 
-	// colStatsUsageUpdateInterval is the minimum interval to update last_used_at when it already exists.
-	colStatsUsageUpdateInterval = 12 * time.Hour
+	// colStatsUsageLastUsedThrottleInterval is the minimum interval to update last_used_at when it already exists (non-NULL).
+	// This throttles frequent timestamp-only updates while allowing immediate NULL-to-value transitions.
+	colStatsUsageLastUsedThrottleInterval = 12 * time.Hour
 
 	// batchInsertSize is the batch size used by internal SQL to insert values to stats usage table.
 	batchInsertSize = 2048
 )
 
-// TimeCostRecorder can collect per-batch timings when provided (e.g., in tests).
-type TimeCostRecorder interface {
+// TimeCostRecorderForTest can collect per-batch timings when provided in tests.
+type TimeCostRecorderForTest interface {
 	Record(duration time.Duration)
 }
 
@@ -346,7 +347,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 }
 
 // DumpColStatsUsageEntries batches and executes the insert/update for column_stats_usage.
-func DumpColStatsUsageEntries(pool util.DestroyableSessionPool, entries []ColStatsUsageEntry, rec TimeCostRecorder) error {
+func DumpColStatsUsageEntries(pool util.DestroyableSessionPool, entries []ColStatsUsageEntry, rec TimeCostRecorderForTest) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -362,7 +363,7 @@ func DumpColStatsUsageEntries(pool util.DestroyableSessionPool, entries []ColSta
 		batch := entries[i:end]
 		if err := utilstats.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 			// build simple INSERT ... VALUES with threshold gating in ON DUPLICATE KEY UPDATE
-			thresholdMinutes := int(colStatsUsageUpdateInterval / time.Minute)
+			thresholdMinutes := int(colStatsUsageLastUsedThrottleInterval / time.Minute)
 			sql := new(strings.Builder)
 			sqlescape.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
 			for j := range batch {
