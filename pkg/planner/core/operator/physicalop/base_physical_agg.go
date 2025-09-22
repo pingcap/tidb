@@ -564,11 +564,6 @@ func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDe
 		ret = false
 	}
 
-	// TiCI only accepts count(*) without group-by.
-	if ret && len(groupByItems) > 0 && storeType == kv.TiCI {
-		ret = false
-	}
-
 	if ret && !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), groupByItems, storeType) {
 		reason = "groupByItems contain unsupported exprs"
 		ret = false
