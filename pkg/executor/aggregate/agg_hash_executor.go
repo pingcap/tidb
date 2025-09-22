@@ -302,25 +302,6 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 
 		e.partialWorkers[i] = HashAggPartialWorker{
-<<<<<<< HEAD
-			baseHashAggWorker:    newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
-			idForTest:            i,
-			ctx:                  ctx,
-			inputCh:              e.partialInputChs[i],
-			outputChs:            e.partialOutputChs,
-			giveBackCh:           e.inputCh,
-			BInMaps:              make([]int, finalConcurrency),
-			partialResultsBuffer: make([][]aggfuncs.PartialResult, 0, 2048),
-			globalOutputCh:       e.finalOutputCh,
-			partialResultsMap:    partialResultsMap,
-			groupByItems:         e.GroupByItems,
-			chk:                  exec.TryNewCacheChunk(e.Children(0)),
-			groupKey:             make([][]byte, 0, 8),
-			serializeHelpers:     aggfuncs.NewSerializeHelper(),
-			isSpillPrepared:      false,
-			spillHelper:          e.spillHelper,
-			inflightChunkSync:    e.inflightChunkSync,
-=======
 			baseHashAggWorker:     newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			idForTest:             i,
 			ctx:                   ctx,
@@ -339,7 +320,6 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			spillHelper:           e.spillHelper,
 			inflightChunkSync:     e.inflightChunkSync,
 			fileNamePrefixForTest: e.FileNamePrefixForTest,
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 		}
 
 		memUsage += e.partialWorkers[i].chk.MemoryUsage()

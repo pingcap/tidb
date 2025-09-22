@@ -76,20 +76,6 @@ func injectParallelSortRandomFail(triggerFactor int32) {
 	})
 }
 
-<<<<<<< HEAD
-=======
-func injectErrorForIssue59655(triggerFactor int32) (err error) {
-	failpoint.Inject("Issue59655", func(val failpoint.Value) {
-		if val.(bool) {
-			randNum := rand.Int31n(1000)
-			if randNum < triggerFactor {
-				err = errors.Errorf("issue 59655 error")
-			}
-		}
-	})
-	return
-}
-
 func injectPanicForIssue63216() {
 	failpoint.Inject("Issue63216", func(val failpoint.Value) {
 		if val.(bool) {
@@ -98,7 +84,6 @@ func injectPanicForIssue63216() {
 	})
 }
 
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 // It's used only when spill is triggered
 type dataCursor struct {
 	chkID     int

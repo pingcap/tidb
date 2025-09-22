@@ -47,16 +47,6 @@ type parallelSortSpillHelper struct {
 
 func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError, fileNamePrefixForTest string) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
-<<<<<<< HEAD
-		cond:          sync.NewCond(new(sync.Mutex)),
-		spillStatus:   notSpilled,
-		sortExec:      sortExec,
-		lessRowFunc:   lessRowFunc,
-		errOutputChan: errOutputChan,
-		finishCh:      finishCh,
-		fieldTypes:    fieldTypes,
-		tmpSpillChunk: chunk.NewChunkFromPoolWithCapacity(fieldTypes, spillChunkSize),
-=======
 		cond:                  sync.NewCond(new(sync.Mutex)),
 		spillStatus:           notSpilled,
 		sortExec:              sortExec,
@@ -65,7 +55,6 @@ func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldTyp
 		finishCh:              finishCh,
 		fieldTypes:            fieldTypes,
 		fileNamePrefixForTest: fileNamePrefixForTest,
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 	}
 }
 
@@ -196,8 +185,13 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	// We must wait the finish of the following goroutine,
 	// or we will exit `spillImpl` function in advance and
 	// this will cause data race.
-<<<<<<< HEAD
-	defer channel.Clear(spilledRowChannel)
+	defer func() {
+		if !isInDiskAppended && inDisk.NumRows() > 0 {
+			inDisk.Close()
+		}
+		channel.Clear(spilledRowChannel)
+	}()
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -205,14 +199,6 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 			}
 			close(spilledRowChannel)
 		}()
-=======
-	defer func() {
-		if !isInDiskAppended && inDisk.NumRows() > 0 {
-			inDisk.Close()
-		}
-		channel.Clear(spilledRowChannel)
-	}()
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
 
 		injectParallelSortRandomFail(200)
 

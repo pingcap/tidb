@@ -11,6 +11,7 @@ go_library(
         "sort_spill.go",
         "sort_util.go",
         "topn.go",
+        "topn_spill.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/sortexec",
     visibility = ["//visibility:public"],
@@ -39,7 +40,7 @@ go_test(
     timeout = "short",
     srcs = ["sort_test.go"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 17,
     deps = [
         "//pkg/config",
         "//pkg/sessionctx/variable",
@@ -60,14 +61,11 @@ go_test(
         "sort_spill_test.go",
         "sort_test.go",
         "sortexec_pkg_test.go",
+        "topn_spill_test.go",
     ],
     embed = [":sortexec"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 6,
-=======
     shard_count = 19,
->>>>>>> be3ba74ef81 (executor: fix the issue that spill files may not be completely deleted when `Out Of Quota For Local Temporary Space` is triggered (#63222))
     deps = [
         "//pkg/config",
         "//pkg/executor/internal/exec",
