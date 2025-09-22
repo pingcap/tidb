@@ -642,7 +642,8 @@ func (r *reorgInfo) String() string {
 func (r *reorgInfo) UpdateConfigFromSysTbl(ctx context.Context) {
 	latestJob, err := r.jobCtx.sysTblMgr.GetJobByID(ctx, r.ID)
 	if err != nil {
-		logutil.DDLLogger().Warn("failed to get latest job from system table", zap.Int64("jobID", r.ID), zap.Error(err))
+		logutil.DDLLogger().Warn("failed to get latest job from system table",
+			zap.Int64("jobID", r.ID), zap.Error(err))
 		return
 	}
 	if latestJob.State == model.JobStateRunning && latestJob.IsAlterable() {
