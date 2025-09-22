@@ -359,7 +359,6 @@
           "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
@@ -611,7 +610,6 @@
           "              └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
@@ -1253,7 +1251,6 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
@@ -1560,7 +1557,6 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid",
           "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },

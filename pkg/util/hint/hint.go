@@ -891,24 +891,15 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			cteMerge = true
 		case HintLeading:
 			leadingHintCnt++
-			if leadingHintCnt > 1 || straightJoinOrder {
-				if leadingHintCnt > 1 {
-					warnHandler.SetHintWarning("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
-				} else {
-					warnHandler.SetHintWarning("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid")
-				}
-				continue // Invalidate all leading hints and skip to next hint.
-			}
-
-			// 取出 LeadingList
+			// get LeadingList
 			leadingList, ok := hint.HintData.(*ast.LeadingList)
 			if !ok || len(leadingList.Items) == 0 {
 				warnHandler.SetHintWarning("Hint LEADING is inapplicable. Please specify the table names in the arguments.")
 				continue
 			}
 
-			// 从 LeadingList 中提取一级表名（不 flatten，保持树状结构可以用递归处理）
-			// 这里先只取顶层 HintTable，用 tableNames2HintTableInfo 转换
+			// Extract the first-level table names from LeadingList
+			// take the top-level HintTable and convert it using tableNames2HintTableInfo.
 			var topLevelTables []ast.HintTable
 			for _, item := range leadingList.Items {
 				if t, ok := item.(*ast.HintTable); ok {

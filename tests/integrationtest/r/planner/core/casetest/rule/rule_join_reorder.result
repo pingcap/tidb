@@ -2111,7 +2111,6 @@ select /*+ leading(t1) leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on 
 a	b	a	b	a	b
 Level	Code	Message
 Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
-Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -2126,21 +2125,17 @@ select /*+ leading(t1) straight_join() */ * from t1 join t2 on t1.a=t2.a join t3
 a	b	a	b	a	b
 Level	Code	Message
 Warning	1815	We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid
-Warning	1815	We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid
 select /*+ straight_join() leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 a	b	a	b	a	b
 Level	Code	Message
-Warning	1815	We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid
 Warning	1815	We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid
 select /*+ leading(t1) leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 a	b	a	b	a	b
 Level	Code	Message
 Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
-Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 select /*+ leading(t1) leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 a	b	a	b	a	b
 Level	Code	Message
-Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 select /*+ straight_join() straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 a	b	a	b	a	b
@@ -3292,7 +3287,6 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner_
             └─TableFullScan	cop[tikv]	table:t5, partition:p4	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
-Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 explain format='plan_tree' select /*+ leading(t5, t6, t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t5.b, planner__core__casetest__rule__rule_join_reorder.t6.a, planner__core__casetest__rule__rule_join_reorder.t6.b
@@ -3976,7 +3970,6 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner_
               └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
                 └─TableFullScan	cop[tikv]	table:t1, partition:p3	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 explain format='plan_tree' select /*+ leading(t3, t4, t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	task	access object	operator info
@@ -6183,7 +6176,6 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner_
           └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
-Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 explain format='plan_tree' select /*+ leading(t5, t6, t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t5.b, planner__core__casetest__rule__rule_join_reorder.t6.a, planner__core__casetest__rule__rule_join_reorder.t6.b
@@ -6394,7 +6386,6 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner_
             └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
               └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 Warning	1815	We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid
 explain format='plan_tree' select /*+ leading(t3, t4, t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	task	access object	operator info
