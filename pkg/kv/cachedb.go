@@ -16,8 +16,8 @@ package kv
 
 import (
 	"context"
-	"hash/fnv"
-	"sync"
+	"maps"
+	"sync/atomic"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -43,8 +43,7 @@ func init() {
 
 type (
 	cacheDB struct {
-		mu        [64]sync.RWMutex
-		memTables [64]map[int64]*freecache.Cache
+		memTables atomic.Pointer[map[int64]*freecache.Cache]
 	}
 
 	// MemManager adds a cache between transaction buffer and the storage to reduce requests to the storage.
@@ -62,30 +61,27 @@ type (
 
 // Set set the key/value in cacheDB.
 func (c *cacheDB) set(tableID int64, key Key, value []byte) error {
-	hasher := fnv.New64a()
-	hasher.Write([]byte(key))
-	shardID := hasher.Sum64() % 64
-	c.mu[shardID].Lock()
-	defer c.mu[shardID].Unlock()
-	table, ok := c.memTables[shardID][tableID]
+	memTables := c.memTables.Load()
+	table, ok := (*memTables)[tableID]
 	if !ok {
-		table = freecache.NewCache(32 * 1024 * 1024 * 1024 / 64)
-		c.memTables[shardID][tableID] = table
+		table = freecache.NewCache(32 * 1024 * 1024 * 1024)
+		newMemTables := maps.Clone(*memTables)
+		newMemTables[tableID] = table
+		c.memTables.Store(&newMemTables)
+		return nil
 	}
 	return table.Set(key, value, 0)
 }
 
 // Get gets the value from cacheDB.
 func (c *cacheDB) get(tableID int64, key Key) []byte {
-	hasher := fnv.New64a()
-	hasher.Write([]byte(key))
-	shardID := hasher.Sum64() % 64
-	c.mu[shardID].RLock()
-	defer c.mu[shardID].RUnlock()
-	if table, ok := c.memTables[shardID][tableID]; ok {
-		if val, err := table.Get(key); err == nil {
-			return val
-		}
+	memTables := c.memTables.Load()
+	table, ok := (*memTables)[tableID]
+	if !ok {
+		return nil
+	}
+	if val, err := table.Get(key); err == nil {
+		return val
 	}
 	return nil
 }
@@ -140,21 +136,15 @@ func (c *cacheDB) BatchUnionGet(ctx context.Context, tid int64, snapshot Snapsho
 
 // Delete delete and reset table from tables in cacheDB by tableID
 func (c *cacheDB) Delete(tableID int64) {
-	for i := 0; i < 64; i++ {
-		c.mu[i].Lock()
-		if k, ok := c.memTables[i][tableID]; ok {
-			k.Clear()
-			delete(c.memTables[i], tableID)
-		}
-		c.mu[i].Unlock()
-	}
+	tables := c.memTables.Load()
+	newTables := maps.Clone(*tables)
+	delete(newTables, tableID)
+	c.memTables.Store(&newTables)
 }
 
 // NewCacheDB news the cacheDB.
 func NewCacheDB() MemManager {
 	mm := new(cacheDB)
-	for i := 0; i < 64; i++ {
-		mm.memTables[i] = make(map[int64]*freecache.Cache)
-	}
+	mm.memTables.Store(&map[int64]*freecache.Cache{})
 	return mm
 }
