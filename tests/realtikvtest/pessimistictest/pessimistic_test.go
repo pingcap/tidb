@@ -3782,21 +3782,33 @@ func TestMaxExecutionTimeWithSelectForUpdate(t *testing.T) {
 	tk1.MustExec("begin pessimistic")
 	tk1.MustQuery("select * from test_lock where id = 1 for update").Check(testkit.Rows("1 100"))
 
-	// Transaction 2: Try to acquire lock with max_execution_time
+	checkSelectForUpdate := func(sql string) {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("set max_execution_time = 1000")
+		err := tk2.ExecToErr(sql)
+
+		// The query should timeout due to max_execution_time (~1s), not lock_wait_timeout (30s)
+		require.Error(t, err)
+
+		// Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
+		require.True(t, strings.Contains(err.Error(), "maximum statement execution time exceeded"),
+			"Expected max_execution_time error, but got: %v", err)
+
+		tk2.MustExec("rollback")
+	}
+
+	// Transaction 2: Try to acquire lock with max_execution_time in different SELECT forms
+	checkSelectForUpdate("select * from test_lock where id = 1 for update")
+	checkSelectForUpdate("(select * from test_lock where id = 1 for update)")
+
+	// DML should keep using the lock wait timeout instead of max_execution_time
 	tk2.MustExec("begin pessimistic")
-	tk2.MustExec("set max_execution_time = 2345")
-
-	// Also test with hint
-	err := tk2.ExecToErr("select * from test_lock where id = 1 for update")
-
-	// The query should timeout due to max_execution_time (around 2s), not lock_wait_timeout (30s)
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustExec("set max_execution_time = 300")
+	err := tk2.ExecToErr("update test_lock set value = value + 1 where id = 1")
 	require.Error(t, err)
-
-	// Check if it's a max execution time exceeded error
-	// Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
-	require.True(t, strings.Contains(err.Error(), "maximum statement execution time exceeded"),
-		"Expected max_execution_time error, but got: %v", err)
-
+	require.True(t, storeerr.ErrLockWaitTimeout.Equal(err), "expected lock wait timeout, got: %v", err)
 	tk2.MustExec("rollback")
+
 	tk1.MustExec("rollback")
 }
