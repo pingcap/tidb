@@ -76,24 +76,23 @@ var (
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
 	bytesLimit           atomic.Pointer[bytesLimits]
+	Killer               *sqlkiller.SQLKiller
+	parent               atomic.Pointer[Tracker]
 	actionMuForHardLimit actionMu
 	actionMuForSoftLimit actionMu
-	Killer               *sqlkiller.SQLKiller
 	mu                   struct {
-		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
+		children map[ // The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
-		children map[int][]*Tracker
+		int][]*Tracker
 		sync.Mutex
 	}
-	parent atomic.Pointer[Tracker] // The parent memory tracker.
-	label  int                     // Label of this "Tracker".
-	// following fields are used with atomic operations, so make them 64-byte aligned.
-	bytesConsumed       int64             // Consumed bytes.
-	bytesReleased       int64             // Released bytes.
-	maxConsumed         atomicutil.Int64  // max number of bytes consumed during execution.
-	SessionID           atomicutil.Uint64 // SessionID indicates the sessionID the tracker is bound.
-	IsRootTrackerOfSess bool              // IsRootTrackerOfSess indicates whether this tracker is bound for session
-	isGlobal            bool              // isGlobal indicates whether this tracker is global tracker
+	label               int
+	bytesConsumed       int64
+	bytesReleased       int64
+	maxConsumed         atomicutil.Int64
+	SessionID           atomicutil.Uint64
+	IsRootTrackerOfSess bool
+	isGlobal            bool
 }
 
 type actionMu struct {
