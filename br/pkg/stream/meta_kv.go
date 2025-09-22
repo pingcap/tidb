@@ -167,7 +167,7 @@ l_for:
 			vlen := data[1]
 			if len(data) < int(vlen)+2 {
 				return errors.Annotatef(berrors.ErrInvalidArgument,
-					"insufficient data for short value, need %d bytes but only have %d", 
+					"insufficient data for short value, need %d bytes but only have %d",
 					int(vlen)+2, len(data))
 			}
 			v.shortValue = data[2 : int(vlen)+2]
