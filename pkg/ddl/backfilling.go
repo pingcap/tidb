@@ -53,7 +53,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -830,23 +829,6 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	)
 	if err != nil {
 		return err
-	}
-
-	if bd != nil {
-		startKey, endKey := bd.GetTiKVCodec().EncodeRange(
-			tablecodec.EncodeTablePrefix(t.GetPhysicalID()),
-			tablecodec.EncodeTablePrefix(t.GetPhysicalID()+1),
-		)
-		stores, err := bd.BackendClients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
-		if err != nil {
-			logutil.DDLIngestLogger().Warn("GetAllStores failed",
-				zap.String("table", t.Meta().Name.L), zap.Error(err))
-		} else {
-			removeTableSplitRange := local.ForceTableSplitRange(ctx,
-				[]kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, stores, bd.BackendClients.GetImportClientFactory(),
-			)
-			defer removeTableSplitRange()
-		}
 	}
 
 	err = executeAndClosePipeline(opCtx, pipe, job, bcCtx, avgRowSize)

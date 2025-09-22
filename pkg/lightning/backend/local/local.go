@@ -878,6 +878,7 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 
 // Close the local backend.
 func (local *Backend) Close() {
+	local.logger.Warn("close local backend")
 	local.engineMgr.close()
 	local.importClientFactory.close()
 
@@ -919,26 +920,22 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
-// ForceTableSplitRange turns on force_partition_range for importing.
+// forceTableSplitRange turns on force_partition_range for importing.
 // See https://github.com/tikv/tikv/pull/18866 for detail.
 // It returns a resetter to turn off.
 // NOTE: importClientFactory should not be closed earlier than calling removeTableSplitRange
-func ForceTableSplitRange(ctx context.Context, keyRanges []kv.KeyRange,
+func forceTableSplitRange(ctx context.Context, keyRange kv.KeyRange,
 	stores []*metapb.Store, importClientFactory importClientFactory) (resetter func()) {
-	intest.Assert(len(keyRanges) > 0)
 	clients := make([]sst.ImportSSTClient, 0, len(stores))
 	storeAddrs := make([]string, 0, len(stores))
 	ctx, cancel := context.WithCancel(ctx)
 
 	addTableSplitRange := func() {
-		reqs := make([]*sst.AddPartitionRangeRequest, 0, len(keyRanges))
-		for i := range len(keyRanges) {
-			reqs = append(reqs, &sst.AddPartitionRangeRequest{
-				Range: &sst.Range{
-					Start: keyRanges[i].StartKey,
-					End:   keyRanges[i].EndKey,
-				},
-			})
+		req := &sst.AddPartitionRangeRequest{
+			Range: &sst.Range{
+				Start: keyRange.StartKey,
+				End:   keyRange.EndKey,
+			},
 		}
 		for _, store := range stores {
 			if store.StatusAddress == "" || engine.IsTiFlash(store) {
@@ -952,14 +949,12 @@ func ForceTableSplitRange(ctx context.Context, keyRanges []kv.KeyRange,
 			clients = append(clients, importCli)
 			storeAddrs = append(storeAddrs, store.StatusAddress)
 
-			for _, req := range reqs {
-				_, err = importCli.AddForcePartitionRange(ctx, req)
-				if err == nil {
-					failpoint.InjectCall("AddPartitionRangeForTable")
-					tidblogutil.Logger(ctx).Info("succeed to call AddForcePartitionRange", zap.String("store", store.StatusAddress))
-				} else {
-					tidblogutil.Logger(ctx).Warn("fail to call AddForcePartitionRange", zap.Error(err), zap.String("store", store.StatusAddress))
-				}
+			_, err = importCli.AddForcePartitionRange(ctx, req)
+			if err == nil {
+				failpoint.InjectCall("AddPartitionRangeForTable")
+				tidblogutil.Logger(ctx).Info("succeed to call AddForcePartitionRange", zap.String("store", store.StatusAddress))
+			} else {
+				tidblogutil.Logger(ctx).Warn("fail to call AddForcePartitionRange", zap.Error(err), zap.String("store", store.StatusAddress))
 			}
 		}
 	}
@@ -978,27 +973,22 @@ func ForceTableSplitRange(ctx context.Context, keyRanges []kv.KeyRange,
 	}()
 
 	resetter = func() {
-		cancel()
-		reqs := make([]*sst.RemovePartitionRangeRequest, 0, len(keyRanges))
-		for i := range len(keyRanges) {
-			reqs = append(reqs, &sst.RemovePartitionRangeRequest{
-				Range: &sst.Range{
-					Start: keyRanges[i].StartKey,
-					End:   keyRanges[i].EndKey,
-				},
-			})
-		}
+		req := &sst.RemovePartitionRangeRequest{
+			Range: &sst.Range{
+				Start: keyRange.StartKey,
+				End:   keyRange.EndKey,
+			}}
+
 		for i, c := range clients {
-			for _, req := range reqs {
-				_, err := c.RemoveForcePartitionRange(ctx, req)
-				if err == nil {
-					failpoint.InjectCall("RemovePartitionRangeRequest")
-					tidblogutil.Logger(ctx).Info("succeed to call RemoveForcePartitionRange", zap.String("store", storeAddrs[i]))
-				} else {
-					tidblogutil.Logger(ctx).Warn("fail to call RemoveForcePartitionRange", zap.Error(err), zap.String("store", storeAddrs[i]))
-				}
+			_, err := c.RemoveForcePartitionRange(ctx, req)
+			if err == nil {
+				failpoint.InjectCall("RemovePartitionRangeRequest")
+				tidblogutil.Logger(ctx).Info("succeed to call RemoveForcePartitionRange", zap.String("store", storeAddrs[i]))
+			} else {
+				tidblogutil.Logger(ctx).Warn("fail to call RemoveForcePartitionRange", zap.Error(err), zap.String("store", storeAddrs[i]))
 			}
 		}
+		cancel()
 	}
 	return resetter
 }
@@ -1355,6 +1345,21 @@ func (local *Backend) ImportEngine(
 	}
 	intest.Assert(len(splitKeys) > 0)
 
+	if startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]; len(startKey) > 0 && len(endKey) > 0 {
+		tidblogutil.Logger(ctx).Info("force table split range",
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("endKey", hex.EncodeToString(endKey)))
+		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
+		if err != nil {
+			return err
+		}
+		removeTableSplitRange := forceTableSplitRange(ctx,
+			kv.KeyRange{StartKey: startKey, EndKey: endKey},
+			stores,
+			local.importClientFactory)
+		defer removeTableSplitRange()
+	}
+
 	if local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		tidblogutil.Logger(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
@@ -1377,7 +1382,7 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	if len(splitKeys) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+	if local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		tidblogutil.Logger(ctx).Info("switch import mode of ranges",
 			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
 			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))

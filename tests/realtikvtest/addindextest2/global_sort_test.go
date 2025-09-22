@@ -762,7 +762,7 @@ func TestSplitRangeForTable(t *testing.T) {
 			addCnt = 0
 			removeCnt = 0
 			tk.MustExec("alter table tp add index i(c)")
-			require.Equal(t, addCnt, 2*len(stores))
+			require.Greater(t, addCnt, 0)
 			require.Equal(t, removeCnt, addCnt)
 			tk.MustExec("alter table tp drop index i")
 		})

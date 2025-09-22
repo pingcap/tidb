@@ -51,11 +51,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/pd/client/opt"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -261,36 +259,6 @@ func (tr *TableImporter) importTable(
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexDropped)
 		if err := firstErr(err, saveCpErr); err != nil {
 			return false, errors.Trace(err)
-		}
-	}
-
-	// turn on/off "force_partition_range" for table
-	if isLocalBackend(rc.cfg) {
-		localbackend := rc.backend.(*local.Backend)
-		pids := []int64{tr.tableInfo.ID}
-		if tr.tableInfo.Core.Partition != nil {
-			defs := tr.tableInfo.Core.Partition.Definitions
-			for _, def := range defs {
-				pids = append(pids, def.ID)
-			}
-		}
-		keyRanges := make([]tidbkv.KeyRange, 0, len(pids))
-		for _, pid := range pids {
-			startKey, endKey := localbackend.GetTiKVCodec().EncodeRange(
-				tablecodec.EncodeTablePrefix(pid),
-				tablecodec.EncodeTablePrefix(pid+1),
-			)
-			keyRanges = append(keyRanges, tidbkv.KeyRange{StartKey: startKey, EndKey: endKey})
-		}
-		stores, err := localbackend.BackendClients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
-		if err != nil {
-			tr.logger.Warn("GetAllStores failed",
-				zap.String("table", tr.tableInfo.Name), zap.Error(err))
-		} else {
-			removeTableSplitRange := local.ForceTableSplitRange(ctx,
-				keyRanges, stores, localbackend.BackendClients.GetImportClientFactory(),
-			)
-			defer removeTableSplitRange()
 		}
 	}
 

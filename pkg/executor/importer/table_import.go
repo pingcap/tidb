@@ -195,7 +195,7 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	backendConfig := e.GetLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
+	backendConfig := e.getLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
 	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
 	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
@@ -264,7 +264,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		return nil, err
 	}
 
-	backendConfig := e.GetLocalBackendCfg("", tidbCfg.Path, dir)
+	backendConfig := e.getLocalBackendCfg("", tidbCfg.Path, dir)
 	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
 	if err != nil {
 		return nil, err

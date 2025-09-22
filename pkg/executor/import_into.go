@@ -17,14 +17,11 @@ package executor
 import (
 	"context"
 	"fmt"
-	"net"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -36,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -46,14 +41,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
-	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -140,11 +131,6 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	failpoint.InjectCall("cancellableCtx", &ctx)
 
-	removeTableSplitRange, err := e.forceTableSplitRange(ctx)
-	if err != nil {
-		logutil.Logger(ctx).Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
-	}
-
 	jobID, task, err := e.submitTask(ctx)
 	if err != nil {
 		return err
@@ -152,19 +138,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	if !e.controller.Detached {
 		err = waitTask(ctx, jobID, task)
-		if removeTableSplitRange != nil {
-			removeTableSplitRange()
-		}
 		if err != nil {
 			return err
 		}
-	} else {
-		go func() {
-			_ = waitTask(ctx, jobID, task)
-			if removeTableSplitRange != nil {
-				removeTableSplitRange()
-			}
-		}()
 	}
 	return e.fillJobInfo(ctx, jobID, req)
 }
@@ -267,65 +243,6 @@ func waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
 	return err
 }
 
-func (e *ImportIntoExec) forceTableSplitRange(ctx context.Context) (
-	removeTableSplitRangeAndCloseClients func(), err error) {
-	tidbCfg := config.GetGlobalConfig()
-	tls, err := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort))),
-		nil, nil, nil,
-	)
-	if err != nil {
-		logutil.Logger(ctx).Warn("fail to NewTLS", zap.Error(err))
-		return nil, err
-	}
-
-	cfg := e.controller.GetLocalBackendCfg(e.Ctx().GetStore().GetKeyspace(), tidbCfg.Path, "")
-
-	//nolint:forcetypeassert
-	store := e.Ctx().GetStore().(tikv.Storage)
-	pdCli := store.GetRegionCache().PDClient()
-	clients, pdCliForTiKV, err := local.CreateClientsForNewBackend(ctx, tls, cfg, pdCli.GetServiceDiscovery())
-	if err != nil {
-		logutil.Logger(ctx).Warn("fail to PrepareClientsForNewBackend", zap.Error(err))
-		return nil, err
-	}
-	intest.Assert(pdCliForTiKV != nil)
-	closeClients := func() {
-		pdCliForTiKV.Close()
-		clients.Close()
-	}
-
-	pids := []int64{e.tbl.Meta().ID}
-	if tbl, ok := e.tbl.(table.PartitionedTable); ok {
-		pids = append(pids, tbl.GetAllPartitionIDs()...)
-	}
-	keyRanges := make([]kv.KeyRange, 0, len(pids))
-	for _, pid := range pids {
-		startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
-			tablecodec.EncodeTablePrefix(pid),
-			tablecodec.EncodeTablePrefix(pid+1),
-		)
-		keyRanges = append(keyRanges, kv.KeyRange{StartKey: startKey, EndKey: endKey})
-	}
-	stores, err := clients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
-	if err != nil {
-		logutil.Logger(ctx).Warn("GetAllStores failed",
-			zap.Int64("table id", e.controller.TableInfo.ID), zap.Error(err))
-		closeClients()
-		return nil, err
-	}
-	removeTableSplitRange := local.ForceTableSplitRange(ctx,
-		keyRanges, stores, clients.GetImportClientFactory(),
-	)
-	return func() {
-		removeTableSplitRange()
-		closeClients()
-	}, nil
-}
-
 func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	e.dataFilled = true
 	// must use a new session as:
@@ -360,14 +277,6 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}()
 	selectedChunkCh := make(chan importer.QueryChunk, 1)
 	ti.SetSelectedChunkCh(selectedChunkCh)
-
-	removeTableSplitRange, err := e.forceTableSplitRange(ctx)
-	if err != nil {
-		logutil.Logger(ctx).Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
-	} else {
-		intest.Assert(removeTableSplitRange != nil)
-		defer removeTableSplitRange()
-	}
 
 	var importedRows int64
 	eg, egCtx := errgroup.WithContext(ctx)

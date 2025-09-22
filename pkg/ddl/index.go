@@ -22,10 +22,8 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
-	"net"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -54,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -87,7 +84,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pdHttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -2650,70 +2646,6 @@ func TaskKey(jobID int64) string {
 	return fmt.Sprintf("ddl/%s/%d", proto.Backfill, jobID)
 }
 
-func (w *worker) forceTableSplitRange(reorgInfo *reorgInfo, t table.Table) (
-	removeTableSplitRangeAndCloseClients func(), err error) {
-	job := reorgInfo.Job
-	cfg := ingest.GenConfig(w.workCtx, "", ingest.LitMemRoot, false,
-		job.ReorgMeta.ResourceGroupName, w.store.GetKeyspace(), job.ReorgMeta.GetConcurrency(),
-		job.ReorgMeta.GetMaxWriteSpeed(), job.ReorgMeta.UseCloudStorage)
-
-	tidbCfg := config.GetGlobalConfig()
-	tls, err := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort))),
-		nil, nil, nil,
-	)
-	if err != nil {
-		logutil.DDLLogger().Warn("fail to NewTLS", zap.Error(err))
-		return nil, err
-	}
-
-	//nolint:forcetypeassert
-	store := w.store.(tikv.Storage)
-	pdCli := store.GetRegionCache().PDClient()
-	clients, pdCliForTiKV, err := local.CreateClientsForNewBackend(w.workCtx, tls, *cfg, pdCli.GetServiceDiscovery())
-	if err != nil {
-		logutil.DDLLogger().Warn("fail to PrepareClientsForNewBackend", zap.Error(err))
-		return nil, err
-	}
-	intest.Assert(pdCliForTiKV != nil)
-	closeClients := func() {
-		pdCliForTiKV.Close()
-		clients.Close()
-	}
-
-	var pids []int64
-	if phyTbl, ok := t.(table.PartitionedTable); ok && phyTbl.Meta().ID != reorgInfo.PhysicalTableID {
-		pids = phyTbl.GetAllPartitionIDs()
-	} else {
-		pids = append(pids, t.Meta().ID)
-	}
-	keyRanges := make([]kv.KeyRange, 0, len(pids))
-	for _, pid := range pids {
-		startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
-			tablecodec.EncodeTablePrefix(pid),
-			tablecodec.EncodeTablePrefix(pid+1),
-		)
-		keyRanges = append(keyRanges, kv.KeyRange{StartKey: startKey, EndKey: endKey})
-	}
-	stores, err := clients.GetPDClient().GetAllStores(w.workCtx, opt.WithExcludeTombstone())
-	if err != nil {
-		logutil.DDLIngestLogger().Warn("GetAllStores failed",
-			zap.Int64("table id", t.Meta().ID), zap.Int64s("physical ids", pids), zap.Error(err))
-		closeClients()
-		return nil, err
-	}
-	removeTableSplitRange := local.ForceTableSplitRange(w.workCtx,
-		keyRanges, stores, clients.GetImportClientFactory(),
-	)
-	return func() {
-		removeTableSplitRange()
-		closeClients()
-	}, nil
-}
-
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
@@ -2744,14 +2676,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	task, err := taskManager.GetTaskByKeyWithHistory(w.workCtx, taskKey)
 	if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
 		return err
-	}
-
-	removeTableSplitRange, err := w.forceTableSplitRange(reorgInfo, t)
-	if err != nil {
-		logutil.DDLLogger().Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
-	} else {
-		intest.Assert(removeTableSplitRange != nil)
-		defer removeTableSplitRange()
 	}
 
 	var (
