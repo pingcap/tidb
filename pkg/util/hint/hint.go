@@ -557,6 +557,7 @@ type PlanHints struct {
 	PreferLimitToCop bool // limit_to_cop
 	CTEMerge         bool // merge
 	TimeRangeHint    ast.HintTimeRange
+	LeadingList      *ast.LeadingList
 }
 
 // HintedTable indicates which table this hint should take effect on.
