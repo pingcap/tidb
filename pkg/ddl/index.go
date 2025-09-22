@@ -2684,13 +2684,14 @@ func (w *worker) getSplitRangeFuncs(reorgInfo *reorgInfo, t table.Table) (
 		clients.Close()
 	}
 
-	var startKeys, endKeys [][]byte
 	var pids []int64
 	if phyTbl, ok := t.(table.PartitionedTable); ok && phyTbl.Meta().ID != reorgInfo.PhysicalTableID {
 		pids = phyTbl.GetAllPartitionIDs()
 	} else {
 		pids = append(pids, t.Meta().ID)
 	}
+	startKeys := make([][]byte, 0, len(pids))
+	endKeys := make([][]byte, 0, len(pids))
 	for _, pid := range pids {
 		startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
 			tablecodec.EncodeTablePrefix(pid),

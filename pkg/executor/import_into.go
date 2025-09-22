@@ -301,11 +301,12 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 		clients.Close()
 	}
 
-	var startKeys, endKeys [][]byte
 	pids := []int64{e.tbl.Meta().ID}
 	if tbl, ok := e.tbl.(table.PartitionedTable); ok {
 		pids = append(pids, tbl.GetAllPartitionIDs()...)
 	}
+	startKeys := make([][]byte, 0, len(pids))
+	endKeys := make([][]byte, 0, len(pids))
 	for _, pid := range pids {
 		startKey, endKey := pdCliForTiKV.GetCodec().EncodeRange(
 			tablecodec.EncodeTablePrefix(pid),

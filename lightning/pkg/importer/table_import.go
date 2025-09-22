@@ -267,7 +267,6 @@ func (tr *TableImporter) importTable(
 	// turn on/off "force_partition_range" for table
 	if isLocalBackend(rc.cfg) {
 		localbackend := rc.backend.(*local.Backend)
-		var startKeys, endKeys [][]byte
 		pids := []int64{tr.tableInfo.ID}
 		if tr.tableInfo.Core.Partition != nil {
 			defs := tr.tableInfo.Core.Partition.Definitions
@@ -275,6 +274,8 @@ func (tr *TableImporter) importTable(
 				pids = append(pids, def.ID)
 			}
 		}
+		startKeys := make([][]byte, 0, len(pids))
+		endKeys := make([][]byte, 0, len(pids))
 		for _, pid := range pids {
 			startKey, endKey := localbackend.GetTiKVCodec().EncodeRange(
 				tablecodec.EncodeTablePrefix(pid),
