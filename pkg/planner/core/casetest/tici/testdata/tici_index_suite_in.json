@@ -26,5 +26,12 @@
       "explain format='brief' select a, b from t3 where fts_match_word('hello', title)",
       "explain format='brief' select b, a from t3 where fts_match_word('hello', title)"
     ]
+  },
+  {
+    "name": "TestTiCIWithIndexHintCases",
+    "cases": [
+      "explain format='brief' select * from t1 use index(idx_title)",
+      "explain format='brief' select * from t1 use index(idx_field) where fts_match_word('hello', title)"
+    ]
   }
 ]
