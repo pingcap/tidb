@@ -43,7 +43,7 @@ func init() {
 type (
 	cacheDB struct {
 		mu        [64]sync.RWMutex
-		memTables map[int64]*freecache.Cache
+		memTables [64]map[int64]*freecache.Cache
 	}
 
 	// MemManager adds a cache between transaction buffer and the storage to reduce requests to the storage.
@@ -63,10 +63,10 @@ func (c *cacheDB) set(tableID int64, key Key, value []byte) error {
 	shardID := key[len(key)-1] % 64
 	c.mu[shardID].Lock()
 	defer c.mu[shardID].Unlock()
-	table, ok := c.memTables[tableID]
+	table, ok := c.memTables[shardID][tableID]
 	if !ok {
-		table = freecache.NewCache(32 * 1024 * 1024 * 1024)
-		c.memTables[tableID] = table
+		table = freecache.NewCache(32 * 1024 * 1024 * 1024 / 64)
+		c.memTables[shardID][tableID] = table
 	}
 	return table.Set(key, value, 0)
 }
@@ -76,7 +76,7 @@ func (c *cacheDB) get(tableID int64, key Key) []byte {
 	shardID := key[len(key)-1] % 64
 	c.mu[shardID].RLock()
 	defer c.mu[shardID].RUnlock()
-	if table, ok := c.memTables[tableID]; ok {
+	if table, ok := c.memTables[shardID][tableID]; ok {
 		if val, err := table.Get(key); err == nil {
 			return val
 		}
@@ -107,17 +107,21 @@ func (c *cacheDB) UnionGet(ctx context.Context, tid int64, snapshot Snapshot, ke
 
 // Delete delete and reset table from tables in cacheDB by tableID
 func (c *cacheDB) Delete(tableID int64) {
-	c.mu.Lock()
-	if k, ok := c.memTables[tableID]; ok {
-		k.Clear()
-		delete(c.memTables, tableID)
+	for i := 0; i < 64; i++ {
+		c.mu[i].Lock()
+		if k, ok := c.memTables[i][tableID]; ok {
+			k.Clear()
+			delete(c.memTables[i], tableID)
+		}
+		c.mu[i].Unlock()
 	}
-	c.mu.Unlock()
 }
 
 // NewCacheDB news the cacheDB.
 func NewCacheDB() MemManager {
 	mm := new(cacheDB)
-	mm.memTables = make(map[int64]*freecache.Cache)
+	for i := 0; i < 64; i++ {
+		mm.memTables[i] = make(map[int64]*freecache.Cache)
+	}
 	return mm
 }
