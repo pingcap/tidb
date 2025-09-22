@@ -878,17 +878,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-<<<<<<< HEAD
-func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
+func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int, reorgInfo *reorgInfo) {
 	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
 	if opR == nil || opW == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
-=======
-func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, bcCtx ingest.BackendCtx, avgRowSize int, reorgInfo *reorgInfo) {
-	reader, writer := pipe.GetReaderAndWriter()
-	if reader == nil || writer == nil {
-		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", reorgInfo.ID))
->>>>>>> 0e26c181f7c (ddl: fix dynamic parameter adjustment failure in txn and local ingest mode (#63605))
 		return
 	}
 	reader, readerOk := opR.(*TableScanOperator)
@@ -910,12 +903,8 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			return
 		case <-ticker.C:
 			failpoint.InjectCall("onUpdateJobParam")
-<<<<<<< HEAD
-			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
-=======
 			reorgInfo.UpdateConfigFromSysTbl(ctx)
-			maxWriteSpeed := reorgInfo.ReorgMeta.GetMaxWriteSpeed()
->>>>>>> 0e26c181f7c (ddl: fix dynamic parameter adjustment failure in txn and local ingest mode (#63605))
+			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
@@ -923,11 +912,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
 			}
 
-<<<<<<< HEAD
 			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-=======
-			concurrency := reorgInfo.ReorgMeta.GetConcurrency()
->>>>>>> 0e26c181f7c (ddl: fix dynamic parameter adjustment failure in txn and local ingest mode (#63605))
 			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
@@ -1160,14 +1145,9 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			case <-doneCh:
 				break outer
 			case <-ticker.C:
-<<<<<<< HEAD
+				reorgInfo.UpdateConfigFromSysTbl(ctx)
 				currentWorkerCnt := scheduler.currentWorkerSize()
 				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-=======
-				reorgInfo.UpdateConfigFromSysTbl(ctx)
-				currentWorkerCnt := exec.currentWorkerSize()
-				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrency()
->>>>>>> 0e26c181f7c (ddl: fix dynamic parameter adjustment failure in txn and local ingest mode (#63605))
 				if currentWorkerCnt != targetWorkerCnt {
 					err := scheduler.adjustWorkerSize()
 					if err != nil {

@@ -855,20 +855,8 @@ type indexIngestBaseWorker struct {
 	totalCount *atomic.Int64
 }
 
-<<<<<<< HEAD
 func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResult, error) {
-	failpoint.Inject("injectPanicForIndexIngest", func() {
-		panic("mock panic")
-	})
-=======
-func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
-	defer func() {
-		if ck.Chunk != nil {
-			w.srcChunkPool.Put(ck.Chunk)
-		}
-	}()
 	failpoint.InjectCall("mockIndexIngestWorkerFault")
->>>>>>> 0e26c181f7c (ddl: fix dynamic parameter adjustment failure in txn and local ingest mode (#63605))
 
 	result := IndexWriteResult{
 		ID: rs.ID,

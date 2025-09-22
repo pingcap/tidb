@@ -9,10 +9,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-=======
     shard_count = 3,
->>>>>>> 0e26c181f7c (ddl: fix dynamic parameter adjustment failure in txn and local ingest mode (#63605))
     deps = [
         "//pkg/config",
         "//pkg/domain",
