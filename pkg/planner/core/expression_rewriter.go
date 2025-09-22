@@ -1035,9 +1035,6 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	}
 	// Add LIMIT 1 when noDecorrelate is true for EXISTS subqueries to enable early exit
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-<<<<<<< HEAD
-	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags)
-=======
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
 	if noDecorrelate {
 		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
@@ -1054,7 +1051,6 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		}
 	}
 	np = er.popExistsSubPlan(planCtx, np)
->>>>>>> 5cb0037c0fc (planner: allow correlated exists subqueries to early-out (#63287))
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
