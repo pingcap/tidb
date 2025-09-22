@@ -60,9 +60,7 @@
           "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t1) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
@@ -84,9 +82,7 @@
           "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t1, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -112,9 +108,7 @@
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t1, t2) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -140,9 +134,7 @@
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t4, t3, t2, t, t1) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -168,9 +160,7 @@
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t4, t3, t2, t, t1) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t4, t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -196,9 +186,7 @@
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t4, t3, t2, t) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -224,9 +212,7 @@
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t2, t) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -242,9 +228,7 @@
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -260,9 +244,7 @@
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t1, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
@@ -282,9 +264,7 @@
           "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
@@ -304,9 +284,7 @@
           "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
@@ -336,9 +314,7 @@
           "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
           "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
@@ -369,8 +345,7 @@
           "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments.",
-          "Warning 1815 Hint leading(t5, t6) is inapplicable. Please specify the table names in the arguments."
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
@@ -401,9 +376,7 @@
           "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
           "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t5, t6, t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
@@ -428,9 +401,7 @@
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t1, t2) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
@@ -455,9 +426,7 @@
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
@@ -482,9 +451,7 @@
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t1, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -500,9 +467,7 @@
           "  └─TableReader(Probe) 10000.00 root partition:all data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -518,9 +483,7 @@
           "  └─TableReader(Probe) 10000.00 root partition:all data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t1, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
@@ -542,9 +505,7 @@
           "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
@@ -566,9 +527,7 @@
           "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
@@ -598,9 +557,7 @@
           "            └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "              └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
@@ -631,8 +588,7 @@
           "              └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments.",
-          "Warning 1815 Hint leading(t5, t6) is inapplicable. Please specify the table names in the arguments."
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
@@ -663,9 +619,7 @@
           "            └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
           "              └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4, t5, t6) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       }
     ]
   },
@@ -851,9 +805,7 @@
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
@@ -874,9 +826,7 @@
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
@@ -897,9 +847,7 @@
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
@@ -920,9 +868,7 @@
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t2) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
@@ -943,9 +889,7 @@
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t1) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -976,9 +920,7 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t1, t2) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -1009,9 +951,7 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t4, t3, t2, t, t1) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -1042,9 +982,7 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t4, t3, t2, t, t1) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t4, t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -1075,9 +1013,7 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t4, t3, t2, t) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;",
@@ -1108,9 +1044,7 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t2, t) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -1131,9 +1065,7 @@
           "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.b))",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -1154,9 +1086,7 @@
           "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.b))",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t1, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
@@ -1182,9 +1112,7 @@
           "            └─Selection(Probe) 9980.01 mpp[tiflash]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
@@ -1210,9 +1138,7 @@
           "            └─Selection(Probe) 9980.01 mpp[tiflash]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
@@ -1250,9 +1176,7 @@
           "              └─Selection(Probe) 9980.01 mpp[tiflash]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
@@ -1291,8 +1215,7 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments.",
-          "Warning 1815 Hint leading(t5, t6) is inapplicable. Please specify the table names in the arguments."
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
@@ -1331,9 +1254,7 @@
           "              └─Selection(Probe) 9980.01 mpp[tiflash]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t5, t6, t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
@@ -1365,9 +1286,7 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t1, t2) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
@@ -1399,9 +1318,7 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
@@ -1433,9 +1350,7 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.b))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t1, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -1454,9 +1369,7 @@
           "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
@@ -1475,9 +1388,7 @@
           "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t1, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
@@ -1503,9 +1414,7 @@
           "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t2, t3) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;",
@@ -1531,9 +1440,7 @@
           "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
@@ -1569,9 +1476,7 @@
           "              └─Selection(Probe) 9980.01 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;",
@@ -1608,8 +1513,7 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 Hint leading(t3, t4) is inapplicable. Please specify the table names in the arguments.",
-          "Warning 1815 Hint leading(t5, t6) is inapplicable. Please specify the table names in the arguments."
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
         ]
       },
       {
@@ -1646,9 +1550,7 @@
           "              └─Selection(Probe) 9980.01 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 Hint leading(t3, t4, t5, t6) is inapplicable. Please specify the table names in the arguments."
-        ]
+        "Warning": null
       }
     ]
   }

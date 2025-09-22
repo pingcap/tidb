@@ -557,7 +557,6 @@ type PlanHints struct {
 	PreferLimitToCop bool // limit_to_cop
 	CTEMerge         bool // merge
 	TimeRangeHint    ast.HintTimeRange
-	LeadingList      *ast.LeadingList
 }
 
 // HintedTable indicates which table this hint should take effect on.
@@ -762,7 +761,19 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge:
+			if len(hint.Tables) == 0 {
+				var sb strings.Builder
+				ctx := format.NewRestoreCtx(0, &sb)
+				if err := hint.Restore(ctx); err != nil {
+					return nil, 0, err
+				}
+				errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
+				warnHandler.SetHintWarning(errMsg)
+				continue
+			}
+		case HintLeading:
+			// Leading table information is in HintData, not in hint.Tables.
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
