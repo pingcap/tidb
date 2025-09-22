@@ -4096,7 +4096,7 @@ StreamAgg	root		funcs:min(planner__core__casetest__physicalplantest__physical_pl
   └─TableRowIDScan(Probe)	cop[tikv]	table:tbl_43	keep order:false, stats:pseudo
 select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 min(col_304)
-BCmuENPHzSOIMJLPB                                                                                                                                                                                              
+BCmuENPHzSOIMJLPB
 explain format = 'plan_tree' select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 id	task	access object	operator info
 StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
@@ -4114,4 +4114,4 @@ StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_pl
   └─TableRowIDScan(Probe)	cop[tikv]	table:tbl_43	keep order:false, stats:pseudo
 select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 max(col_304)
-swLIoWa                                                                                                                                                                                                        
+swLIoWa
