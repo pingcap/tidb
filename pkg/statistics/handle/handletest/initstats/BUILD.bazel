@@ -5,7 +5,11 @@ go_test(
     timeout = "short",
     srcs = ["load_stats_test.go"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 4,
+=======
+    shard_count = 7,
+>>>>>>> f1837cc3e45 (statistics: correctly set last table stats status (#63618))
     deps = [
         "//pkg/config",
         "//pkg/parser/model",

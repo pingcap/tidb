@@ -139,3 +139,77 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	is := dom.InfoSchema()
 	require.NoError(t, h.InitStats(context.Background(), is))
 }
+<<<<<<< HEAD:pkg/statistics/handle/handletest/initstats/load_stats_test.go
+=======
+
+func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
+	config.GetGlobalConfig().Performance.SkipInitStats = true
+	defer func() {
+		config.GetGlobalConfig().Performance.SkipInitStats = false
+	}()
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer store.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "create table t( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "analyze table t all columns;")
+	dom.Close()
+
+	vardef.SetStatsLease(3)
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	<-h.InitStatsDone
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	_, ok := h.StatsCache.Get(tbl.Meta().ID)
+	require.False(t, ok)
+	dom.Close()
+}
+
+func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer store.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "create table t1( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table t2( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table t3( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into t3 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "analyze table t1, t2, t3 all columns with 1 topn, 10 buckets;")
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl3, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+	require.NoError(t, err)
+
+	dom.Close()
+
+	vardef.SetStatsLease(-1)
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	is = dom.InfoSchema()
+	h := dom.StatsHandle()
+	_, ok := h.Get(tbl1.Meta().ID)
+	require.False(t, ok)
+	require.NoError(t, h.InitStats(context.Background(), is))
+	stats1, ok := h.Get(tbl1.Meta().ID)
+	require.True(t, ok)
+	require.True(t, stats1.GetIdx(1).IsFullLoad())
+	stats2, ok := h.Get(tbl2.Meta().ID)
+	require.True(t, ok)
+	require.True(t, stats2.GetIdx(1).IsFullLoad())
+	stats3, ok := h.Get(tbl3.Meta().ID)
+	require.True(t, ok)
+	require.True(t, stats3.GetIdx(1).IsFullLoad())
+
+	dom.Close()
+}
+>>>>>>> f1837cc3e45 (statistics: correctly set last table stats status (#63618)):pkg/statistics/handle/handletest/initstats/init_stats_test.go
