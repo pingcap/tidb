@@ -15,7 +15,6 @@
 package physicalop
 
 import (
-	"fmt"
 	"maps"
 	"strconv"
 	"strings"
@@ -32,9 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
 
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
@@ -236,12 +237,16 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPus
 // tryPushDownLookUp tries to push down the index lookup to TiKV.
 func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
 	intest.Assert(!p.IndexLookUpPushDown)
-	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.IndexPlan, p.TablePlan, p.KeepOrder)
+	if p.KeepOrder {
+		// If keep order is required, we cannot push down the index lookup.
+		ctx.GetSessionVars().StmtCtx.SetHintWarning("The hint INDEX_LOOKUP_PUSHDOWN cannot be applied: keep order is not supported.")
+		return
+	}
+
+	indexLookUpPlan, err := buildPushDownIndexLookUpPlan(ctx, p.IndexPlan, p.TablePlan)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
-			"hint INDEX_LOOKUP_PUSHDOWN is not supported, reason: %s",
-			err.Error(),
-		))
+		// This should not happen, but if it happens, we just log a warning and continue to use the original plan.
+		logutil.BgLogger().Warn("try to push down index lookup failed", zap.Error(err))
 		return
 	}
 	p.IndexPlan = indexLookUpPlan

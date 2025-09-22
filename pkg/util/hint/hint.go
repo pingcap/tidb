@@ -597,8 +597,8 @@ func (hint *HintedIndex) Match(dbName, tblName ast.CIStr) bool {
 			hint.DBName.L == "*") // for universal bindings, e.g. *.t
 }
 
-// SupportIndexLookUpPushDown returns whether the index lookup push down is supported.
-func (hint *HintedIndex) SupportIndexLookUpPushDown() bool {
+// ShouldPushDownIndexLookUp returns whether the hint indicates to push down index lookup.
+func (hint *HintedIndex) ShouldPushDownIndexLookUp() bool {
 	return hint.IndexHint.HintType == ast.HintUse && hint.PushDownLookUp
 }
 

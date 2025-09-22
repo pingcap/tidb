@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -45,12 +44,8 @@ func resetPlanIDRecursively(ctx base.PlanContext, p base.PhysicalPlan) {
 }
 
 func buildPushDownIndexLookUpPlan(
-	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan, keepOrder bool,
+	ctx base.PlanContext, indexPlan base.PhysicalPlan, tablePlan base.PhysicalPlan,
 ) (indexLookUpPlan base.PhysicalPlan, err error) {
-	if keepOrder {
-		return nil, errors.NewNoStackError("keep order is not supported")
-	}
-
 	tablePlan, err = tablePlan.Clone(ctx)
 	if err != nil {
 		return nil, err
@@ -72,22 +67,6 @@ func buildPushDownIndexLookUpPlan(
 	// UsedColumnarIndexes has tag `plan-cache-clone:"must-nil"`
 	if len(tableScanPlan.UsedColumnarIndexes) == 0 {
 		tableScanPlan.UsedColumnarIndexes = nil
-	}
-
-	if tableScanPlan.Table.IsCommonHandle {
-		return nil, errors.NewNoStackError("common handle table is not supported")
-	}
-
-	if tableScanPlan.Table.Partition != nil {
-		return nil, errors.NewNoStackError("partition table is not supported")
-	}
-
-	if tableScanPlan.Table.TempTableType != model.TempTableNone {
-		return nil, errors.NewNoStackError("temporary table is not supported")
-	}
-
-	if tableScanPlan.Table.TableCacheStatusType != model.TableCacheStatusDisable {
-		return nil, errors.NewNoStackError("cached table is not supported")
 	}
 
 	indexLookUpPlan = PhysicalIndexLookUp{

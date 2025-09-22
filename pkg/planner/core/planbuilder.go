@@ -1173,6 +1173,31 @@ func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *m
 	return indexInfo != nil && !indexInfo.IsColumnarIndex()
 }
 
+func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo) bool {
+	unSupportedReason := ""
+	if tblInfo.IsCommonHandle {
+		unSupportedReason = "common handle table is not supported"
+	}
+
+	if tblInfo.Partition != nil {
+		unSupportedReason = "partition table is not supported"
+	}
+
+	if tblInfo.TempTableType != model.TempTableNone {
+		unSupportedReason = "temporary table is not supported"
+	}
+
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		unSupportedReason = "cached table is not supported"
+	}
+
+	if unSupportedReason != "" {
+		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("The hint INDEX_LOOKUP_PUSHDOWN cannot be applied: %s", unSupportedReason))
+		return false
+	}
+	return true
+}
+
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -1282,14 +1307,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
-	indexLookUpPushDown := make(map[int]struct{})
+	var indexLookUpPushDownHints map[int]struct{}
 	if tableHints != nil {
 		for i, hint := range tableHints.IndexHintList {
 			if hint.Match(dbName, tblName) {
 				indexHints = append(indexHints, hint.IndexHint)
 				tableHints.IndexHintList[i].Matched = true
-				if hint.SupportIndexLookUpPushDown() {
-					indexLookUpPushDown[len(indexHints)-1] = struct{}{}
+				if hint.ShouldPushDownIndexLookUp() {
+					if indexLookUpPushDownHints == nil {
+						indexLookUpPushDownHints = make(map[int]struct{}, 1)
+					}
+					indexLookUpPushDownHints[len(indexHints)-1] = struct{}{}
 				}
 			}
 		}
@@ -1314,7 +1342,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				hasUseOrForce = true
 				path.Forced = true
 				if i >= indexHintsLen {
-					_, path.IsIndexLookUpPushDown = indexLookUpPushDown[i]
+					_, path.IsIndexLookUpPushDown = indexLookUpPushDownHints[i]
+				}
+				if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo) {
+					continue
 				}
 				available = append(available, path)
 			}
@@ -1359,7 +1390,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				path.ForceNoKeepOrder = true
 			}
 			if i >= indexHintsLen {
-				_, path.IsIndexLookUpPushDown = indexLookUpPushDown[i]
+				_, path.IsIndexLookUpPushDown = indexLookUpPushDownHints[i]
+			}
+			if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo) {
+				continue
 			}
 			available = append(available, path)
 		}
