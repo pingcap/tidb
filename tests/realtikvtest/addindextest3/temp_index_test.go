@@ -95,13 +95,13 @@ func TestMergeTempIndexBasic(t *testing.T) {
 		},
 	}
 
-	tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
-	tk.MustExec("create view all_subtasks as select * from mysql.tidb_background_subtask union all select * from mysql.tidb_background_subtask_history;")
 	for _, tc := range testCases {
 		tk.WithComments(tc.name)
 		tk.MustExec("drop database if exists test;")
 		tk.MustExec("create database test;")
 		tk.MustExec("use test;")
+		tk.MustExec("create view all_global_tasks as select * from mysql.tidb_global_task union all select * from mysql.tidb_global_task_history;")
+		tk.MustExec("create view all_subtasks as select * from mysql.tidb_background_subtask union all select * from mysql.tidb_background_subtask_history;")
 
 		tk.MustExec(tc.createTable)
 		for _, data := range tc.initOp {
@@ -110,7 +110,7 @@ func TestMergeTempIndexBasic(t *testing.T) {
 
 		var jobID int64
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
-			if job.Type == model.ActionAddIndex {
+			if jobID == 0 || job.Type == model.ActionAddIndex || job.Type == model.ActionMultiSchemaChange {
 				jobID = job.ID
 			}
 		})
