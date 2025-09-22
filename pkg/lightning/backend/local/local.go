@@ -919,19 +919,18 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
-// GetTableSplitRangeFuncs gets two functions to turn on/off force_partition_range.
-// See https://github.com/tikv/tikv/pull/18866 for detail
+// ForceTableSplitRange turns on force_partition_range for importing.
+// See https://github.com/tikv/tikv/pull/18866 for detail.
+// It returns a resetter to turn off.
 // NOTE: importClientFactory should not be closed earlier than calling removeTableSplitRange
-func GetTableSplitRangeFuncs(ctx context.Context,
-	keyRanges []kv.KeyRange, stores []*metapb.Store,
-	importClientFactory importClientFactory) (
-	addTableSplitRange func(),
-	removeTableSplitRange func()) {
+func ForceTableSplitRange(ctx context.Context, keyRanges []kv.KeyRange,
+	stores []*metapb.Store, importClientFactory importClientFactory) (resetter func()) {
+	intest.Assert(len(keyRanges) > 0)
 	clients := make([]sst.ImportSSTClient, 0, len(stores))
 	storeAddrs := make([]string, 0, len(stores))
-	intest.Assert(len(keyRanges) > 0)
+	ctx, cancel := context.WithCancel(ctx)
 
-	addTableSplitRange = func() {
+	addTableSplitRange := func() {
 		reqs := make([]*sst.AddPartitionRangeRequest, 0, len(keyRanges))
 		for i := range len(keyRanges) {
 			reqs = append(reqs, &sst.AddPartitionRangeRequest{
@@ -965,7 +964,21 @@ func GetTableSplitRangeFuncs(ctx context.Context,
 		}
 	}
 
-	removeTableSplitRange = func() {
+	go func() {
+		tick := time.Tick(time.Hour) // the same as ttl
+		addTableSplitRange()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick:
+				addTableSplitRange()
+			}
+		}
+	}()
+
+	resetter = func() {
+		cancel()
 		reqs := make([]*sst.RemovePartitionRangeRequest, 0, len(keyRanges))
 		for i := range len(keyRanges) {
 			reqs = append(reqs, &sst.RemovePartitionRangeRequest{
@@ -987,8 +1000,7 @@ func GetTableSplitRangeFuncs(ctx context.Context,
 			}
 		}
 	}
-
-	return
+	return resetter
 }
 
 func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {

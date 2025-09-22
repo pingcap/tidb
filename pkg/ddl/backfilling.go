@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -843,11 +842,9 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 			logutil.DDLIngestLogger().Warn("GetAllStores failed",
 				zap.String("table", t.Meta().Name.L), zap.Error(err))
 		} else {
-			addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
+			removeTableSplitRange := local.ForceTableSplitRange(ctx,
 				[]kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, stores, bd.BackendClients.GetImportClientFactory(),
 			)
-			intest.Assert(addTableSplitRange != nil && removeTableSplitRange != nil)
-			addTableSplitRange()
 			defer removeTableSplitRange()
 		}
 	}

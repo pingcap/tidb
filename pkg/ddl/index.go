@@ -2650,8 +2650,8 @@ func TaskKey(jobID int64) string {
 	return fmt.Sprintf("ddl/%s/%d", proto.Backfill, jobID)
 }
 
-func (w *worker) getSplitRangeFuncs(reorgInfo *reorgInfo, t table.Table) (
-	addTableSplitRange func(), removeTableSplitRangeAndCloseClients func(), err error) {
+func (w *worker) forceTableSplitRange(reorgInfo *reorgInfo, t table.Table) (
+	removeTableSplitRangeAndCloseClients func(), err error) {
 	job := reorgInfo.Job
 	cfg := ingest.GenConfig(w.workCtx, "", ingest.LitMemRoot, false,
 		job.ReorgMeta.ResourceGroupName, w.store.GetKeyspace(), job.ReorgMeta.GetConcurrency(),
@@ -2667,7 +2667,7 @@ func (w *worker) getSplitRangeFuncs(reorgInfo *reorgInfo, t table.Table) (
 	)
 	if err != nil {
 		logutil.DDLLogger().Warn("fail to NewTLS", zap.Error(err))
-		return nil, nil, err
+		return nil, err
 	}
 
 	//nolint:forcetypeassert
@@ -2676,7 +2676,7 @@ func (w *worker) getSplitRangeFuncs(reorgInfo *reorgInfo, t table.Table) (
 	clients, pdCliForTiKV, err := local.CreateClientsForNewBackend(w.workCtx, tls, *cfg, pdCli.GetServiceDiscovery())
 	if err != nil {
 		logutil.DDLLogger().Warn("fail to PrepareClientsForNewBackend", zap.Error(err))
-		return nil, nil, err
+		return nil, err
 	}
 	intest.Assert(pdCliForTiKV != nil)
 	closeClients := func() {
@@ -2703,12 +2703,12 @@ func (w *worker) getSplitRangeFuncs(reorgInfo *reorgInfo, t table.Table) (
 		logutil.DDLIngestLogger().Warn("GetAllStores failed",
 			zap.Int64("table id", t.Meta().ID), zap.Int64s("physical ids", pids), zap.Error(err))
 		closeClients()
-		return nil, nil, err
+		return nil, err
 	}
-	addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(w.workCtx,
+	removeTableSplitRange := local.ForceTableSplitRange(w.workCtx,
 		keyRanges, stores, clients.GetImportClientFactory(),
 	)
-	return addTableSplitRange, func() {
+	return func() {
 		removeTableSplitRange()
 		closeClients()
 	}, nil
@@ -2746,12 +2746,11 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		return err
 	}
 
-	addTableSplitRange, removeTableSplitRange, err := w.getSplitRangeFuncs(reorgInfo, t)
+	removeTableSplitRange, err := w.forceTableSplitRange(reorgInfo, t)
 	if err != nil {
 		logutil.DDLLogger().Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
 	} else {
-		intest.Assert(addTableSplitRange != nil && removeTableSplitRange != nil)
-		addTableSplitRange()
+		intest.Assert(removeTableSplitRange != nil)
 		defer removeTableSplitRange()
 	}
 

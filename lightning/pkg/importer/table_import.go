@@ -287,10 +287,9 @@ func (tr *TableImporter) importTable(
 			tr.logger.Warn("GetAllStores failed",
 				zap.String("table", tr.tableInfo.Name), zap.Error(err))
 		} else {
-			addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
+			removeTableSplitRange := local.ForceTableSplitRange(ctx,
 				keyRanges, stores, localbackend.BackendClients.GetImportClientFactory(),
 			)
-			addTableSplitRange()
 			defer removeTableSplitRange()
 		}
 	}

@@ -707,7 +707,7 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.Equal(t, bytes, 0)     // 0
 }
 
-func TestSplitnRangeForTable(t *testing.T) {
+func TestSplitRangeForTable(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
 	}

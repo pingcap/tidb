@@ -140,12 +140,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	failpoint.InjectCall("cancellableCtx", &ctx)
 
-	addTableSplitRange, removeTableSplitRange, err := e.getSplitRangeFuncs(ctx)
+	removeTableSplitRange, err := e.forceTableSplitRange(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
-	}
-	if addTableSplitRange != nil {
-		addTableSplitRange()
 	}
 
 	jobID, task, err := e.submitTask(ctx)
@@ -270,8 +267,8 @@ func waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
 	return err
 }
 
-func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
-	addTableSplitRange func(), removeTableSplitRangeAndCloseClients func(), err error) {
+func (e *ImportIntoExec) forceTableSplitRange(ctx context.Context) (
+	removeTableSplitRangeAndCloseClients func(), err error) {
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
@@ -282,7 +279,7 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 	)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to NewTLS", zap.Error(err))
-		return nil, nil, err
+		return nil, err
 	}
 
 	cfg := e.controller.GetLocalBackendCfg(e.Ctx().GetStore().GetKeyspace(), tidbCfg.Path, "")
@@ -293,7 +290,7 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 	clients, pdCliForTiKV, err := local.CreateClientsForNewBackend(ctx, tls, cfg, pdCli.GetServiceDiscovery())
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to PrepareClientsForNewBackend", zap.Error(err))
-		return nil, nil, err
+		return nil, err
 	}
 	intest.Assert(pdCliForTiKV != nil)
 	closeClients := func() {
@@ -318,12 +315,12 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 		logutil.Logger(ctx).Warn("GetAllStores failed",
 			zap.Int64("table id", e.controller.TableInfo.ID), zap.Error(err))
 		closeClients()
-		return nil, nil, err
+		return nil, err
 	}
-	addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
+	removeTableSplitRange := local.ForceTableSplitRange(ctx,
 		keyRanges, stores, clients.GetImportClientFactory(),
 	)
-	return addTableSplitRange, func() {
+	return func() {
 		removeTableSplitRange()
 		closeClients()
 	}, nil
@@ -364,12 +361,11 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	selectedChunkCh := make(chan importer.QueryChunk, 1)
 	ti.SetSelectedChunkCh(selectedChunkCh)
 
-	addTableSplitRange, removeTableSplitRange, err := e.getSplitRangeFuncs(ctx)
+	removeTableSplitRange, err := e.forceTableSplitRange(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to getPartitionRangeForTableFuncs", zap.Error(err))
 	} else {
-		intest.Assert(addTableSplitRange != nil && removeTableSplitRange != nil)
-		addTableSplitRange()
+		intest.Assert(removeTableSplitRange != nil)
 		defer removeTableSplitRange()
 	}
 
