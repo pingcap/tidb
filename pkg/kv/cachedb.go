@@ -18,8 +18,27 @@ import (
 	"context"
 	"sync"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/coocood/freecache"
 )
+
+var KVCacheCounter = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "tidb",
+		Subsystem: "server",
+		Name:      "kv_cache",
+		Help:      "Counter of kv cache hit/miss.",
+	}, []string{"result"})
+
+var (
+	HitCounter  = KVCacheCounter.WithLabelValues("hit")
+	MissCounter = KVCacheCounter.WithLabelValues("miss")
+)
+
+func init() {
+	prometheus.MustRegister(KVCacheCounter)
+}
 
 type (
 	cacheDB struct {
@@ -45,7 +64,7 @@ func (c *cacheDB) set(tableID int64, key Key, value []byte) error {
 	defer c.mu.Unlock()
 	table, ok := c.memTables[tableID]
 	if !ok {
-		table = freecache.NewCache(100 * 1024 * 1024)
+		table = freecache.NewCache(32 * 1024 * 1024 * 1024)
 		c.memTables[tableID] = table
 	}
 	return table.Set(key, value, 0)
@@ -67,7 +86,10 @@ func (c *cacheDB) get(tableID int64, key Key) []byte {
 func (c *cacheDB) UnionGet(ctx context.Context, tid int64, snapshot Snapshot, key Key) (val []byte, err error) {
 	val = c.get(tid, key)
 	// key does not exist then get from snapshot and set to cache
-	if val == nil {
+	if val != nil {
+		HitCounter.Inc()
+	} else {
+		MissCounter.Inc()
 		val, err = snapshot.Get(ctx, key)
 		if err != nil {
 			return nil, err
