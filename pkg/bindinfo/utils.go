@@ -226,7 +226,7 @@ func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, 
 		}
 		// lockBindInfoTable is to prefetch the rows and lock them, it is good for performance when
 		// there are many bindings to update with multi tidb nodes.
-		if err = lockBindInfoTable(sctx); err != nil {
+		if err = addLockForBinds(sctx, bindings); err != nil {
 			return errors.Trace(err)
 		}
 		for _, binding := range bindings {
