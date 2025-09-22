@@ -343,7 +343,7 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*Tabl
 		Table:  ti.encTable,
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
-	return NewTableKVEncoder(cfg, ti)
+	return NewTableKVEncoder(cfg, ti.LoadDataController)
 }
 
 // GetKVEncoderForDupResolve get the KV encoder for duplicate resolution.
@@ -357,7 +357,7 @@ func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
 		Logger:               log.Logger{Logger: ti.logger},
 		UseIdentityAutoRowID: true,
 	}
-	return NewTableKVEncoderForDupResolve(cfg, ti)
+	return NewTableKVEncoderForDupResolve(cfg, ti.LoadDataController)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {

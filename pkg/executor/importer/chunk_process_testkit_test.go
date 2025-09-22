@@ -91,12 +91,10 @@ func TestFileChunkProcess(t *testing.T) {
 			Table:  table,
 			Logger: logger,
 		},
-		&importer.TableImporter{
-			LoadDataController: &importer.LoadDataController{
-				ASTArgs:       &importer.ASTArgs{},
-				InsertColumns: table.VisibleCols(),
-				FieldMappings: fieldMappings,
-			},
+		&importer.LoadDataController{
+			ASTArgs:       &importer.ASTArgs{},
+			InsertColumns: table.VisibleCols(),
+			FieldMappings: fieldMappings,
 		},
 	)
 	require.NoError(t, err)

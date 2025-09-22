@@ -204,15 +204,19 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) (kvBytes int64, err error) {
 
 // chunkEncoder encodes data from readFn and sends encoded data to sendFn.
 type chunkEncoder struct {
-	readFn    encodeReaderFn
+	readFn encodeReaderFn
+	// on init, it's set to the start offset of this chunk, but it will be updated
+	// during encoding.
+	// only used for file source.
 	offset    int64
 	sendFn    func(ctx context.Context, batch *encodedKVGroupBatch) error
 	collector execute.Collector
 
-	chunkName string
-	logger    *zap.Logger
-	encoder   *TableKVEncoder
-	keyspace  []byte
+	chunkName        string
+	encoder          *TableKVEncoder
+	keyspace         []byte
+	minDeliverBytes  uint64
+	minDeliverRowCnt int
 
 	// total duration takes by read/encode.
 	readTotalDur   time.Duration
@@ -227,20 +231,20 @@ func newChunkEncoder(
 	offset int64,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
 	collector execute.Collector,
-	logger *zap.Logger,
 	encoder *TableKVEncoder,
 	keyspace []byte,
 ) *chunkEncoder {
 	return &chunkEncoder{
-		chunkName:     chunkName,
-		readFn:        readFn,
-		offset:        offset,
-		sendFn:        sendFn,
-		collector:     collector,
-		logger:        logger,
-		encoder:       encoder,
-		keyspace:      keyspace,
-		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
+		chunkName:        chunkName,
+		readFn:           readFn,
+		offset:           offset,
+		sendFn:           sendFn,
+		collector:        collector,
+		encoder:          encoder,
+		keyspace:         keyspace,
+		minDeliverBytes:  MinDeliverBytes,
+		minDeliverRowCnt: MinDeliverRowCnt,
+		groupChecksum:    verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
 }
 
@@ -347,7 +351,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		// pebble cannot allow > 4.0G kv in one batch.
 		// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 		// so add this check.
-		if rowBatchByteSize >= MinDeliverBytes || len(rowBatch) >= MinDeliverRowCnt {
+		if rowBatchByteSize >= p.minDeliverBytes || len(rowBatch) >= p.minDeliverRowCnt {
 			if err := recordSendReset(); err != nil {
 				return err
 			}
@@ -439,7 +443,6 @@ func NewFileChunkProcessor(
 			chunk.Chunk.Offset,
 			deliver.sendEncodedData,
 			collector,
-			chunkLogger,
 			encoder,
 			keyspace,
 		),
@@ -585,7 +588,6 @@ func newQueryChunkProcessor(
 			-1,
 			deliver.sendEncodedData,
 			collector,
-			chunkLogger,
 			encoder,
 			keyspace,
 		),
