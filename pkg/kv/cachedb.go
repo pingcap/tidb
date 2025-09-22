@@ -54,6 +54,7 @@ type (
 		// UnionGet gets the value from cacheDB first, if it not exists,
 		// it gets the value from the snapshot, then caches the value in cacheDB.
 		UnionGet(ctx context.Context, tid int64, snapshot Snapshot, key Key) ([]byte, error)
+		BatchUnionGet(ctx context.Context, tid int64, snapshot Snapshot, keys []Key) (map[string][]byte, error)
 		// Delete releases the cache by tableID.
 		Delete(tableID int64)
 	}
@@ -108,6 +109,33 @@ func (c *cacheDB) UnionGet(ctx context.Context, tid int64, snapshot Snapshot, ke
 		}
 	}
 	return val, nil
+}
+
+func (c *cacheDB) BatchUnionGet(ctx context.Context, tid int64, snapshot Snapshot, keys []Key) (map[string][]byte, error) {
+	result := make(map[string][]byte, len(keys))
+	misses := make([]Key, 0, len(keys))
+	for _, key := range keys {
+		val := c.get(tid, key)
+		if val != nil {
+			HitCounter.Inc()
+			result[string(key)] = val
+		} else {
+			MissCounter.Inc()
+			misses = append(misses, key)
+		}
+	}
+	missesValues, err := snapshot.BatchGet(ctx, misses)
+	if err != nil {
+		return nil, err
+	}
+	for key, val := range missesValues {
+		err = c.set(tid, Key(key), val)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = val
+	}
+	return result, err
 }
 
 // Delete delete and reset table from tables in cacheDB by tableID

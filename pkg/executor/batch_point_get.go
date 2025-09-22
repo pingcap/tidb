@@ -522,18 +522,7 @@ type cacheBatchGetter struct {
 
 func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	cacheDB := b.ctx.GetStore().GetMemCache()
-	vals := make(map[string][]byte)
-	for _, key := range keys {
-		val, err := cacheDB.UnionGet(ctx, b.tid, b.snapshot, key)
-		if err != nil {
-			if !kv.ErrNotExist.Equal(err) {
-				return nil, err
-			}
-			continue
-		}
-		vals[string(key)] = val
-	}
-	return vals, nil
+	return cacheDB.BatchUnionGet(ctx, b.tid, b.snapshot, keys)
 }
 
 func newCacheBatchGetter(ctx sessionctx.Context, tid int64, snapshot kv.Snapshot) *cacheBatchGetter {
