@@ -15,8 +15,6 @@
 package cardinality
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -176,35 +174,10 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt, nil
 	}
-	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
-	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
-	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
-	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	if histNDV <= 0 || (c.IsFullLoad() && c.Histogram.NotNullCount() == 0) {
-		// branch 1: all NDV's are in TopN, and no histograms
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
-		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
-		//
-		// If the table hasn't been modified, it's safe to return 0.
-		if modifyCount == 0 {
-			return 0, nil
-		}
-		// ELSE calculate an approximate estimate based upon newly inserted rows.
-		//
-		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
-		if c.Histogram.NDV > 0 {
-			histNDV = float64(c.Histogram.NDV)
-		} else {
-			histNDV = math.Sqrt(max(c.NotNullCount(), float64(realtimeRowCount)))
-		}
-		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
-		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
-		totalRowCount := min(c.NotNullCount(), float64(realtimeRowCount)-c.NotNullCount())
-		return max(1, totalRowCount/histNDV), nil
-	}
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return c.Histogram.NotNullCount() / histNDV, nil
+	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
+	// or all values assumed to be contained within TopN.
+	rowEstimate := estimateRowCountWithUniformDistribution(sctx, c, realtimeRowCount, modifyCount)
+	return rowEstimate, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
