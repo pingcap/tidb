@@ -42,7 +42,7 @@ func init() {
 
 type (
 	cacheDB struct {
-		mu        sync.RWMutex
+		mu        [64]sync.RWMutex
 		memTables map[int64]*freecache.Cache
 	}
 
@@ -60,8 +60,9 @@ type (
 
 // Set set the key/value in cacheDB.
 func (c *cacheDB) set(tableID int64, key Key, value []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	shardID := key[len(key)-1] % 64
+	c.mu[shardID].Lock()
+	defer c.mu[shardID].Unlock()
 	table, ok := c.memTables[tableID]
 	if !ok {
 		table = freecache.NewCache(32 * 1024 * 1024 * 1024)
@@ -72,8 +73,9 @@ func (c *cacheDB) set(tableID int64, key Key, value []byte) error {
 
 // Get gets the value from cacheDB.
 func (c *cacheDB) get(tableID int64, key Key) []byte {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	shardID := key[len(key)-1] % 64
+	c.mu[shardID].RLock()
+	defer c.mu[shardID].RUnlock()
 	if table, ok := c.memTables[tableID]; ok {
 		if val, err := table.Get(key); err == nil {
 			return val
