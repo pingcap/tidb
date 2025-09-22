@@ -224,6 +224,11 @@ func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, 
 		if err = lockBindInfoTable(sctx); err != nil {
 			return errors.Trace(err)
 		}
+		// lockBindInfoTable is to prefetch the rows and lock them, it is good for performance when
+		// there are many bindings to update with multi tidb nodes.
+		if err = lockBindInfoTable(sctx); err != nil {
+			return errors.Trace(err)
+		}
 		for _, binding := range bindings {
 			lastUsed := binding.UsageInfo.LastUsedAt.Load()
 			intest.Assert(lastUsed != nil)
@@ -241,6 +246,28 @@ func updateBindingUsageInfoToStorageInternal(sPool util.DestroyableSessionPool, 
 		}
 	}
 	return err
+}
+
+func addLockForBinds(sctx sessionctx.Context, bindings []*Binding) error {
+	condition := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		sqlDigest := binding.SQLDigest
+		planDigest := binding.PlanDigest
+		sql := fmt.Sprintf("('%s'", sqlDigest)
+		if planDigest == "" {
+			sql += ",NULL)"
+		} else {
+			sql += fmt.Sprintf(",'%s')", planDigest)
+		}
+		condition = append(condition, sql)
+	}
+	locksql := "select 1 from mysql.bind_info use index(digest_index) where (plan_digest, sql_digest) in (" +
+		strings.Join(condition, " , ") + ") for update"
+	_, err := exec(sctx, locksql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func saveBindUsage(sctx sessionctx.Context, sqldigest, planDigest string, ts time.Time) error {
