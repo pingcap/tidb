@@ -271,13 +271,13 @@ func (tr *TableImporter) importTable(
 			tablecodec.EncodeTablePrefix(tr.tableInfo.ID),
 			tablecodec.EncodeTablePrefix(tr.tableInfo.ID+1),
 		)
-		stores, err := localbackend.Clients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
+		stores, err := localbackend.BackendClients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 		if err != nil {
 			tr.logger.Warn("GetAllStores failed",
 				zap.String("table", tr.tableInfo.Name), zap.Error(err))
 		} else {
-			addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(ctx,
-				startKey, endKey, stores, localbackend.Clients.GetImportClientFactory(),
+			addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
+				startKey, endKey, stores, localbackend.BackendClients.GetImportClientFactory(),
 			)
 			addTableSplitRange()
 			defer removeTableSplitRange()

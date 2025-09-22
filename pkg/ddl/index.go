@@ -2694,7 +2694,7 @@ func (w *worker) getSplitRangeFuncs(job *model.Job, tableID int64) (
 		closeClients()
 		return nil, nil, err
 	}
-	addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(w.workCtx,
+	addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(w.workCtx,
 		startKey, endKey, stores, clients.GetImportClientFactory(),
 	)
 	return addTableSplitRange, func() {

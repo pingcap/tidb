@@ -1065,7 +1065,7 @@ func TestMultiIngest(t *testing.T) {
 		}
 
 		local := &Backend{
-			Clients: Clients{
+			BackendClients: BackendClients{
 				pdCli: &mockPdClient{stores: stores},
 				importClientFactory: &mockImportClientFactory{
 					stores: allStores,
@@ -1208,7 +1208,7 @@ func TestCheckPeersBusy(t *testing.T) {
 
 	createTimeStore12 := 0
 	local := &Backend{
-		Clients: Clients{
+		BackendClients: BackendClients{
 			importClientFactory: &mockImportClientFactory{
 				stores: []*metapb.Store{
 					{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
@@ -1342,7 +1342,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		}}
 
 	local := &Backend{
-		Clients: Clients{
+		BackendClients: BackendClients{
 			splitCli: initTestSplitClient3Replica([][]byte{{}, {'a'}, {}}, nil),
 			importClientFactory: &mockImportClientFactory{
 				stores: []*metapb.Store{
@@ -1449,7 +1449,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 		}}
 
 	local := &Backend{
-		Clients: Clients{
+		BackendClients: BackendClients{
 			splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
 			importClientFactory: &mockImportClientFactory{
 				stores: []*metapb.Store{
@@ -1552,7 +1552,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	onceResp.Store(notLeaderResp)
 
 	local := &Backend{
-		Clients: Clients{
+		BackendClients: BackendClients{
 			splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
 			importClientFactory: &mockImportClientFactory{
 				stores: []*metapb.Store{
@@ -1719,7 +1719,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	})
 
 	local := &Backend{
-		Clients: Clients{
+		BackendClients: BackendClients{
 			splitCli: initTestSplitClient(
 				[][]byte{{1}, {11}},      // we have one big region
 				panicSplitRegionClient{}, // make sure no further split region
@@ -1786,7 +1786,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	}
 	ctx := context.Background()
 	local := &Backend{
-		Clients: Clients{
+		BackendClients: BackendClients{
 			splitCli: initTestSplitClient(
 				[][]byte{{1}, {11}},      // we have one big region
 				panicSplitRegionClient{}, // make sure no further split region
@@ -2285,7 +2285,7 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 1,
 		},
-		Clients: Clients{
+		BackendClients: BackendClients{
 			splitCli: initTestSplitClient(
 				[][]byte{{1}, {11}},
 				panicSplitRegionClient{},
@@ -2362,7 +2362,7 @@ func TestExternalEngine(t *testing.T) {
 			WorkerConcurrency: 2,
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
-		Clients: Clients{
+		BackendClients: BackendClients{
 			splitCli: initTestSplitClient([][]byte{
 				keys[0], keys[50], endKey,
 			}, hook),

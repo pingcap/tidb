@@ -509,8 +509,8 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
-// Clients is the set of clients for creating a local backend
-type Clients struct {
+// BackendClients is the set of clients needed for a local backend
+type BackendClients struct {
 	pdCli     pd.Client
 	pdHTTPCli pdhttp.Client
 	tikvCli   *tikvclient.KVStore
@@ -524,17 +524,17 @@ type Clients struct {
 }
 
 // GetImportClientFactory returns the importClientFactory
-func (c *Clients) GetImportClientFactory() importClientFactory {
+func (c *BackendClients) GetImportClientFactory() importClientFactory {
 	return c.importClientFactory
 }
 
 // GetPDClient returns the pdClient
-func (c *Clients) GetPDClient() pd.Client {
+func (c *BackendClients) GetPDClient() pd.Client {
 	return c.pdCli
 }
 
 // Close closes all inner clients
-func (c *Clients) Close() {
+func (c *BackendClients) Close() {
 	if c.importClientFactory != nil {
 		c.importClientFactory.close()
 	}
@@ -551,7 +551,7 @@ func (c *Clients) Close() {
 
 // Backend is a local backend.
 type Backend struct {
-	Clients
+	BackendClients
 
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
@@ -637,12 +637,12 @@ func NewBackend(
 	clients.supportMultiIngest = multiIngestSupported
 	clients.tikvCli = tikvCli
 	local := &Backend{
-		Clients:       clients,
-		tls:           tls,
-		tikvCodec:     pdCliForTiKV.GetCodec(),
-		BackendConfig: config,
-		writeLimiter:  writeLimiter,
-		logger:        log.Wrap(tidblogutil.Logger(ctx)),
+		BackendClients: clients,
+		tls:            tls,
+		tikvCodec:      pdCliForTiKV.GetCodec(),
+		BackendConfig:  config,
+		writeLimiter:   writeLimiter,
+		logger:         log.Wrap(tidblogutil.Logger(ctx)),
 	}
 	local.engineMgr, err = newEngineManager(config, local, local.logger)
 	if err != nil {
@@ -663,7 +663,7 @@ func CreateClientsForNewBackend(
 	config BackendConfig,
 	pdSvcDiscovery sd.ServiceDiscovery,
 ) (
-	clients Clients,
+	clients BackendClients,
 	pdCliForTiKV *tikvclient.CodecPDClient,
 	err error,
 ) {
@@ -744,7 +744,7 @@ func CreateClientsForNewBackend(
 	splitCli = split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
-	clients = Clients{
+	clients = BackendClients{
 		pdCli:     pdCli,
 		pdHTTPCli: pdHTTPCli,
 		splitCli:  splitCli,
@@ -918,10 +918,10 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
-// GetPartitionRangeForTableFuncs gets two functions to turn on/off force_partition_range.
+// GetTableSplitRangeFuncs gets two functions to turn on/off force_partition_range.
 // See https://github.com/tikv/tikv/pull/18866 for detail
 // NOTE: importClientFactory should not be closed earlier than calling removeTableSplitRange
-func GetPartitionRangeForTableFuncs(ctx context.Context,
+func GetTableSplitRangeFuncs(ctx context.Context,
 	startKey, endKey []byte, stores []*metapb.Store,
 	importClientFactory importClientFactory) (
 	addTableSplitRange func(),

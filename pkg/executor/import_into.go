@@ -312,7 +312,7 @@ func (e *ImportIntoExec) getSplitRangeFuncs(ctx context.Context) (
 		closeClients()
 		return nil, nil, err
 	}
-	addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(ctx,
+	addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
 		startKey, endKey, stores, clients.GetImportClientFactory(),
 	)
 	return addTableSplitRange, func() {

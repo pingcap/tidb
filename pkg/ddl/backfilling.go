@@ -838,13 +838,13 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 			tablecodec.EncodeTablePrefix(t.GetPhysicalID()),
 			tablecodec.EncodeTablePrefix(t.GetPhysicalID()+1),
 		)
-		stores, err := bd.Clients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
+		stores, err := bd.BackendClients.GetPDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 		if err != nil {
 			logutil.DDLIngestLogger().Warn("GetAllStores failed",
 				zap.String("table", t.Meta().Name.L), zap.Error(err))
 		} else {
-			addTableSplitRange, removeTableSplitRange := local.GetPartitionRangeForTableFuncs(ctx,
-				startKey, endKey, stores, bd.Clients.GetImportClientFactory(),
+			addTableSplitRange, removeTableSplitRange := local.GetTableSplitRangeFuncs(ctx,
+				startKey, endKey, stores, bd.BackendClients.GetImportClientFactory(),
 			)
 			intest.Assert(addTableSplitRange != nil && removeTableSplitRange != nil)
 			addTableSplitRange()
