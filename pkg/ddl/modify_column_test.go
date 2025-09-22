@@ -649,3 +649,13 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	tk.MustExecToErr("alter table t modify column b tinyint not null")
 	tk.MustExec("admin check table t")
 }
+
+func TestXxx(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b char(16) collate utf8mb4_general_ci, index idx_b(b))")
+	tk.MustExec("insert into t values (1, '1'), (2, '2'), (3, '3')")
+	tk.MustExec("alter table t modify column b varchar(16) collate utf8mb4_general_ci")
+}

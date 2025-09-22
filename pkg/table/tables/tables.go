@@ -280,8 +280,9 @@ func initTableIndices(t *TableCommon) error {
 	return nil
 }
 
+// checkDataWithModifyColumn checks if the data can be stored in the column with changingType.
+// It's used to prevent illegal data being inserted if we want to skip reorg.
 func checkDataWithModifyColumn(data types.Datum, changingType *types.FieldType) error {
-	// For meta-only modify column, we should check if the old value can be casted to the new type
 	strictCtx := exprstatic.NewExprContext(
 		exprstatic.WithEvalCtx(
 			exprstatic.NewEvalContext(

@@ -140,31 +140,44 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if !needChangeColumnData(oldCol, args.Column) {
+
+	switch args.ModifyColumnType {
+	case ModifyTypeNone:
+		// The job hasn't been handled and we cancel it directly.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	case ModifyTypeDirect, ModifyTypeNull, ModifyTypeNoReorg:
 		// Normal-type rolling back
-		if job.SchemaState == model.StateNone {
-			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
-			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			if args.ModifyColumnType == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
-				job.State = model.JobStateRollingback
-				return ver, dbterror.ErrCancelledDDLJob
-			}
-			// Normal job with stateNone can be cancelled directly.
-			job.State = model.JobStateCancelled
+		col := tblInfo.Columns[oldCol.Offset]
+		if args.ModifyColumnType == ModifyTypeNull && mysql.HasPreventNullInsertFlag(col.GetFlag()) {
+			job.State = model.JobStateRollingback
+			return ver, dbterror.ErrCancelledDDLJob
+		}
+		if args.ModifyColumnType == ModifyTypeNoReorg && col.ChangingFieldType == nil {
+			job.State = model.JobStateRollingback
 			return ver, dbterror.ErrCancelledDDLJob
 		}
 		// StatePublic couldn't be cancelled.
 		job.State = model.JobStateRunning
 		return ver, nil
-	}
-	// reorg-type rolling back
-	if args.ChangingColumn == nil {
-		// The job hasn't been handled and we cancel it directly.
-		job.State = model.JobStateCancelled
+	case ModifyTypeReorg, ModifyTypeIndexReorg:
+		// To simplify the rollback logic, cannot be canceled after reorg is done.
+		// The only thing we need to do is update table info.
+		if job.SchemaState == model.StatePublic {
+			job.State = model.JobStateRunning
+			return ver, nil
+		}
+
+		if args.ChangingColumn == nil {
+			// The job hasn't been handled and we cancel it directly.
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrCancelledDDLJob
+		}
+		// The job has been in its middle state (but the reorg worker hasn't started) and we roll it back here.
+		job.State = model.JobStateRollingback
 		return ver, dbterror.ErrCancelledDDLJob
 	}
-	// The job has been in its middle state (but the reorg worker hasn't started) and we roll it back here.
-	job.State = model.JobStateRollingback
+
 	return ver, dbterror.ErrCancelledDDLJob
 }
 

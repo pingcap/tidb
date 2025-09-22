@@ -1581,6 +1581,18 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 	return pkColIDs
 }
 
+// getIDForIndexCol gets the column ID for index column.
+func getIDForIndexCol(tblInfo *model.TableInfo, idxCol *model.IndexColumn) int64 {
+	tblCol := tblInfo.Columns[idxCol.Offset]
+	colID := tblCol.ID
+	// If ChangingFieldType of the dependency column is set, it means that we are skiping
+	// row reorg. As we want to reuse the old column, we must use the ID of the old column.
+	if tblCol.ChangeStateInfo != nil && tblInfo.Columns[tblCol.DependencyColumnOffset].ChangingFieldType != nil {
+		colID = tblInfo.Columns[tblCol.DependencyColumnOffset].ID
+	}
+	return colID
+}
+
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
 func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
@@ -1614,7 +1626,7 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 				continue
 			}
 			if types.NeedRestoredData(&col.FieldType) {
-				colIds = append(colIds, col.ID)
+				colIds = append(colIds, getIDForIndexCol(tblInfo, idxCol))
 				if collate.IsBinCollation(col.GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
@@ -1670,7 +1682,7 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 	if idxValNeedRestoredData {
 		colIds := make([]int64, len(idxInfo.Columns))
 		for i, col := range idxInfo.Columns {
-			colIds[i] = tblInfo.Columns[col.Offset].ID
+			colIds[i] = getIDForIndexCol(tblInfo, col)
 		}
 		rd := rowcodec.Encoder{Enable: true}
 		// Encode row restored value.

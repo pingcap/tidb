@@ -1123,6 +1123,7 @@ SwitchIndexState:
 		}
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
+		failpoint.InjectCall("testDeleteOnly")
 		// delete only -> write only
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateWriteOnly
@@ -1138,6 +1139,7 @@ SwitchIndexState:
 		}
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
+		failpoint.InjectCall("testWriteOnly")
 		// write only -> reorganization
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateWriteReorganization

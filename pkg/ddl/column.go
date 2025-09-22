@@ -508,7 +508,9 @@ func LocateOffsetToMove(currentOffset int, pos *ast.ColumnPosition, tblInfo *mod
 // BuildElements is exported for testing.
 func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
-	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	if changingCol != nil {
+		elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	}
 	for _, idx := range changingIdxs {
 		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
 	}
@@ -575,10 +577,21 @@ func (w *worker) updateCurrentElement(
 	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
-		if err != nil {
-			return errors.Trace(err)
+		doRowReorg := true
+		for _, col := range t.WritableCols() {
+			if col.ID == reorgInfo.currElement.ID {
+				if col.IsVirtualGenerated() {
+					doRowReorg = false
+				}
+			}
+		}
+
+		if doRowReorg {
+			//nolint:forcetypeassert
+			err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
@@ -950,12 +963,15 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 	return errors.Trace(err)
 }
 
+// markOldObjectRemoving changes the names of the old and new indexes/columns to mark them as removing and public respectively.
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
-	publicName := newColName
-	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+	if oldCol.ID != changingCol.ID {
+		publicName := newColName
+		removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+		renameColumnTo(oldCol, oldIdxs, removingName)
+		renameColumnTo(changingCol, changingIdxs, publicName)
+	}
 
-	renameColumnTo(oldCol, oldIdxs, removingName)
-	renameColumnTo(changingCol, changingIdxs, publicName)
 	for i := range oldIdxs {
 		oldIdxName := oldIdxs[i].Name.O
 		publicName := ast.NewCIStr(getRemovingObjOriginName(oldIdxName))
@@ -992,7 +1008,9 @@ func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName 
 }
 
 func updateObjectState(col *model.ColumnInfo, idxs []*model.IndexInfo, state model.SchemaState) {
-	col.State = state
+	if col != nil {
+		col.State = state
+	}
 	for _, idx := range idxs {
 		idx.State = state
 	}
