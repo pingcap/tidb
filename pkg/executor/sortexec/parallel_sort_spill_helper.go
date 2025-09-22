@@ -54,6 +54,7 @@ func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldTyp
 		errOutputChan:         errOutputChan,
 		finishCh:              finishCh,
 		fieldTypes:            fieldTypes,
+		tmpSpillChunk:         chunk.NewChunkFromPoolWithCapacity(fieldTypes, spillChunkSize),
 		fileNamePrefixForTest: fileNamePrefixForTest,
 	}
 }
