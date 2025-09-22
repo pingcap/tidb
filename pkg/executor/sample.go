@@ -232,7 +232,7 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 		if kv.Key(start).Cmp(startKey) < 0 {
 			start = startKey
 		}
-		if end == nil || kv.Key(end).Cmp(endKey) > 0 {
+		if len(end) == 0 || kv.Key(end).Cmp(endKey) > 0 {
 			end = endKey
 		}
 		ranges = append(ranges, kv.KeyRange{StartKey: start, EndKey: end})
