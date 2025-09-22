@@ -206,7 +206,8 @@ type IndexReaderExecutor struct {
 	physicalTableID int64
 	ranges          []*ranger.Range
 	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
-	// In brief, it splits ranges into groups. We need to access them respectively and use a merge sort to combine them.
+	// In brief, it splits IndexReaderExecutor.ranges into groups. When it's set, we need to access them respectively
+	// and use a merge sort to combine them.
 	groupedRanges [][]*ranger.Range
 	partitions    []table.PhysicalTable
 	partRangeMap  map[int64][]*ranger.Range // each partition may have different ranges
@@ -462,7 +463,8 @@ type IndexLookUpExecutor struct {
 	index  *model.IndexInfo
 	ranges []*ranger.Range
 	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
-	// In brief, it splits ranges into groups. We need to access them respectively and use a merge sort to combine them.
+	// In brief, it splits IndexLookUpExecutor.ranges into groups. When it's set, we need to access them respectively
+	// and use a merge sort to combine them.
 	groupedRanges [][]*ranger.Range
 	dagPB         *tipb.DAGRequest
 	startTS       uint64

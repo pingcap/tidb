@@ -153,7 +153,8 @@ type TableReaderExecutor struct {
 	ranges []*ranger.Range
 
 	// groupedRanges and groupByColIdxs are from AccessPath.groupedRanges, please see the comment there for more details
-	// In brief, it splits ranges into groups. We need to access them respectively and use a merge sort to combine them.
+	// In brief, it splits TableReaderExecutor.ranges into groups. When it's set, we need to access them respectively
+	// and use a merge sort to combine them.
 
 	groupedRanges  [][]*ranger.Range
 	groupByColIdxs []int
@@ -400,10 +401,10 @@ func (e *TableReaderExecutor) Close() error {
 func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, groupedRanges [][]*ranger.Range) (distsql.SelectResult, error) {
 	// Accessing partitioned table on TiFlash is slightly different right now, we use a different code path for it.
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
+		// Since accessing partitioned table on TiFlash doesn't support keep order, so e.groupedRanges must be empty.
 		intest.Assert(len(groupedRanges) == 1 && len(e.groupedRanges) == 0)
 	}
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil && len(groupedRanges) == 1 && len(e.groupedRanges) == 0 {
-		// This is the case where we converted []Range to [][]Range, use original buildResp logic
 		ranges := groupedRanges[0]
 		if !e.batchCop {
 			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
