@@ -200,7 +200,7 @@ func updateBindingUsageInfoToStorage(sPool util.DestroyableSessionPool, bindings
 		}, " lastUsed should be later than or equal to lastSaved and lastSaved is not nil")
 		if time.Since(*lastSaved) > MaxWriteInterval {
 			toWrite = append(toWrite, binding)
-			cnt += 1
+			cnt++
 		}
 		if len(toWrite) == UpdateBindingUsageInfoBatchSize {
 			err := updateBindingUsageInfoToStorageInternal(sPool, toWrite)
