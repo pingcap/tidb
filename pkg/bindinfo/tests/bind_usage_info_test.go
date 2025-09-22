@@ -75,7 +75,7 @@ func TestBindUsageInfo(t *testing.T) {
 		tk.MustExec("execute stmt3;")
 		tk.MustExec("select * from t1, t2, t3, t4, t5")
 		time.Sleep(1 * time.Second)
-		checkBindinfoInMemory(t, bindingHandle, checklist, false)
+		checkBindinfoInMemory(t, bindingHandle, checklist, true)
 		// Set all last_used_date to null to simulate that the bindinfo in storage is not updated.
 		tk.MustExec(`update mysql.bind_info set last_used_date = null where original_sql != 'builtin_pseudo_sql_for_bind_lock'`)
 		require.NoError(t, bindingHandle.UpdateBindingUsageInfoToStorage())
@@ -103,9 +103,9 @@ func checkBindinfoInMemory(t *testing.T, bindingHandle bindinfo.BindingHandle, c
 		binding := bindingHandle.GetBinding(digest)
 		require.NotNil(t, binding)
 		if writeBefore {
-			require.GreaterOrEqual(t, *binding.UsageInfo.LastSavedAt.Load(), *binding.UsageInfo.LastUsedAt.Load())
-		} else {
 			require.GreaterOrEqual(t, *binding.UsageInfo.LastUsedAt.Load(), *binding.UsageInfo.LastSavedAt.Load())
+		} else {
+			require.GreaterOrEqual(t, *binding.UsageInfo.LastSavedAt.Load(), *binding.UsageInfo.LastUsedAt.Load())
 		}
 	}
 }
