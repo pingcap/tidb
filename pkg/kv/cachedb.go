@@ -16,6 +16,7 @@ package kv
 
 import (
 	"context"
+	"hash/fnv"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -60,7 +61,9 @@ type (
 
 // Set set the key/value in cacheDB.
 func (c *cacheDB) set(tableID int64, key Key, value []byte) error {
-	shardID := key[len(key)-1] % 64
+	hasher := fnv.New64a()
+	hasher.Write([]byte(key))
+	shardID := hasher.Sum64() % 64
 	c.mu[shardID].Lock()
 	defer c.mu[shardID].Unlock()
 	table, ok := c.memTables[shardID][tableID]
@@ -73,7 +76,9 @@ func (c *cacheDB) set(tableID int64, key Key, value []byte) error {
 
 // Get gets the value from cacheDB.
 func (c *cacheDB) get(tableID int64, key Key) []byte {
-	shardID := key[len(key)-1] % 64
+	hasher := fnv.New64a()
+	hasher.Write([]byte(key))
+	shardID := hasher.Sum64() % 64
 	c.mu[shardID].RLock()
 	defer c.mu[shardID].RUnlock()
 	if table, ok := c.memTables[shardID][tableID]; ok {
