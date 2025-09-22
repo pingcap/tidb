@@ -112,7 +112,7 @@ func TestAdminAlterAddIndexLocalIngestDDLJob(t *testing.T) {
 	tk1.MustExec("insert into t values (1);")
 	tk1.MustExec("set @@global.tidb_enable_dist_task=off;")
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerStuck", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockIndexIngestWorkerFault", func() {
 		<-ch
 	})
 
