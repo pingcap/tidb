@@ -11,12 +11,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-<<<<<<< HEAD
         "//pkg/config",
-=======
-        "//pkg/config/kerneltype",
-        "//pkg/disttask/framework/handle",
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
@@ -25,11 +20,7 @@ go_test(
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/config",
-<<<<<<< HEAD
-=======
-        "//pkg/planner/core",
         "//pkg/session",
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
@@ -37,11 +28,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",
-<<<<<<< HEAD
-=======
-        "@com_github_tikv_pd_client//opt",
-        "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_zap//:zap",
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
+        "@com_github_tikv_pd_client//:client",
     ],
 )

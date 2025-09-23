@@ -9,10 +9,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-=======
     shard_count = 12,
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
@@ -24,12 +21,8 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/backend/external",
         "//pkg/meta/model",
-<<<<<<< HEAD
-        "//pkg/sessionctx/variable",
-=======
         "//pkg/session",
-        "//pkg/sessionctx/vardef",
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
+        "//pkg/sessionctx/variable",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/testkit",
@@ -41,10 +34,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
-<<<<<<< HEAD
-=======
-        "@com_github_tikv_client_go_v2//util",
-        "@com_github_tikv_pd_client//opt",
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
+        "@com_github_tikv_pd_client//:client",
     ],
 )

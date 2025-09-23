@@ -36,12 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -50,11 +46,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/client-go/v2/util"
-	"github.com/tikv/pd/client/opt"
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
+	pd "github.com/tikv/pd/client"
 )
 
 func init() {
@@ -118,12 +110,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
-<<<<<<< HEAD
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
-=======
-		vardef.CloudStorageURI.Store("")
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
 	}()
 
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -302,12 +289,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	t.Cleanup(func() {
-<<<<<<< HEAD
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
-=======
-		vardef.CloudStorageURI.Store("")
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 		tk.MustExec("set @@session.tidb_scatter_region = ''")
 	})
@@ -421,44 +403,6 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-=======
-// When meeting a retryable error, the subtask/job should be idempotent.
-func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("might cause overlapped data")
-	}
-	server, cloudStorageURI := genServerWithStorage(t)
-	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
-	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
-	defer func() {
-		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
-	}()
-	failpoints := []string{
-		"github.com/pingcap/tidb/pkg/ddl/mockCheckDuplicateForUniqueIndexError",
-		"github.com/pingcap/tidb/pkg/ddl/mockCloudImportRunSubtaskError",
-		"github.com/pingcap/tidb/pkg/ddl/mockMergeSortRunSubtaskError",
-	}
-
-	for _, fp := range failpoints {
-		tk.MustExec("drop table if exists t;")
-		tk.MustExec("create table t (a int);")
-		tk.MustExec("insert into t values (1), (2), (3);")
-		require.NoError(t, failpoint.Enable(fp, "1*return"))
-		tk.MustExec("alter table t add unique index idx(a);")
-		require.NoError(t, failpoint.Disable(fp))
-	}
-}
-
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
 func TestIngestUseGivenTS(t *testing.T) {
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
@@ -522,163 +466,23 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }
-<<<<<<< HEAD
-=======
-
-func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
-	testutil.ReduceCheckInterval(t)
-
-	server, cloudStorageURI := genServerWithStorage(t)
-	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
-	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
-	t.Cleanup(func() {
-		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
-	})
-
-	tk.MustExec("drop database if exists testalter;")
-	tk.MustExec("create database testalter;")
-	tk.MustExec("use testalter;")
-	tk.MustExec("create table gsort(a bigint auto_random primary key);")
-	for range 16 {
-		tk.MustExec("insert into gsort values (), (), (), ()")
-	}
-	tk.MustExec("split table gsort between (3) and (8646911284551352360) regions 50;")
-
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
-	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
-	if kerneltype.IsClassic() {
-		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
-		t.Cleanup(func() {
-			tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
-		})
-	}
-
-	var pipeClosed bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
-		pipeClosed = true
-		reader, writer := pipe.GetReaderAndWriter()
-		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
-		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
-	})
-
-	// Change the batch size and concurrency during table scanning and check the modified parameters.
-	var modified atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
-		require.False(t, modified.Load())
-		modified.Store(true)
-	})
-	var onceScan sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(reorgMeta *model.DDLReorgMeta) {
-		onceScan.Do(func() {
-			tk1 := testkit.NewTestKit(t, store)
-			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-			require.Len(t, rows, 1)
-			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))
-			require.Eventually(t, func() bool {
-				return modified.Load()
-			}, 20*time.Second, 100*time.Millisecond)
-			require.Equal(t, 256, reorgMeta.GetBatchSize())
-		})
-	})
-
-	tk.MustExec("alter table gsort add index idx(a)")
-	require.True(t, pipeClosed)
-	require.True(t, modified.Load())
-	tk.MustExec("admin check index gsort idx")
-}
-
-func TestDXFAddIndexRealtimeSummary(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
-	testutil.ReduceCheckInterval(t)
-
-	server, cloudStorageURI := genServerWithStorage(t)
-	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
-	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
-	t.Cleanup(func() {
-		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
-	})
-
-	tk.MustExec("use test;")
-
-	tk.MustExec("create table t (id varchar(255), b int, c int, primary key(id) clustered);")
-	tk.MustExec("insert into t values ('a',1,1),('b',2,2),('c',3,3);")
-
-	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
-		if job.Type == model.ActionAddIndex {
-			jobID = job.ID
-		}
-	})
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
-	tk.MustExec("alter table t add index idx(c);")
-	sql := `with global_tasks as (table mysql.tidb_global_task union table mysql.tidb_global_task_history)
-		select id from global_tasks where task_key like concat('%%/', '%d');`
-	taskIDRows := tk.MustQuery(fmt.Sprintf(sql, jobID)).Rows()
-	taskID := taskIDRows[0][0].(string)
-
-	getSummary := func(taskID string, step int64) (getReqCnt, putReqCnt, readBytes, bytes int) {
-		sql = `with subtasks as (table mysql.tidb_background_subtask union table mysql.tidb_background_subtask_history)
-		select
-			json_extract(summary, '$.get_request_count'),
-			json_extract(summary, '$.put_request_count'),
-			json_extract(summary, '$.read_bytes'),
-			json_extract(summary, '$.bytes')
-		from subtasks where task_key = '%s' and step = %d;`
-		fmtSQL := fmt.Sprintf(sql, taskID, step)
-		rs := tk.MustQuery(fmtSQL).Rows()
-		require.Len(t, rs, 1)
-		var err error
-		getReqCnt, err = strconv.Atoi(rs[0][0].(string))
-		require.NoError(t, err)
-		putReqCnt, err = strconv.Atoi(rs[0][1].(string))
-		require.NoError(t, err)
-		readBytes, err = strconv.Atoi(rs[0][2].(string))
-		require.NoError(t, err)
-		bytes, err = strconv.Atoi(rs[0][3].(string))
-		require.NoError(t, err)
-		return
-	}
-	getReqCnt, putReqCnt, readBytes, bytes := getSummary(taskID, 1)
-	require.Equal(t, getReqCnt, 0)   // 0, because step 1 doesn't read s3
-	require.Equal(t, putReqCnt, 2)   // 2 times (data + stats)
-	require.Greater(t, readBytes, 0) // 143 bytes for reading table records
-	require.Greater(t, bytes, 0)     // 153 bytes for writing index records
-
-	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 2)
-	require.Equal(t, getReqCnt, 1) // 1, read s3
-	require.Equal(t, putReqCnt, 2) // 2 times (data + stats)
-	require.Equal(t, readBytes, 0) // 0, not suitable for merge sort
-	require.Equal(t, bytes, 0)     // 0, not suitable for merge sort
-
-	getReqCnt, putReqCnt, readBytes, bytes = getSummary(taskID, 3)
-	require.Equal(t, getReqCnt, 1) // 2, read s3
-	require.Equal(t, putReqCnt, 0) // 0, because step 3 doesn't write s3
-	require.Equal(t, readBytes, 0) // 0
-	require.Equal(t, bytes, 0)     // 0
-}
 
 func TestSplitRangeForTable(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
 	}
-	server, cloudStorageURI := genServerWithStorage(t)
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
 	require.NoError(t, err)
 
 	tk.MustExec("drop database if exists addindexlit;")
@@ -726,10 +530,15 @@ func TestSplitRangeForTable(t *testing.T) {
 }
 
 func TestSplitRangeForPartitionTable(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
 	}
-	server, cloudStorageURI := genServerWithStorage(t)
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -784,4 +593,3 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 		})
 	}
 }
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))

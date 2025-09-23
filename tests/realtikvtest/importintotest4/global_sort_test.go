@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -36,12 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/pd/client/opt"
-	"go.uber.org/atomic"
-	"go.uber.org/zap"
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
+	pd "github.com/tikv/pd/client"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -196,43 +190,8 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	// TODO: decode the key to use readable value in the error message.
 	require.ErrorContains(s.T(), err, "746573742d313233")
 }
-<<<<<<< HEAD
-=======
-
-func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
-		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
-	})
-	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.2.csv"},
-		Content:     []byte("4,foo4,bar4,123\n5,foo5,bar5,223\n6,foo6,bar6,323\n"),
-	})
-	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-	s.prepareAndUseDB("gsort_basic")
-	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,	key(a), key(c,d), key(d));`)
-	defer func() {
-		s.tk.MustExec("drop table t;")
-	}()
-
-	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
-	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
-		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
-
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/br/pkg/storage/GCSReadUnexpectedEOF", "return(0)")
-	s.tk.MustExec("truncate table t")
-	result := s.tk.MustQuery(importSQL).Rows()
-	s.Len(result, 1)
-	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
-		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
-		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
-	))
-}
 
 func (s *mockGCSSuite) TestSplitRangeForTable() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
-	}
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
 		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
@@ -255,7 +214,7 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	})
 	dom, err := session.GetDomain(s.store)
 	require.NoError(s.T(), err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
 	require.NoError(s.T(), err)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
@@ -281,4 +240,3 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	require.Equal(s.T(), addCnt, 2*len(stores))
 	require.Equal(s.T(), removeCnt, addCnt)
 }
->>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
