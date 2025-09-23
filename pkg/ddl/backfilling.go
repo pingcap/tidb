@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -1119,6 +1120,14 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
+type lockKeysCollector struct {
+	locks []*kvrpcpb.KvPair
+}
+
+func (c *lockKeysCollector) CollectLockKV(kvpair *kvrpcpb.KvPair) {
+	c.locks = append(c.locks, kvpair)
+}
+
 func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyPrefix kv.Key, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
 	isRecord := tablecodec.IsRecordKey(keyPrefix.Next())
@@ -1142,7 +1151,8 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
 	snap.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
-	// snap.SetOption(kv.SkipNewerChange, nil)
+	var collector lockKeysCollector
+	snap.SetOption(kv.SkipNewerChange, &collector)
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
 		snap.SetOption(kv.ResourceGroupTagger, tagger)
 	}
