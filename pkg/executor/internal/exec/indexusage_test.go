@@ -52,13 +52,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	runtimeStatsColl := sc.RuntimeStatsColl
 
 	// For PointGet and BatchPointGet
-<<<<<<< HEAD
-	planID := 3
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
-	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
-=======
 	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, 1, 2024)
->>>>>>> 56c07d07a70 (executor: optimize executor runtime stats by avoid unnecessary clone (#54004))
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
@@ -91,13 +85,7 @@ func TestIndexUsageReporter(t *testing.T) {
 		Version:       statistics.PseudoVersion,
 		RealtimeCount: 100,
 	})
-<<<<<<< HEAD
-	planID = 4
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
-	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
-=======
 	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, 1, 2024)
->>>>>>> 56c07d07a70 (executor: optimize executor runtime stats by avoid unnecessary clone (#54004))
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()

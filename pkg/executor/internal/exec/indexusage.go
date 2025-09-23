@@ -106,17 +106,7 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTab
 		return
 	}
 
-<<<<<<< HEAD
-	basic := e.runtimeStatsColl.GetBasicRuntimeStats(planID)
-	if basic == nil {
-		return
-	}
-	accessRows := basic.GetActRows()
-
-	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(accessRows), uint64(tableRowCount))
-=======
 	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(rows), uint64(tableRowCount))
->>>>>>> 56c07d07a70 (executor: optimize executor runtime stats by avoid unnecessary clone (#54004))
 	e.reporter.Update(tableID, indexID, sample)
 }
 
