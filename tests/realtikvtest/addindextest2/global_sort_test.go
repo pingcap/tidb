@@ -745,6 +745,10 @@ func TestSplitRangeForTable(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
 		removeCnt += 1
 	})
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+		tk.MustExec("set global tidb_cloud_storage_uri = '';")
+	})
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
@@ -793,6 +797,10 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
 		removeCnt += 1
+	})
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+		tk.MustExec("set global tidb_cloud_storage_uri = '';")
 	})
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {

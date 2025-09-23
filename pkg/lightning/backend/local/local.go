@@ -844,10 +844,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 func (local *Backend) forceTableSplitRange(ctx context.Context,
 	startKey, endKey kv.Key, stores []*metapb.Store) (resetter func()) {
 	subctx, cancel := context.WithCancel(ctx)
-	var (
-		mu sync.Mutex
-		wg util.WaitGroupWrapper
-	)
+	var wg util.WaitGroupWrapper
 	clients := make([]sst.ImportSSTClient, 0, len(stores))
 	storeAddrs := make([]string, 0, len(stores))
 	const ttlSecond = uint64(3600) // default 1 hour
@@ -879,8 +876,6 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 	}
 
 	addTableSplitRange := func() {
-		mu.Lock()
-		defer mu.Unlock()
 		for i, c := range clients {
 			_, err := c.AddForcePartitionRange(subctx, addReq)
 			if err == nil {
@@ -894,31 +889,32 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 
 	addTableSplitRange()
 	wg.Run(func() {
-		tick := time.Tick(time.Duration(ttlSecond) * time.Second / 5) // 12min
+		timeout := time.Duration(ttlSecond) * time.Second / 5 // 12min
+		ticker := time.NewTicker(timeout)
+		defer ticker.Stop()
 		for {
+			ticker.Reset(timeout)
 			select {
 			case <-subctx.Done():
 				return
-			case <-tick:
+			case <-ticker.C:
 				addTableSplitRange()
 			}
 		}
 	})
 
 	resetter = func() {
-		mu.Lock()
+		cancel()
+		wg.Wait()
 		for i, c := range clients {
-			_, err := c.RemoveForcePartitionRange(subctx, removeReq)
+			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
 			if err == nil {
 				failpoint.InjectCall("RemovePartitionRangeRequest")
-				tidblogutil.Logger(subctx).Info("succeed to call RemoveForcePartitionRange", zap.String("store", storeAddrs[i]))
+				tidblogutil.Logger(ctx).Info("succeed to call RemoveForcePartitionRange", zap.String("store", storeAddrs[i]))
 			} else {
-				tidblogutil.Logger(subctx).Warn("fail to call RemoveForcePartitionRange", zap.Error(err), zap.String("store", storeAddrs[i]))
+				tidblogutil.Logger(ctx).Warn("fail to call RemoveForcePartitionRange", zap.Error(err), zap.String("store", storeAddrs[i]))
 			}
 		}
-		cancel()
-		mu.Unlock()
-		wg.Wait()
 	}
 	return resetter
 }
