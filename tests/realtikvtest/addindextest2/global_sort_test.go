@@ -165,11 +165,9 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	cloudStorageURI = handle.GetCloudStorageURI(context.Background(), store) // path with cluster id
 	defer func() {
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")
 	}()
 
@@ -292,7 +290,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		})
 	}
 
-	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 }
 
@@ -307,6 +305,10 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	})
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("alter table t add index idx(a);")
@@ -336,12 +338,10 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	t.Cleanup(func() {
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 		tk.MustExec("set @@session.tidb_scatter_region = ''")
@@ -474,11 +474,9 @@ func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
-	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	defer func() {
-		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 	}()
 	failpoints := []string{
@@ -519,10 +517,6 @@ func TestIngestUseGivenTS(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-	tk.MustExec("set global tidb_enable_dist_task = on;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
@@ -566,10 +560,6 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set global tidb_enable_dist_task = on;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
@@ -638,10 +628,6 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set global tidb_enable_dist_task = on;")
-	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
-	})
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 	t.Cleanup(func() {
@@ -746,7 +732,7 @@ func TestSplitRangeForTable(t *testing.T) {
 		removeCnt += 1
 	})
 	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
+		tk.MustExec("set global tidb_enable_dist_task = on;")
 		tk.MustExec("set global tidb_cloud_storage_uri = '';")
 	})
 	for _, tc := range testcases {
@@ -799,7 +785,7 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 		removeCnt += 1
 	})
 	t.Cleanup(func() {
-		tk.MustExec("set global tidb_enable_dist_task = off;")
+		tk.MustExec("set global tidb_enable_dist_task = on;")
 		tk.MustExec("set global tidb_cloud_storage_uri = '';")
 	})
 	for _, tc := range testcases {
