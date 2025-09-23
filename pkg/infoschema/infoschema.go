@@ -67,6 +67,10 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
+
+	// referredForeignKeyMap records all table's ReferredFKInfo.
+	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
+	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
 }
 
 type infoSchemaMisc struct {
@@ -86,10 +90,6 @@ type infoSchemaMisc struct {
 
 	// temporaryTables stores the temporary table ids
 	temporaryTableIDs map[int64]struct{}
-
-	// referredForeignKeyMap records all table's ReferredFKInfo.
-	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
-	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
 }
 
 // SchemaAndTableName contains the lower-case schema name and table name.
@@ -199,14 +199,14 @@ func (is *infoSchema) base() *infoSchema {
 func newInfoSchema() *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
-			policyMap:             map[string]*model.PolicyInfo{},
-			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-			ruleBundleMap:         map[int64]*placement.Bundle{},
-			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+			policyMap:        map[string]*model.PolicyInfo{},
+			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
+			ruleBundleMap:    map[int64]*placement.Bundle{},
 		},
-		schemaMap:           map[string]*schemaTables{},
-		schemaID2Name:       map[int64]string{},
-		sortedTablesBuckets: make([]sortedTables, bucketCount),
+		schemaMap:             map[string]*schemaTables{},
+		schemaID2Name:         map[int64]string{},
+		sortedTablesBuckets:   make([]sortedTables, bucketCount),
+		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 	}
 }
 
@@ -625,7 +625,7 @@ func (is *infoSchemaMisc) deletePolicy(name string) {
 	delete(is.policyMap, name)
 }
 
-func (is *infoSchemaMisc) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchema) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -665,7 +665,7 @@ func (is *infoSchemaMisc) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *mo
 	}
 }
 
-func (is *infoSchemaMisc) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchema) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -687,7 +687,7 @@ func (is *infoSchemaMisc) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo 
 }
 
 // GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-func (is *infoSchemaMisc) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
 	name := SchemaAndTableName{schema: schema, table: table}
 	return is.referredForeignKeyMap[name]
 }

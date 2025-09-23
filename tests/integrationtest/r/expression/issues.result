@@ -326,6 +326,7 @@ a
 8
 9223372036854775810
 18446744073709551614
+18446744073709551615
 SELECT a FROM t WHERE a NOT IN (-1, -2, 4, 9223372036854775810);
 a
 0
@@ -342,6 +343,7 @@ a
 7
 8
 9223372036854775810
+18446744073709551614
 18446744073709551615
 drop table if exists t1;
 create table t1 (some_id smallint(5) unsigned,key (some_id) );
@@ -3230,3 +3232,66 @@ INSERT INTO test.t VALUES (1234567890123456);
 SELECT IFNULL(id, 'abcdef') FROM test.t;
 IFNULL(id, 'abcdef')
 1234567890123456
+drop table if exists lrr_test;
+create table lrr_test( `COL1` tinyint(16),`COL3` bigint(20) DEFAULT NULL,KEY `UM_COL` (`COL1`,`COL3`));
+insert into lrr_test(col3) values(-825024501864323944);
+insert into lrr_test values(-2,2295421130981788987);
+prepare stmt from 'select * from lrr_test t1 join lrr_test t2 on t1.col1 = t2.col1 where t1. col1 + 10 > ? + 10 or t2. col1 + 10 >= ? + 10;';
+set @a=NULL, @b=-2;
+execute stmt using @a,@b;
+COL1	COL3	COL1	COL3
+-2	2295421130981788987	-2	2295421130981788987
+use test;
+drop table if exists t;
+create table t(a int);
+insert into t values (1), (2), (3), (4), (5);
+explain format=brief select * from t where a in (1, 1, 1, 1, 1, 2);
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(test.t.a, 1, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create table t_str(s varchar(10));
+insert into t_str values ('test');
+explain format=brief select * from t_str where s in ('a', 'a', 'a', 'b', 'a');
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(test.t_str.s, "a", "b")
+  └─TableFullScan	10000.00	cop[tikv]	table:t_str	keep order:false, stats:pseudo
+create table t_dec(d decimal(10,2));
+insert into t_dec values (1.5), (2.5);
+explain format=brief select * from t_dec where d in (1.5, 1.5, 2.5, 1.5);
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(test.t_dec.d, 1.5, 2.5)
+  └─TableFullScan	10000.00	cop[tikv]	table:t_dec	keep order:false, stats:pseudo
+explain format=brief select * from t where a in (1, NULL, NULL, NULL, 2);
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(test.t.a, 1, NULL, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create table t_date(dt date);
+insert into t_date values ('2023-01-01'), ('2023-01-02');
+explain format=brief select * from t_date where dt in
+('2023-01-01', '2023-01-01', '2023-01-02');
+id	estRows	task	access object	operator info
+TableReader	20.00	root		data:Selection
+└─Selection	20.00	cop[tikv]		in(test.t_date.dt, 2023-01-01 00:00:00.000000, 2023-01-02 00:00:00.000000)
+  └─TableFullScan	10000.00	cop[tikv]	table:t_date	keep order:false, stats:pseudo
+select * from t where a in (1, 1, 1, 1, 2);
+a
+1
+2
+select * from t_str where s in ('a', 'a', 'a', 'b', 'a');
+s
+select * from t_dec where d in (1.5, 1.5, 2.5, 1.5);
+d
+1.50
+2.50
+select * from t where a in (1, NULL, NULL, NULL, 2);
+a
+1
+2
+select * from t_date where dt in ('2023-01-01', '2023-01-01', '2023-01-02');
+dt
+2023-01-01
+2023-01-02

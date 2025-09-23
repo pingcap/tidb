@@ -58,6 +58,30 @@ func loadTableStats(fileName string, dom *domain.Domain) error {
 	return nil
 }
 
+func TestIssue62438(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("use test")
+	testKit.MustExec("CREATE TABLE `objects` (\n  `id` bigint NOT NULL AUTO_INCREMENT,\n  `path` varchar(1024) NOT NULL,\n  `updated_ms` bigint DEFAULT NULL,\n  `size` bigint DEFAULT NULL,\n  `etag` varchar(128) DEFAULT NULL,\n  `seq` bigint DEFAULT NULL,\n  `last_seen_ms` bigint DEFAULT NULL,\n  `metastore_uuid` binary(16) NOT NULL,\n  `securable_id` bigint NOT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `idx_metastore_securable_seq` (`metastore_uuid`,`securable_id`,`seq`)\n)")
+	require.NoError(t, testkit.LoadTableStats("issue62438.json", dom))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	analyzeSuiteData := GetAnalyzeSuiteData()
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		plan := testKit.MustQuery(sql)
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 // TestCBOWithoutAnalyze tests the plan with stats that only have count info.
 func TestCBOWithoutAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -178,6 +202,43 @@ func TestEstimation(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestIssue61792(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set tidb_cost_model_version=2")
+	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
+	testKit.MustExec("use test;")
+	testKit.MustExec("CREATE TABLE `tbl_cardcore_statement` (" +
+		"  `ID` varchar(30) NOT NULL," +
+		"  `latest_stmt_print_date` date DEFAULT NULL COMMENT 'KUSTMD'," +
+		"  `created_domain` varchar(10) DEFAULT NULL," +
+		"  PRIMARY KEY (`ID`)," +
+		"  KEY `tbl_cardcore_statement_ix7` (`latest_stmt_print_date`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='CCDSTMT';")
+	require.NoError(t, testkit.LoadTableStats("issue61792.json", dom))
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	analyzeSuiteData := GetAnalyzeSuiteData()
+	analyzeSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 	}
 }
 
