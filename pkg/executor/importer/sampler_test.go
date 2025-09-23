@@ -80,6 +80,7 @@ func runCaseFn(t *testing.T, i int, c caseTp) {
 		LineFieldsInfo: newDefaultLineFieldsInfo(),
 		InImportInto:   true,
 	}, table, &ASTArgs{})
+	require.NoError(t, err)
 	ctrl.logger = zap.Must(zap.NewDevelopment())
 	ctx := context.Background()
 	require.NoError(t, ctrl.InitDataFiles(ctx))
