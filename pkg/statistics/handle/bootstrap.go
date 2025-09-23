@@ -437,7 +437,7 @@ type loadStrategy interface {
 }
 
 // maxTidStrategy is to load stats by paging using the max tid.
-// It is used for full load.
+// It is used for full load. Backup and restore also use this strategy for refreshing stats.
 type maxTidStrategy struct {
 	maxTid int64
 }
