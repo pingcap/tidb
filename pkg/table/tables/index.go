@@ -515,10 +515,10 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
 			}
 		}
-		// if c.idxInfo.State == model.StatePublic {
-		// If the index is in public state, delete this index means it must exists.
-		err = txn.SetAssertion(key, kv.SetAssertExist)
-		// }
+		if c.idxInfo.State == model.StatePublic {
+			// If the index is in public state, delete this index means it must exists.
+			err = txn.SetAssertion(key, kv.SetAssertExist)
+		}
 		if err != nil {
 			return err
 		}
