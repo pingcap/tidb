@@ -4,7 +4,7 @@
     "cases": [
       // Test normal non-correlated scalar sub query.
       {
-        "SQL": "explain format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where a = (select a from t2 limit 1)",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
@@ -15,7 +15,7 @@
       },
       // Test EXISTS non-correlated scalar sub query.
       {
-        "SQL": "explain format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where a = 1)",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
@@ -25,7 +25,7 @@
         "HasErr": false
       },
       {
-        "SQL": "explain format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where not exists(select 1 from t2 where a = 1)",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
@@ -36,7 +36,7 @@
       },
       // Test with constant propagation.
       {
-        "SQL": "explain format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
         "IsExplainAnalyze": false,
         "HasErr": false
       },
@@ -47,7 +47,7 @@
       },
       // Test multiple returns.
       {
-        "SQL": "explain format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "IsExplainAnalyze": false,
         "HasErr": false
       },

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -127,12 +126,8 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	case proto.BackfillStepReadIndex:
 		taskKS := task.Keyspace
 		store := sch.d.store
-		if taskKS != tidbconfig.GetGlobalKeyspaceName() {
-			taskMgr, err := diststorage.GetTaskManager()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+		if taskKS != sch.d.store.GetKeyspace() {
+			err = sch.WithNewSession(func(se sessionctx.Context) error {
 				store, err = se.GetSQLServer().GetKSStore(taskKS)
 				return err
 			})

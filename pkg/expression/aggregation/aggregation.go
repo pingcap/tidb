@@ -246,13 +246,15 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	if !checkVectorAggPushDown(ctx, aggFunc) {
 		return false
 	}
-	ret := true
+	var ret bool
 	switch storeType {
 	case kv.TiFlash:
 		ret = CheckAggPushFlash(ctx, aggFunc)
 	case kv.TiKV:
 		// TiKV does not support group_concat now
 		ret = aggFunc.Name != ast.AggFuncGroupConcat
+	default:
+		return false
 	}
 	if ret {
 		// don't need to call strings.ToLower because it is ensured by newBaseFuncDesc that aggFunc.Name is already in lower case.

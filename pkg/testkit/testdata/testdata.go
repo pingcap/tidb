@@ -203,7 +203,8 @@ func (td *TestData) LoadTestCases(t *testing.T, in any, out any, opts ...string)
 }
 
 // LoadTestCasesByName loads the test cases for a test function by its name.
-func (td *TestData) LoadTestCasesByName(caseName string, t *testing.T, in any, out any) {
+func (td *TestData) LoadTestCasesByName(caseName string, t *testing.T, in any, out any, opts ...string) {
+	inCascades := len(opts) > 0 && opts[0] == "on"
 	casesIdx, ok := td.funcMap[caseName]
 	require.Truef(t, ok, "Case name: %s", caseName)
 	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))
@@ -215,10 +216,18 @@ func (td *TestData) LoadTestCasesByName(caseName string, t *testing.T, in any, o
 			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
 		}
 	} else {
-		require.NoError(t, json.Unmarshal(*td.output[casesIdx].Cases, out))
+		if !inCascades {
+			require.NoError(t, json.Unmarshal(*td.output[casesIdx].Cases, out))
+		} else {
+			require.NoError(t, json.Unmarshal(*td.casout[casesIdx].Cases, out))
+		}
 	}
 
-	td.output[casesIdx].decodedOut = out
+	if !inCascades {
+		td.output[casesIdx].decodedOut = out
+	} else {
+		td.casout[casesIdx].decodedOut = out
+	}
 }
 
 func (td *TestData) generateOutputIfNeeded() error {

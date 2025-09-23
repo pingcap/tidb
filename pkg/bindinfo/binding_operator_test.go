@@ -644,17 +644,6 @@ func TestOptimizeOnlyOnce(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
-// for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Type, Sql_digest
-func showBinding(tk *testkit.TestKit, showStmt string) [][]any {
-	rows := tk.MustQuery(showStmt).Sort().Rows()
-	result := make([][]any, len(rows))
-	for i, r := range rows {
-		result[i] = append(result[i], r[:4]...)
-		result[i] = append(result[i], r[8:10]...)
-	}
-	return result
-}
-
 func TestNormalizeStmtForBinding(t *testing.T) {
 	tests := []struct {
 		sql        string

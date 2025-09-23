@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -79,8 +80,15 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	originalReadStaleness := se.GetSessionVars().ReadStaleness
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	sessVars.ReadStaleness = 0
+	// NT-DML should not use the bulk DML mode.
+	originalBulkDMLEnabled := sessVars.BulkDMLEnabled
+	sessVars.BulkDMLEnabled = false
+	// NT-DML is used to be large and unusual, so we don't mix it with other DMLs, give it the prefix "NTDML-".
+	stmtType := fmt.Sprintf("NTDML-%s", ast.GetStmtLabel(stmt.DMLStmt))
+	ctx = stmtctx.WithStmtLabel(ctx, stmtType)
 	defer func() {
 		sessVars.ReadStaleness = originalReadStaleness
+		sessVars.BulkDMLEnabled = originalBulkDMLEnabled
 	}()
 	nodeW := resolve.NewNodeW(stmt)
 	err := core.Preprocess(ctx, se, nodeW)
@@ -423,7 +431,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		}
 	})
 	if err != nil {
-		logutil.Logger(ctx).Error("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
+		logutil.Logger(ctx).Info("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
 		job.err = err
 	} else {
 		logutil.Logger(ctx).Info("Non-transactional DML SQL finished successfully", zap.Int("jobID", job.jobID),

@@ -31,6 +31,7 @@ enum ErrorCode {
   SUCCESS = 0;
   UNKNOWN_ERROR = 1;
   INVALID_ARGUMENTS = 2;
+  TRY_AGAIN = 3;
 
   SHARD_NOT_FOUND = 11;
   INDEX_NOT_FOUND = 12;
@@ -127,6 +128,11 @@ message FragProperty {
   bytes max_handle = 5;
 }
 
+message IndexSegment {
+  string seg_id = 1;
+  string del_suffix = 2;
+}
+
 message FragMeta {
   // Data format version​​, used for future iterative upgrades
   uint64 format_version = 1;
@@ -135,10 +141,6 @@ message FragMeta {
 
   bool has_deleted_set = 3;
 
-  message IndexSegment {
-    string seg_id = 1;
-    string del_suffix = 2;
-  }
   repeated IndexSegment segs = 4;
 
   FragProperty property = 5;
@@ -399,10 +401,9 @@ message AddShardResponse {
 
 // CreateIndexRequest is a request to create an index
 message CreateIndexRequest {
-  // Index information
-  IndexInfo index_info = 1;
-  // Table information
-  TableInfo table_info = 2;
+  string database_name = 1;
+  bytes table_info = 2;
+  int64 index_id = 3;
 }
 
 // CreateIndexResponse is a response to the index creation request
@@ -558,11 +559,9 @@ message GetImportStoragePrefixRequest {
   string tidb_task_id = 1;
   // Table ID of the target table.
   int64 table_id = 2;
-  int64 index_id = 3;
-  // TODO: use repeated index_ids
   // Index ID of the target index. If this is an Import Into job that relates
   // to multiple indexes, this field should contain all the index IDs.
-  // repeated int64 index_ids = 3;
+  repeated int64 index_ids = 3;
 }
 
 message GetImportStoragePrefixResponse {

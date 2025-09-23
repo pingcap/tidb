@@ -111,6 +111,7 @@ func MergeOverlappingFiles(
 				collector,
 				checkHotspot,
 				onDup,
+				len(dataFilesSlice),
 			)
 		})
 	}
@@ -177,6 +178,7 @@ func mergeOverlappingFilesInternal(
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
+	fileGroupNum int,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
@@ -187,7 +189,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, fileGroupNum)
 	if err != nil {
 		return err
 	}

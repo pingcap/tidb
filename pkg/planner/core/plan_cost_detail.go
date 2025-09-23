@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -90,7 +91,7 @@ const (
 	MemQuotaLbl = "memQuota"
 )
 
-func setPointGetPlanCostDetail(p *PointGetPlan, opt *optimizetrace.PhysicalOptimizeOp,
+func setPointGetPlanCostDetail(p *physicalop.PointGetPlan, opt *optimizetrace.PhysicalOptimizeOp,
 	rowSize, networkFactor, seekFactor float64) {
 	if opt == nil {
 		return
@@ -103,7 +104,7 @@ func setPointGetPlanCostDetail(p *PointGetPlan, opt *optimizetrace.PhysicalOptim
 	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setBatchPointGetPlanCostDetail(p *BatchPointGetPlan, opt *optimizetrace.PhysicalOptimizeOp,
+func setBatchPointGetPlanCostDetail(p *physicalop.BatchPointGetPlan, opt *optimizetrace.PhysicalOptimizeOp,
 	rowCount, rowSize, networkFactor, seekFactor float64, scanConcurrency int) {
 	if opt == nil {
 		return
@@ -124,8 +125,8 @@ func setPhysicalTableOrIndexScanCostDetail(p base.PhysicalPlan, opt *optimizetra
 	if opt == nil {
 		return
 	}
-	_, ok1 := p.(*PhysicalTableScan)
-	_, ok2 := p.(*PhysicalIndexScan)
+	_, ok1 := p.(*physicalop.PhysicalTableScan)
+	_, ok2 := p.(*physicalop.PhysicalIndexScan)
 	if !ok1 && !ok2 {
 		return
 	}
@@ -143,7 +144,7 @@ func setPhysicalTableOrIndexScanCostDetail(p base.PhysicalPlan, opt *optimizetra
 	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalTableReaderCostDetail(p *PhysicalTableReader, opt *optimizetrace.PhysicalOptimizeOp,
+func setPhysicalTableReaderCostDetail(p *physicalop.PhysicalTableReader, opt *optimizetrace.PhysicalOptimizeOp,
 	rowCount, rowSize, networkFactor, netSeekCost, tablePlanCost float64,
 	scanConcurrency int, storeType kv.StoreType) {
 	// tracer haven't support non tikv plan for now
@@ -162,7 +163,7 @@ func setPhysicalTableReaderCostDetail(p *PhysicalTableReader, opt *optimizetrace
 	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *optimizetrace.PhysicalOptimizeOp,
+func setPhysicalIndexReaderCostDetail(p *physicalop.PhysicalIndexReader, opt *optimizetrace.PhysicalOptimizeOp,
 	rowCount, rowSize, networkFactor, netSeekCost, indexPlanCost float64,
 	scanConcurrency int) {
 	if opt == nil {
@@ -180,7 +181,7 @@ func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *optimizetrace
 	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *optimizetrace.PhysicalOptimizeOp, spill bool,
+func setPhysicalHashJoinCostDetail(p *physicalop.PhysicalHashJoin, opt *optimizetrace.PhysicalOptimizeOp, spill bool,
 	buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
 	cpuCost, probeCPUCost, memCost, diskCost, probeDiskCost,
 	diskFactor, memoryFactor, concurrencyFactor float64,

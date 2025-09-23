@@ -149,6 +149,13 @@ func (tk *TestKit) MustExec(sql string, args ...any) {
 	tk.MustExecWithContext(ctx, sql, args...)
 }
 
+// PrepareDB prepares a database for test.
+func (tk *TestKit) PrepareDB(db string) {
+	tk.MustExec("drop schema if exists " + db)
+	tk.MustExec("create schema " + db)
+	tk.MustExec("use " + db)
+}
+
 // MustExecWithContext executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...any) {
 	res, err := tk.ExecWithContext(ctx, sql, args...)

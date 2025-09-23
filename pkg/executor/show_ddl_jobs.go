@@ -194,6 +194,13 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		finishTS = job.BinlogInfo.FinishedTS
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
+		} else if job.Type == model.ActionRenameTable {
+			// For running rename table jobs, we use old table name stored in job
+			// since TableInfo is not set yet. So we extract the new table name from
+			// job args for consistent output.
+			if arg, err := model.GetRenameTableArgs(job); err == nil && len(arg.NewTableName.L) > 0 {
+				tableName = arg.NewTableName.L
+			}
 		}
 		if job.BinlogInfo.MultipleTableInfos != nil {
 			tablenames := new(strings.Builder)

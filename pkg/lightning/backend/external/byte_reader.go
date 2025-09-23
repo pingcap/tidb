@@ -19,7 +19,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/pingcap/errors"
@@ -69,10 +68,8 @@ type byteReader struct {
 		reloadCnt int
 	}
 
-	logger *zap.Logger
-	// monitor the speed of reading from external storage
-	readDurHist  prometheus.Observer
-	readRateHist prometheus.Observer
+	logger               *zap.Logger
+	mergeSortReadCounter prometheus.Counter
 }
 
 func openStoreReaderAndSeek(
@@ -279,16 +276,13 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 }
 
 func (r *byteReader) reload() error {
-	if r.readDurHist != nil && r.readRateHist != nil {
-		startTime := time.Now()
+	if r.mergeSortReadCounter != nil {
 		defer func() {
-			readSecond := time.Since(startTime).Seconds()
-			size := 0
+			sz := 0
 			for _, b := range r.curBuf {
-				size += len(b)
+				sz += len(b)
 			}
-			r.readDurHist.Observe(readSecond)
-			r.readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
+			r.mergeSortReadCounter.Add(float64(sz))
 		}()
 	}
 	to := r.concurrentReader.expected

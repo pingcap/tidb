@@ -34,6 +34,11 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
+// VaildConstantPropagationExpressionFuncType is to filter the unsuitable expression when to propagate the constant.
+// Currently, only the `LogicalJoin.isVaildConstantPropagationExpression` has implemented this capability.
+// For more information, you can refer to the comments on this.
+type VaildConstantPropagationExpressionFuncType func(Expression) bool
+
 type basePropConstSolver struct {
 	colMapper map[int64]int             // colMapper maps column to its index
 	eqMapper  map[int]*Constant         // if eqMapper[i] != nil, it means col_i = eqMapper[i]
@@ -243,6 +248,13 @@ var propConstSolverPool = sync.Pool{
 type propConstSolver struct {
 	basePropConstSolver
 	conditions []Expression
+	// TODO: remove this func pointer for performance
+	vaildExprFunc VaildConstantPropagationExpressionFuncType
+
+	// if schema1 and schema2 are not nil, we're propagating constants for inner joins.
+	// for outer joins, use propOuterJoinConstSolver instead.
+	schema1 *Schema
+	schema2 *Schema
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -252,8 +264,12 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, schema1, schema2 *Schema,
+	vaildExprFunc VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression {
 	s.ctx = ctx
+	s.vaildExprFunc = vaildExprFunc
+	s.schema1 = schema1
+	s.schema2 = schema2
 	return s.solve(conditions)
 }
 
@@ -261,6 +277,9 @@ func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions 
 func (s *propConstSolver) Clear() {
 	s.basePropConstSolver.Clear()
 	s.conditions = s.conditions[:0]
+	s.vaildExprFunc = nil
+	s.schema1 = nil
+	s.schema2 = nil
 	propConstSolverPool.Put(s)
 }
 
@@ -350,15 +369,29 @@ func (s *propConstSolver) propagateColumnEQ() {
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
+					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
+					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+						continue
+					}
 					s.conditions = append(s.conditions, newExpr)
 				}
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
+					// TODO(hawkingrei): if it is the true expression, we can remvoe it.
+					if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+						continue
+					}
 					s.conditions = append(s.conditions, newExpr)
 				}
 			}
 		}
 	}
+}
+
+// isConstant is to determine whether the expression is a constant.
+func isConstant(cond Expression) bool {
+	_, ok := cond.(*Constant)
+	return ok
 }
 
 func (s *propConstSolver) setConds2ConstFalse() {
@@ -410,7 +443,18 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			return nil
 		}
 		if updated {
-			retMapper[s.getColID(col)] = con
+			colType := col.GetType(s.ctx.GetEvalCtx())
+			conType := con.GetType(s.ctx.GetEvalCtx())
+			castedCon := con
+			if !colType.Equal(conType) {
+				oriWarningCnt := s.ctx.GetEvalCtx().WarningCount()
+				newExpr := BuildCastFunction(s.ctx, con, colType.DeepCopy())
+				s.ctx.GetEvalCtx().TruncateWarnings(oriWarningCnt)
+				if newCon, ok := newExpr.(*Constant); ok {
+					castedCon = newCon
+				}
+			}
+			retMapper[s.getColID(col)] = castedCon
 		}
 	}
 	return
@@ -431,14 +475,14 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.conditions = propagateConstantDNF(s.ctx, s.conditions...)
+	s.conditions = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.conditions...)
 	s.conditions = RemoveDupExprs(s.conditions)
 	return slices.Clone(s.conditions)
 }
 
-// PropagateConstant propagate constant values of deterministic predicates in a condition.
-// This is a constant propagation logic for expression list such as ['a=1', 'a=b']
-func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expression {
+// PropagateConstantForJoin propagate constants for inner joins.
+func PropagateConstantForJoin(ctx exprctx.ExprContext, schema1, schema2 *Schema,
+	filter VaildConstantPropagationExpressionFuncType, conditions ...Expression) []Expression {
 	if len(conditions) == 0 {
 		return conditions
 	}
@@ -446,7 +490,20 @@ func PropagateConstant(ctx exprctx.ExprContext, conditions ...Expression) []Expr
 	defer func() {
 		solver.Clear()
 	}()
-	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), schema1, schema2, filter, conditions)
+}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+// This is a constant propagation logic for expression list such as ['a=1', 'a=b']
+func PropagateConstant(ctx exprctx.ExprContext, filter VaildConstantPropagationExpressionFuncType, conditions ...Expression) []Expression {
+	if len(conditions) == 0 {
+		return conditions
+	}
+	solver := newPropConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), nil, nil, filter, conditions)
 }
 
 var propOuterJoinConstSolverPool = sync.Pool{
@@ -460,15 +517,23 @@ var propOuterJoinConstSolverPool = sync.Pool{
 	},
 }
 
+// propOuterJoinConstSolver is used to propagate constant values over outer join.
+// Outer join predicates need special care since we can only propagate constants from the inner side to
+// the outer side, otherwise nullability of the join result could be incorrectly affected.
+// For example: `select * from t1 left join t2 on t1.a=t2.a where t1.a=1`, we can't propagate t1.a=1 to t2.a=1,
+// since after this propagation, t2.a will never be null, which is incorrect for this outer join query.
 type propOuterJoinConstSolver struct {
 	basePropConstSolver
 	joinConds   []Expression
 	filterConds []Expression
 	outerSchema *Schema
 	innerSchema *Schema
+	// TODO: remove this func pointer for performance
+	vaildExprFunc VaildConstantPropagationExpressionFuncType
+
 	// nullSensitive indicates if this outer join is null sensitive, if true, we cannot generate
 	// additional `col is not null` condition from column equal conditions. Specifically, this value
-	// is true for LeftOuterSemiJoin and AntiLeftOuterSemiJoin.
+	// is true for LeftOuterSemiJoin, AntiLeftOuterSemiJoin and AntiSemiJoin.
 	nullSensitive bool
 }
 
@@ -485,6 +550,7 @@ func (s *propOuterJoinConstSolver) Clear() {
 	s.outerSchema = nil
 	s.innerSchema = nil
 	s.nullSensitive = false
+	s.vaildExprFunc = nil
 	propOuterJoinConstSolverPool.Put(s)
 }
 
@@ -691,6 +757,10 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 		}
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
+			// TODO(hawkingrei): if it is the true expression, we can remvoe it.
+			if !isConstant(newExpr) && s.vaildExprFunc != nil && !s.vaildExprFunc(newExpr) {
+				continue
+			}
 			s.joinConds = append(s.joinConds, newExpr)
 		}
 	}
@@ -773,18 +843,18 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds...)
-	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds...)
+	s.joinConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.joinConds...)
+	s.filterConds = propagateConstantDNF(s.ctx, s.vaildExprFunc, s.filterConds...)
 	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
-func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expression {
+func propagateConstantDNF(ctx exprctx.ExprContext, filter VaildConstantPropagationExpressionFuncType, conds ...Expression) []Expression {
 	for i, cond := range conds {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, item)...)
+				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, filter, item)...)
 			}
 			conds[i] = ComposeDNFCondition(ctx, dnfItems...)
 		}
@@ -792,14 +862,15 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expres
 	return conds
 }
 
-// PropConstOverOuterJoin propagate constant equal and column equal conditions over outer join.
+// PropConstForOuterJoin propagate constant equal and column equal conditions over outer join or anti semi join.
 // First step is to extract `outerCol = const` from join conditions and filter conditions,
 // and substitute `outerCol` in join conditions with `const`;
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
-func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
-	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
+func PropConstForOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
+	outerSchema, innerSchema *Schema, nullSensitive bool,
+	vaildExprFunc VaildConstantPropagationExpressionFuncType) ([]Expression, []Expression) {
 	solver := newPropOuterJoinConstSolver()
 	defer func() {
 		solver.Clear()
@@ -808,11 +879,14 @@ func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Ex
 	solver.innerSchema = innerSchema
 	solver.nullSensitive = nullSensitive
 	solver.ctx = ctx
+	solver.vaildExprFunc = vaildExprFunc
 	return solver.solve(joinConds, filterConds)
 }
 
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
-	PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression
+	PropagateConstant(ctx exprctx.ExprContext,
+		schema1, schema2 *Schema,
+		filter VaildConstantPropagationExpressionFuncType, conditions []Expression) []Expression
 	Clear()
 }

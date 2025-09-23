@@ -417,10 +417,24 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_dist_task = off;")
 	})
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("insert into t values (1, 1);")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
-	tk.MustExec("alter table t add index idx(b);")
+	retryableErrs := []string{
+		"requested lease not found",
+		"mvcc: required revision has been compacted",
+	}
+	for _, errStr := range retryableErrs {
+		t.Run(errStr, func(t *testing.T) {
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec("create table t (a int, b int);")
+			tk.MustExec("insert into t values (1, 1);")
+			var once sync.Once
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", func(errP *error) {
+				once.Do(func() {
+					*errP = errors.New(errStr)
+				})
+			})
+			tk.MustExec("alter table t add index idx(b);")
+		})
+	}
 }
 
 func TestAddIndexScheduleAway(t *testing.T) {

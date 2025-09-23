@@ -49,17 +49,17 @@ func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 
 func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 	switch x := p.(type) {
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		x.Ranges = ranges
-		x.rangeInfo = rangeInfo
-	case *PhysicalIndexScan:
+		x.RangeInfo = rangeInfo
+	case *physicalop.PhysicalIndexScan:
 		x.Ranges = ranges
-		x.rangeInfo = rangeInfo
-	case *PhysicalTableReader:
+		x.RangeInfo = rangeInfo
+	case *physicalop.PhysicalTableReader:
 		updateRange(x.TablePlans[0], ranges, rangeInfo)
-	case *PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		updateRange(x.IndexPlans[0], ranges, rangeInfo)
-	case *PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		updateRange(x.IndexPlans[0], ranges, rangeInfo)
 	}
 }
@@ -77,9 +77,9 @@ func rebuildRange(p base.Plan) error {
 	sctx := p.SCtx()
 	var err error
 	switch x := p.(type) {
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
-	case *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexMergeJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
 	case *physicalop.PhysicalIndexJoin:
 		if err := x.Ranges.Rebuild(sctx); err != nil {
@@ -96,41 +96,41 @@ func rebuildRange(p base.Plan) error {
 				return err
 			}
 		}
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		err = buildRangeForTableScan(sctx, x)
 		if err != nil {
 			return err
 		}
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		err = buildRangeForIndexScan(sctx, x)
 		if err != nil {
 			return err
 		}
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		err = rebuildRange(x.TablePlans[0])
 		if err != nil {
 			return err
 		}
-	case *PhysicalIndexReader:
+	case *physicalop.PhysicalIndexReader:
 		err = rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
-	case *PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		err = rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
-	case *PointGetPlan:
+	case *physicalop.PointGetPlan:
 		if err = buildRangesForPointGet(sctx, x); err != nil {
 			return err
 		}
-	case *BatchPointGetPlan:
+	case *physicalop.BatchPointGetPlan:
 		if err = buildRangesForBatchGet(sctx, x); err != nil {
 			return err
 		}
-	case *PhysicalIndexMergeReader:
-		indexMerge := p.(*PhysicalIndexMergeReader)
+	case *physicalop.PhysicalIndexMergeReader:
+		indexMerge := p.(*physicalop.PhysicalIndexMergeReader)
 		for _, partialPlans := range indexMerge.PartialPlans {
 			err = rebuildRange(partialPlans[0])
 			if err != nil {
@@ -180,7 +180,7 @@ func convertConstant2Datum(ctx base.PlanContext, con *expression.Constant, targe
 	return &dVal, nil
 }
 
-func buildRangeForTableScan(sctx base.PlanContext, ts *PhysicalTableScan) (err error) {
+func buildRangeForTableScan(sctx base.PlanContext, ts *physicalop.PhysicalTableScan) (err error) {
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))
@@ -245,7 +245,7 @@ func buildRangeForTableScan(sctx base.PlanContext, ts *PhysicalTableScan) (err e
 	return
 }
 
-func buildRangesForPointGet(sctx base.PlanContext, x *PointGetPlan) (err error) {
+func buildRangesForPointGet(sctx base.PlanContext, x *physicalop.PointGetPlan) (err error) {
 	if x.TblInfo.GetPartitionInfo() != nil {
 		if fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
 			return errors.NewNoStackError("Fix33031 fix-control set and partitioned table in cached Point Get plan")
@@ -269,7 +269,7 @@ func buildRangesForPointGet(sctx base.PlanContext, x *PointGetPlan) (err error) 
 			var unsignedIntHandle bool
 			if x.TblInfo.PKIsHandle {
 				if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					pkCol = expression.ColInfo2Col(x.Schema().Columns, pkColInfo)
 				}
 				if !x.TblInfo.IsCommonHandle {
 					unsignedIntHandle = true
@@ -292,7 +292,7 @@ func buildRangesForPointGet(sctx base.PlanContext, x *PointGetPlan) (err error) 
 		}
 	}
 	if x.HandleConstant != nil {
-		dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
+		dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.HandleFieldType)
 		if err != nil {
 			return err
 		}
@@ -315,14 +315,14 @@ func buildRangesForPointGet(sctx base.PlanContext, x *PointGetPlan) (err error) 
 	return nil
 }
 
-func buildRangesForBatchGet(sctx base.PlanContext, x *BatchPointGetPlan) (err error) {
+func buildRangesForBatchGet(sctx base.PlanContext, x *physicalop.BatchPointGetPlan) (err error) {
 	if x.TblInfo.GetPartitionInfo() != nil && fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
 		return errors.NewNoStackError("Fix33031 fix-control set and partitioned table in cached Batch Point Get plan")
 	}
 	// if access condition is not nil, which means it's a point get generated by cbo.
 	if x.AccessConditions != nil {
 		if x.IndexInfo != nil {
-			ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx.GetRangerCtx(), x.AccessConditions, x.IdxCols, x.IdxColLens, 0)
+			ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.GetCtx().GetRangerCtx(), x.AccessConditions, x.IdxCols, x.IdxColLens, 0)
 			if err != nil {
 				return err
 			}
@@ -337,14 +337,14 @@ func buildRangesForBatchGet(sctx base.PlanContext, x *BatchPointGetPlan) (err er
 			var unsignedIntHandle bool
 			if x.TblInfo.PKIsHandle {
 				if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					pkCol = expression.ColInfo2Col(x.Schema().Columns, pkColInfo)
 				}
 				if !x.TblInfo.IsCommonHandle {
 					unsignedIntHandle = true
 				}
 			}
 			if pkCol != nil {
-				ranges, accessConds, remainingConds, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetRangerCtx(), pkCol.RetType, 0)
+				ranges, accessConds, remainingConds, err := ranger.BuildTableRange(x.AccessConditions, x.GetCtx().GetRangerCtx(), pkCol.RetType, 0)
 				if err != nil {
 					return err
 				}
@@ -401,7 +401,7 @@ func buildRangesForBatchGet(sctx base.PlanContext, x *BatchPointGetPlan) (err er
 	return nil
 }
 
-func buildRangeForIndexScan(sctx base.PlanContext, is *PhysicalIndexScan) (err error) {
+func buildRangeForIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
 		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
 			is.Ranges = ranger.FullRange()

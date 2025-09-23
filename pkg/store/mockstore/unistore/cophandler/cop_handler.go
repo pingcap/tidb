@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -411,8 +412,7 @@ type evalContext struct {
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
-	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
-	copy(e.columnInfos, cols)
+	e.columnInfos = slices.Clone(cols)
 
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
 	for _, col := range e.columnInfos {

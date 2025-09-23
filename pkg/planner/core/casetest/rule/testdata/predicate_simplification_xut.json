@@ -36,14 +36,27 @@
       {
         "SQL": "with cte_81 ( col_108 ) AS ( select    space( 2 ) as r0 from t7c899916 where t7c899916.col_44 = '[17764220206423580415]' and t7c899916.col_44 != '[5725396597060626308,5860284933591136807,11766074999769332834,11879855656810383243]' order by r0 limit 385374223 ) ( select 1,col_108 from cte_81 where cte_81.col_108 = null or cte_81.col_108 in ( '^w#txObGH*=J*Jn5kq' ,'+PzzjiWQ7y&PQV' ,'=%4C7Oain' )   )",
         "Plan": [
-          "Projection 6400.00 root  1->Column#26, Column#25",
-          "└─Selection 6400.00 root  in(Column#25, \"^w#txObGH*=J*Jn5kq\", \"+PzzjiWQ7y&PQV\", \"=%4C7Oain\")",
-          "  └─Projection 8000.00 root    ->Column#25",
+          "Projection 6400.00 root  1->Column#28, Column#27",
+          "└─Selection 6400.00 root  in(Column#27, \"^w#txObGH*=J*Jn5kq\", \"+PzzjiWQ7y&PQV\", \"=%4C7Oain\")",
+          "  └─Projection 8000.00 root    ->Column#27",
           "    └─Limit 8000.00 root  offset:0, count:385374223",
           "      └─TableReader 8000.00 root  data:Limit",
           "        └─Limit 8000.00 cop[tikv]  offset:0, count:385374223",
           "          └─Selection 8000.00 cop[tikv]  eq(test.t7c899916.col_44, cast(\"[17764220206423580415]\", json BINARY)), ne(test.t7c899916.col_44, cast(\"[5725396597060626308,5860284933591136807,11766074999769332834,11...(len:83)\", json BINARY))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t7c899916 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select col_47 from t7c899916 limit 1) t where col_47 in ('2034-05-27', '2001-06-27') and col_47 in (null, '1996-06-27');",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "with cte_263 ( col_1350,col_1351,col_1352 ) AS ( select /*+ read_from_storage(tiflash[ tad03b424,tlfdfece63 ]) */ /*+ use_index_merge( tlfdfece63,tad03b424 ) */ /*+ merge_join( tlfdfece63 , tad03b424 */ rpad( tad03b424.col_44 , 6 , tad03b424.col_48 ) as r0 , insert( tlfdfece63.col_44 , 0 , 10 , tlfdfece63.col_43 ) as r1 , tad03b424.col_41 as r2 from tlfdfece63 , tad03b424 where not( tlfdfece63.col_42 = '[\"Sl9DRlDnSdIOxbfequ02VeikDWiphuDO6suBf0F7esJeCWrRJWQbd3BK3vT58Coz\",\"MmC5saHdTUqosY50IrxprAR52oD08XgGhqJCcYeoaDJKrYxBdbi0QuVDDArCghyL\"]' ) order by r0,r1,r2 limit 348170821 ) ( select 1,col_1350,col_1351,col_1352 from cte_263 where not( cte_263.col_1352 != '2020-06-30' ) and cte_263.col_1352 in ( null ,'1983-08-09' ) order by 1,2,3,4  );",
+        "Plan": [
+          "Projection 0.00 root  1->Column#48, Column#46, Column#47, test.tad03b424.col_41",
+          "└─TableDual 0.00 root  rows:0"
         ]
       }
     ]

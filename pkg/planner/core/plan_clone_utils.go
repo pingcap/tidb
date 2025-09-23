@@ -17,20 +17,9 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/types"
 )
-
-func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
-	clonedPlans := make([]base.PhysicalPlan, len(plans))
-	for i, plan := range plans {
-		cloned, ok := plan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		clonedPlans[i] = cloned.(base.PhysicalPlan)
-	}
-	return clonedPlans, true
-}
 
 func cloneExpressionsForPlanCache(exprs, cloned []expression.Expression) []expression.Expression {
 	if exprs == nil {
@@ -166,28 +155,17 @@ func cloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*exp
 	return cloned
 }
 
-func cloneConstant2DForPlanCache(constants [][]*expression.Constant) [][]*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	cloned := make([][]*expression.Constant, 0, len(constants))
-	for _, c := range constants {
-		cloned = append(cloned, cloneConstantsForPlanCache(c, nil))
-	}
-	return cloned
-}
-
 // FastClonePointGetForPlanCache is a fast path to clone a PointGetPlan for plan cache.
-func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPlan) *PointGetPlan {
+func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop.PointGetPlan) *physicalop.PointGetPlan {
 	if dst == nil {
-		dst = new(PointGetPlan)
+		dst = new(physicalop.PointGetPlan)
 	}
 	dst.Plan = src.Plan
 	dst.Plan.SetSCtx(newCtx)
-	dst.probeParents = src.probeParents
+	dst.ProbeParents = src.ProbeParents
 	dst.PartitionNames = src.PartitionNames
-	dst.dbName = src.dbName
-	dst.schema = src.schema
+	dst.DBName = src.DBName
+	dst.SetSchema(src.Schema())
 	dst.TblInfo = src.TblInfo
 	dst.IndexInfo = src.IndexInfo
 	dst.PartitionIdx = nil // partition prune will be triggered during execution phase
@@ -201,7 +179,7 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPl
 			dst.HandleConstant = src.HandleConstant.Clone().(*expression.Constant)
 		}
 	}
-	dst.handleFieldType = src.handleFieldType
+	dst.HandleFieldType = src.HandleFieldType
 	dst.HandleColOffset = src.HandleColOffset
 	if len(dst.IndexValues) < len(src.IndexValues) { // actually set during rebuild phase
 		dst.IndexValues = make([]types.Datum, len(src.IndexValues))
@@ -216,7 +194,7 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *PointGetPl
 	dst.UnsignedHandle = src.UnsignedHandle
 	dst.IsTableDual = src.IsTableDual
 	dst.Lock = src.Lock
-	dst.outputNames = src.outputNames
+	dst.SetOutputNames(src.OutputNames())
 	dst.LockWaitTime = src.LockWaitTime
 	dst.Columns = src.Columns
 

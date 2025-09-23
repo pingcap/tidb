@@ -20,7 +20,7 @@ type Permission string
 
 // StrongConsistency is a marker interface that indicates the storage is strong consistent
 // over its `Read`, `Write` and `WalkDir` APIs.
-type StrongConsisency interface {
+type StrongConsistency interface {
 	MarkStrongConsistency()
 }
 

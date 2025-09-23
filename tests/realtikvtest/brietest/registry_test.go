@@ -68,7 +68,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 	cleanupRegistryTable(tk)
 
 	// Create registry
-	r, err := registry.NewRestoreRegistry(g, dom)
+	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
 	defer r.Close()
 
@@ -214,10 +214,10 @@ func TestRegistryConfigurationOperations(t *testing.T) {
 	cleanupRegistryTable(tk)
 
 	// Create registry
-	r1, err := registry.NewRestoreRegistry(g, dom)
+	r1, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
 	defer r1.Close()
-	r2, err := registry.NewRestoreRegistry(g, dom)
+	r2, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
 	defer r2.Close()
 
@@ -340,7 +340,7 @@ func TestRegistryTableConflicts(t *testing.T) {
 	cleanupRegistryTable(tk)
 
 	// Create registry
-	r, err := registry.NewRestoreRegistry(g, dom)
+	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
 	defer r.Close()
 
@@ -404,7 +404,7 @@ func TestGetRegistrationsByMaxID(t *testing.T) {
 	cleanupRegistryTable(tk)
 
 	// Create registry
-	r, err := registry.NewRestoreRegistry(g, dom)
+	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
 	defer r.Close()
 

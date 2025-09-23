@@ -135,6 +135,8 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 		switch format {
 		case types.ExplainFormatBrief, types.ExplainFormatROW:
 			columnIndices = []int{0, 1, 3, 4, 5, 6, 7, 8, 9}
+		case types.ExplainFormatPlanTree:
+			columnIndices = []int{0, 2, 3, 4, 5, 6, 7, 8}
 		case types.ExplainFormatVerbose:
 			columnIndices = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 		}
@@ -142,6 +144,8 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 		switch format {
 		case types.ExplainFormatBrief, types.ExplainFormatROW:
 			columnIndices = []int{0, 1, 3, 4, 5}
+		case types.ExplainFormatPlanTree:
+			columnIndices = []int{0, 2, 3, 4, 5}
 		case types.ExplainFormatVerbose:
 			columnIndices = []int{0, 1, 2, 3, 4, 5}
 		}

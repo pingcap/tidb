@@ -37,7 +37,6 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",
-        "//pkg/util/slice",
         "//pkg/util/sqlescape",
         "//pkg/util/table-filter",
         "//pkg/util/zeropool",

@@ -174,12 +174,7 @@ func SetTableMode(
 	tblInfo *model.TableInfo,
 	mode model.TableMode,
 ) error {
-	args := &model.AlterTableModeArgs{
-		TableMode: mode,
-		SchemaID:  dbInfo.ID,
-		TableID:   tblInfo.ID,
-	}
-	err := de.AlterTableMode(ctx, args)
+	err := ddl.AlterTableMode(de, ctx, mode, dbInfo.ID, tblInfo.ID)
 	if err == nil {
 		checkTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 		CheckTableMode(t, store, dbInfo, tblInfo, mode)

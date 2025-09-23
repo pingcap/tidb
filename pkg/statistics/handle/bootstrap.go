@@ -139,7 +139,11 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 			if !ok {
 				continue
 			}
-			table = table.Copy()
+			// optimization: doesn't need to copy and can do in place changes since
+			// 1. initStatsHistograms4ChunkLite is a single thread populating entries in a local cache, and later the
+			// cache will be called h.Replace(cache) to be the global cache
+			// 2. following logic only modifies ColAndIdxExistenceMap, so it won't impact the cache memory cost
+			// calculation
 		}
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
@@ -189,7 +193,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if !ok {
 				continue
 			}
-			table = table.Copy()
+			table = table.CopyAs(statistics.BothMapsWritable)
 		}
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
@@ -396,7 +400,8 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			if !ok {
 				continue
 			}
-			table = table.Copy()
+			// existing idx histogram is modified have to use deep copy
+			table = table.CopyAs(statistics.AllDataWritable)
 		}
 		idx := table.GetIdx(row.GetInt64(1))
 		if idx == nil || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
@@ -569,7 +574,8 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			if !ok {
 				continue
 			}
-			table = table.Copy()
+			// existing idx histogram is modified have to use deep copy
+			table = table.CopyAs(statistics.AllDataWritable)
 		}
 		var lower, upper types.Datum
 		var hist *statistics.Histogram

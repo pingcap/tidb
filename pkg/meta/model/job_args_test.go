@@ -1162,7 +1162,7 @@ func TestModifyColumnsArgs(t *testing.T) {
 		if v == JobVersion1 {
 			var rawArgs []json.RawMessage
 			require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
-			require.Len(t, rawArgs, 8)
+			require.Len(t, rawArgs, 9)
 		}
 	}
 

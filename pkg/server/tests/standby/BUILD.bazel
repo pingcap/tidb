@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "standby_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "standby_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/metrics",
+        "//pkg/server",
+        "//pkg/server/internal/testserverclient",
+        "//pkg/server/internal/testutil",
+        "//pkg/server/internal/util",
+        "//pkg/session",
+        "//pkg/sessionctx/vardef",
+        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/topsql/state",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

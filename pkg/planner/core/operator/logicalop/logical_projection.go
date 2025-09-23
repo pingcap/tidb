@@ -148,8 +148,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
-	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
+	selfUsedCols := expression.ExtractColumnsFromExpressions(p.Exprs, nil)
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt)
 	if err != nil {
@@ -297,7 +296,8 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 	})
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
-		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
+		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(
+			p.SCtx(), cols, childSchema[0], childProfile)
 	}
 	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
 	return p.StatsInfo(), true, nil

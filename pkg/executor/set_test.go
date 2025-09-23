@@ -450,24 +450,19 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("ON"))
 	tk.MustExec("set global tidb_redact_log = 0")
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
-	tk.MustExec("set session tidb_redact_log = 0")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("OFF"))
-	tk.MustExec("set session tidb_redact_log = 1")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
-	tk.MustExec("set session tidb_redact_log = oFf")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("OFF"))
-	tk.MustExec("set session tidb_redact_log = marker")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("MARKER"))
-	tk.MustExec("set session tidb_redact_log = On")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set global tidb_redact_log = marker")
+	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("MARKER"))
+	tk.MustExec("set @@session.tidb_dml_batch_size = -120")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '‹-120›'"))
 
+	tk.MustExec("set global tidb_redact_log = 1")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = -120")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '?'")) // redacted because of tidb_redact_log = 1 above
 	tk.MustQuery("select @@session.tidb_dml_batch_size").Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_redact_log = 0")
+	tk.MustExec("set global tidb_redact_log = 0")
 	tk.MustExec("set session tidb_dml_batch_size = -120")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '-120'")) // without redaction
 
@@ -606,16 +601,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec(`set tidb_opt_enable_correlation_adjustment=0`)
 	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
-
-	// test for tidb_opt_limit_push_down_threshold
-	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 20`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
-	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 100`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
 
 	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_opt_prefer_range_scan = 1")

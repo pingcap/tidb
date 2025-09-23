@@ -611,12 +611,12 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
 			// Since most unit tests don't consume events, we make a few attempts and then give up rather
 			// than blocking the DDL job forever on a full channel.
-			for range 10 {
+			for range 3 {
 				select {
 				case ch <- e:
 					break forLoop
 				default:
-					time.Sleep(time.Microsecond * 10)
+					time.Sleep(time.Microsecond * 2)
 				}
 			}
 			logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
@@ -673,8 +673,9 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
-		id = globalOwnerManager.ID()
-		manager = globalOwnerManager.OwnerManager()
+		ownerMgr := getOwnerManager(opt.Store)
+		id = ownerMgr.ID()
+		manager = ownerMgr.OwnerManager()
 		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
 		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
@@ -1137,7 +1138,7 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
-	isEnableBefore := vardef.EnableMDL.Load()
+	isEnableBefore := vardef.IsMDLEnabled()
 	if isEnableBefore == enable {
 		return nil
 	}
@@ -1161,7 +1162,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return errors.New("please wait for all jobs done")
 	}
 
-	vardef.EnableMDL.Store(enable)
+	vardef.SetEnableMDL(enable)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		oldEnable, _, err := m.GetMetadataLock()
@@ -1185,7 +1186,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 // It should be called before any DDL that could break data consistency.
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		// If metadata lock is enabled. The transaction of DDL must begin after
 		// pre-write of the async commit transaction, then the commit ts of DDL
 		// must be greater than the async commit transaction. In this case, the

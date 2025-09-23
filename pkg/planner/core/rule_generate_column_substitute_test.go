@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -259,7 +260,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 		addresses = append(addresses, "0x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC51")
 	}
 	condition = fmt.Sprintf(condition, addresses...)
-	s := core.CreatePlannerSuite(tk.Session(), is)
+	s := coretestsdk.CreatePlannerSuite(tk.Session(), is)
 	defer s.Close()
 	ctx := context.Background()
 	sql := "select * from tai where " + condition

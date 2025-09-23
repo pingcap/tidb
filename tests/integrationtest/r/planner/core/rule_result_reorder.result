@@ -41,12 +41,12 @@ set tidb_enable_ordered_result_mode=1;
 set tidb_enable_clustered_index = 'ON';
 drop table if exists t;
 CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b));
-explain format=brief select * from t limit 10;
-id	estRows	task	access object	operator info
-TopN	10.00	root		planner__core__rule_result_reorder.t.a, planner__core__rule_result_reorder.t.b, planner__core__rule_result_reorder.t.c, offset:0, count:10
-└─TableReader	10.00	root		data:TopN
-  └─TopN	10.00	cop[tikv]		planner__core__rule_result_reorder.t.a, planner__core__rule_result_reorder.t.b, planner__core__rule_result_reorder.t.c, offset:0, count:10
-    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t limit 10;
+id	task	access object	operator info
+TopN	root		planner__core__rule_result_reorder.t.a, planner__core__rule_result_reorder.t.b, planner__core__rule_result_reorder.t.c, offset:0, count:10
+└─TableReader	root		data:TopN
+  └─TopN	cop[tikv]		planner__core__rule_result_reorder.t.a, planner__core__rule_result_reorder.t.b, planner__core__rule_result_reorder.t.c, offset:0, count:10
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 set tidb_enable_ordered_result_mode=DEFAULT;
 set tidb_enable_clustered_index = DEFAULT;
 show variables where variable_name like 'tidb_enable_ordered_result_mode';

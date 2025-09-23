@@ -58,7 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
@@ -222,6 +222,8 @@ const (
 	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
 	// TableKeyspaceMeta is the table to show the keyspace meta.
 	TableKeyspaceMeta = "KEYSPACE_META"
+	// TableSchemataExtensions is the table to show read only status of database.
+	TableSchemataExtensions = "SCHEMATA_EXTENSIONS"
 )
 
 const (
@@ -351,6 +353,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBStatementsStats:             autoid.InformationSchemaDBID + 98,
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
 	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
+	TableSchemataExtensions:              autoid.InformationSchemaDBID + 101,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -373,7 +376,7 @@ type columnInfo struct {
 	enumElems []string
 }
 
-func buildColumnInfo(col columnInfo) *model.ColumnInfo {
+func buildColumnInfo(colID int64, col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeMediumBlob || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum {
@@ -398,6 +401,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	fieldType.SetFlag(col.flag)
 	fieldType.SetElems(col.enumElems)
 	return &model.ColumnInfo{
+		ID:           colID,
 		Name:         ast.NewCIStr(col.name),
 		FieldType:    fieldType,
 		State:        model.StatePublic,
@@ -436,7 +440,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 				tblInfo.Indices = primaryIndices
 			}
 		}
-		cols = append(cols, buildColumnInfo(c))
+		cols = append(cols, buildColumnInfo(int64(offset), c))
 	}
 	for i, col := range cols {
 		col.Offset = i

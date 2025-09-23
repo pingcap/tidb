@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -46,9 +47,6 @@ var (
 	// subtasks balance to/away from this node.
 	checkBalanceSubtaskInterval = 2 * time.Second
 
-	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
-	// subtask table.
-	updateSubtaskSummaryInterval = 5 * time.Second
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
@@ -70,15 +68,17 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
+	Store  kv.Storage
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string) Param {
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, store kv.Storage) Param {
 	return Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
+		Store:     store,
 	}
 }
 
@@ -196,7 +196,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 	checkCtx, runStepCtx context.Context, stepExec execute.StepExecutor) {
 	taskMgr := e.taskTable.(*storage.TaskManager)
-	ticker := time.NewTicker(updateSubtaskSummaryInterval)
+	ticker := time.NewTicker(execute.UpdateSubtaskSummaryInterval)
 	defer ticker.Stop()
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {
@@ -732,4 +732,9 @@ func (e *BaseTaskExecutor) failOneSubtask(ctx context.Context, taskID int64, sub
 		e.logger.Error("fail one subtask failed", zap.NamedError("subtaskErr", subtaskErr),
 			zap.Duration("takes", time.Since(start)), zap.Error(err1))
 	}
+}
+
+// GetTaskTable returns the TaskTable of the TaskExecutor.
+func (e *BaseTaskExecutor) GetTaskTable() TaskTable {
+	return e.taskTable
 }

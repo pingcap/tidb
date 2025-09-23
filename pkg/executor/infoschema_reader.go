@@ -78,7 +78,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -1068,7 +1068,8 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	sctx sessionctx.Context,
 	schema ast.CIStr,
 	table *model.TableInfo,
-	checker privilege.Manager) bool {
+	checker privilege.Manager,
+) bool {
 	hasPrivs := false
 	var priv mysql.PrivilegeType
 	if checker != nil {
@@ -1118,7 +1119,8 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 	sctx sessionctx.Context,
 	schema ast.CIStr,
 	tbl *model.TableInfo,
-	priv mysql.PrivilegeType) {
+	priv mysql.PrivilegeType,
+) {
 	if tbl.IsView() {
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
@@ -1469,7 +1471,8 @@ func (e *memtableRetriever) setDataFromIndex(
 	sctx sessionctx.Context,
 	schema ast.CIStr,
 	tb *model.TableInfo,
-	rows [][]types.Datum) ([][]types.Datum, error) {
+	rows [][]types.Datum,
+) ([][]types.Datum, error) {
 	checker := privilege.GetPrivilegeManager(sctx)
 	if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tb.Name.L, "", mysql.AllPrivMask) {
 		return rows, nil
@@ -1759,7 +1762,7 @@ func (e *memtableRetriever) setDataFromEngines() {
 
 func (e *memtableRetriever) setDataFromCharacterSets() {
 	charsets := charset.GetSupportedCharsets()
-	var rows = make([][]types.Datum, 0, len(charsets))
+	rows := make([][]types.Datum, 0, len(charsets))
 	for _, charset := range charsets {
 		record := types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen)
 		rows = append(rows, record)
@@ -1770,7 +1773,7 @@ func (e *memtableRetriever) setDataFromCharacterSets() {
 
 func (e *memtableRetriever) setDataFromCollations() {
 	collations := collate.GetSupportedCollations()
-	var rows = make([][]types.Datum, 0, len(collations))
+	rows := make([][]types.Datum, 0, len(collations))
 	for _, collation := range collations {
 		isDefault := ""
 		if collation.IsDefault {
@@ -1786,7 +1789,7 @@ func (e *memtableRetriever) setDataFromCollations() {
 
 func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 	collations := collate.GetSupportedCollations()
-	var rows = make([][]types.Datum, 0, len(collations))
+	rows := make([][]types.Datum, 0, len(collations))
 	for _, collation := range collations {
 		record := types.MakeDatums(collation.Name, collation.CharsetName)
 		rows = append(rows, record)
@@ -2137,23 +2140,8 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 		return nil, err
 	}
 	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
-	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
-	if err != nil {
-		return nil, err
-	}
-	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
-	if err != nil {
-		return nil, err
-	}
-	sk, err = hex.DecodeString(sRegion.StartKey)
-	if err != nil {
-		return nil, err
-	}
-	ek, err = hex.DecodeString(eRegion.EndKey)
-	if err != nil {
-		return nil, err
-	}
-	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(sk, ek), -1)
+	start, end := helper.Store.GetCodec().EncodeRegionRange(sk, ek)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), -1)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
@@ -2560,9 +2548,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 			if !ok {
 				return nil, errors.New("invalid start time")
 			}
-			remainingDuration, progress, estimatedRowCnt, remainDurationErr :=
-				getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
-					dbName, tableName, partitionName, processedRows)
+			remainingDuration, progress, estimatedRowCnt, remainDurationErr := getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
+				dbName, tableName, partitionName, processedRows)
 			if remainDurationErr != nil {
 				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(remainDurationErr))
 			}
@@ -2599,7 +2586,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
 	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	dbName, tableName, partitionName string, processedRows int64,
+) (_ *time.Duration, percentage, totalCnt float64, err error) {
 	remainingDuration := time.Duration(0)
 	if startTime != nil {
 		start, err := startTime.GoTime(time.UTC)
@@ -2626,9 +2614,9 @@ func getRemainDurationForAnalyzeStatusHelper(
 			if partitionName != "" {
 				pt := meta.GetPartitionInfo()
 				tid = pt.GetPartitionIDByName(partitionName)
-				statsTbl = statsHandle.GetPartitionStats(meta, tid)
+				statsTbl = statsHandle.GetPhysicalTableStats(tid, meta)
 			} else {
-				statsTbl = statsHandle.GetTableStats(meta)
+				statsTbl = statsHandle.GetPhysicalTableStats(meta.ID, meta)
 				tid = meta.ID
 			}
 			if statsTbl != nil && statsTbl.RealtimeCount != 0 {
@@ -3094,7 +3082,6 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -3281,7 +3268,6 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -3429,7 +3415,6 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -3527,13 +3512,11 @@ type tiFlashSQLExecuteResponse struct {
 	Data [][]any                               `json:"data"`
 }
 
-var (
-	tiflashTargetTableName = map[string]string{
-		"tiflash_tables":   "dt_tables",
-		"tiflash_segments": "dt_segments",
-		"tiflash_indexes":  "dt_local_indexes",
-	}
-)
+var tiflashTargetTableName = map[string]string{
+	"tiflash_tables":   "dt_tables",
+	"tiflash_segments": "dt_segments",
+	"tiflash_indexes":  "dt_local_indexes",
+}
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
 	maxCount := 1024
@@ -3637,7 +3620,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 
 		// for "tiflash_indexes", set the column_name and index_name according to the TableInfo
 		if e.table.Name.L == "tiflash_indexes" {
-			var logicalTableID = outputRow[outputColIndexMap["table_id"]].GetInt64()
+			logicalTableID := outputRow[outputColIndexMap["table_id"]].GetInt64()
 			if !outputRow[outputColIndexMap["belonging_table_id"]].IsNull() {
 				// Old TiFlash versions may not have this column. In this case we will try to get by the "table_id"
 				belongingTableID := outputRow[outputColIndexMap["belonging_table_id"]].GetInt64()
@@ -3853,7 +3836,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	}
 	rows := make([][]types.Datum, 0, len(resourceGroups))
 	for _, group := range resourceGroups {
-		//mode := ""
+		// mode := ""
 		burstable := burstdisableStr
 		priority := ast.PriorityValueToName(uint64(group.Priority))
 		fillrate := unlimitedFillRate
@@ -3950,7 +3933,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			rows = append(rows, row)
 			e.recordMemoryConsume(row)
 		default:
-			//mode = "UNKNOWN_MODE"
+			// mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
 				nil,

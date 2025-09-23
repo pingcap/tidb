@@ -12272,6 +12272,14 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
+| 	"IMPORT" "GROUPS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups}
+	}
+| 	"IMPORT" "GROUP" stringLit 
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
+	}
 |	"IMPORT" "JOBS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}

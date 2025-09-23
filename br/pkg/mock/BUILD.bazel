@@ -23,6 +23,7 @@ go_library(
         "//pkg/server",
         "//pkg/session",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/types",
         "@com_github_aws_aws_sdk_go//aws/request",
         "@com_github_aws_aws_sdk_go//service/s3",

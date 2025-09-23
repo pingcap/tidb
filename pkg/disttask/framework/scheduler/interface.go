@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -158,6 +159,15 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
+	Store          kv.Storage
+}
+
+// NewParamForTest creates a new Param for test.
+func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
+	return Param{
+		taskMgr: taskMgr,
+		Store:   store,
+	}
 }
 
 // GetNodeResource returns the node resource.

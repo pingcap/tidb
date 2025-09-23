@@ -56,6 +56,14 @@ func TestTiCISearchExplain(t *testing.T) {
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	tk.MustExec("create table t2(col text)")
 
+	tk.MustExec(`create table t3(
+		a int,
+		b int,
+		title text,
+		primary key(a, b),
+		fulltext key(title)
+	)`)
+
 	var input []string
 	var output []struct {
 		SQL  string

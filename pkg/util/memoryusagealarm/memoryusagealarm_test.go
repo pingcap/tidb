@@ -16,6 +16,7 @@ package memoryusagealarm
 
 import (
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // MockConfigProvider implements ConfigProvider for testing
@@ -178,4 +180,61 @@ func TestUpdateVariables(t *testing.T) {
 	assert.Equal(t, 0.6, record.configProvider.GetMemoryUsageAlarmRatio())
 	assert.Equal(t, int64(6), record.configProvider.GetMemoryUsageAlarmKeepRecordNum())
 	assert.Equal(t, uint64(2048), record.serverMemoryLimit)
+}
+
+func TestRecordGoroutineProfileWithBackgroundGoroutine(t *testing.T) {
+	recordDir := t.TempDir()
+	profileFile := recordDir + "/goroutine"
+	err := recordGoroutineProfile(recordDir)
+	require.NoError(t, err)
+
+	// Validate the profile file content
+	content, err := os.ReadFile(profileFile)
+	require.NoError(t, err)
+	require.NotEmpty(t, content)
+	// Check if the content contains goroutine stack traces
+	require.Contains(t, string(content), "goroutine ")
+	require.Contains(t, string(content), "created by")
+}
+
+func benchmarkRecordGoroutineProfileWithBackgroundGoroutine(b *testing.B, goroutineCount int) {
+	b.StopTimer()
+
+	// Start many background goroutines
+	stopCh := make(chan struct{})
+	wg := &sync.WaitGroup{}
+	for range goroutineCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			<-stopCh
+		}()
+	}
+
+	// Benchmark the recordGoroutineProfile function
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		err := recordGoroutineProfile(b.TempDir())
+		require.NoError(b, err)
+	}
+	b.StopTimer()
+}
+
+func BenchmarkRecordGoroutineProfile(b *testing.B) {
+	b.Run("WithBackgroundGoroutine/10", func(b *testing.B) {
+		benchmarkRecordGoroutineProfileWithBackgroundGoroutine(b, 10)
+	})
+
+	b.Run("WithBackgroundGoroutine/100", func(b *testing.B) {
+		benchmarkRecordGoroutineProfileWithBackgroundGoroutine(b, 100)
+	})
+
+	b.Run("WithBackgroundGoroutine/1000", func(b *testing.B) {
+		benchmarkRecordGoroutineProfileWithBackgroundGoroutine(b, 1000)
+	})
+
+	b.Run("WithBackgroundGoroutine/10000", func(b *testing.B) {
+		benchmarkRecordGoroutineProfileWithBackgroundGoroutine(b, 1000)
+	})
 }
