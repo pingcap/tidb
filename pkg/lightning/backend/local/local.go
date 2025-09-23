@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -843,10 +844,13 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 func (local *Backend) forceTableSplitRange(ctx context.Context,
 	startKey, endKey kv.Key, stores []*metapb.Store) (resetter func()) {
 	subctx, cancel := context.WithCancel(ctx)
-	var mu sync.Mutex
+	var (
+		mu sync.Mutex
+		wg util.WaitGroupWrapper
+	)
 	clients := make([]sst.ImportSSTClient, 0, len(stores))
 	storeAddrs := make([]string, 0, len(stores))
-	ttlSecond := uint64(3600) // default 1 hour
+	const ttlSecond = uint64(3600) // default 1 hour
 	addReq := &sst.AddPartitionRangeRequest{
 		Range: &sst.Range{
 			Start: startKey,
@@ -889,8 +893,8 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 	}
 
 	addTableSplitRange()
-	go func() {
-		tick := time.Tick(time.Duration(ttlSecond) * time.Second) // the same as ttl
+	wg.Run(func() {
+		tick := time.Tick(time.Duration(ttlSecond) * time.Second / 5) // 12min
 		for {
 			select {
 			case <-subctx.Done():
@@ -899,11 +903,10 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 				addTableSplitRange()
 			}
 		}
-	}()
+	})
 
 	resetter = func() {
 		mu.Lock()
-		defer mu.Unlock()
 		for i, c := range clients {
 			_, err := c.RemoveForcePartitionRange(subctx, removeReq)
 			if err == nil {
@@ -914,6 +917,8 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 			}
 		}
 		cancel()
+		mu.Unlock()
+		wg.Wait()
 	}
 	return resetter
 }
@@ -1269,12 +1274,12 @@ func (local *Backend) ImportEngine(
 		return err
 	}
 	intest.Assert(len(splitKeys) > 0)
+	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	if startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]; kerneltype.IsClassic() &&
-		len(startKey) > 0 && len(endKey) > 0 {
+	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
 		tidblogutil.Logger(ctx).Info("force table split range",
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
 		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 		if err != nil {
 			return err
@@ -1307,8 +1312,8 @@ func (local *Backend) ImportEngine(
 
 	if local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		tidblogutil.Logger(ctx).Info("switch import mode of ranges",
-			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
-			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
