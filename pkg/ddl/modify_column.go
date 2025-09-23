@@ -533,6 +533,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// delete only -> write only
 		updateObjectState(changingCol, changingIdxs, model.StateWriteOnly)
+		// new col's origin default value be the same as the new default value.
+		if err = changingCol.SetOriginDefaultValue(changingCol.GetDefaultValue()); err != nil {
+			return ver, errors.Trace(err)
+		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -541,10 +545,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		// new col's origin default value be the same as the new default value.
-		if err = changingCol.SetOriginDefaultValue(changingCol.GetDefaultValue()); err != nil {
-			return ver, errors.Trace(err)
-		}
 		updateObjectState(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
