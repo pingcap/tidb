@@ -46,6 +46,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
+        "//pkg/keyspace",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",

@@ -207,7 +207,7 @@ DROP TABLE if exists t1;
 CREATE TABLE t1(cnotnull tinyint not null, cnull tinyint null);
 INSERT INTO t1 VALUES(1, 1);
 select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) from t1;
-explain format="brief" select IFNULL(cnotnull, '1') from t1;
+explain format="plan_tree" select IFNULL(cnotnull, '1') from t1;
 
 # TestColResolutionPriBetweenOuterAndNatureJoin
 DROP TABLE if exists t0;

@@ -18,62 +18,73 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
-func TestListPartitionPruning(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("create database list_partition_pruning")
-		testKit.MustExec("use list_partition_pruning")
-		testKit.MustExec("drop table if exists tlist")
-		testKit.MustExec(`create table tlist (a int, b int) partition by list (a) (
+func testListPartitionPruning(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	testKit.MustExec("create database list_partition_pruning")
+	testKit.MustExec("use list_partition_pruning")
+	testKit.MustExec("drop table if exists tlist")
+	testKit.MustExec(`create table tlist (a int, b int) partition by list (a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5),
     partition p2 values in (6, 7, 8),
     partition p3 values in (9, 10, 11),
     partition p4 values in (-1))`)
-		testKit.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (
+	testKit.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5),
     partition p2 values in (6, 7, 8),
     partition p3 values in (9, 10, 11),
     partition p4 values in (-1))`)
-		testKit.MustExec(`analyze table tlist`)
-		testKit.MustExec(`analyze table tcollist`)
+	testKit.MustExec(`analyze table tlist`)
+	testKit.MustExec(`analyze table tcollist`)
 
-		var input []string
-		var output []struct {
-			SQL         string
-			DynamicPlan []string
-			StaticPlan  []string
-		}
-		integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
-		integrationPartitionSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, tt := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = tt
-				testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-				output[i].DynamicPlan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-				testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
-				output[i].StaticPlan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-			})
+	var input []string
+	var output []struct {
+		SQL         string
+		DynamicPlan []string
+		StaticPlan  []string
+	}
+	integrationPartitionSuiteData := getIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
 			testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-			testKit.MustQuery(tt).Check(testkit.Rows(output[i].DynamicPlan...))
+			output[i].DynamicPlan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 			testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
-			testKit.MustQuery(tt).Check(testkit.Rows(output[i].StaticPlan...))
-		}
-	})
+			output[i].StaticPlan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].DynamicPlan...))
+		testKit.MustExec("set @@tidb_partition_prune_mode = 'static'")
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].StaticPlan...))
+	}
+}
+
+func TestListPartitionPruning(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Please run TestListPartitionPruningForNextGen under the next-gen mode")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	testkit.RunTestUnderCascades(t, testListPartitionPruning)
+}
+
+func TestListPartitionPruningForNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Please run TestListPartitionPruning under the non next-gen mode")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	testkit.RunTestUnderCascades(t, testListPartitionPruning)
 }
 
 func TestPartitionTableExplain(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -109,8 +120,7 @@ func TestPartitionTableExplain(t *testing.T) {
 }
 
 func TestBatchPointGetTablePartition(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -195,8 +205,7 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 }
 
 func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")

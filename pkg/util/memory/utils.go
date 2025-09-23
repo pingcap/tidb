@@ -58,18 +58,18 @@ func (l *wrapList[V]) moveToFront(e wrapListElement) {
 func (l *wrapList[V]) remove(e wrapListElement) {
 	e.base.Value = nil
 	l.base.MoveToBack(e.base)
-	l.num--
+	atomic.AddInt64(&l.num, -1)
 }
 
 func (l *wrapList[V]) front() (res V) {
-	if l.num == 0 {
+	if l.empty() {
 		return
 	}
 	return l.base.Front().Value.(V)
 }
 
 func (l *wrapList[V]) popFront() (res V) {
-	if l.num == 0 {
+	if l.empty() {
 		return
 	}
 	e := l.base.Front()
@@ -79,11 +79,11 @@ func (l *wrapList[V]) popFront() (res V) {
 }
 
 func (l *wrapList[V]) size() int64 {
-	return l.num
+	return atomic.LoadInt64(&l.num)
 }
 
 func (l *wrapList[V]) empty() bool {
-	return l.num == 0
+	return l.size() == 0
 }
 
 func (l *wrapList[V]) pushBack(v V) wrapListElement {
@@ -95,7 +95,7 @@ func (l *wrapList[V]) pushBack(v V) wrapListElement {
 		l.base.MoveBefore(x, l.end.base)
 		x.Value = v
 	}
-	l.num++
+	atomic.AddInt64(&l.num, 1)
 	return wrapListElement{x}
 }
 

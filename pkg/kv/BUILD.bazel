@@ -15,6 +15,7 @@ go_library(
         "option.go",
         "txn.go",
         "txn_scope_var.go",
+        "unistore.go",
         "utils.go",
         "variables.go",
         "version.go",
@@ -83,7 +84,7 @@ go_test(
     ],
     embed = [":kv"],
     flaky = True,
-    shard_count = 26,
+    shard_count = 27,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/keyspace",

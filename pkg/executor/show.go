@@ -80,7 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -2456,7 +2456,13 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 		return
 	}
 
-	result.AppendTime(14, runInfo.UpdateTime)
+	// update time of run info comes from subtask summary, but checksum step don't
+	// have period updated summary.
+	updateTime := runInfo.UpdateTime
+	if updateTime.IsZero() {
+		updateTime = info.UpdateTime
+	}
+	result.AppendTime(14, updateTime)
 	result.AppendString(15, proto.Step2Str(proto.ImportInto, runInfo.Step))
 	result.AppendString(16, runInfo.ProcessedSize())
 	result.AppendString(17, runInfo.TotalSize())

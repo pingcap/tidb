@@ -16,6 +16,7 @@ package handle
 
 import (
 	"context"
+	"encoding/json"
 	goerrors "errors"
 	"path"
 	"strconv"
@@ -26,12 +27,18 @@ import (
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -71,7 +78,7 @@ func GetCPUCountOfNode(ctx context.Context) (int, error) {
 }
 
 // SubmitTask submits a task.
-func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
+func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, keyspace string, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
 	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
@@ -84,7 +91,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 		return nil, storage.ErrTaskAlreadyExists
 	}
 
-	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, concurrency, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -289,6 +296,53 @@ func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 		logutil.BgLogger().Warn("Can't get cluster id from store, use default cloud storage uri")
 	}
 	return cloudURI
+}
+
+// UpdatePauseScaleInFlag updates the pause scale-in flag.
+func UpdatePauseScaleInFlag(ctx context.Context, flag *schstatus.TTLFlag) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	bytes, err := json.Marshal(flag)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		_, err2 := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`REPLACE INTO mysql.tidb(variable_name, variable_value) VALUES(%?, %?)`,
+			tidbvar.DXFSchedulePauseScaleIn, string(bytes))
+		return err2
+	})
+}
+
+// GetScheduleTuneFactors gets the schedule tune factors for a keyspace.
+// if not set or expired, it returns the default tune factors.
+func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.TuneFactors, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	mgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return nil, err
+	}
+	var factors *schstatus.TTLTuneFactors
+	if err = mgr.WithNewSession(func(se sessionctx.Context) error {
+		return kv.RunInNewTxn(ctx, se.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
+			mutator := meta.NewMutator(txn)
+			var err2 error
+			factors, err2 = mutator.GetDXFScheduleTuneFactors(keyspace)
+			if err2 != nil {
+				return err2
+			}
+			return nil
+		})
+	}); err != nil {
+		return nil, err
+	}
+	if factors == nil || factors.ExpireTime.Before(time.Now()) {
+		return schstatus.GetDefaultTuneFactors(), nil
+	}
+	return &factors.TuneFactors, nil
 }
 
 func init() {

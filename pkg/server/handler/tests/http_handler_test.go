@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -64,8 +66,9 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -391,7 +394,7 @@ func TestGetRegionByIDWithError(t *testing.T) {
 
 func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	var err error
-	ts.store, err = mockstore.NewMockStore()
+	ts.store, err = teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
@@ -542,6 +545,11 @@ func TestGetTableMVCC(t *testing.T) {
 	}
 
 	hexKey := p2.Key
+	if kerneltype.IsNextGen() {
+		// EncodeKey(nil) returns the codec's key prefix. We use this to strip the prefix from the hex key.
+		keyPrefix := strings.ToUpper(hex.EncodeToString(ts.store.GetCodec().EncodeKey(nil)))
+		hexKey = strings.TrimPrefix(hexKey, keyPrefix)
+	}
 	resp, err = ts.FetchStatus("/mvcc/hex/" + hexKey)
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
@@ -974,6 +982,9 @@ func TestGetSchema(t *testing.T) {
 }
 
 func TestAllHistory(t *testing.T) {
+	// TestGetSchema will set schema lease to -1, while this test needs a valid
+	// schema lease.
+	vardef.SetStatsLease(time.Second)
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -1322,6 +1333,10 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 }
 
 func TestUpgrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -1513,14 +1528,14 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	// test upgrade show for 1 server
 	checkUpgradeShow(1, 100, 0)
 	// test upgrade show for 3 servers
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo")
 	// test upgrade show again with 3 different version servers
 	checkUpgradeShow(3, 33, 3)
 	// test upgrade show again with 3 servers of the same version
 	mockedAllServerInfos["s2"].Version = mockedAllServerInfos["s0"].Version
 	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	checkUpgradeShow(3, 100, 0)
 }
 

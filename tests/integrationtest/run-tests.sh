@@ -220,6 +220,7 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
+
     start_options="-P $port -status $status -config $config_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         start_options="$start_options -store tikv -path ${TIKV_PATH}"
@@ -228,7 +229,7 @@ function start_tidb_server()
     fi
 
     if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
-        start_options="$start_options -keyspace-name SYSTEM"
+        start_options="$start_options -keyspace-name SYSTEM --tidb-service-scope dxf_service"
     fi
 
     echo "start tidb-server, log file: $mysql_tester_log"

@@ -100,7 +100,7 @@ func TestStandby(t *testing.T) {
 
 	select {
 	case <-serverCreated:
-	case <-time.After(time.Second * 5):
+	case <-time.After(time.Second * 15):
 		t.Fatal("server creation timeout")
 	}
 

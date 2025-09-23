@@ -118,7 +118,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 30,
     deps = [
         "//br/pkg/errors",
         "//pkg/autoid_service",
@@ -134,6 +134,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/store/driver/error",
         "//pkg/store/mockstore",
+        "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/codec",

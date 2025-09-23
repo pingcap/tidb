@@ -206,6 +206,7 @@ func NewTableImporter(
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
+		kvStore:            kvStore,
 		tableInfo: &checkpoints.TidbTableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
@@ -233,6 +234,7 @@ type TableImporter struct {
 	// uuid. we use this id to create a unique directory for this importer.
 	id        string
 	backend   *local.Backend
+	kvStore   tidbkv.Storage
 	tableInfo *checkpoints.TidbTableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
 	encTable table.Table
@@ -267,6 +269,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 	if err != nil {
 		return nil, err
 	}
+	keyspace := helper.GetTiKVCodec().GetKeyspace()
 
 	return &TableImporter{
 		LoadDataController: e,
@@ -277,6 +280,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
 		},
+		keyspace:      keyspace,
 		encTable:      tbl,
 		dbID:          e.DBID,
 		logger:        e.logger.With(zap.String("import-id", id)),
@@ -287,6 +291,11 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 // GetKeySpace gets the keyspace of the kv store.
 func (ti *TableImporter) GetKeySpace() []byte {
 	return ti.keyspace
+}
+
+// GetKVStore gets the kv store.
+func (ti *TableImporter) GetKVStore() tidbkv.Storage {
+	return ti.kvStore
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -426,6 +435,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 		DataInvalidCharReplace: string(utf8.RuneError),
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
+		SkipParquetRowCount:    common.SkipReadRowCount(e.Table.Meta()),
 	}
 	makeEngineCtx := logutil.WithLogger(ctx, e.logger)
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)

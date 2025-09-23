@@ -104,6 +104,11 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 	return uc.KeyWithoutTrimRightSpace(uc.impl.Preprocess(str))
 }
 
+// ImmutableKey implements Collator interface.
+func (uc *unicodeCICollator) ImmutableKey(str string) []byte {
+	return uc.KeyWithoutTrimRightSpace(uc.impl.Preprocess(str))
+}
+
 // KeyWithoutTrimRightSpace implements Collator interface.
 func (uc *unicodeCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)

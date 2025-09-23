@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -107,14 +106,14 @@ func (t *CopTask) getStoreType() kv.StoreType {
 	if t.tablePlan == nil {
 		return kv.TiKV
 	}
-	tp := t.tablePlan
-	for len(tp.Children()) > 0 {
-		if len(tp.Children()) > 1 {
+	p := t.tablePlan
+	for len(p.Children()) > 0 {
+		if len(p.Children()) > 1 {
 			return kv.TiFlash
 		}
-		tp = tp.Children()[0]
+		p = p.Children()[0]
 	}
-	if ts, ok := tp.(*physicalop.PhysicalTableScan); ok {
+	if ts, ok := p.(*physicalop.PhysicalTableScan); ok {
 		return ts.StoreType
 	}
 	return kv.TiKV
@@ -179,8 +178,9 @@ func attach2Task4PhysicalApply(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalIndexMergeJoin implements PhysicalPlan interface.
+func attach2Task4PhysicalIndexMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalIndexMergeJoin)
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.InnerPlan)
@@ -532,8 +532,8 @@ func attach2TaskForMpp4PhysicalHashJoin(pp base.PhysicalPlan, tasks ...base.Task
 	// for outer join, it should always be the outer side of the join
 	// for semi join, it should be the left side(the same as left out join)
 	outerTaskIndex := 1 - p.InnerChildIdx
-	if p.JoinType != logicalop.InnerJoin {
-		if p.JoinType == logicalop.RightOuterJoin {
+	if p.JoinType != base.InnerJoin {
+		if p.JoinType == base.RightOuterJoin {
 			outerTaskIndex = 1
 		} else {
 			outerTaskIndex = 0
@@ -634,13 +634,13 @@ func attach2Task4PhysicalMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) bas
 
 func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	newTask := &RootTask{}
-	p := PhysicalIndexLookUpReader{
-		tablePlan:        t.tablePlan,
-		indexPlan:        t.indexPlan,
+	p := physicalop.PhysicalIndexLookUpReader{
+		TablePlan:        t.tablePlan,
+		IndexPlan:        t.indexPlan,
 		ExtraHandleCol:   t.extraHandleCol,
 		CommonHandleCols: t.commonHandleCols,
-		expectedCnt:      t.expectCnt,
-		keepOrder:        t.keepOrder,
+		ExpectedCnt:      t.expectCnt,
+		KeepOrder:        t.keepOrder,
 	}.Init(ctx, t.tablePlan.QueryBlockOffset())
 	p.PlanPartInfo = t.physPlanPartInfo
 	p.SetStats(t.tablePlan.StatsInfo())
@@ -649,7 +649,7 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
 	// We need to refactor these logics.
 	aggPushedDown := false
-	switch p.tablePlan.(type) {
+	switch p.TablePlan.(type) {
 	case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 		aggPushedDown = true
 	}
@@ -707,7 +707,7 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(ctx.GetSessionVars(), selectivity), newTask.GetPlan().QueryBlockOffset())
 		sel.FromDataSource = true
 		sel.SetChildren(newTask.GetPlan())
 		newTask.SetPlan(sel)
@@ -846,20 +846,20 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 
 func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 	root := t.(*RootTask)
-	reader, isDoubleRead := root.GetPlan().(*PhysicalIndexLookUpReader)
+	reader, isDoubleRead := root.GetPlan().(*physicalop.PhysicalIndexLookUpReader)
 	proj, isProj := root.GetPlan().(*physicalop.PhysicalProjection)
 	if !isDoubleRead && !isProj {
 		return false
 	}
 	if isProj {
-		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookUpReader)
+		reader, isDoubleRead = proj.Children()[0].(*physicalop.PhysicalIndexLookUpReader)
 		if !isDoubleRead {
 			return false
 		}
 	}
 
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
-	ts, isTableScan := reader.tablePlan.(*physicalop.PhysicalTableScan)
+	ts, isTableScan := reader.TablePlan.(*physicalop.PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
@@ -898,18 +898,18 @@ func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 
 func sinkIntoIndexMerge(p *physicalop.PhysicalLimit, t base.Task) bool {
 	root := t.(*RootTask)
-	imReader, isIm := root.GetPlan().(*PhysicalIndexMergeReader)
+	imReader, isIm := root.GetPlan().(*physicalop.PhysicalIndexMergeReader)
 	proj, isProj := root.GetPlan().(*physicalop.PhysicalProjection)
 	if !isIm && !isProj {
 		return false
 	}
 	if isProj {
-		imReader, isIm = proj.Children()[0].(*PhysicalIndexMergeReader)
+		imReader, isIm = proj.Children()[0].(*physicalop.PhysicalIndexMergeReader)
 		if !isIm {
 			return false
 		}
 	}
-	ts, ok := imReader.tablePlan.(*physicalop.PhysicalTableScan)
+	ts, ok := imReader.TablePlan.(*physicalop.PhysicalTableScan)
 	if !ok {
 		return false
 	}
@@ -1340,10 +1340,10 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *CopTask) (base.T
 	pushedLimit.SetSchema(copTsk.tablePlan.Schema())
 	copTsk = attachPlan2Task(pushedLimit, copTsk).(*CopTask)
 	child := pushedLimit.Children()[0]
-	child.SetStats(child.StatsInfo().ScaleByExpectCnt(float64(newCount)))
+	child.SetStats(child.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), float64(newCount)))
 	if selSelectivity > 0 && selSelectivity < 1 {
 		scaledRowCount := child.StatsInfo().RowCount / selSelectivity
-		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(scaledRowCount))
+		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), scaledRowCount))
 	}
 	rootTask := copTsk.ConvertToRootTask(p.SCtx())
 	return attachPlan2Task(p, rootTask), true
@@ -1514,7 +1514,7 @@ func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) bas
 func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinInfo *IndexJoinInfo, stats *property.StatsInfo) {
 	var isIndexJoin bool
 	switch p.(type) {
-	case *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalIndexMergeJoin:
 		isIndexJoin = true
 	default:
 	}
@@ -1525,18 +1525,18 @@ func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinI
 		case *physicalop.PhysicalSelection:
 			// todo: for simplicity, we can just inherit it from child.
 			// scale(1) means a cloned stats information same as the input stats.
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		case *physicalop.PhysicalProjection:
 			// mainly about the rowEst, proj doesn't change that.
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 			// todo: for simplicity, we can just inherit it from child.
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		case *physicalop.PhysicalUnionScan:
 			// todo: for simplicity, we can just inherit it from child.
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		default:
-			p.SetStats(stats.Scale(1))
+			p.SetStats(stats.Scale(p.SCtx().GetSessionVars(), 1))
 		}
 	}
 }
@@ -1674,14 +1674,14 @@ func scaleStats4GroupingSets(p *physicalop.PhysicalHashAgg, groupingSets express
 		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
 		groupingSetCols := groupingSet.ExtractCols()
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
-		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(p.SCtx(), groupingSetCols, childSchema, childStats)
 		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all
 	// change the sub-agg's stats
 	if p.StatsInfo() != nil {
 		// equivalence to a new cloned one. (cause finalAgg and partialAgg may share a same copy of stats)
-		cpStats := p.StatsInfo().Scale(1)
+		cpStats := p.StatsInfo().Scale(p.SCtx().GetSessionVars(), 1)
 		cpStats.RowCount = sumNDV
 		// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
 		for k := range cpStats.ColNDVs {
@@ -1701,7 +1701,8 @@ func scaleStats4GroupingSets(p *physicalop.PhysicalHashAgg, groupingSets express
 					// when meet an id in grouping sets, skip it (cause its null) and append the rest ids to count the incrementNDV.
 					beforeLen := len(intersectionIDs)
 					intersectionIDs = append(intersectionIDs, oneGNDV.Cols[i:]...)
-					incrementNDV, _ := cardinality.EstimateColsDNVWithMatchedLenFromUniqueIDs(intersectionIDs, childSchema, childStats)
+					incrementNDV, _ := cardinality.EstimateColsDNVWithMatchedLenFromUniqueIDs(
+						p.SCtx(), intersectionIDs, childSchema, childStats)
 					newGNDV += incrementNDV
 					// restore the before intersectionIDs slice.
 					intersectionIDs = intersectionIDs[:beforeLen]
@@ -1810,7 +1811,7 @@ func adjust3StagePhaseAgg(p *physicalop.PhysicalHashAgg, partialAgg, finalAgg ba
 	// enforce Expand operator above the children.
 	// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
 	// scale(len(groupingSets)) will change the NDV, while Expand doesn't change the NDV and groupNDV.
-	stats := mpp.p.StatsInfo().Scale(float64(1))
+	stats := mpp.p.StatsInfo().Scale(p.SCtx().GetSessionVars(), float64(1))
 	stats.RowCount = stats.RowCount * float64(len(groupingSets))
 	physicalExpand := physicalop.PhysicalExpand{
 		GroupingSets: groupingSets,
@@ -2235,7 +2236,7 @@ func accumulateNetSeekCost4MPP(p base.PhysicalPlan) (cost float64) {
 
 func tryExpandVirtualColumn(p base.PhysicalPlan) {
 	if ts, ok := p.(*physicalop.PhysicalTableScan); ok {
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
+		ts.Columns = physicalop.ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		return
 	}
 	for _, child := range p.Children() {

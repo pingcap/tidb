@@ -103,49 +103,23 @@ func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexReader) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
+// resolveIndices4PhysicalIndexLookUpReader implements Plan interface.
+func resolveIndices4PhysicalIndexLookUpReader(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalIndexLookUpReader)
+	err = physicalop.ResolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.Schema())
 	if err != nil {
 		return err
 	}
-	err = p.indexPlan.ResolveIndices()
+	err = p.TablePlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
-	for i, col := range p.OutputColumns {
-		newCol, err := col.ResolveIndices(p.indexPlan.Schema())
-		if err != nil {
-			// Check if there is duplicate virtual expression column matched.
-			sctx := p.SCtx()
-			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx().GetEvalCtx(), p.indexPlan.Schema())
-			if isOK {
-				p.OutputColumns[i] = newExprCol.(*expression.Column)
-				continue
-			}
-			return err
-		}
-		p.OutputColumns[i] = newCol.(*expression.Column)
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = physicalop.ResolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	err = p.tablePlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	err = p.indexPlan.ResolveIndices()
+	err = p.IndexPlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
 	if p.ExtraHandleCol != nil {
-		newCol, err := p.ExtraHandleCol.ResolveIndices(p.tablePlan.Schema())
+		newCol, err := p.ExtraHandleCol.ResolveIndices(p.TablePlan.Schema())
 		if err != nil {
 			return err
 		}
@@ -159,33 +133,6 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 		p.CommonHandleCols[i] = newCol.(*expression.Column)
 	}
 	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
-	err = physicalop.ResolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	if p.tablePlan != nil {
-		err = p.tablePlan.ResolveIndices()
-		if err != nil {
-			return err
-		}
-	}
-	for i := range p.partialPlans {
-		err = p.partialPlans[i].ResolveIndices()
-		if err != nil {
-			return err
-		}
-	}
-	if p.HandleCols != nil && p.KeepOrder {
-		p.HandleCols, err = p.HandleCols.ResolveIndices(p.Schema())
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // resolveIndices4PhysicalSelection implements Plan interface.
@@ -208,32 +155,6 @@ func resolveIndices4PhysicalSelection(pp base.PhysicalPlan) (err error) {
 		}
 	}
 	return nil
-}
-
-// ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalExchangeSender) ResolveIndicesItself() (err error) {
-	return p.ResolveIndicesItselfWithSchema(p.Children()[0].Schema())
-}
-
-// ResolveIndicesItselfWithSchema is added for test usage
-func (p *PhysicalExchangeSender) ResolveIndicesItselfWithSchema(inputSchema *expression.Schema) (err error) {
-	for i, hashCol := range p.HashCols {
-		newHashCol, err := hashCol.ResolveIndices(inputSchema)
-		if err != nil {
-			return err
-		}
-		p.HashCols[i] = newHashCol
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	return p.ResolveIndicesItself()
 }
 
 // resolveIndicesForSort is a helper function to resolve indices for sort operators.
@@ -334,67 +255,6 @@ func resolveIndices4PhysicalLimit(pp base.PhysicalPlan) (err error) {
 	}
 	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
 		return err
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *Update) ResolveIndices() (err error) {
-	err = p.SimpleSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	schema := p.SelectPlan.Schema()
-	for _, assign := range p.OrderedList {
-		newCol, err := assign.Col.ResolveIndices(schema)
-		if err != nil {
-			return err
-		}
-		assign.Col = newCol.(*expression.Column)
-		assign.Expr, err = assign.Expr.ResolveIndices(schema)
-		if err != nil {
-			return err
-		}
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *Insert) ResolveIndices() (err error) {
-	err = p.SimpleSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	for _, asgn := range p.OnDuplicate {
-		newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return err
-		}
-		asgn.Col = newCol.(*expression.Column)
-		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
-		if asgn.Expr != nil {
-			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	for i, expr := range p.GenCols.Exprs {
-		p.GenCols.Exprs[i], err = expr.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return err
-		}
-	}
-	for _, asgn := range p.GenCols.OnDuplicates {
-		newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return err
-		}
-		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
-		if err != nil {
-			return err
-		}
 	}
 	return
 }

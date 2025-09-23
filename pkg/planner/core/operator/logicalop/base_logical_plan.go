@@ -69,9 +69,9 @@ type BaseLogicalPlan struct {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
-	_, ok1 := p.self.(*LogicalSequence)
-	_, ok2 := p.self.(*LogicalMaxOneRow)
-	if !ok1 && !ok2 {
+	switch p.self.(type) {
+	case *LogicalSequence, *LogicalMaxOneRow, *LogicalLock:
+	default:
 		intest.Assert(false, "Hash64 should not be called directly")
 	}
 	h.HashInt(p.ID())
@@ -442,6 +442,16 @@ func (p *BaseLogicalPlan) GetPlanIDsHash() uint64 {
 // GetWrappedLogicalPlan implements the logical plan interface.
 func (p *BaseLogicalPlan) GetWrappedLogicalPlan() base.LogicalPlan {
 	return p.self
+}
+
+// GetChildStatsAndSchema gets the stats and schema of the first child.
+func (p *BaseLogicalPlan) GetChildStatsAndSchema() (*property.StatsInfo, *expression.Schema) {
+	return p.Children()[0].StatsInfo(), p.Children()[0].Schema()
+}
+
+// GetJoinChildStatsAndSchema gets the stats and schema of both children.
+func (*BaseLogicalPlan) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+	panic("baseLogicalPlan.GetJoinChildStatsAndSchema() should never be called.")
 }
 
 // NewBaseLogicalPlan is the basic constructor of BaseLogicalPlan.

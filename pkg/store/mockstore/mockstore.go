@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	cp "github.com/otiai10/copy"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -231,7 +230,7 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		// test, we set the default keyspace meta to system keyspace.
 		if opt.keyspaceMeta == nil {
 			opt.keyspaceMeta = &keyspacepb.KeyspaceMeta{
-				Id:   1,
+				Id:   uint32(0xFFFFFF) - 1,
 				Name: keyspace.System,
 			}
 		}
@@ -279,18 +278,6 @@ func ImageAvailable() bool {
 	}
 	_, err = os.ReadDir(filepath.Join(ImageFilePath, "kv"))
 	return err == nil
-}
-
-func copyImage() (string, error) {
-	path, err := os.MkdirTemp("", "tidb-unistore-temp")
-	if err != nil {
-		return "", err
-	}
-	err = cp.Copy(ImageFilePath, path)
-	if err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.

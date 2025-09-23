@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -235,4 +236,34 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 func (en *TableKVEncoder) Close() error {
 	en.SessionCtx.Close()
 	return nil
+}
+
+// GetNumOfIndexGenKV gets the number of indices that generate index KVs.
+func GetNumOfIndexGenKV(tblInfo *model.TableInfo) int {
+	return len(GetIndicesGenKV(tblInfo))
+}
+
+// GenKVIndex is used to store index info that generates index KVs.
+type GenKVIndex struct {
+	name   string
+	Unique bool
+}
+
+// GetIndicesGenKV gets all indices that generate index KVs.
+func GetIndicesGenKV(tblInfo *model.TableInfo) map[int64]GenKVIndex {
+	res := make(map[int64]GenKVIndex, len(tblInfo.Indices))
+	for _, idxInfo := range tblInfo.Indices {
+		// all public non-primary index generates index KVs
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
+			continue
+		}
+		res[idxInfo.ID] = GenKVIndex{
+			name:   idxInfo.Name.L,
+			Unique: idxInfo.Unique,
+		}
+	}
+	return res
 }

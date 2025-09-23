@@ -161,6 +161,7 @@ go_test(
         "//pkg/store/mockstore",
         "//pkg/table/tables",
         "//pkg/tablecodec",
+        "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//pkg/util/codec",
         "//pkg/util/dbutil/dbutiltest",

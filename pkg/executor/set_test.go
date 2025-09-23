@@ -444,6 +444,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
 	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
 
+	// test for instance
+	tk.MustExec("set @@instance.ddl_slow_threshold=1234")
+	tk.MustQuery("select @@instance.ddl_slow_threshold").Check(testkit.Rows("1234"))
+	tk.MustGetErrCode("set @@instance.tidb_redact_log=1", errno.ErrIncorrectGlobalLocalVar)
+
 	// test for tidb_redact_log
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set global tidb_redact_log = 1")
@@ -601,16 +606,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec(`set tidb_opt_enable_correlation_adjustment=0`)
 	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
-
-	// test for tidb_opt_limit_push_down_threshold
-	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 20`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
-	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 100`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
 
 	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_opt_prefer_range_scan = 1")

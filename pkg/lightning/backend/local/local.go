@@ -1481,6 +1481,7 @@ func (local *Backend) newRegionJobWorker(
 			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, isHTTPS, local.nextgenHTTPCli, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
+			collector:      local.collector,
 		}
 		base.writeFn = cloudW.write
 		base.ingestFn = cloudW.ingest
