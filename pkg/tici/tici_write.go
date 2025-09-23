@@ -104,12 +104,12 @@ func getEtcdClient() (cli *clientv3.Client, err error) {
 	if err != nil {
 		return nil, err
 	}
-	ectdEndpoints, err := util.ParseHostPortAddr(tidbCfg.Path)
+	etcdEndpoints, err := util.ParseHostPortAddr(tidbCfg.Path)
 	if err != nil {
 		return nil, err
 	}
 	return clientv3.New(clientv3.Config{
-		Endpoints:        ectdEndpoints,
+		Endpoints:        etcdEndpoints,
 		DialTimeout:      etcdDialTimeout,
 		TLS:              tls,
 		AutoSyncInterval: 30 * time.Second,

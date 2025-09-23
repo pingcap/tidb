@@ -482,7 +482,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	if local.ticiWriteGroup != nil {
 		// Write headers for all tici file writers.
 		if err = local.ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, dataCommitTS); err != nil {
-			return nil, errors.Annotate(err, "ticiWriteGroup.WriteHeader failed")
+			return nil, errors.Annotate(err, "failed to write header to tici file writer")
 		}
 	}
 
@@ -558,7 +558,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		// If TiCI is enabled, write the batch to all TiCI writers.
 		if local.ticiWriteGroup != nil {
 			if err := local.ticiWriteGroup.WritePairs(ctx, ticiFileWriter, pairs, count); err != nil {
-				return errors.Annotate(err, "ticiWriteGroup.WritePairs failed")
+				return errors.Annotate(err, "failed to write pairs to tici file writer")
 			}
 		}
 
@@ -648,10 +648,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 
 	if local.ticiWriteGroup != nil {
 		if err := local.ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
-			return nil, errors.Annotate(err, "ticiWriteGroup.CloseFileWriters failed")
+			return nil, errors.Annotate(err, "failed to close tici file writer")
 		}
 		if err := local.ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
-			return nil, errors.Annotate(err, "ticiWriteGroup.FinishPartitionUpload failed")
+			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
 		}
 	}
 
