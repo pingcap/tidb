@@ -22,11 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
->>>>>>> ca7e8acb3ea (planner: refactor outer to inner join (#63637))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -204,12 +200,8 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 // HashCode inherits the BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
-<<<<<<< HEAD
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-=======
-func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	simplifyOuterJoin(p, predicates)
->>>>>>> ca7e8acb3ea (planner: refactor outer to inner join (#63637))
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -311,17 +303,17 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
 func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
-	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.InnerJoin {
+	if p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != InnerJoin {
 		return
 	}
 
 	innerTable := p.children[0]
 	outerTable := p.children[1]
-	if p.JoinType == base.LeftOuterJoin {
+	if p.JoinType == LeftOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
 	}
 
-	if p.JoinType == base.InnerJoin {
+	if p.JoinType == InnerJoin {
 		return
 	}
 	// then simplify embedding outer join.
@@ -338,7 +330,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		}
 	}
 	if canBeSimplified {
-		p.JoinType = base.InnerJoin
+		p.JoinType = InnerJoin
 	}
 }
 
@@ -359,7 +351,7 @@ func isNullRejected(ctx planctx.PlanContext, schema *expression.Schema, expr exp
 			return true
 		}
 
-		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond, true)
+		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond)
 		if err != nil {
 			return false
 		}
