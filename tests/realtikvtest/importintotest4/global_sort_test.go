@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -335,6 +336,9 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 }
 
 func (s *mockGCSSuite) TestSplitRangeForTable() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
+	}
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
 		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
