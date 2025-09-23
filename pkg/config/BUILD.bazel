@@ -37,7 +37,11 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 24,
+=======
+    shard_count = 30,
+>>>>>>> eb6cdbbc8a1 (pkg/config: add buffer config for plugin audit log (#63651))
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",
