@@ -185,14 +185,10 @@ func TestAddStatement(t *testing.T) {
 			NumCopTasks:       20,
 			MaxProcessAddress: "200",
 			MaxProcessTime:    25000,
-<<<<<<< HEAD
-			AvgWaitTime:       200,
-			P90WaitTime:       2000,
-=======
 			TotProcessTime:    40000,
->>>>>>> fc3c894e391 (stmtsummary: tiny optimize by avoiding unnecessary calculations (#58562))
 			MaxWaitAddress:    "201",
 			MaxWaitTime:       2500,
+			TotWaitTime:       40000,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  180,
@@ -330,14 +326,10 @@ func TestAddStatement(t *testing.T) {
 			NumCopTasks:       2,
 			MaxProcessAddress: "300",
 			MaxProcessTime:    350,
-<<<<<<< HEAD
-			AvgWaitTime:       20,
-			P90WaitTime:       200,
-=======
 			TotProcessTime:    200,
->>>>>>> fc3c894e391 (stmtsummary: tiny optimize by avoiding unnecessary calculations (#58562))
 			MaxWaitAddress:    "301",
 			MaxWaitTime:       250,
+			TotWaitTime:       40,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  18,
@@ -638,14 +630,10 @@ func generateAnyExecInfo() *StmtExecInfo {
 			NumCopTasks:       10,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
-<<<<<<< HEAD
-			AvgWaitTime:       100,
-			P90WaitTime:       1000,
-=======
 			TotProcessTime:    10000,
->>>>>>> fc3c894e391 (stmtsummary: tiny optimize by avoiding unnecessary calculations (#58562))
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
+			TotWaitTime:       1000,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  80,
