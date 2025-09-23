@@ -856,9 +856,7 @@ type indexIngestBaseWorker struct {
 }
 
 func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResult, error) {
-	failpoint.Inject("injectPanicForIndexIngest", func() {
-		panic("mock panic")
-	})
+	failpoint.InjectCall("mockIndexIngestWorkerFault")
 
 	result := IndexWriteResult{
 		ID: rs.ID,

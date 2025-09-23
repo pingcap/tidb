@@ -949,3 +949,28 @@ CREATE  TABLE  t0(c0 INTEGER);
 CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
 SELECT t0.c0 FROM v0, t0 WHERE RAND();
 c0
+drop table if exists t1,t2,t3,t4;
+create table t1(a int, b int);
+create table t2 like t1;
+create table t3 like t1;
+create table t4 like t1;
+set @@tidb_opt_join_reorder_threshold=5;
+explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
+id	estRows	task	access object	operator info
+Projection	155937656.25	root		1->Column#13
+└─HashJoin	155937656.25	root		CARTESIAN inner join
+  ├─HashJoin(Build)	12487.50	root		inner join, equal:[eq(test.t3.b, test.t4.b)]
+  │ ├─TableReader(Build)	9990.00	root		data:Selection
+  │ │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.b))
+  │ │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	9990.00	root		data:Selection
+  │   └─Selection	9990.00	cop[tikv]		not(isnull(test.t3.b))
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(test.t1.a, test.t2.a)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t2.a))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t1.a))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_opt_join_reorder_threshold=default;
