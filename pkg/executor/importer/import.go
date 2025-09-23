@@ -1345,7 +1345,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {
-		indexSizeRatio, err = e.sampleIndexSizeRatio(ctx, e.dataFiles, ksCodec)
+		indexSizeRatio, err = e.sampleIndexSizeRatio(ctx, ksCodec)
 		if err != nil {
 			e.logger.Warn("meet error when sampling index size ratio", zap.Error(err))
 		}
