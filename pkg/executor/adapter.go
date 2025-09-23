@@ -638,8 +638,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
-		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
