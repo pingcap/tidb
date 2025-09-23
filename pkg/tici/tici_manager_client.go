@@ -252,7 +252,7 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	req := &GetImportStoragePrefixRequest{
 		TidbTaskId: tidbTaskID,
 		TableId:    tableID,
-		IndexId:    indexIDs[0],
+		IndexIds:   indexIDs,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
