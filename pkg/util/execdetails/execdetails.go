@@ -1431,29 +1431,8 @@ func (e *BasicRuntimeStats) String() string {
 		return ""
 	}
 	var str strings.Builder
-<<<<<<< HEAD
 	str.WriteString("time:")
 	str.WriteString(FormatDuration(time.Duration(e.consume.Load())))
-=======
-	timePrefix := ""
-	if e.executorCount.Load() > 1 {
-		timePrefix = "total_"
-	}
-	totalTime := e.consume.Load()
-	openTime := e.open.Load()
-	closeTime := e.close.Load()
-	str.WriteString(timePrefix)
-	str.WriteString("time:")
-	str.WriteString(FormatDuration(time.Duration(totalTime)))
-	str.WriteString(", ")
-	str.WriteString(timePrefix)
-	str.WriteString("open:")
-	str.WriteString(FormatDuration(time.Duration(openTime)))
-	str.WriteString(", ")
-	str.WriteString(timePrefix)
-	str.WriteString("close:")
-	str.WriteString(FormatDuration(time.Duration(closeTime)))
->>>>>>> 68d6b9932b6 (execdetails: tiny optimization for executor stats (#58186))
 	str.WriteString(", loops:")
 	str.WriteString(strconv.FormatInt(int64(e.loop.Load()), 10))
 	return str.String()
