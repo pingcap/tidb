@@ -99,7 +99,7 @@ from t
 )
 select 'ok' from dual
 where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows())
-	testKit.MustQuery(`explain format = 'plan_tree' with tmp as (
+	testKit.MustQuery(`explain format = 'brief' with tmp as (
 select
 row_number() over() as id,
 (select '1' from dual where id in (2)) as name
@@ -107,16 +107,16 @@ from t
 )
 select 'ok' from dual
 where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
-		`Projection root  ok->Column#13`,
-		`└─HashJoin root  CARTESIAN inner join`,
-		`  ├─TableDual(Build) root  rows:1`,
-		`  └─HashAgg(Probe) root  group by:Column#11, Column#12, funcs:firstrow(1)->Column#18`,
-		`    └─Selection root  eq("1", Column#11), eq(1, Column#12)`,
-		`      └─Window root  row_number()->Column#12 over(rows between current row and current row)`,
-		`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
-		`          ├─TableReader(Build) root  data:TableFullScan`,
-		`          │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo`,
-		`          └─Projection(Probe) root  1->Column#11`,
-		`            └─Selection root  eq(test.t.id, 2)`,
-		`              └─TableDual root  rows:1`))
+		`Projection 8000.00 root  ok->Column#13`,
+		`└─HashJoin 8000.00 root  CARTESIAN inner join`,
+		`  ├─TableDual(Build) 1.00 root  rows:1`,
+		`  └─HashAgg(Probe) 8000.00 root  group by:Column#11, Column#12, funcs:firstrow(1)->Column#18`,
+		`    └─Selection 8000.00 root  eq("1", Column#11), eq(1, Column#12)`,
+		`      └─Window 10000.00 root  row_number()->Column#12 over(rows between current row and current row)`,
+		`        └─Apply 10000.00 root  CARTESIAN left outer join`,
+		`          ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+		`          │ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
+		`          └─Projection(Probe) 8000.00 root  1->Column#11`,
+		`            └─Selection 8000.00 root  eq(test.t.id, 2)`,
+		`              └─TableDual 10000.00 root  rows:1`))
 }
