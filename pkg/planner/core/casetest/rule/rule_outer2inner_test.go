@@ -87,11 +87,11 @@ func TestOuter2InnerIssue55886(t *testing.T) {
 
 func TestIssue58836(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (id int primary key, name varchar(100));")
-	testKit.MustExec("insert into t values (1, null), (2, 1);")
-	testKit.MustQuery(`with tmp as (
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, name varchar(100));")
+	tk.MustExec("insert into t values (1, null), (2, 1);")
+	tk.MustQuery(`with tmp as (
 select
 row_number() over() as id,
 (select '1' from dual where id in (2)) as name
@@ -99,7 +99,7 @@ from t
 )
 select 'ok' from dual
 where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows())
-	testKit.MustQuery(`explain format = 'brief' with tmp as (
+	tk.MustQuery(`explain format = 'brief' with tmp as (
 select
 row_number() over() as id,
 (select '1' from dual where id in (2)) as name
@@ -119,4 +119,37 @@ where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
 		`          └─Projection(Probe) 8000.00 root  1->Column#11`,
 		`            └─Selection 8000.00 root  eq(test.t.id, 2)`,
 		`              └─TableDual 10000.00 root  rows:1`))
+	// https://github.com/pingcap/tidb/issues/61327
+	tk.MustExec(`CREATE TABLE t0(c0 INT);`)
+	tk.MustExec(`CREATE TABLE t2(c0 INT);`)
+	tk.MustExec(`CREATE TABLE t3(c0 INT);`)
+	tk.MustExec(`INSERT INTO t0 VALUES(0);`)
+	tk.MustExec(`INSERT INTO t3 VALUES(3);`)
+	tk.MustQuery(`explain format = 'brief' SELECT *
+FROM t0
+         LEFT JOIN (SELECT NULL AS col_2
+                    FROM t2) as subQuery1
+                   ON true
+         INNER JOIN t3 ON (((((CASE 1
+                                   WHEN subQuery1.col_2 THEN t3.c0
+                                   ELSE NULL END)) AND (((t0.c0))))) < 1);`).
+		Check(testkit.Rows(
+			`Projection 1000000000000.00 root  test.t0.c0, Column#5, test.t3.c0`,
+			`└─HashJoin 1000000000000.00 root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column#5, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)`,
+			`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+			`  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`,
+			`  └─HashJoin(Probe) 100000000.00 root  CARTESIAN left outer join`,
+			`    ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+			`    │ └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`,
+			`    └─Projection(Probe) 10000.00 root  <nil>->Column#5`,
+			`      └─TableReader 10000.00 root  data:TableFullScan`,
+			`        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`))
+	tk.MustQuery(`SELECT *
+FROM t0
+         LEFT JOIN (SELECT NULL AS col_2
+                    FROM t2) as subQuery1
+                   ON true
+         INNER JOIN t3 ON (((((CASE 1
+                                   WHEN subQuery1.col_2 THEN t3.c0
+                                   ELSE NULL END)) AND (((t0.c0))))) < 1);`).Check(testkit.Rows("0 <nil> 3"))
 }
