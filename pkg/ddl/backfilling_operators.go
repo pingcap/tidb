@@ -253,8 +253,10 @@ func NewWriteIndexToExternalStoragePipeline(
 	}
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
-	failpoint.Inject("mockWriterMemSize", func() {
-		memSizePerIndex = 1 * size.GB
+	failpoint.Inject("mockWriterMemSizeInKB", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			memSizePerIndex = uint64(v) * size.KB
+		}
 	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
@@ -263,7 +265,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
-		onClose, memSizePerIndex, reorgMeta,
+		onClose, memSizePerIndex, reorgMeta, rowCntListener,
 	)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, nil, rowCntListener)
 
@@ -650,6 +652,7 @@ func NewWriteExternalStoreOperator(
 	onClose external.OnCloseFunc,
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
+	rowCntListener RowCountListener,
 ) *WriteExternalStoreOperator {
 	onDuplicateKey := common.OnDuplicateKeyError
 	failpoint.Inject("ignoreReadIndexDupKey", func() {
@@ -689,6 +692,7 @@ func NewWriteExternalStoreOperator(
 					reorgMeta:    reorgMeta,
 					totalCount:   totalCount,
 				},
+				rowCntListener: rowCntListener,
 			}
 		})
 	return &WriteExternalStoreOperator{
@@ -778,6 +782,7 @@ func NewIndexIngestOperator(
 
 type indexIngestExternalWorker struct {
 	indexIngestBaseWorker
+	rowCntListener RowCountListener
 }
 
 func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
@@ -791,6 +796,7 @@ func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(In
 		w.ctx.onError(err)
 		return
 	}
+	w.rowCntListener.Written(rs.Added)
 	send(rs)
 }
 
@@ -850,9 +856,7 @@ type indexIngestBaseWorker struct {
 }
 
 func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk) (IndexWriteResult, error) {
-	failpoint.Inject("injectPanicForIndexIngest", func() {
-		panic("mock panic")
-	})
+	failpoint.InjectCall("mockIndexIngestWorkerFault")
 
 	result := IndexWriteResult{
 		ID: rs.ID,

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	goerrors "errors"
 	"io"
 	"time"
 
@@ -168,10 +169,10 @@ func readOneFile(
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
-			if err == io.EOF {
+			if goerrors.Is(err, io.EOF) {
 				break
 			}
-			return err
+			return errors.Trace(err)
 		}
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)

@@ -1654,7 +1654,8 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 		require.Equal(t, check, true)
 	}
 
-	check := func(query string) {
+	check := func(prefix, suffix string) {
+		query := "explain " + prefix + " " + suffix
 		// If sql mode is strict, read does not push down to tiflash
 		tk.MustExec("set @@sql_mode = 'strict_trans_tables'")
 		tk.MustExec("set @@tidb_enforce_mpp=0")
@@ -1670,22 +1671,35 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 		rs = tk.MustQuery("show warnings").Rows()
 		checkRes(rs, 2, "MPP mode may be blocked because the query is not readonly and sql mode is strict.")
 
+		// If using `set_var` to set sql mode to non-strict mode, read should push down to tiflash
+		hintedQuery := "explain " + prefix + " /*+ SET_VAR(sql_mode='') */ " + suffix
+		rs = tk.MustQuery(hintedQuery).Rows()
+		checkRes(rs, 2, "mpp[tiflash]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
 		// If sql mode is not strict, read should push down to tiflash
 		tk.MustExec("set @@sql_mode = ''")
 		rs = tk.MustQuery(query).Rows()
 		checkRes(rs, 2, "mpp[tiflash]")
 		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		// If using `set_var` to set sql mode to strict mode, read should not push down to tiflash
+		hintedQuery = "explain " + prefix + " /*+ SET_VAR(sql_mode='strict_trans_tables') */ " + suffix
+		rs = tk.MustQuery(hintedQuery).Rows()
+		checkRes(rs, 2, "cop[tikv]")
+		rs = tk.MustQuery("show warnings").Rows()
+		checkRes(rs, 2, "MPP mode may be blocked because the query is not readonly and sql mode is strict.")
 	}
 
 	// Insert into ... select
-	check("explain insert into t2 select a+b from t")
-	check("explain insert into t2 select t.a from t2 join t on t2.a = t.a")
+	check("insert", "into t2 select a+b from t")
+	check("insert", "into t2 select t.a from t2 join t on t2.a = t.a")
 
 	// Replace into ... select
-	check("explain replace into t2 select a+b from t")
+	check("replace", "into t2 select a+b from t")
 
 	// CTE
-	check("explain update t set a=a+1 where b in (select a from t2 where t.a > t2.a)")
+	check("update", "t set a=a+1 where b in (select a from t2 where t.a > t2.a)")
 }
 
 func TestPointGetWithSelectLock(t *testing.T) {
@@ -1968,11 +1982,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tikv.
 	rows := [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_13", "root", "data:TableFullScan_12"},
-		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tikv.
 	rows = [][]any{
@@ -2004,11 +2018,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tiflash.
 	rows = [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_15", "root", "data:TableFullScan_14"},
-		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tiflash.
 	rows = [][]any{
@@ -2326,7 +2340,6 @@ func TestIssue61669(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	tk.MustExec(`
 CREATE TABLE B (
   ROW_NO bigint NOT NULL AUTO_INCREMENT,
@@ -2386,4 +2399,16 @@ JOIN
             ON A.BSTPRTFL_NO = f.BSTPRTFL_NO
     WHERE A.PCSG_BTNO_NO = 'MXUU2022123043502318'`)
 	require.True(t, len(r.Rows()) > 0) // no error
+}
+
+func TestIssue58829(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t1 (id varchar(64) not null,  key(id))`)
+	tk.MustExec(`create table t2 (id bigint(20), k int)`)
+
+	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
+	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
 }

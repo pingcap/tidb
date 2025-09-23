@@ -238,9 +238,9 @@ func TestIssue32632(t *testing.T) {
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	statsTbl1 := h.GetTableStats(tbl1.Meta())
+	statsTbl1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
 	statsTbl1.RealtimeCount = 800000
-	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 	statsTbl2.RealtimeCount = 10000
 	var input []string
 	var output []struct {

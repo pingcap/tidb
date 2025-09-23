@@ -392,3 +392,10 @@ func (p *LogicalExpand) GenerateGroupingIDIncrementModeNumericSet(oneSetOffset i
 	// {0,1,2}. This grouping id set is returned back as this grouping function's specified meta when rewriting the grouping function,
 	// and the evaluating logic is quite simple as IN compare.
 }
+
+// BuildKeyInfo implements base.LogicalPlan interface.
+func (*LogicalExpand) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
+	// since LogicalExpand is a logical operator which will split the rows out, duplicated rows may exist in the output.
+	selfSchema.SetKeys(nil)
+	selfSchema.SetUniqueKeys(nil)
+}
