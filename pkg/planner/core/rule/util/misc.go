@@ -30,9 +30,13 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	case *expression.Column:
 		return ResolveColumnAndReplace(expr, replace)
 	case *expression.CorrelatedColumn:
+		newCol, changed := resolveColumnAndReplace(&expr.Column, replace)
+		if !changed {
+			return expr
+		}
 		newExpr := expr.Clone().(*expression.CorrelatedColumn)
 		newExpr.Data = expr.Data
-		newExpr.Column = *ResolveColumnAndReplace(&expr.Column, replace)
+		newExpr.Column = *newCol
 		return newExpr
 	case *expression.ScalarFunction:
 		for i, arg := range expr.GetArgs() {
@@ -45,15 +49,20 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 
 // ResolveColumnAndReplace replaces columns fields of expressions by children logical plans.
 func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) *expression.Column {
+	newCol, _ := resolveColumnAndReplace(origin, replace)
+	return newCol
+}
+
+func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) (*expression.Column, bool) {
 	dst := replace[string(origin.HashCode())]
 	if dst != nil {
 		// To avoid origin column is shared by multiple operators,
 		// need to clone it before modification.
 		newCol := dst.Clone().(*expression.Column)
 		newCol.RetType, newCol.InOperand = origin.RetType, origin.InOperand
-		return newCol
+		return newCol, true
 	}
-	return origin
+	return origin, false
 }
 
 // ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.

@@ -3999,7 +3999,7 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 8. order by item year+2 resolve to gby grouping expression",
         "Plan": [
-          "Projection root  Column#10->Column#11",
+          "Projection root  Column#10",
           "└─Sort root  Column#7",
           "  └─HashAgg root  group by:Column#15, Column#16, Column#17, funcs:sum(Column#14)->Column#10, funcs:firstrow(Column#15)->Column#7",
           "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#14, Column#7->Column#15, Column#8->Column#16, gid->Column#17",
@@ -4013,7 +4013,7 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year+2, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 9. order by item year+2 resolve to select field",
         "Plan": [
-          "Projection root  Column#7->Column#11, Column#10->Column#12",
+          "Projection root  Column#7->Column#11, Column#10",
           "└─Sort root  Column#7",
           "  └─HashAgg root  group by:Column#16, Column#17, Column#18, funcs:sum(Column#15)->Column#10, funcs:firstrow(Column#16)->Column#7",
           "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#15, Column#7->Column#16, Column#8->Column#17, gid->Column#18",
@@ -4027,7 +4027,7 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year+2 as y, SUM(profit) as profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 10. having (year+2) shouldn't be pushed down",
         "Plan": [
-          "Projection root  Column#7->Column#11, Column#10->Column#12",
+          "Projection root  Column#7, Column#10",
           "└─Sort root  Column#7, Column#10",
           "  └─HashAgg root  group by:Column#16, Column#17, Column#18, funcs:sum(Column#15)->Column#10, funcs:firstrow(Column#16)->Column#7",
           "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#15, Column#7->Column#16, Column#8->Column#17, gid->Column#18",
@@ -4057,7 +4057,7 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup order by grouping(year); -- 12. grouping function in order by clause",
         "Plan": [
-          "Projection root  Column#7->Column#12, Column#8->Column#13, Column#9->Column#14, Column#11->Column#15",
+          "Projection root  Column#7, Column#8->Column#13, Column#9->Column#14, Column#11",
           "└─Projection root  Column#11, Column#7, Column#8, Column#9, gid",
           "  └─Sort root  Column#21",
           "    └─Projection root  Column#11, Column#7, Column#8, Column#9, gid, grouping(gid)->Column#21",
@@ -4073,7 +4073,7 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(country); -- 13. 12 under gpos case",
         "Plan": [
-          "Projection root  Column#7->Column#12, Column#8->Column#13, Column#11->Column#14",
+          "Projection root  Column#7, Column#8->Column#13, Column#11",
           "└─Projection root  Column#11, Column#7, Column#8, gid",
           "  └─Sort root  Column#20",
           "    └─Projection root  Column#11, Column#7, Column#8, gid, grouping(gid)->Column#20",
@@ -4089,7 +4089,7 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup having grouping(year) > 0 order by grouping(year); -- 14. grouping function in having clause",
         "Plan": [
-          "Projection root  Column#7->Column#12, Column#8->Column#13, Column#9->Column#14, Column#11->Column#15",
+          "Projection root  Column#7, Column#8->Column#13, Column#9->Column#14, Column#11",
           "└─Projection root  Column#11, Column#7, Column#8, Column#9, gid",
           "  └─Sort root  Column#21",
           "    └─Projection root  Column#11, Column#7, Column#8, Column#9, gid, grouping(gid)->Column#21",
@@ -4106,7 +4106,7 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
         "Plan": [
-          "Projection root  Column#7->Column#12, Column#8->Column#13, Column#11->Column#14",
+          "Projection root  Column#7, Column#8->Column#13, Column#11",
           "└─Projection root  Column#11, Column#7, Column#8, gid",
           "  └─Sort root  Column#20",
           "    └─Projection root  Column#11, Column#7, Column#8, gid, grouping(gid)->Column#20",

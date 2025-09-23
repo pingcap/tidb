@@ -184,8 +184,8 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	case *logicalop.LogicalApply:
 		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
 	default:
-		for _, dst := range p.Schema().Columns {
-			ruleutil.ResolveColumnAndReplace(dst, replace)
+		for i, dst := range p.Schema().Columns {
+			p.Schema().Columns[i] = ruleutil.ResolveColumnAndReplace(dst, replace)
 		}
 	}
 
