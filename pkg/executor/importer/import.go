@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/docker/go-units"
@@ -1329,6 +1330,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 // CalResourceParams calculates resource related parameters according to the total
 // file size and target node cpu count.
 func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []byte) error {
+	start := time.Now()
 	targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
 	if err != nil {
 		return err
@@ -1364,6 +1366,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
 		zap.Float64("indexSizeRatio", indexSizeRatio),
 		zap.Float64("amplifyFactor", factors.AmplifyFactor),
+		zap.Duration("costTime", time.Since(start)),
 	)
 	return nil
 }
