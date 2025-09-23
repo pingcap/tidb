@@ -786,8 +786,8 @@ github.com/pingcap/kvproto v0.0.0-20250915095348-efd5134a6d6c h1:dZQmQHDT5YhvrWt
 github.com/pingcap/kvproto v0.0.0-20250915095348-efd5134a6d6c/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7/go.mod h1:8AanEdAHATuRurdGxZXBz0At+9avep+ub7U1AGYLIMM=
 github.com/pingcap/log v1.1.0/go.mod h1:DWQW5jICDR7UJh4HtxXSM20Churx4CQL0fwL/SoOSA4=
-github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e h1:8AZZRv1Ox9FVGATVZBBgr6y1MrNBQFABEdovNJt1QIc=
-github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
+github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9 h1:qG9BSvlWFEE5otQGamuWedx9LRm0nrHvsQRQiW8SxEs=
+github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/metering_sdk v0.0.0-20250918015914-468cd6feb1dc h1:WQYup3tMJq1tyDU8aWTpSZcMPJIKHV+LNlCu6S7OH1I=
 github.com/pingcap/metering_sdk v0.0.0-20250918015914-468cd6feb1dc/go.mod h1:Qj77xzm/Bscv47607+/BkP0ovAHnf4j7HWSLKQaKwBw=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
