@@ -25,27 +25,30 @@ import (
 )
 
 // ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
+func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) expression.Expression {
 	switch expr := origin.(type) {
 	case *expression.Column:
-		ResolveColumnAndReplace(expr, replace)
+		return ResolveColumnAndReplace(expr, replace)
 	case *expression.CorrelatedColumn:
-		ResolveColumnAndReplace(&expr.Column, replace)
+		return ResolveColumnAndReplace(&expr.Column, replace)
 	case *expression.ScalarFunction:
-		for _, arg := range expr.GetArgs() {
-			ResolveExprAndReplace(arg, replace)
+		for i, arg := range expr.GetArgs() {
+			expr.GetArgs()[i] = ResolveExprAndReplace(arg, replace)
 		}
+		return expr
 	}
+	return origin
 }
 
 // ResolveColumnAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
+func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) *expression.Column {
 	dst := replace[string(origin.HashCode())]
 	if dst != nil {
-		retType, inOperand := origin.RetType, origin.InOperand
-		*origin = *dst
-		origin.RetType, origin.InOperand = retType, inOperand
+		newCol := origin.Clone().(*expression.Column)
+		newCol.RetType, newCol.InOperand = origin.RetType, origin.InOperand
+		return newCol
 	}
+	return origin
 }
 
 // ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
