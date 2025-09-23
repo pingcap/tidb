@@ -225,6 +225,16 @@ func (idx *Index) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	return float64(realtimeRowCount) / columnCount
 }
 
+// GetHistogram returns the histogram for this index.
+func (idx *Index) GetHistogram() *Histogram {
+	return &idx.Histogram
+}
+
+// GetTopN returns the TopN for this index.
+func (idx *Index) GetTopN() *TopN {
+	return idx.TopN
+}
+
 // IsAnalyzed indicates whether the index is analyzed.
 func (idx *Index) IsAnalyzed() bool {
 	return idx.StatsVer != Version0

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -247,7 +248,10 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			r.recordRegionSplitAfterNextProp = false
 		}
 
-		if r.curRangeJobSize >= r.rangeJobSize || r.curRangeJobKeyCnt >= r.rangeJobKeyCnt {
+		// each KV need additional memory for 2 slice.
+		// we can enhance it later using SliceLocation.
+		rangeMemSize := r.curRangeJobSize + r.curRangeJobKeyCnt*size.SizeOfSlice*2
+		if rangeMemSize >= r.rangeJobSize || r.curRangeJobKeyCnt >= r.rangeJobKeyCnt {
 			r.curRangeJobSize = 0
 			r.curRangeJobKeyCnt = 0
 			r.recordRangeJobAfterNextProp = true

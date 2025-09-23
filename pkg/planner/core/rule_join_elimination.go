@@ -52,27 +52,34 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 
 	outerPlan := p.Children()[1^innerChildIdx]
 	innerPlan := p.Children()[innerChildIdx]
-	outerUniqueIDs := set.NewInt64Set()
-	for _, outerCol := range outerPlan.Schema().Columns {
-		outerUniqueIDs.Insert(outerCol.UniqueID)
-	}
 
 	// in case of count(*) FROM R LOJ S, the parentCols is empty, but
 	// still need to proceed to check whether we can eliminate outer join.
 	// In fact, we only care about whether there is any column from inner
 	// table, if there is none, we are good.
 	if len(parentCols) > 0 {
+		outerUniqueIDs := set.NewInt64Set()
+		for _, outerCol := range outerPlan.Schema().Columns {
+			outerUniqueIDs.Insert(outerCol.UniqueID)
+		}
 		matched := IsColsAllFromOuterTable(parentCols, outerUniqueIDs)
 		if !matched {
 			return p, false, nil
 		}
 	}
 
-	// outer join elimination with duplicate agnostic aggregate functions
-	matched := IsColsAllFromOuterTable(aggCols, outerUniqueIDs)
-	if matched {
-		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
-		return outerPlan, true, nil
+	if len(aggCols) > 0 {
+		innerUniqueIDs := set.NewInt64Set()
+		for _, innerCol := range innerPlan.Schema().Columns {
+			innerUniqueIDs.Insert(innerCol.UniqueID)
+		}
+		// Check if any column is from the inner table.
+		// If any column is from the inner table, we cannot eliminate the outer join.
+		innerFound := IsColFromInnerTable(aggCols, innerUniqueIDs)
+		if !innerFound {
+			appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
+			return outerPlan, true, nil
+		}
 	}
 	// outer join elimination without duplicate agnostic aggregate functions
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
@@ -119,6 +126,16 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64
 		}
 	}
 	return true
+}
+
+// IsColFromInnerTable checks whether any column is from inner table.
+func IsColFromInnerTable(cols []*expression.Column, innerUniqueIDs set.Int64Set) bool {
+	for _, col := range cols {
+		if innerUniqueIDs.Exist(col.UniqueID) {
+			return true
+		}
+	}
+	return false
 }
 
 // check whether one of unique keys sets is contained by inner join keys
