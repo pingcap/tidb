@@ -78,19 +78,9 @@ func TestAddStatement(t *testing.T) {
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
-<<<<<<< HEAD
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
-	}
 	samplePlan, _, _ := stmtExecInfo1.PlanGenerator()
-=======
 	key := &StmtDigestKey{}
 	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
-	samplePlan, _, _ := stmtExecInfo1.LazyInfo.GetEncodedPlan()
->>>>>>> 9c2ce652909 (executor: Optimize statements summary by using buffer pool (#58544))
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
@@ -980,18 +970,9 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// LRU cache should work.
 	for i := loops - 10; i < loops; i++ {
-<<<<<<< HEAD
-		key := &stmtSummaryByDigestKey{
-			schemaName:        stmtExecInfo1.SchemaName,
-			digest:            fmt.Sprintf("digest%d", i),
-			planDigest:        stmtExecInfo1.PlanDigest,
-			resourceGroupName: stmtExecInfo1.ResourceGroupName,
-		}
-=======
 		key := &StmtDigestKey{}
 		key.Init(stmtExecInfo1.SchemaName, fmt.Sprintf("digest%d", i), "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
 		key.Hash()
->>>>>>> 9c2ce652909 (executor: Optimize statements summary by using buffer pool (#58544))
 		_, ok := sm.Get(key)
 		require.True(t, ok)
 	}
