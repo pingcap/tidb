@@ -27,7 +27,7 @@ import (
 
 func TestLazyRowIterator(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
-	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "test", nil, nil)
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "test", nil, nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()

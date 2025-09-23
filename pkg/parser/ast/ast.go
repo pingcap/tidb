@@ -238,6 +238,14 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Savepoint"
 	case *OptimizeTableStmt:
 		return "Optimize"
+	case *CreateProcedureInfo:
+		return "CreateProcedure"
+	case *DropProcedureStmt:
+		return "DropProcedure"
+	case *AlterProcedureStmt:
+		return "AlterProcedure"
+	case *CallStmt:
+		return "Call"
 	}
 	return "other"
 }

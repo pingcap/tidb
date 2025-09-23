@@ -880,6 +880,8 @@ type VarAssignment struct {
 	IsInstance  bool
 	IsSystem    bool
 	ExtendValue *Constant
+	// can be a sp variable
+	CanSPVariable bool
 }
 
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
