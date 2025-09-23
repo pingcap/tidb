@@ -14,7 +14,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 9,
+=======
+    shard_count = 12,
+>>>>>>> ca7e8acb3ea (planner: refactor outer to inner join (#63637))
     deps = [
         "//pkg/domain",
         "//pkg/expression",
