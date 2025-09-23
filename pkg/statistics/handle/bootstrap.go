@@ -436,6 +436,8 @@ type loadStrategy interface {
 	generateAndSendTasks(worker *initstats.RangeWorker)
 }
 
+// maxTidStrategy is to load stats by paging using the max tid.
+// It is used for full load.
 type maxTidStrategy struct {
 	maxTid int64
 }
@@ -468,6 +470,8 @@ func (m maxTidStrategy) generateAndSendTasks(worker *initstats.RangeWorker) {
 	}
 }
 
+// tableListStrategy is to load stats for a list of table IDs.
+// Used for partial loading. Applicable only when the refresh stats command is run with a specified database or table.
 type tableListStrategy struct {
 	tableIDs []int64
 }
