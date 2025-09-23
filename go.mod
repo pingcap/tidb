@@ -108,9 +108,15 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20250910113454-79074b120a3e
 	github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20250917111308-6cbd7e4f9761
+	github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500
+	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
+>>>>>>> 7cf087bde56 (txn: check `max_execution_time` when locking keys (#63000))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
@@ -169,6 +175,11 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
+<<<<<<< HEAD
+=======
+	gopkg.in/ini.v1 v1.67.0 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+>>>>>>> 7cf087bde56 (txn: check `max_execution_time` when locking keys (#63000))
 )
 
 require (
