@@ -17,6 +17,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/resourcegroup",
+        "//pkg/store/helper",
         "//pkg/structure",
         "//pkg/util",
         "//pkg/util/codec",

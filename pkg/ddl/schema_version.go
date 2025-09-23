@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
 
@@ -405,13 +407,30 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 		return nil
 	}
 
-	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	failpoint.Inject("mockGetCurrentVersionFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			// ref: https://github.com/tikv/client-go/blob/master/tikv/kv.go#L505-L532
+			ver, err = kv.NewVersion(0), tikverr.NewErrPDServerTimeout("mock PD timeout")
+		}
+	})
+
+	// If we failed to get the current version, caller will retry after one second again.
+	if err != nil {
+		logutil.DDLLogger().Warn("get current version failed", zap.Int64("jobID", job.ID), zap.Error(err))
+		return err
+	}
 	snapshot := jobCtx.store.GetSnapshot(ver)
 	m := meta.NewReader(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		logutil.DDLLogger().Warn("get global version failed", zap.Int64("jobID", job.ID), zap.Error(err))
 		return err
+	}
+
+	// Try adding guard for schema version in test
+	if intest.InTest {
+		intest.Assert(latestSchemaVersion > 0, "latestSchemaVersion should be greater than 0")
 	}
 
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {

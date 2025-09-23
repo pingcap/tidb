@@ -749,6 +749,39 @@ func TestAddGlobalIndex(t *testing.T) {
 
 	require.NoError(t, txn.Commit(context.Background()))
 
+	// Test add non-unqiue global index
+	tk.MustExec("drop table if exists test_t2")
+	tk.MustExec("create table test_t2 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t2 values (2, 1)")
+	tk.MustExec("alter table test_t2 add key p_a (a) global")
+	tk.MustExec("insert test_t2 values (1, 11)")
+	tbl = external.GetTableByName(t, tk, "test", "test_t2")
+	tblInfo = tbl.Meta()
+	indexInfo = tblInfo.FindIndexByName("p_a")
+	require.NotNil(t, indexInfo)
+	require.True(t, indexInfo.Global)
+	require.False(t, indexInfo.Unique)
+
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
+
+	// check row 1
+	pid = tblInfo.Partition.Definitions[0].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(1)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(1)}
+	rowVals = []types.Datum{types.NewDatum(1), types.NewDatum(11)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	require.NoError(t, txn.Commit(context.Background()))
+
 	// `sanity_check.go` will check the del_range numbers are correct or not.
 	// normal index
 	tk.MustExec("drop table if exists t")
@@ -801,7 +834,17 @@ func checkGlobalIndexRow(
 	require.NoError(t, err)
 	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
 	require.NoError(t, err)
-	value, err := txn.Get(context.Background(), key)
+	var value []byte
+	if indexInfo.Unique {
+		value, err = txn.Get(context.Background(), key)
+	} else {
+		var iter kv.Iterator
+		iter, err = txn.Iter(key, key.PrefixNext())
+		require.NoError(t, err)
+		require.True(t, iter.Valid())
+		key = iter.Key()
+		value = iter.Value()
+	}
 	require.NoError(t, err)
 	idxColInfos := tables.BuildRowcodecColInfoForIndexColumns(indexInfo, tblInfo)
 	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns), tablecodec.HandleDefault, idxColInfos)

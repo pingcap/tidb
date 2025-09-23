@@ -1140,7 +1140,7 @@
             "handle cols: test.t3._tidb_rowid:0"
           ]
         ],
-        "InsidePlan": "TableReader(Table(t3)->Sel([eq(test.t3.b, 1)]))->Projection"
+        "InsidePlan": "TableReader(Table(t3)->Sel([eq(test.t3.b, 1)])->Projection)"
       },
       {
         "SQL": "",

@@ -55,6 +55,8 @@ var (
 	MergeSortOverlapThreshold int64 = 4000
 	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
 	MergeSortFileCountStep = 4000
+	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
+	MergeSortMaxSubtaskTargetFiles = 16
 )
 
 const (

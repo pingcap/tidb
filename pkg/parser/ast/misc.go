@@ -800,10 +800,11 @@ const (
 // VariableAssignment is a variable assignment struct.
 type VariableAssignment struct {
 	node
-	Name     string
-	Value    ExprNode
-	IsGlobal bool
-	IsSystem bool
+	Name       string
+	Value      ExprNode
+	IsInstance bool
+	IsGlobal   bool
+	IsSystem   bool
 
 	// ExtendValue is a way to store extended info.
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
@@ -818,6 +819,8 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("@@")
 		if n.IsGlobal {
 			ctx.WriteKeyWord("GLOBAL")
+		} else if n.IsInstance {
+			ctx.WriteKeyWord("INSTANCE")
 		} else {
 			ctx.WriteKeyWord("SESSION")
 		}
@@ -3772,6 +3775,23 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
 	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// CancelDistributionJobStmt represent CANCEL DISTRIBUTION JOB statement.
+type CancelDistributionJobStmt struct {
+	stmtNode
+	JobID int64
+}
+
+func (n *CancelDistributionJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *CancelDistributionJobStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CANCEL DISTRIBUTION JOB ")
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
 }

@@ -64,6 +64,7 @@ go_test(
         "optimize_test.go",
         "session_handle_test.go",
     ],
+    data = glob(["testdata/**"]),
     embed = [":bindinfo"],
     flaky = True,
     race = "on",
