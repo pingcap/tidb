@@ -30,8 +30,10 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	case *expression.Column:
 		return ResolveColumnAndReplace(expr, replace)
 	case *expression.CorrelatedColumn:
-		expr.Column = *ResolveColumnAndReplace(&expr.Column, replace)
-		return expr
+		newExpr := expr.Clone().(*expression.CorrelatedColumn)
+		newExpr.Data = expr.Data
+		newExpr.Column = *ResolveColumnAndReplace(&expr.Column, replace)
+		return newExpr
 	case *expression.ScalarFunction:
 		for i, arg := range expr.GetArgs() {
 			expr.GetArgs()[i] = ResolveExprAndReplace(arg, replace)
@@ -45,6 +47,8 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) *expression.Column {
 	dst := replace[string(origin.HashCode())]
 	if dst != nil {
+		// To avoid origin column is shared by multiple operators,
+		// need to clone it before modification.
 		newCol := dst.Clone().(*expression.Column)
 		newCol.RetType, newCol.InOperand = origin.RetType, origin.InOperand
 		return newCol
