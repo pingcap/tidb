@@ -250,9 +250,6 @@ func (g *DataWriterGroup) CreateFileWriter(ctx context.Context) (*FileWriter, er
 	if err != nil {
 		return nil, err
 	}
-	if logger == nil {
-		logger = logutil.Logger(ctx)
-	}
 
 	writer, err := NewTICIFileWriter(ctx, store, filename, TiCIMinUploadPartSize, logger)
 	if err != nil {

@@ -454,7 +454,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	if local.ticiWriteGroup != nil {
 		// Initialize TICI file writers for each full-text index in the group.
 		if ticiFileWriter, err = local.ticiWriteGroup.CreateFileWriter(ctx); err != nil {
-			return nil, errors.Annotate(err, fmt.Sprintf("ticiWriteGroup.CreateFileWriters failed, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey)))
+			return nil, errors.Annotatef(err, "failed to create tici file writer, startKey=%s endKey=%s", hex.EncodeToString(firstKey), hex.EncodeToString(lastKey))
 		}
 	}
 

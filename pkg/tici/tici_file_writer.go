@@ -17,6 +17,7 @@ package tici
 import (
 	"context"
 	"encoding/binary"
+	"path"
 	"time"
 
 	"github.com/docker/go-units"
@@ -79,7 +80,7 @@ func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataF
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("NewTiCIFileWriter", zap.String("dataFile", dataFile))
+	logger.Info("create TiCI file writer", zap.String("dataFile", dataFile))
 	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(int(DefaultBlockSize)))
 	return &FileWriter{
 		store:      store,
@@ -93,7 +94,7 @@ func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataF
 
 // URI returns the URI of the key stored in external storage.
 func (w *FileWriter) URI() string {
-	return w.store.URI() + w.dataFile
+	return path.Join(w.store.URI(), w.dataFile)
 }
 
 // WriteRow writes a key-value pair to the S3 file.

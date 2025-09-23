@@ -536,7 +536,7 @@ message GetIndexProgressResponse {
 // -----------------------------------------------------------------------------
 // 1. TiDB requests a cloud storage object prefix from the TiCI Meta Service.
 //    It provides a unique tidb_task_id that specify a job in the TiDB side. A
-//    job means one Import Into or Create Index operation.
+//    job means one Import Into or Index Backfilling operation.
 //
 // 2. Import DXF generate the files for partition data and upload them to the
 //    cloud storage prefix returned by TiCI. The files should contain the
@@ -555,7 +555,7 @@ message GetIndexProgressResponse {
 // -----------------------------------------------------------------------------
 
 message GetImportStoragePrefixRequest {
-  // TiDB unique task ID for this Import Into/Create Index job.
+  // TiDB unique task ID for this Import Into/Index Backfilling job.
   string tidb_task_id = 1;
   // Table ID of the target table.
   int64 table_id = 2;
@@ -577,7 +577,7 @@ message GetImportStoragePrefixResponse {
 }
 
 message FinishImportPartitionUploadRequest {
-  // TiDB unique task ID for this Import Into/Create Index job.
+  // TiDB unique task ID for this Import Into/Index Backfilling job.
   string tidb_task_id = 1;
   // Key range for the partition uploaded.
   KeyRange key_range = 2;
@@ -606,7 +606,7 @@ message FinishImportPartitionBuildRequest {
 }
 
 message FinishImportIndexUploadRequest {
-  // TiDB unique task ID for this Import Into/Create Index job.
+  // TiDB unique task ID for this Import Into/Index Backfilling job.
   string tidb_task_id = 1;
   // If status is SUCCESS, the job is finished successfully.
   // If status is not SUCCESS, the job is aborted or cancelled in TiDB side,
