@@ -153,9 +153,9 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 				realMaxWriteSpeed atomic.Int64
 			)
 			testfailpoint.EnableCall(t, tc.checkReorgMetaFp, func(j *model.Job) {
-				realWorkerCnt.Store(int64(j.ReorgMeta.GetConcurrency()))
-				realBatchSize.Store(int64(j.ReorgMeta.GetBatchSize()))
-				realMaxWriteSpeed.Store(int64(j.ReorgMeta.GetMaxWriteSpeed()))
+				realWorkerCnt.Store(int64(j.ReorgMeta.GetConcurrencyOrDefault(0)))
+				realBatchSize.Store(int64(j.ReorgMeta.GetBatchSizeOrDefault(0)))
+				realMaxWriteSpeed.Store(int64(j.ReorgMeta.GetMaxWriteSpeedOrDefault()))
 			})
 
 			jobID := ""
