@@ -971,8 +971,7 @@ Projection	root		1->Column#13
       └─Selection	cop[tikv]		not(isnull(test.t1.a))
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 set @@tidb_opt_join_reorder_threshold=default;
-set global tidb_enable_stmt_summary = 1;
-set global tidb_stmt_summary_refresh_interval = 1;
+set global tidb_enable_stmt_summary = 0;
 drop table if exists long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
 create table long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill (
 pk int primary key,
@@ -1010,6 +1009,8 @@ insert into long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill valu
 (1, 'filler1', 'filler2', 'filler3', 'filler4', 'filler5', 'filler6', 'filler7', 'filler8', 'filler9', 'filler10',
 'filler11', 'filler12', 'filler13', 'filler14', 'filler15', 'filler16', 'filler17', 'filler18', 'filler19', 'filler20',
 'filler21', 'filler22', 'filler23', 'filler24', 'filler25', 'filler26', 'filler27', 'filler28', 999);
+set global tidb_enable_stmt_summary = 1;
+set global tidb_stmt_summary_refresh_interval = 1;
 select pk,
 long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
 long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,

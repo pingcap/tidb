@@ -621,9 +621,8 @@ set @@tidb_opt_join_reorder_threshold=default;
 # This test verifies the fix for the issue where long queries were truncated in statement summary
 # and caused binding creation from history to fail
 
-# Enable statement summary
-set global tidb_enable_stmt_summary = 1;
-set global tidb_stmt_summary_refresh_interval = 1;
+# Clear statements summary
+set global tidb_enable_stmt_summary = 0;
 
 # Create a table with many long column names to generate a long query
 drop table if exists long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
@@ -665,6 +664,10 @@ insert into long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill valu
 (1, 'filler1', 'filler2', 'filler3', 'filler4', 'filler5', 'filler6', 'filler7', 'filler8', 'filler9', 'filler10',
  'filler11', 'filler12', 'filler13', 'filler14', 'filler15', 'filler16', 'filler17', 'filler18', 'filler19', 'filler20',
  'filler21', 'filler22', 'filler23', 'filler24', 'filler25', 'filler26', 'filler27', 'filler28', 999);
+
+# Enable statement summary
+set global tidb_enable_stmt_summary = 1;
+set global tidb_stmt_summary_refresh_interval = 1;
 
 # Execute a very long query that would previously exceed the 4k limit
 select pk,

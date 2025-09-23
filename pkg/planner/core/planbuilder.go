@@ -948,10 +948,8 @@ func constructSQLBindOPFromPlanDigest(
 		return nil, errors.New("can't find any plans for '" + planDigest + "'")
 	}
 	// Check if the SQL is truncated (ends with "(len:<num>)" pattern)
-	var match bool
-	var err2 error
 	if query[len(query)-1] == ')' {
-		match, err2 = regexp.MatchString(`\(len:\d+\)$`, query)
+		match, err2 := regexp.MatchString(`\(len:\d+\)$`, query)
 		if match || err2 != nil {
 			return nil, errors.NewNoStackErrorf("binding failed: SQL query is truncated due to tidb_stmt_summary_max_sql_length limit. "+
 				"Please increase tidb_stmt_summary_max_sql_length. Plan Digest: %v", planDigest)
