@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -245,19 +244,15 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		return
 	}
 
-	k := &stmtKey{
-		schemaName:        info.SchemaName,
-		digest:            info.Digest,
-		prevDigest:        info.PrevSQLDigest,
-		planDigest:        info.PlanDigest,
-		resourceGroupName: info.ResourceGroupName,
-	}
-	k.Hash() // Calculate hash value in advance, to reduce the time holding the window lock.
+	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
+	// Init hash value in advance, to reduce the time holding the lock.
+	k.Init(info.SchemaName, info.Digest, info.PrevSQLDigest, info.PlanDigest, info.ResourceGroupName)
 
 	// Add info to the current statistics window.
 	s.windowLock.Lock()
 	var record *lockedStmtRecord
-	if v, ok := s.window.lru.Get(k); ok {
+	v, exist := s.window.lru.Get(k)
+	if exist {
 		record = v.(*lockedStmtRecord)
 	} else {
 		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
@@ -268,6 +263,9 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	record.Lock()
 	record.Add(info)
 	record.Unlock()
+	if exist {
+		stmtsummary.StmtDigestKeyPool.Put(k)
+	}
 }
 
 // Evicted returns the number of statements evicted for the current
@@ -417,7 +415,7 @@ func (s *StmtSummary) rotate(now time.Time) {
 // into stmtEvicted.
 type stmtWindow struct {
 	begin   time.Time
-	lru     *kvcache.SimpleLRUCache // *stmtKey => *lockedStmtRecord
+	lru     *kvcache.SimpleLRUCache // *StmtDigestKey => *lockedStmtRecord
 	evicted *stmtEvicted
 }
 
@@ -431,7 +429,7 @@ func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		defer r.Unlock()
-		w.evicted.add(k.(*stmtKey), r.StmtRecord)
+		w.evicted.add(k.(*stmtsummary.StmtDigestKey), r.StmtRecord)
 	})
 	return w
 }
@@ -444,36 +442,6 @@ func (w *stmtWindow) clear() {
 type stmtStorage interface {
 	persist(w *stmtWindow, end time.Time)
 	sync() error
-}
-
-// stmtKey defines key for stmtElement.
-type stmtKey struct {
-	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
-	// The digest of the previous statement.
-	prevDigest string
-	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
-	// `hash` is the hash value of this object.
-	hash []byte
-}
-
-// Hash implements SimpleLRUCache.Key.
-// Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
-// `prevSQL` is included in the key To distinguish different transactions.
-func (k *stmtKey) Hash() []byte {
-	if len(k.hash) == 0 {
-		k.hash = make([]byte, 0, len(k.schemaName)+len(k.digest)+len(k.prevDigest)+len(k.planDigest)+len(k.resourceGroupName))
-		k.hash = append(k.hash, hack.Slice(k.digest)...)
-		k.hash = append(k.hash, hack.Slice(k.schemaName)...)
-		k.hash = append(k.hash, hack.Slice(k.prevDigest)...)
-		k.hash = append(k.hash, hack.Slice(k.planDigest)...)
-		k.hash = append(k.hash, hack.Slice(k.resourceGroupName)...)
-	}
-	return k.hash
 }
 
 type stmtEvicted struct {
@@ -494,7 +462,7 @@ func newStmtEvicted() *stmtEvicted {
 	}
 }
 
-func (e *stmtEvicted) add(key *stmtKey, record *StmtRecord) {
+func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord) {
 	if key == nil || record == nil {
 		return
 	}
