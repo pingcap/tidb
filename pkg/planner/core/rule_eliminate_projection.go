@@ -188,8 +188,23 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 			ruleutil.ResolveColumnAndReplace(dst, replace)
 		}
 	}
+
 	// replace all of exprs in logical plan
-	p.ReplaceExprColumns(replace)
+	newReplace := make(map[string]*expression.Column, len(replace))
+	for code, expr := range replace {
+	childloop:
+		for _, child := range p.Children() {
+			for _, schemaCol := range child.Schema().Columns {
+				if schemaCol.Equal(nil, expr) {
+					newReplace[code] = expr
+					break childloop
+				}
+			}
+		}
+	}
+	if len(newReplace) > 0 {
+		p.ReplaceExprColumns(newReplace)
+	}
 
 	// eliminate duplicate projection: projection with child projection
 	if isProj {

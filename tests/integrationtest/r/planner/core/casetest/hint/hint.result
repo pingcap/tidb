@@ -241,7 +241,7 @@ TopN	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb, v) order_index(t1@qb, idx_a) */ * from v;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
+Projection	root		planner__core__casetest__hint__hint.t1.a->Column#1, planner__core__casetest__hint__hint.t1.b->Column#2
 └─IndexLookUp	root		limit embedded(offset:0, count:1)
   ├─Limit(Build)	cop[tikv]		offset:0, count:1
   │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:true, stats:pseudo
