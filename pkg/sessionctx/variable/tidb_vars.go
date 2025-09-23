@@ -318,6 +318,12 @@ const (
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
+	// TiDBOptEnableSemiJoinRewrite is the variable equivalent of SEMI_JOIN_REWRITE hint.
+	TiDBOptEnableSemiJoinRewrite = "tidb_opt_enable_semi_join_rewrite"
+
+	// TiDBOptEnableNoDecorrelateInSelect is the variable equivalent of NO_DECORRELATE hint.
+	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
+
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -1281,6 +1287,8 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
+	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1

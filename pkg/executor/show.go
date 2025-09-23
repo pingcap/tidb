@@ -786,7 +786,7 @@ func (e *ShowExec) fetchShowIndex() error {
 		return errors.Trace(err)
 	}
 
-	statsTbl := h.GetTableStats(tb.Meta())
+	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
@@ -1075,7 +1075,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col.Hidden {
+		if col == nil || col.Hidden {
 			continue
 		}
 		if needAddComma {

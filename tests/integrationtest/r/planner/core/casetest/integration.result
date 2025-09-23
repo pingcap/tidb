@@ -1154,15 +1154,15 @@ TableReader_7	3.00	130.42	root		data:Selection_6
   └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_11	1.00	98.74	root		offset:0, count:1
-└─TableReader_24	1.00	98.74	root		data:Limit_23
+Limit_11	1.00	105.07	root		offset:0, count:1
+└─TableReader_24	1.00	105.07	root		data:Limit_23
   └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_8	1.00	98.74	root		offset:0, count:1
-└─TableReader_13	1.00	98.74	root		data:Limit_12
+Limit_8	1.00	105.07	root		offset:0, count:1
+└─TableReader_13	1.00	105.07	root		data:Limit_12
   └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
@@ -1174,15 +1174,15 @@ TableReader_7	3.00	130.42	root		data:Selection_6
   └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_11	1.00	98.74	root		offset:0, count:1
-└─TableReader_24	1.00	98.74	root		data:Limit_23
+Limit_11	1.00	105.07	root		offset:0, count:1
+└─TableReader_24	1.00	105.07	root		data:Limit_23
   └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_8	1.00	98.74	root		offset:0, count:1
-└─TableReader_13	1.00	98.74	root		data:Limit_12
+Limit_8	1.00	105.07	root		offset:0, count:1
+└─TableReader_13	1.00	105.07	root		data:Limit_12
   └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
