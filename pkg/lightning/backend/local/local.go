@@ -893,7 +893,6 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 		ticker := time.NewTicker(timeout)
 		defer ticker.Stop()
 		for {
-			ticker.Reset(timeout)
 			select {
 			case <-subctx.Done():
 				return
