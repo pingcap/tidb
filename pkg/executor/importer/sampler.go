@@ -121,7 +121,7 @@ func (e *LoadDataController) sampleIndexRatioForOneFile(
 	}()
 
 	var count int
-	sendFn := func(ctx context.Context, batch *encodedKVGroupBatch) error {
+	sendFn := func(context.Context, *encodedKVGroupBatch) error {
 		count++
 		if count >= maxRowCount {
 			return stopIterErr
