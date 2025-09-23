@@ -40,10 +40,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/infoschema"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	"github.com/pingcap/tidb/pkg/kv"
+>>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
@@ -57,6 +63,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
+<<<<<<< HEAD
+=======
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/tikv/client-go/v2/oracle"
+>>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -251,13 +263,13 @@ func NewEncodingBuilder(ctx context.Context) encode.EncodingBuilder {
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
 func (b *encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return kv.NewTableKVEncoder(config, b.metrics)
+	return backendkv.NewTableKVEncoder(config, b.metrics)
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
 func (*encodingBuilder) MakeEmptyRows() encode.Rows {
-	return kv.MakeRowsFromKvPairs(nil)
+	return backendkv.MakeRowsFromKvPairs(nil)
 }
 
 type targetInfoGetter struct {
@@ -798,12 +810,120 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
+<<<<<<< HEAD
 func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	return local.importClientFactory.Create(ctx, storeID)
 }
 
 func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []common.Range {
 	ranges := make([]common.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
+=======
+// forceTableSplitRange turns on force_partition_range for importing.
+// See https://github.com/tikv/tikv/pull/18866 for detail.
+// It returns a resetter to turn off.
+func (local *Backend) forceTableSplitRange(ctx context.Context,
+	startKey, endKey kv.Key, stores []*metapb.Store) (resetter func()) {
+	subctx, cancel := context.WithCancel(ctx)
+	var wg util.WaitGroupWrapper
+	clients := make([]sst.ImportSSTClient, 0, len(stores))
+	storeAddrs := make([]string, 0, len(stores))
+	const ttlSecond = uint64(3600) // default 1 hour
+	addReq := &sst.AddPartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+		TtlSeconds: ttlSecond,
+	}
+	removeReq := &sst.RemovePartitionRangeRequest{
+		Range: &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		},
+	}
+
+	for _, store := range stores {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) {
+			continue
+		}
+		importCli, err := local.importClientFactory.create(subctx, store.Id)
+		if err != nil {
+			tidblogutil.Logger(subctx).Warn("create import client failed", zap.Error(err), zap.String("store", store.StatusAddress))
+			continue
+		}
+		clients = append(clients, importCli)
+		storeAddrs = append(storeAddrs, store.StatusAddress)
+	}
+
+	addTableSplitRange := func() {
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
+		for i, c := range clients {
+			_, err := c.AddForcePartitionRange(subctx, addReq)
+			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
+				failpoint.InjectCall("AddPartitionRangeForTable")
+			} else {
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
+	}
+
+	addTableSplitRange()
+	wg.Run(func() {
+		timeout := time.Duration(ttlSecond) * time.Second / 5 // 12min
+		ticker := time.NewTicker(timeout)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-subctx.Done():
+				return
+			case <-ticker.C:
+				addTableSplitRange()
+			}
+		}
+	})
+
+	resetter = func() {
+		cancel()
+		wg.Wait()
+
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
+		for i, c := range clients {
+			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
+			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
+				failpoint.InjectCall("RemovePartitionRangeRequest")
+			} else {
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
+	}
+	return resetter
+}
+
+func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {
+	ranges := make([]engineapi.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
+>>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
 	curSize := uint64(0)
 	curKeys := uint64(0)
 	curKey := fullRange.Start
@@ -1311,9 +1431,28 @@ func (local *Backend) ImportEngine(
 	if err != nil {
 		return err
 	}
+	intest.Assert(len(splitKeys) > 0)
+	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
+<<<<<<< HEAD
 	if len(splitKeys) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		log.FromContext(ctx).Info("pause pd scheduler of table scope")
+=======
+	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
+		tidblogutil.Logger(ctx).Info("force table split range",
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
+		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
+		if err != nil {
+			return err
+		}
+		removeTableSplitRange := local.forceTableSplitRange(ctx, startKey, endKey, stores)
+		defer removeTableSplitRange()
+	}
+
+	if local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+		tidblogutil.Logger(ctx).Info("pause pd scheduler of table scope")
+>>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
@@ -1334,10 +1473,17 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
+<<<<<<< HEAD
 	if len(splitKeys) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		log.FromContext(ctx).Info("switch import mode of ranges",
 			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
 			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))
+=======
+	if local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+		tidblogutil.Logger(ctx).Info("switch import mode of ranges",
+			zap.String("startKey", redact.Key(startKey)),
+			zap.String("endKey", redact.Key(endKey)))
+>>>>>>> ef6f8e723ef (ingest: adapt `AddPartitionRange` api for ingest (#63467))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
