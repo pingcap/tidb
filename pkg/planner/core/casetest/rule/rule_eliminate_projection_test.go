@@ -17,10 +17,19 @@ package rule
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 func TestElinimateProjectionWithExpressionIndex(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.AllowsExpressionIndex = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -48,5 +57,5 @@ func TestElinimateProjectionWithExpressionIndex(t *testing.T) {
 	FROM t1
 	LEFT JOIN t2
 	USING (namespace_id,run_id)
-	ORDER BY  coalesce(close_time, CAST('9999-12-31 23:59:59' AS DATETIME));`)
+	ORDER BY  coalesce(close_time, CAST('9999-12-31 23:59:59' AS DATETIME));`).Check(testkit.Rows())
 }
