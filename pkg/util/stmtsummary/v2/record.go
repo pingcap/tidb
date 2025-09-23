@@ -257,15 +257,17 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		r.MaxCompileLatency = info.CompileLatency
 	}
 	// Coprocessor
-	numCopTasks := int64(info.CopTasks.NumCopTasks)
-	r.SumNumCopTasks += numCopTasks
-	if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
-		r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
-		r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
-	}
-	if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
-		r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
-		r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
+	if info.CopTasks != nil {
+		numCopTasks := int64(info.CopTasks.NumCopTasks)
+		r.SumNumCopTasks += numCopTasks
+		if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
+			r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
+			r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
+		}
+		if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
+			r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
+			r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
+		}
 	}
 	// TiKV
 	r.SumProcessTime += info.ExecDetail.TimeDetail.ProcessTime

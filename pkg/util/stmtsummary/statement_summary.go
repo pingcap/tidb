@@ -747,15 +747,17 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	// coprocessor
-	numCopTasks := int64(sei.CopTasks.NumCopTasks)
-	ssElement.sumNumCopTasks += numCopTasks
-	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
-		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
-		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
-	}
-	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
-		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
-		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+	if sei.CopTasks != nil {
+		numCopTasks := int64(sei.CopTasks.NumCopTasks)
+		ssElement.sumNumCopTasks += numCopTasks
+		if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
+			ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
+			ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
+		}
+		if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
+			ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
+			ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+		}
 	}
 
 	// TiKV
