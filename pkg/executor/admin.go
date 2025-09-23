@@ -378,7 +378,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if result.scanRowCount >= int64(e.batchSize) {
 				return e.recoverRows, nil
 			}
-			handle, err := e.handleCols.BuildHandle(row)
+			handle, err := e.handleCols.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
 			if err != nil {
 				return nil, err
 			}
@@ -692,7 +692,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		}
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, err := e.handleCols.BuildHandle(row)
+			handle, err := e.handleCols.BuildHandle(sc, row)
 			if err != nil {
 				return err
 			}

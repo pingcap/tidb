@@ -18,7 +18,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand/v2"
+	"slices"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,9 +36,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
@@ -57,13 +62,19 @@ func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
 }
 
 type mockPDClient struct {
-	t *testing.T
+	t  *testing.T
+	mu sync.Mutex
 	pd.Client
+
+	nextRegionID  uint64
 	regions       []*pd.Region
 	regionsSorted bool
 }
 
 func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if len(c.regions) == 0 {
 		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
 	}
@@ -98,6 +109,50 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 	return result, nil
 }
 
+func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts ...pd.GetRegionOption) (*pd.Region, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, r := range c.regions {
+		if r.Meta.Id == regionID {
+			return r, nil
+		}
+	}
+	return nil, fmt.Errorf("region %d not found", regionID)
+}
+
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, _ ...pd.GetRegionOption) (*pd.Region, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, r := range c.regions {
+		if kv.Key(r.Meta.StartKey).Cmp(key) <= 0 && kv.Key(r.Meta.EndKey).Cmp(key) > 0 {
+			return r, nil
+		}
+	}
+
+	return nil, fmt.Errorf("region not found for key %s", key)
+}
+
+func (c *mockPDClient) BatchScanRegions(ctx context.Context, ranges []pd.KeyRange, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	logutil.BgLogger().Info("BatchScanRegions", zap.Any("ranges", ranges))
+
+	var reg []*pd.Region
+	for _, r := range c.regions {
+		for _, kr := range ranges {
+			if kv.Key(r.Meta.StartKey).Cmp(kr.EndKey) < 0 && kv.Key(r.Meta.EndKey).Cmp(kr.StartKey) > 0 {
+				reg = append(reg, r)
+				break
+			}
+		}
+	}
+
+	return reg, nil
+}
+
 func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
 	return &metapb.Store{
 		Id:      storeID,
@@ -109,21 +164,92 @@ func (c *mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
 }
 
+func (c *mockPDClient) addRegion(key, endKey []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	require.True(c.t, kv.Key(endKey).Cmp(key) > 0)
+	if len(c.regions) > 0 {
+		lastRegion := c.regions[len(c.regions)-1]
+		require.True(c.t, kv.Key(endKey).Cmp(lastRegion.Meta.EndKey) >= 0)
+	}
+
+	regionID := c.nextRegionID
+	c.nextRegionID++
+	leader := &metapb.Peer{
+		Id:      regionID,
+		StoreId: 1,
+		Role:    metapb.PeerRole_Voter,
+	}
+
+	c.regions = append(c.regions, &pd.Region{
+		Meta: &metapb.Region{
+			Id:       regionID,
+			StartKey: key,
+			EndKey:   endKey,
+			Peers:    []*metapb.Peer{leader},
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: 1,
+				Version: 1,
+			},
+		},
+		Leader: leader,
+	})
+
+	c.regionsSorted = false
+}
+
+// randomlyMergeRegions merges two region, and returned whether it has merged
+func (c *mockPDClient) randomlyMergeRegions() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.regions) < 2 {
+		return len(c.regions)
+	}
+
+	// Randomly merge two regions
+	if !c.regionsSorted {
+		sort.Slice(c.regions, func(i, j int) bool {
+			return kv.Key(c.regions[i].Meta.StartKey).Cmp(c.regions[j].Meta.StartKey) < 0
+		})
+		c.regionsSorted = true
+	}
+	r1Idx := rand.IntN(len(c.regions) - 1)
+	r2Idx := r1Idx + 1
+
+	newRegion := &pd.Region{
+		Meta: &metapb.Region{
+			Id:       c.regions[r1Idx].Meta.Id,
+			StartKey: c.regions[r1Idx].Meta.StartKey,
+			EndKey:   c.regions[r2Idx].Meta.EndKey,
+			Peers:    c.regions[r1Idx].Meta.Peers,
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: c.regions[r1Idx].Meta.RegionEpoch.ConfVer,
+				Version: max(c.regions[r1Idx].Meta.RegionEpoch.Version,
+					c.regions[r2Idx].Meta.RegionEpoch.Version) + 1,
+			},
+		},
+		Leader: c.regions[r1Idx].Leader,
+	}
+	c.regions = slices.Delete(c.regions, r1Idx, r1Idx+2)
+	c.regions = append(c.regions, newRegion)
+	c.regionsSorted = false
+	return len(c.regions)
+}
+
 type mockTiKVStore struct {
 	t *testing.T
 	helper.Storage
-	pdClient     *mockPDClient
-	cache        *tikv.RegionCache
-	nextRegionID uint64
+	pdClient *mockPDClient
+	cache    *tikv.RegionCache
 }
 
 func newMockTiKVStore(t *testing.T) *mockTiKVStore {
-	pdClient := &mockPDClient{t: t}
+	pdClient := &mockPDClient{t: t, nextRegionID: 1000}
 	s := &mockTiKVStore{
-		t:            t,
-		pdClient:     pdClient,
-		cache:        tikv.NewRegionCache(pdClient),
-		nextRegionID: 1000,
+		t:        t,
+		pdClient: pdClient,
+		cache:    tikv.NewRegionCache(pdClient),
 	}
 	s.refreshCache()
 	t.Cleanup(func() {
@@ -135,47 +261,29 @@ func newMockTiKVStore(t *testing.T) *mockTiKVStore {
 func (s *mockTiKVStore) addRegionBeginWithTablePrefix(tableID int64, handle kv.Handle) *mockTiKVStore {
 	start := tablecodec.GenTablePrefix(tableID)
 	end := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	return s.addRegion(start, end)
+	s.pdClient.addRegion(start, end)
+	s.refreshCache()
+	return s
 }
 
 func (s *mockTiKVStore) addRegionEndWithTablePrefix(handle kv.Handle, tableID int64) *mockTiKVStore {
 	start := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	end := tablecodec.GenTablePrefix(tableID + 1)
-	return s.addRegion(start, end)
+	s.pdClient.addRegion(start, end)
+	s.refreshCache()
+	return s
 }
 
 func (s *mockTiKVStore) addRegionWithTablePrefix(tableID int64, start kv.Handle, end kv.Handle) *mockTiKVStore {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, start)
 	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, end)
-	return s.addRegion(startKey, endKey)
+	s.pdClient.addRegion(startKey, endKey)
+	s.refreshCache()
+	return s
 }
 
-func (s *mockTiKVStore) addRegion(key, endKey []byte) *mockTiKVStore {
-	require.True(s.t, kv.Key(endKey).Cmp(key) > 0)
-	if len(s.pdClient.regions) > 0 {
-		lastRegion := s.pdClient.regions[len(s.pdClient.regions)-1]
-		require.True(s.t, kv.Key(endKey).Cmp(lastRegion.Meta.EndKey) >= 0)
-	}
-
-	regionID := s.nextRegionID
-	s.nextRegionID++
-	leader := &metapb.Peer{
-		Id:      regionID,
-		StoreId: 1,
-		Role:    metapb.PeerRole_Voter,
-	}
-
-	s.pdClient.regions = append(s.pdClient.regions, &pd.Region{
-		Meta: &metapb.Region{
-			Id:       regionID,
-			StartKey: key,
-			EndKey:   endKey,
-			Peers:    []*metapb.Peer{leader},
-		},
-		Leader: leader,
-	})
-
-	s.pdClient.regionsSorted = false
+func (s *mockTiKVStore) addRegion(start, end []byte) *mockTiKVStore {
+	s.pdClient.addRegion(start, end)
 	s.refreshCache()
 	return s
 }
@@ -199,6 +307,8 @@ func (s *mockTiKVStore) batchAddIntHandleRegions(tblID int64, regionCnt, regionS
 	return
 }
 
+// clearRegions is **not** thread-safe, it is only used in test cases to reset the region cache.
+// A more suggested way is to create a new mockTiKVStore instance for each test case.
 func (s *mockTiKVStore) clearRegions() {
 	s.pdClient.regions = nil
 	s.cache.Close()
@@ -208,6 +318,12 @@ func (s *mockTiKVStore) clearRegions() {
 
 func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
 	return s.cache
+}
+
+func (s *mockTiKVStore) randomlyMergeRegions() int {
+	ret := s.pdClient.randomlyMergeRegions()
+	s.refreshCache()
+	return ret
 }
 
 func bytesHandle(t *testing.T, data []byte) kv.Handle {
@@ -865,16 +981,7 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 			result: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9},
 		},
 		{
-			// recordPrefix + bytesFlag + [1, 2, 3, 4, 5, 6, 7, 8, 255, 9, 0, 0, 0, 0, 0, 0, 0]
-			key: func() []byte {
-				bs := buildBytesRowKey([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9})
-				bs = bs[:len(bs)-1]
-				return bs
-			},
-			result: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9},
-		},
-		{
-			// recordPrefix + bytesFlag + [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+			// recordPrefix + bytesFlag + [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 246]
 			key: func() []byte {
 				bs := buildBytesRowKey([]byte{1, 2, 3, 4, 5, 6, 7, 8})
 				bs = bs[:len(bs)-1]
@@ -1267,5 +1374,73 @@ func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 
 		d := cache.GetNextIntDatumFromCommonHandle(c.key, tablecodec.GenTableRecordPrefix(tblID), c.unsigned)
 		require.Equal(t, c.d, d)
+	}
+}
+
+func TestMergeRegion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tikvStore := newMockTiKVStore(t)
+	tbl := create2PKTTLTable(t, tk, "t1", "int")
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(tbl.ID)
+
+	tikvStore.clearRegions()
+	// create a table with 102 regions
+	tikvStore.addRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(0))
+	end := tikvStore.batchAddIntHandleRegions(tbl.ID, 100, 1000000, 0)
+	tikvStore.addRegionEndWithTablePrefix(end, tbl.ID)
+
+	regionCount := 102
+	for regionCount >= 2 {
+		regionCount--
+		require.Equal(t, regionCount, tikvStore.randomlyMergeRegions())
+		regionIDs, err := tikvStore.GetRegionCache().ListRegionIDsInKeyRange(
+			tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
+		require.NoError(t, err)
+		require.Equal(t, regionCount, len(regionIDs))
+	}
+}
+
+func TestRegionDisappearDuringSplitRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	testStartTime := time.Now()
+	testDuration := 5 * time.Second
+
+	i := 0
+	for time.Since(testStartTime) < testDuration {
+		i++
+
+		tikvStore := newMockTiKVStore(t)
+		tbl := create2PKTTLTable(t, tk, fmt.Sprintf("t%d", i), "int")
+		tikvStore.clearRegions()
+		// create a table with 100 regions
+		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(0))
+		end := tikvStore.batchAddIntHandleRegions(tbl.ID, 100, 100, 0)
+		tikvStore.addRegionEndWithTablePrefix(end, tbl.ID)
+
+		mergeStopCh := make(chan struct{})
+		// merge regions while splitting ranges
+		go func() {
+			for tikvStore.randomlyMergeRegions() >= 2 {
+			}
+			close(mergeStopCh)
+		}()
+
+	loop:
+		for {
+			select {
+			case <-mergeStopCh:
+				// merging finished
+				break loop
+			default:
+				_, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 16)
+				require.NoError(t, err)
+			}
+		}
+
+		tikvStore.cache.Close()
 	}
 }

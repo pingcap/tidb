@@ -45,7 +45,7 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 	defer func() {
 		if err != nil {
 			actionType := event.GetType().String()
-			statslogutil.StatsLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
+			statslogutil.StatsErrVerboseSampleLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
 				zap.Error(err),
 				zap.String("event", event.String()),
 			)
@@ -84,7 +84,7 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 func (pq *AnalysisPriorityQueue) getAndDeleteJob(tableID int64) error {
 	job, ok, err := pq.syncFields.inner.getByKey(tableID)
 	if err != nil {
-		statslogutil.StatsLogger().Error(
+		statslogutil.StatsErrVerboseSampleLogger().Error(
 			"Failed to get the job from priority queue",
 			zap.Error(err),
 			zap.Int64("tableID", tableID),
@@ -94,7 +94,7 @@ func (pq *AnalysisPriorityQueue) getAndDeleteJob(tableID int64) error {
 	if ok {
 		err := pq.syncFields.inner.delete(job)
 		if err != nil {
-			statslogutil.StatsLogger().Error(
+			statslogutil.StatsErrVerboseSampleLogger().Error(
 				"Failed to delete table from priority queue",
 				zap.Error(err),
 				zap.Int64("tableID", tableID),
@@ -139,7 +139,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 	// For static partitioned tables, we need to recreate the job for each partition.
 	if partitionInfo != nil && pruneMode == variable.Static {
 		for _, def := range partitionInfo.Definitions {
-			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, def.ID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+			if !found {
+				return nil
+			}
 			err := pq.recreateAndPushJob(sctx, lockedTables, pruneMode, partitionStats)
 			if err != nil {
 				return err
@@ -147,7 +150,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 		}
 		return nil
 	}
-	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	return pq.recreateAndPushJob(sctx, lockedTables, pruneMode, stats)
 }
 
@@ -186,15 +192,23 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		// For static partitioned tables, we need to recreate the job for each partition.
 		for _, def := range partitionInfo.Definitions {
 			partitionID := def.ID
-			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, partitionID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(partitionID)
+			if !found {
+				return nil
+			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
-			return pq.pushWithoutLock(job)
+			if err := pq.pushWithoutLock(job); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
 
 	// For normal tables and dynamic partitioned tables, we only need to recreate the job for the table.
-	stats := pq.statsHandle.GetTableStatsForAutoAnalyze(tableInfo)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	// Directly create a new job for the newly added index.
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
@@ -416,7 +430,7 @@ func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, eve
 		for _, partition := range tbl.Partitions {
 			if err := pq.getAndDeleteJob(partition.ID); err != nil {
 				// Try best to delete as many tables as possible.
-				statslogutil.StatsLogger().Error(
+				statslogutil.StatsErrVerboseSampleLogger().Error(
 					"Failed to delete table from priority queue",
 					zap.Error(err),
 					zap.String("db", miniDBInfo.Name.O),
@@ -430,7 +444,7 @@ func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, eve
 		// For non-partitioned tables or dynamic partitioned tables.
 		if err := pq.getAndDeleteJob(tbl.ID); err != nil {
 			// Try best to delete as many tables as possible.
-			statslogutil.StatsLogger().Error(
+			statslogutil.StatsErrVerboseSampleLogger().Error(
 				"Failed to delete table from priority queue",
 				zap.Error(err),
 				zap.String("db", miniDBInfo.Name.O),
