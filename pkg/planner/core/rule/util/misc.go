@@ -30,7 +30,8 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	case *expression.Column:
 		return ResolveColumnAndReplace(expr, replace)
 	case *expression.CorrelatedColumn:
-		return ResolveColumnAndReplace(&expr.Column, replace)
+		expr.Column = *ResolveColumnAndReplace(&expr.Column, replace)
+		return expr
 	case *expression.ScalarFunction:
 		for i, arg := range expr.GetArgs() {
 			expr.GetArgs()[i] = ResolveExprAndReplace(arg, replace)
@@ -44,7 +45,7 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) *expression.Column {
 	dst := replace[string(origin.HashCode())]
 	if dst != nil {
-		newCol := origin.Clone().(*expression.Column)
+		newCol := dst.Clone().(*expression.Column)
 		newCol.RetType, newCol.InOperand = origin.RetType, origin.InOperand
 		return newCol
 	}
