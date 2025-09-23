@@ -949,7 +949,7 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
-
+	failpoint.InjectCall("mockUpdateColumnWorkerStuck")
 	return
 }
 

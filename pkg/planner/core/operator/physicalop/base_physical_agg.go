@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -928,4 +929,51 @@ func (p *BasePhysicalAgg) ResolveIndices() (err error) {
 		}
 	}
 	return
+}
+
+// ExhaustPhysicalPlans4LogicalAggregation will be called by LogicalAggregation in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalAggregation)
+	preferHash, preferStream := la.ResetHintIfConflicted()
+	hashAggs := getHashAggs(la, prop)
+	if len(hashAggs) > 0 && preferHash {
+		return hashAggs, true, nil
+	}
+	streamAggs := getStreamAggs(la, prop)
+	if len(streamAggs) > 0 && preferStream {
+		return streamAggs, true, nil
+	}
+	aggs := append(hashAggs, streamAggs...)
+
+	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
+		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
+	}
+	return aggs, !(preferStream || preferHash), nil
+}
+
+// TODO: support more operators and distinct later
+func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
+	hasUnsupportedDistinct := false
+	for _, agg := range la.AggFuncs {
+		// MPP does not support distinct except count distinct now
+		if agg.HasDistinct {
+			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
+				hasUnsupportedDistinct = true
+			}
+		}
+		// MPP does not support AggFuncApproxCountDistinct now
+		if agg.Name == ast.AggFuncApproxCountDistinct {
+			hasUnsupportedDistinct = true
+		}
+	}
+	if hasUnsupportedDistinct {
+		warnErr := errors.NewNoStackError("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct")
+		if la.SCtx().GetSessionVars().StmtCtx.InExplainStmt {
+			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warnErr)
+		} else {
+			la.SCtx().GetSessionVars().StmtCtx.AppendExtraWarning(warnErr)
+		}
+		return false
+	}
+	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }

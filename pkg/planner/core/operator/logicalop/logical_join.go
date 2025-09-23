@@ -709,6 +709,13 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	return p
 }
 
+// GetJoinChildStatsAndSchema gets the stats and schema of join children.
+func (p *LogicalJoin) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+	stats1, schema1 = p.Children()[1].StatsInfo(), p.Children()[1].Schema()
+	stats0, schema0 = p.Children()[0].StatsInfo(), p.Children()[0].Schema()
+	return
+}
+
 // *************************** end implementation of logicalPlan interface ***************************
 
 // IsNAAJ checks if the join is a non-adjacent-join.

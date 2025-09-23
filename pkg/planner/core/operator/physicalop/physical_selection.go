@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -49,6 +50,34 @@ type PhysicalSelection struct {
 	// True: Used for RuntimeFilter
 	// False: Only for normal conditions
 	// hasRFConditions bool
+}
+
+// ExhaustPhysicalPlans4LogicalSelection will be called by LogicalSelection in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalSelection(p *logicalop.LogicalSelection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	newProps := make([]*property.PhysicalProperty, 0, 2)
+	childProp := prop.CloneEssentialFields()
+	newProps = append(newProps, childProp)
+	// we lift the p.CanPushDown(kv.TiFlash) check here, which may depend on the children.
+	canPushDownToTiFlash := !expression.ContainVirtualColumn(p.Conditions) &&
+		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, kv.TiFlash)
+
+	if prop.TaskTp != property.MppTaskType &&
+		p.SCtx().GetSessionVars().IsMPPAllowed() &&
+		canPushDownToTiFlash {
+		childPropMpp := prop.CloneEssentialFields()
+		childPropMpp.TaskTp = property.MppTaskType
+		newProps = append(newProps, childPropMpp)
+	}
+
+	ret := make([]base.PhysicalPlan, 0, len(newProps))
+	newProps = admitIndexJoinProps(newProps, prop)
+	for _, newProp := range newProps {
+		sel := PhysicalSelection{
+			Conditions: p.Conditions,
+		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
+		ret = append(ret, sel)
+	}
+	return ret, true, nil
 }
 
 // Clone implements op.PhysicalPlan interface.
