@@ -2007,19 +2007,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_cznic_mathutil",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/cznic/mathutil",
-        sha256 = "8f69a36f60d885e011b0a90b91246a7e88223cb2883dc6e71eab3f42d653231b",
-        strip_prefix = "github.com/cznic/mathutil@v0.0.0-20181122101859-297441e03548",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cznic/mathutil/com_github_cznic_mathutil-v0.0.0-20181122101859-297441e03548.zip",
-            "http://ats.apps.svc/gomod/github.com/cznic/mathutil/com_github_cznic_mathutil-v0.0.0-20181122101859-297441e03548.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/cznic/mathutil/com_github_cznic_mathutil-v0.0.0-20181122101859-297441e03548.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cznic/mathutil/com_github_cznic_mathutil-v0.0.0-20181122101859-297441e03548.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_daixiang0_gci",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/daixiang0/gci",
