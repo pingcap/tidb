@@ -175,15 +175,12 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
 	p1, d1 := getNormalizedPlan()
 	require.Equal(t, []string{
-		" Projection                    root         test.t.vec",
-		" └─TopN                        root         ?",
-		"   └─Projection                root         test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"     └─TableReader             root         ",
-		"       └─ExchangeSender        cop[tiflash] ",
-		"         └─Projection          cop[tiflash] test.t.vec",
-		"           └─TopN              cop[tiflash] ?",
-		"             └─Projection      cop[tiflash] test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"               └─TableFullScan cop[tiflash] table:t, index:vector_index(vec), range:[?,?], keep order:false, annIndex:COSINE(vec..[?], limit:?)",
+		" Projection              root test.t.vec",
+		" └─TopN                  root ?",
+		"   └─Projection          root test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"     └─TableReader       root ",
+		"       └─TopN            cop  vec_cosine_distance(test.t.vec, ?)",
+		"         └─TableFullScan cop  table:t, range:[?,?], keep order:false",
 	}, p1)
 
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
