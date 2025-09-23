@@ -876,15 +876,26 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 	}
 
 	addTableSplitRange := func() {
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
 		for i, c := range clients {
 			_, err := c.AddForcePartitionRange(subctx, addReq)
 			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
 				failpoint.InjectCall("AddPartitionRangeForTable")
-				tidblogutil.Logger(subctx).Info("succeed to call AddForcePartitionRange", zap.String("store", storeAddrs[i]))
 			} else {
-				tidblogutil.Logger(subctx).Warn("fail to call AddForcePartitionRange", zap.Error(err), zap.String("store", storeAddrs[i]))
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
 			}
 		}
+		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
 	}
 
 	addTableSplitRange()
@@ -905,15 +916,27 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 	resetter = func() {
 		cancel()
 		wg.Wait()
+
+		var firstErr error
+		successStores := make([]string, 0, len(clients))
+		failedStores := make([]string, 0, len(clients))
 		for i, c := range clients {
 			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
 			if err == nil {
+				successStores = append(successStores, storeAddrs[i])
 				failpoint.InjectCall("RemovePartitionRangeRequest")
-				tidblogutil.Logger(ctx).Info("succeed to call RemoveForcePartitionRange", zap.String("store", storeAddrs[i]))
 			} else {
-				tidblogutil.Logger(ctx).Warn("fail to call RemoveForcePartitionRange", zap.Error(err), zap.String("store", storeAddrs[i]))
+				failedStores = append(failedStores, storeAddrs[i])
+				if firstErr == nil {
+					firstErr = err
+				}
 			}
 		}
+		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
+			zap.Strings("success stores", successStores),
+			zap.Strings("failed stores", failedStores),
+			zap.Error(firstErr),
+		)
 	}
 	return resetter
 }
