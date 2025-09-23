@@ -105,6 +105,50 @@ func TestPreferRangeScan(t *testing.T) {
 	}
 }
 
+func TestPreferRangeScanForDNF(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@session.tidb_opt_prefer_range_scan=1")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	// Create table without inserting data to test pseudo stats behavior
+	tk.MustExec("create table t (a int, b int, c int, index idx_a_b(a, b))")
+
+	// DNF with only equal predicates - should prefer IndexLookUp
+	result := tk.MustQuery("explain format='brief' select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)")
+	require.Contains(t, result.Rows()[0][0], "IndexLookUp")
+
+	// Longer DNF with only equal predicates - should prefer IndexLookUp
+	result = tk.MustQuery("explain format='brief' select * from t where a = 1 or a = 3 or a = 5 or a = 7 or a = 9 or a = 11 or a = 13 or a = 15 or a = 17 or a = 19 or a = 21 or a = 23 or a = 25 or a = 27 or a = 29 or a = 31 or a = 33 or a = 35 or a = 37 or a = 39 or a = 41 or a = 43 or a = 45 or a = 47 or a = 49 or a = 51 or a = 53 or a = 55 or a = 57 or a = 59")
+	require.Contains(t, result.Rows()[0][0], "IndexLookUp")
+
+	// DNF with leading equal conditions plus range predicates - should prefer IndexLookUp
+	result = tk.MustQuery("explain format='brief' select * from t where (a = 1 and b > 0) or (a = 2 and b < 5)")
+	require.Contains(t, result.Rows()[0][0], "IndexLookUp")
+
+	// DNF with NOT operators - should not prefer IndexLookUp
+	// This should fall back to TableReader since NOT operators don't qualify
+	result = tk.MustQuery("explain format='brief' select * from t where (a = 1 and b = 1) or not (a = 2 and b = 2)")
+	require.Contains(t, result.Rows()[0][0], "TableReader")
+
+	// DNF with mixed predicates - should not prefer IndexLookUp
+	// This should fall back to TableReader since it contains non-equal predicates
+	result = tk.MustQuery("explain format='brief' select * from t where (a = 1 and b = 1) or (a >= 2 and b <= 3) or (a = 4 and b = 4) or (a = 5 and b > 0) or (a < 6 and b < 6)")
+	require.Contains(t, result.Rows()[0][0], "TableReader")
+
+	// Disabling prefer_range_scan should not use IndexLookUp for long set of DNF conditions
+	// NOTE: This test could become flaky if "cost" of IndexLookup is lowered in future. Consider adding
+	// more "or a = N" terms if that happens.
+	tk.MustExec("set @@session.tidb_opt_prefer_range_scan=0")
+	result = tk.MustQuery("explain format='brief' select * from t where a = 1 or a = 3 or a = 5 or a = 7 or a = 9 or a = 11 or a = 13 or a = 15 or a = 17 or a = 19 or a = 21 or a = 23 or a = 25 or a = 27 or a = 29 or a = 31 or a = 33 or a = 35 or a = 37 or a = 39 or a = 41 or a = 43 or a = 45 or a = 47 or a = 49 or a = 51 or a = 53 or a = 55 or a = 57 or a = 59")
+	require.Contains(t, result.Rows()[0][0], "TableReader")
+
+	// Restore settings
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='ON'")
+	tk.MustExec("set @@session.tidb_opt_prefer_range_scan=1")
+}
+
 func TestNormalizedPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
