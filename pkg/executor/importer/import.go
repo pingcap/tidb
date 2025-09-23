@@ -1300,7 +1300,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				// pick arbitrary one file to detect the format.
 				e.detectAndUpdateFormat(path)
 				sourceType = e.getSourceType()
-				allFiles = append(allFiles, mydump.RawFile{Path: path, Size: size})
 				totalSize += size
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
