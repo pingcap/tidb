@@ -155,6 +155,9 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -322,7 +325,7 @@ func isNullRejected(ctx planctx.PlanContext, schema *expression.Schema, expr exp
 			return true
 		}
 
-		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond, false)
+		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond, true)
 		if err != nil {
 			return false
 		}
