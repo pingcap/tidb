@@ -113,9 +113,9 @@ explain select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( 
 id	estRows	task	access object	operator info
 Projection_8	382.00	root		planner__core__issuetest__planner_issue.tbl_39.col_239
 └─Limit_15	382.00	root		offset:0, count:382
-  └─UnionScan_23	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
+  └─UnionScan_23	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
     └─IndexMerge_29	382.00	root		type: union
-      ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))
+      ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))
       │ └─IndexRangeScan_24	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
       ├─Selection_27(Build)	458.26	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
       │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:(1996,+inf], keep order:true, stats:pseudo

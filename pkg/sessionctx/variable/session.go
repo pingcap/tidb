@@ -1112,6 +1112,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
+	EnableSemiJoinRewrite bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
@@ -1715,6 +1718,8 @@ type SessionVars struct {
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
 
+	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	InternalSQLScanUserTable bool
 	// database name +"."+procedure_name as key , *RoutineCacahe as value.
 	ProcedurePlanCache map[string]any
 	// LastProcedureErrorStr is used to save last handler command.
@@ -1855,8 +1860,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &s.cachedStmtCtx[1]
 	}
 	if s.RefCountOfStmtCtx.TryFreeze() {
-		sc.Reset()
+		succ := sc.Reset()
 		s.RefCountOfStmtCtx.UnFreeze()
+		if !succ {
+			sc = stmtctx.NewStmtCtx()
+		}
 	} else {
 		sc = stmtctx.NewStmtCtx()
 	}
@@ -2161,6 +2169,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		EnableSemiJoinRewrite:         DefOptEnableSemiJoinRewrite,
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,

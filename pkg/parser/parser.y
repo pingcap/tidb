@@ -607,6 +607,7 @@ import (
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	rule                  "RULE"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	schemaName            "SCHEMA_NAME"
@@ -678,6 +679,7 @@ import (
 	than                  "THAN"
 	tikvImporter          "TIKV_IMPORTER"
 	timeType              "TIME"
+	timeout               "TIMEOUT"
 	timestampType         "TIMESTAMP"
 	tokenIssuer           "TOKEN_ISSUER"
 	tpcc                  "TPCC"
@@ -880,6 +882,9 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	distribute                 "DISTRIBUTE"
+	distribution               "DISTRIBUTION"
+	distributions              "DISTRIBUTIONS"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -994,6 +999,7 @@ import (
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
 	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
+	CancelDistributionJobStmt  "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
@@ -1027,6 +1033,7 @@ import (
 	DeleteFromStmt             "DELETE FROM statement"
 	DeleteWithoutUsingStmt     "Normal DELETE statement"
 	DeleteWithUsingStmt        "DELETE USING statement"
+	DistributeTableStmt        "Distribute table statement"
 	EmptyStmt                  "empty statement"
 	ExecuteStmt                "Execute statement"
 	ExplainStmt                "EXPLAIN statement"
@@ -3204,6 +3211,43 @@ FlashbackDatabaseStmt:
 		$$ = &ast.FlashBackDatabaseStmt{
 			DBName:  model.NewCIStr($3),
 			NewName: $4,
+		}
+	}
+
+/*******************************************************************
+ *
+ *  Distribute Table Statement
+ *
+ *  Example:
+ *      DISTRIBUTE TABLE table_name Partitions(p0,p1) Engine ='tikv' Rule='leader' timeout = '30m';
+ *
+ *******************************************************************/
+DistributeTableStmt:
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]model.CIStr),
+			Rule:           $7,
+			Engine:         $10,
+		}
+	}
+|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit "TIMEOUT" EqOpt stringLit
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]model.CIStr),
+			Rule:           $7,
+			Engine:         $10,
+			Timeout:        $13,
+		}
+	}
+
+CancelDistributionJobStmt:
+	"CANCEL" "DISTRIBUTION" "JOB" Int64Num
+	{
+		$$ = &ast.CancelDistributionJobStmt{
+			JobID: $4.(int64),
 		}
 	}
 
@@ -6882,6 +6926,7 @@ UnReservedKeyword:
 |	"ROLE"
 |	"ROLLBACK"
 |	"ROLLUP"
+|	"RULE"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -6898,6 +6943,7 @@ UnReservedKeyword:
 |	"TEXT"
 |	"THAN"
 |	"TIME" %prec lowerThanStringLitToken
+|	"TIMEOUT"
 |	"TIMESTAMP" %prec lowerThanStringLitToken
 |	"TRACE"
 |	"TRANSACTION"
@@ -7200,6 +7246,9 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTE"
+|	"DISTRIBUTION"
+|	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
@@ -11815,12 +11864,29 @@ ShowStmt:
 			ImportJobID: &v,
 		}
 	}
+|	"SHOW" "DISTRIBUTION" "JOB" Int64Num
+	{
+		v := $4.(int64)
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs, DistributionJobID: &v}
+	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
 	{
 		$$ = &ast.ShowStmt{
 			Tp:        ast.ShowCreateProcedure,
 			Procedure: $4.(*ast.TableName),
 		}
+	}
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowDistributions,
+			Table: $3.(*ast.TableName),
+		}
+		stmt.Table.PartitionNames = $4.([]model.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 
 ShowPlacementTarget:
@@ -12153,6 +12219,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
+|	"DISTRIBUTION" "JOBS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs}
+	}
 
 ShowLikeOrWhereOpt:
 	{
@@ -12373,6 +12443,7 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
+|	CancelDistributionJobStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
@@ -12386,6 +12457,7 @@ Statement:
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
+|	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt

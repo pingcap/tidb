@@ -87,6 +87,8 @@ func TestPipelinedDMLPositive(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("set session tidb_dml_type = bulk")
 	for _, stmt := range stmts {
+		tk.MustExec("drop global binding for " + stmt)
+
 		// text protocol
 		err := panicToErr(func() error {
 			_, err := tk.Exec(stmt)
@@ -125,16 +127,29 @@ func TestPipelinedDMLPositive(t *testing.T) {
 
 	// enable by hint
 	// Hint works for DELETE and UPDATE, but not for INSERT if the hint is in its select clause.
+	dmls := [][3]string{
+		{"update t set b = b + 1", "update /*+ SET_VAR(tidb_dml_type=bulk) */ t set b = b + 1", "true"},
+		{"insert into t select * from t", "insert /*+ SET_VAR(tidb_dml_type=bulk) */ into t select * from t", "false"},
+		{"delete from t", "delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t", "true"},
+	}
+
+	for _, dmlPair := range dmls {
+		tk.MustExec("drop global binding for " + dmlPair[0])
+	}
+
 	tk.MustExec("set @@tidb_dml_type = standard")
-	err = panicToErr(
-		func() error {
-			_, err := tk.Exec("delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t")
-			// "insert into t select /*+ SET_VAR(tidb_dml_type=bulk) */ * from t" won't work
-			return err
-		},
-	)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+	tk.MustQuery("select @@tidb_dml_type").Check(testkit.Rows("standard"))
+	for _, dmlPair := range dmls {
+		err := panicToErr(
+			func() error {
+				_, err := tk.Exec(dmlPair[1])
+				return err
+			},
+		)
+		require.Error(t, err, dmlPair[1])
+		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+		tk.MustQuery("select @@tidb_dml_type").Check(testkit.Rows("standard"))
+	}
 }
 
 func TestPipelinedDMLNegative(t *testing.T) {

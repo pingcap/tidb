@@ -585,6 +585,12 @@ func (hg *Histogram) TotalRowCount() float64 {
 	return hg.NotNullCount() + float64(hg.NullCount)
 }
 
+// AbsRowCountDifference returns the absolute difference between the realtime row count
+// and the histogram's total row count, representing data changes since the last ANALYZE.
+func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64) float64 {
+	return math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
+}
+
 // NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
 // for multi-column index histogram, since we cannot define null for the row, we treat all rows as non-null, that means,
 // notNullCount would return same value as TotalRowCount for multi-column index histograms.
