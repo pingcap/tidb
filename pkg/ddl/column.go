@@ -370,7 +370,7 @@ func updateModifyingCols(oldCol, changingCol *model.ColumnInfo) {
 	oldCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: changingCol.Offset}
 }
 
-func moveChangingColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
+func moveChangingColumnToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
 	// Swap the old column with new column position.
 	oldOffset := oldCol.Offset
 	changingOffset := changingCol.Offset
@@ -383,9 +383,9 @@ func moveChangingColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol 
 	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
 }
 
-// moveOldColumnInfo is used to make sure the columns in TableInfo
+// moveOldColumnToBack is used to make sure the columns in TableInfo
 // are in correct order after the old column is changed to non-public state.
-func moveOldColumnInfo(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
+func moveOldColumnToBack(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
 	order := []model.SchemaState{
 		model.StatePublic,
 		model.StateWriteReorganization,

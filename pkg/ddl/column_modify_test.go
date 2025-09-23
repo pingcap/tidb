@@ -623,7 +623,7 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
-	tk.MustExec("create table t (a int primary key, b bigint);")
+	tk.MustExec("create table t (a int primary key, b varchar(16));")
 	rowCnt := 10
 	for i := range rowCnt {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i*10000, i*10000))
@@ -644,7 +644,7 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 		rangeCnts = append(rangeCnts, rangeCnt)
 	})
 
-	tk.MustExec("alter table t modify column b int;")
+	tk.MustExec("alter table t modify column b char(16);")
 	require.Len(t, rangeCnts, 2)                // It should have two rounds for loading table ranges.
 	require.Less(t, rangeCnts[1], rangeCnts[0]) // Verify if the checkpoint is progressing.
 }

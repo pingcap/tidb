@@ -130,6 +130,11 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
 func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	if !job.IsRollbackable() {
+		job.State = model.JobStateRunning
+		return ver, nil
+	}
+
 	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -146,7 +151,7 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		// The job hasn't been handled and we cancel it directly.
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
-	case ModifyTypeNoReorg, ModifyTypeNullToNotNull, ModifyTypeNoReorgWithCheck:
+	case ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck:
 		// Normal-type rolling back
 		col := tblInfo.Columns[oldCol.Offset]
 		if mysql.HasPreventNullInsertFlag(col.GetFlag()) || col.ChangingFieldType == nil {
