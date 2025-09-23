@@ -127,7 +127,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		if sctx.GetSessionVars().InTxn() {
 			ts := sctx.GetSessionVars().TxnCtx.StartTS
 			if sctx.GetSessionVars().SnapshotTS != 0 {
-				logutil.BgLogger().Info("aaaaaaaaaaaaaaaaaaaaaaaaaa", zap.Uint64("startTS", ts), zap.Uint64("snapshotTS", sctx.GetSessionVars().SnapshotTS))
 				ts = sctx.GetSessionVars().SnapshotTS
 			}
 			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(ts)
