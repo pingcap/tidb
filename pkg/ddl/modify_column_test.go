@@ -550,12 +550,13 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 		CREATE TABLE t (
 			id int NOT NULL AUTO_INCREMENT,
 			val0 varchar(16) NOT NULL,
+			var1 int NOT NULL,
 			padding varchar(256) NOT NULL DEFAULT '',
-			PRIMARY KEY (id),
-			INDEX val0_idx (val0)
+			PRIMARY KEY (id)
 		);
 	`)
-	tk.MustExec("insert into t (val0, padding) values ('1', 'a'), ('2', 'b'), ('3', 'c')")
+	tk.MustExec("CREATE INDEX val0_idx ON t (val0)")
+	tk.MustExec("insert into t (val0, padding) values ('1', 1, 'a'), ('2', 2, 'b'), ('3', 3, 'c')")
 
 	conflictOnce := sync.Once{}
 	conflictCh := make(chan struct{})

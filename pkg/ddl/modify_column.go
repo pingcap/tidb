@@ -52,34 +52,36 @@ import (
 	"go.uber.org/zap"
 )
 
+// ModifyColumnType is used to indicate what type of modify column job it is.
 const (
-	ModifyTypeNone byte = iota
-	ModifyTypeDirect
-	ModifyTypeNull
-	ModifyTypeNoReorg
-	ModifyTypeIndexReorg
-	ModifyTypeReorg
+	ModifyTypeNone             byte = iota
+	ModifyTypeNoReorg               // modify column that guarantees no reorganization of all data is needed.
+	ModifyTypeNullToNotNull         // modify column that only changes null to not-null without reorganization of existing data.
+	ModifyTypeNoReorgWithCheck      // modify column that guarantees no reorganization if the existing data are in range.
+	ModifyTypeIndexReorg            // modify column that needs to reorg the index data only.
+	ModifyTypeReorg                 // modify column that needs to reorg both the row and index data.
 )
 
 func typeToString(tp byte) string {
 	switch tp {
 	case ModifyTypeNone:
 		return "none"
-	case ModifyTypeDirect:
-		return "modify meta only"
-	case ModifyTypeNull:
-		return "null to not null"
 	case ModifyTypeNoReorg:
+		return "modify meta only"
+	case ModifyTypeNullToNotNull:
+		return "modify meta only null to not-null"
+	case ModifyTypeNoReorgWithCheck:
 		return "modify meta only with range check"
 	case ModifyTypeIndexReorg:
-		return "index reorg only"
+		return "reorg index only"
 	case ModifyTypeReorg:
-		return "reorg"
+		return "reorg row and index"
 	}
 
 	return ""
 }
 
+// getVirtualExpr returns the expression string for the virtual generated column with new type.
 func getVirtualExpr(changingCol *model.ColumnInfo, colName ast.CIStr) string {
 	if !mysql.IsIntegerType(changingCol.GetType()) {
 		s := fmt.Sprintf("CAST(`%s` AS %s)", colName.O, changingCol.GetTypeDesc())
@@ -174,7 +176,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	if job.IsRollingback() {
 		switch args.ModifyColumnType {
-		case ModifyTypeDirect, ModifyTypeNull, ModifyTypeNoReorg:
+		case ModifyTypeNoReorg, ModifyTypeNullToNotNull, ModifyTypeNoReorgWithCheck:
 			// For those column-type-change jobs which don't reorg the data
 			return rollbackModifyColumnJob(jobCtx, tblInfo, job, args.Column, oldCol)
 		case ModifyTypeIndexReorg, ModifyTypeReorg:
@@ -193,7 +195,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	if args.ModifyColumnType == ModifyTypeDirect || args.ModifyColumnType == ModifyTypeNull {
+	if args.ModifyColumnType == ModifyTypeNoReorg || args.ModifyColumnType == ModifyTypeNullToNotNull {
 		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -202,9 +204,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	// Do checks only necessary for jobs with reorg.
-	if isGeneratedRelatedColumn(tblInfo, args.Column, oldCol) {
+	if err = isGeneratedRelatedColumn(tblInfo, args.Column, oldCol); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column has related generated column"))
+		return ver, errors.Trace(err)
 	}
 	if tblInfo.Partition != nil {
 		job.State = model.JobStateCancelled
@@ -223,7 +225,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	defer checkColumnOrderByStates(tblInfo)
 
 	// Check if we can only do index reorg
-	if args.ModifyColumnType == ModifyTypeNoReorg {
+	if args.ModifyColumnType == ModifyTypeNoReorgWithCheck {
 		if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -493,10 +495,10 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 }
 
 // getModifyColumnType gets the modify column type.
-//  1. ModifyTypeDirect: The range of new type is a superset of the old type
-//  2. ModifyTypeNoReorg: The range of new type is a subset of the old type, but we are running in strict SQL mode.
+//  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
+//  2. ModifyTypeNoReorgWithCheck: The range of new type is a subset of the old type, but we are running in strict SQL mode.
 //     And there is no index on this column.
-//     The difference between ModifyTypeNoReorg and ModifyTypeDirect is that we need some additional checks.
+//     The difference between ModifyTypeNoReorgWithCheck and ModifyTypeNoReorg is that we need some additional checks.
 //  3. ModifyTypeIndexReorg: The range of new type is a subset of the old type, and there are indexes on this column.
 //  4. ModifyTypeReorg: other
 func getModifyColumnType(
@@ -506,9 +508,9 @@ func getModifyColumnType(
 	sqlMode mysql.SQLMode) byte {
 	if !needChangeColumnData(oldCol, args.Column) {
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(args.Column.GetFlag()) {
-			return ModifyTypeNull
+			return ModifyTypeNullToNotNull
 		}
-		return ModifyTypeDirect
+		return ModifyTypeNoReorg
 	}
 
 	if needDoRowReorg(oldCol, args.Column, sqlMode) {
@@ -517,7 +519,7 @@ func getModifyColumnType(
 
 	relatedIndexes := buildRelatedIndexIDs(tblInfo, oldCol.ID)
 	if len(relatedIndexes) == 0 {
-		return ModifyTypeNoReorg
+		return ModifyTypeNoReorgWithCheck
 	}
 	return ModifyTypeIndexReorg
 }
@@ -1227,8 +1229,8 @@ func GetModifiableColumnJob(
 	}
 	needChangeColData := needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo)
 	if needChangeColData {
-		if isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo) {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column has related generated column")
+		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
+			return nil, errors.Trace(err)
 		}
 		if t.Meta().Partition != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
@@ -1350,7 +1352,7 @@ func GetModifiableColumnJob(
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
-		modifyColumnTp = ModifyTypeNull
+		modifyColumnTp = ModifyTypeNullToNotNull
 	}
 
 	if err = checkColumnWithIndexConstraint(t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {

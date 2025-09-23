@@ -349,10 +349,8 @@ func removeOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo)
 }
 
 // updateNewIdxColsNameOffset updates the name&offset of the index column.
-func updateNewIdxColsNameOffset(
-	changingIdxs []*model.IndexInfo,
-	oldName ast.CIStr, changingCol *model.ColumnInfo,
-) {
+func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
+	oldName ast.CIStr, changingCol *model.ColumnInfo) {
 	for _, idx := range changingIdxs {
 		for _, col := range idx.Columns {
 			if col.Name.L == oldName.L {
@@ -508,9 +506,7 @@ func LocateOffsetToMove(currentOffset int, pos *ast.ColumnPosition, tblInfo *mod
 // BuildElements is exported for testing.
 func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
-	if changingCol != nil {
-		elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
-	}
+	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
 	for _, idx := range changingIdxs {
 		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
 	}
@@ -960,7 +956,10 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
 	_, err := LocateOffsetToMove(oldCol.Offset, pos, tblInfo)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // markOldObjectRemoving changes the names of the old and new indexes/columns to mark them as removing and public respectively.

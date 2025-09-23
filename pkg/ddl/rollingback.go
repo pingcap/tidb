@@ -146,14 +146,10 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		// The job hasn't been handled and we cancel it directly.
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
-	case ModifyTypeDirect, ModifyTypeNull, ModifyTypeNoReorg:
+	case ModifyTypeNoReorg, ModifyTypeNullToNotNull, ModifyTypeNoReorgWithCheck:
 		// Normal-type rolling back
 		col := tblInfo.Columns[oldCol.Offset]
-		if args.ModifyColumnType == ModifyTypeNull && mysql.HasPreventNullInsertFlag(col.GetFlag()) {
-			job.State = model.JobStateRollingback
-			return ver, dbterror.ErrCancelledDDLJob
-		}
-		if args.ModifyColumnType == ModifyTypeNoReorg && col.ChangingFieldType == nil {
+		if mysql.HasPreventNullInsertFlag(col.GetFlag()) || col.ChangingFieldType == nil {
 			job.State = model.JobStateRollingback
 			return ver, dbterror.ErrCancelledDDLJob
 		}
@@ -161,13 +157,6 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		job.State = model.JobStateRunning
 		return ver, nil
 	case ModifyTypeReorg, ModifyTypeIndexReorg:
-		// To simplify the rollback logic, cannot be canceled after reorg is done.
-		// The only thing we need to do is update table info.
-		if job.SchemaState == model.StatePublic {
-			job.State = model.JobStateRunning
-			return ver, nil
-		}
-
 		if args.ChangingColumn == nil {
 			// The job hasn't been handled and we cancel it directly.
 			job.State = model.JobStateCancelled
