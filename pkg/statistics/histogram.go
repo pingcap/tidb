@@ -585,6 +585,12 @@ func (hg *Histogram) TotalRowCount() float64 {
 	return hg.NotNullCount() + float64(hg.NullCount)
 }
 
+// AbsRowCountDifference returns the absolute difference between the realtime row count
+// and the histogram's total row count, representing data changes since the last ANALYZE.
+func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64) float64 {
+	return math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
+}
+
 // NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
 // for multi-column index histogram, since we cannot define null for the row, we treat all rows as non-null, that means,
 // notNullCount would return same value as TotalRowCount for multi-column index histograms.
@@ -1412,6 +1418,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	// minValue is used to calc the bucket lower.
 	var minValue *types.Datum
+	// The empty hists is danger to merge. we cannot get the table information from histograms
+	// The empty hists is very rare. The DDL event was not processed, and in the previous analyze,
+	// this column was not marked as "predict," resulting in it not being analyzed.
+	if len(hists) == 0 {
+		return nil, nil
+	}
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1433,6 +1445,10 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 	}
 
+	// If all the hist and the topn is empty, return a empty hist.
+	if bucketNumber+int64(len(popedTopN)) == 0 {
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
+	}
 	bucketNumber += int64(len(popedTopN))
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)

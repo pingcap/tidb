@@ -10,3 +10,20 @@ select * from t use index (idx1) order by a desc;
 a	b
 2	5
 1	3
+drop table if exists t;
+create table t(a int, b int, index idx(a) global) partition by hash(b) partitions 5;
+insert into t values (1, 1), (1, 2), (2, 2);
+select * from t use index (idx);
+a	b
+1	1
+1	2
+2	2
+alter table t add index idx1(b) global;
+insert into t values (2, 4), (3, 4);
+select * from t use index (idx1) order by a desc, b;
+a	b
+3	4
+2	2
+2	4
+1	1
+1	2

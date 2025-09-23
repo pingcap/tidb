@@ -139,3 +139,10 @@ select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 
 
 # Test OR simplification end 
 
+CREATE TABLE `t910beff5` (
+`col_40` tinyint unsigned DEFAULT '95',
+`col_41` tinytext COLLATE gbk_bin NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;
+INSERT INTO `t910beff5` VALUES(7,'CWHObI8-!amnYA'),(1,'g+!OHa@OTdsA2#JN'),(249,'cwx!P4xaX)U'),(118,'mlDJX^n+'),(0,'EOZ9*QUsH%qi)%'),(183,'9*Lzmwg%pxy'),(139,'!ME5dBDrOG5'),(127,'BNb8SajqZ'),(209,'IWS^j'),(68,'U9v99'),(187,'dE*Zzjz#0&'),(10,'iC'),(87,'jIgUfpWzE9#oQhn&#&'),(4,'BLmM2'),(153,'(BG(8nIFNyE$%i'),(51,'EDhm)%Fie~qReM');
+SELECT AVG(DISTINCT `t910beff5`.`col_40`) AS `r0` FROM `t910beff5` WHERE `t910beff5`.`col_41`>='D1$9+VTpEe)' OR `t910beff5`.`col_41` BETWEEN 'znRD*2pkmtm4' AND 'PBueg(&tWY%dzsT(_' GROUP BY `t910beff5`.`col_40`,`t910beff5`.`col_41` HAVING `t910beff5`.`col_41`='cwx!P4xaX)U';
+explain format=brief SELECT AVG(DISTINCT `t910beff5`.`col_40`) AS `r0` FROM `t910beff5` WHERE `t910beff5`.`col_41`>='D1$9+VTpEe)' OR `t910beff5`.`col_41` BETWEEN 'znRD*2pkmtm4' AND 'PBueg(&tWY%dzsT(_' GROUP BY `t910beff5`.`col_40`,`t910beff5`.`col_41` HAVING `t910beff5`.`col_41`='cwx!P4xaX)U';

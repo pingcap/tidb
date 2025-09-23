@@ -85,7 +85,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
@@ -97,7 +97,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.Equal(t, int64(1), tblStats.RealtimeCount)
 }
@@ -124,7 +124,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
 
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
@@ -137,7 +137,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
 	require.NotNil(t, tblStats.GetIdx(2))

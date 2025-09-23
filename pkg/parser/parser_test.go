@@ -1067,6 +1067,28 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 partition (p0,p1) index idx1 regions where a=2", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) INDEX `idx1` REGIONS WHERE `a`=2"},
 		{"show table t1 partition index idx1", false, ""},
 
+		// for distribute table
+		{"distribute table t1", false, ""},
+		{"distribute table t1 partition(p0)", false, ""},
+		{"distribute table t1 partition(p0,p1)", false, ""},
+		{"distribute table t1 partition(p0,p1) engine = tikv", false, ""},
+		{"distribute table t1 rule = 'leader-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 rule = \"leader-scatter\" engine = \"tikv\"", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0,p1) rule = 'learner-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = 'learner-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash' timeout = '30m'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash' TIMEOUT = '30m'"},
+
+		// for show distribution job(s)
+		{"show distribution jobs 1", false, ""},
+		{"show distribution jobs", true, "SHOW DISTRIBUTION JOBS"},
+		{"show distribution jobs where id > 0", true, "SHOW DISTRIBUTION JOBS WHERE `id`>0"},
+		{"show distribution job 1 where id > 0", false, ""},
+		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
+
+		// for cancel distribution job JOBID
+		{"cancel distribution job", false, ""},
+		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
@@ -1449,26 +1471,29 @@ func TestDBAStmt(t *testing.T) {
 
 func TestSetVariable(t *testing.T) {
 	table := []struct {
-		Input    string
-		Name     string
-		IsGlobal bool
-		IsSystem bool
+		Input      string
+		Name       string
+		IsGlobal   bool
+		IsInstance bool
+		IsSystem   bool
 	}{
 
 		// Set system variable xx.xx, although xx.xx isn't a system variable, the parser should accept it.
-		{"set xx.xx = 666", "xx.xx", false, true},
+		{"set xx.xx = 666", "xx.xx", false, false, true},
 		// Set session system variable xx.xx
-		{"set session xx.xx = 666", "xx.xx", false, true},
-		{"set local xx.xx = 666", "xx.xx", false, true},
-		{"set global xx.xx = 666", "xx.xx", true, true},
+		{"set session xx.xx = 666", "xx.xx", false, false, true},
+		{"set local xx.xx = 666", "xx.xx", false, false, true},
+		{"set global xx.xx = 666", "xx.xx", true, false, true},
+		{"set instance xx.xx = 666", "xx.xx", false, true, true},
 
-		{"set @@xx.xx = 666", "xx.xx", false, true},
-		{"set @@session.xx.xx = 666", "xx.xx", false, true},
-		{"set @@local.xx.xx = 666", "xx.xx", false, true},
-		{"set @@global.xx.xx = 666", "xx.xx", true, true},
+		{"set @@xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@session.xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@local.xx.xx = 666", "xx.xx", false, false, true},
+		{"set @@global.xx.xx = 666", "xx.xx", true, false, true},
+		{"set @@instance.xx.xx = 666", "xx.xx", false, true, true},
 
 		// Set user defined variable xx.xx
-		{"set @xx.xx = 666", "xx.xx", false, false},
+		{"set @xx.xx = 666", "xx.xx", false, false, false},
 	}
 
 	p := parser.New()
@@ -1483,6 +1508,7 @@ func TestSetVariable(t *testing.T) {
 		v := setStmt.Variables[0]
 		require.Equal(t, tbl.Name, v.Name)
 		require.Equal(t, tbl.IsGlobal, v.IsGlobal)
+		require.Equal(t, tbl.IsInstance, v.IsInstance)
 		require.Equal(t, tbl.IsSystem, v.IsSystem)
 	}
 
@@ -6640,7 +6666,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 	p := parser.New()
 
 	st, err := p.ParseOneStmt(
-		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\";",
+		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\", @@instance.sql_mode;",
 		"",
 		"",
 	)
@@ -6683,6 +6709,13 @@ func TestQuotedSystemVariables(t *testing.T) {
 			IsSystem:      true,
 			ExplicitScope: true,
 		},
+		{
+			Name:          "sql_mode",
+			IsGlobal:      false,
+			IsSystem:      true,
+			IsInstance:    true,
+			ExplicitScope: true,
+		},
 	}
 
 	require.Len(t, ss.Fields.Fields, len(expected))
@@ -6691,6 +6724,7 @@ func TestQuotedSystemVariables(t *testing.T) {
 		comment := fmt.Sprintf("field %d, ve = %v", i, ve)
 		require.Equal(t, expected[i].Name, ve.Name, comment)
 		require.Equal(t, expected[i].IsGlobal, ve.IsGlobal, comment)
+		require.Equal(t, expected[i].IsInstance, ve.IsInstance, comment)
 		require.Equal(t, expected[i].IsSystem, ve.IsSystem, comment)
 		require.Equal(t, expected[i].ExplicitScope, ve.ExplicitScope, comment)
 	}
