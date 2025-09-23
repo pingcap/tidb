@@ -189,7 +189,8 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 		}
 	}
 
-	// replace all of exprs in logical plan
+	// Filter replace map first to make sure the replaced columns
+	// exist in the child output.
 	newReplace := make(map[string]*expression.Column, len(replace))
 	for code, expr := range replace {
 	childloop:
