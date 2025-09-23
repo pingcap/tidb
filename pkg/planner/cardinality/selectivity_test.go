@@ -333,19 +333,13 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	testKit.MustExec("insert into t select a+10 from t where a <= 10")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-<<<<<<< HEAD
 
 	statsTblNew := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	// Search for a not found value based upon statistics - count should be >= 10 and <=40
-=======
-	statsTblNew := h.GetTableStats(table.Meta())
-
-	// Search for a not found value based upon statistics - count should be > 20 and < 40
->>>>>>> a3574aa6a3b (planner: Refactor out-of-range estimation based upon modifyCount (#57431))
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	require.NoError(t, err)
-	require.Truef(t, count < 40, "expected: between 20 to 40, got: %v", count)
-	require.Truef(t, count > 20, "expected: between 20 to 40, got: %v", count)
+	require.Truef(t, count < 45, "expected: between 35 to 45, got: %v", count)
+	require.Truef(t, count > 35, "expected: between 35 to 45, got: %v", count)
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {

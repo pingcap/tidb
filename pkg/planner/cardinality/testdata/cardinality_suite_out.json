@@ -3953,12 +3953,8 @@
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
-<<<<<<< HEAD
-                            "rDatum": "KindInt64 -1500"
-=======
                             "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$",
                             "realtimeRowCount": 3080
->>>>>>> a3574aa6a3b (planner: Refactor out-of-range estimation based upon modifyCount (#57431))
                           },
                           {
                             "commonPrefix": 0,
@@ -3967,18 +3963,6 @@
                             "unsigned": false
                           },
                           {
-<<<<<<< HEAD
-                            "boundL": -2997,
-                            "boundR": 2997,
-                            "histL": -999,
-                            "histR": 999,
-                            "lPercent": 0.5613744375005636,
-                            "rPercent": 0,
-                            "rowCount": 555.760693125558
-                          },
-                          {
-                            "Result": 100
-=======
                             "boundL": 252201579132747780,
                             "boundR": 252201579132747780,
                             "histL": 252201579132747780,
@@ -3989,17 +3973,12 @@
                           },
                           {
                             "Result": 1
->>>>>>> a3574aa6a3b (planner: Refactor out-of-range estimation based upon modifyCount (#57431))
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-<<<<<<< HEAD
-                          "RowCount": 100,
-=======
                           "RowCount": 1,
->>>>>>> a3574aa6a3b (planner: Refactor out-of-range estimation based upon modifyCount (#57431))
                           "Type": "Range"
                         }
                       }
