@@ -1326,11 +1326,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	return nil
 }
 
-const indexSizeRatioPerIndex = 0.01
-
 // CalResourceParams calculates resource related parameters according to the total
 // file size and target node cpu count.
-func (e *LoadDataController) CalResourceParams(ctx context.Context) error {
+func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []byte) error {
 	targetNodeCPUCnt, err := handle.GetCPUCountOfNode(ctx)
 	if err != nil {
 		return err
@@ -1344,20 +1342,28 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context) error {
 	// for row length = 4K, one simple index on bigint is about 1% of data KV size,
 	// we use 1% as default index size factor.
 	// TODO get the ratio by sampling the data files.
-	indexSizeRatio := float64(GetNumOfIndexGenKV(e.TableInfo)) * indexSizeRatioPerIndex
+	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
+	var indexSizeRatio float64
+	if numOfIndexGenKV > 0 {
+		indexSizeRatio, err = e.sampleIndexSizeRatio(ctx, e.dataFiles, ksCodec)
+		if err != nil {
+			e.logger.Warn("meet error when sampling index size ratio", zap.Error(err))
+		}
+	}
 	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
 	e.ThreadCnt = cal.CalcConcurrency()
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
-		zap.Int("thread count", e.ThreadCnt),
-		zap.Int("max node count", e.MaxNodeCnt),
-		zap.Int("dist sql scan concurrency", e.DistSQLScanConcurrency),
-		zap.Int("target node cpu count", targetNodeCPUCnt),
-		zap.String("total file size", units.BytesSize(float64(totalSize))),
-		zap.Int("file count", len(e.dataFiles)),
-		zap.Float64("index size ratio", indexSizeRatio),
-		zap.Float64("amplify factor", factors.AmplifyFactor),
+		zap.Int("thread", e.ThreadCnt),
+		zap.Int("maxNode", e.MaxNodeCnt),
+		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
+		zap.Int("targetNodeCPU", targetNodeCPUCnt),
+		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.Int("fileCount", len(e.dataFiles)),
+		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
+		zap.Float64("indexSizeRatio", indexSizeRatio),
+		zap.Float64("amplifyFactor", factors.AmplifyFactor),
 	)
 	return nil
 }
