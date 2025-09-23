@@ -255,6 +255,12 @@ TableOptimizerHintOpt:
 			HintName: ast.NewCIStr($1),
 			HintData: $3,
 		}
+		for _, item := range $3.Items {
+            if t, ok := item.(*ast.HintTable); ok && t.QBName.L != "" {
+                $$.QBName = t.QBName
+                break
+            }
+        }
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{

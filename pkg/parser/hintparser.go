@@ -1318,6 +1318,12 @@ yynewstate:
 				HintName: ast.NewCIStr(yyS[yypt-3].ident),
 				HintData: yyS[yypt-1].leadingList,
 			}
+			for _, item := range yyS[yypt-1].leadingList.Items {
+				if t, ok := item.(*ast.HintTable); ok && t.QBName.L != "" {
+					parser.yyVAL.hint.QBName = t.QBName
+					break
+				}
+			}
 		}
 	case 11:
 		{
