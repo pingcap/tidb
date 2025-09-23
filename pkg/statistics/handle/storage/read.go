@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -631,7 +632,8 @@ func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, sta
 				zap.Bool("IsSyncLoadFailed", item.IsSyncLoadFailed),
 				zap.Bool("fullLoad", item.FullLoad),
 			)
-			intest.Assert(false, "load needed histogram failed")
+			// All other errors are unacceptable.
+			intest.Assert(strings.Contains(err.Error(), "in flashback progress"), "load needed histogram failed")
 			return errors.Trace(err)
 		}
 	}
