@@ -840,7 +840,7 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 
 	// Use standard TiDB test approach: set analyze version and analyze
 	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder")
