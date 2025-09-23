@@ -2071,7 +2071,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		ParseLatency:        sessVars.DurationParse,
 		CompileLatency:      sessVars.DurationCompile,
 		StmtCtx:             stmtCtx,
-		CopTasks:            &copTaskInfo,
+		CopTasks:            copTaskInfo,
 		ExecDetail:          &execDetail,
 		MemMax:              memMax,
 		DiskMax:             diskMax,
