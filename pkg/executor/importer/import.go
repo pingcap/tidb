@@ -1341,9 +1341,6 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	}
 	totalSize := e.TotalFileSize
 	failpoint.InjectCall("mockImportDataSize", &totalSize)
-	// for row length = 4K, one simple index on bigint is about 1% of data KV size,
-	// we use 1% as default index size factor.
-	// TODO get the ratio by sampling the data files.
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {

@@ -43,10 +43,13 @@ import (
 
 // constants, make it a variable for test
 var (
-	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
-	MinDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
-	// MinDeliverRowCnt see default for tikv-importer.max-kv-pairs
-	MinDeliverRowCnt = 4096
+	// Cache at most this number of rows before blocking the encode loop
+	maxKVQueueSize = 32
+	// DefaultMinDeliverBytes 96 KB (data + index). batch at least this amount
+	// of bytes to reduce number of messages
+	DefaultMinDeliverBytes uint64 = 96 * units.KiB
+	// DefaultMinDeliverRowCnt see default for tikv-importer.max-kv-pairs.
+	DefaultMinDeliverRowCnt = 4096
 )
 
 type rowToEncode struct {
@@ -242,8 +245,8 @@ func newChunkEncoder(
 		collector:        collector,
 		encoder:          encoder,
 		keyspace:         keyspace,
-		minDeliverBytes:  MinDeliverBytes,
-		minDeliverRowCnt: MinDeliverRowCnt,
+		minDeliverBytes:  DefaultMinDeliverBytes,
+		minDeliverRowCnt: DefaultMinDeliverRowCnt,
 		groupChecksum:    verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
 }
@@ -253,7 +256,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		encodedBytesCounter, encodedRowsCounter prometheus.Counter
 		readDur, encodeDur                      time.Duration
 		rowCount                                int
-		rowBatch                                = make([]*kv.Pairs, 0, MinDeliverRowCnt)
+		rowBatch                                = make([]*kv.Pairs, 0, DefaultMinDeliverRowCnt)
 		rowBatchByteSize                        uint64
 		currOffset                              int64
 	)
@@ -314,7 +317,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
 		// not touch it anymore.
-		rowBatch = make([]*kv.Pairs, 0, MinDeliverRowCnt)
+		rowBatch = make([]*kv.Pairs, 0, DefaultMinDeliverRowCnt)
 		rowBatchByteSize = 0
 		rowCount = 0
 		readDur = 0

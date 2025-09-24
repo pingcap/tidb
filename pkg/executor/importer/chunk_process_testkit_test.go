@@ -119,10 +119,10 @@ func TestFileChunkProcess(t *testing.T) {
 		defer func() {
 			tidbmetrics.UnregisterImportMetrics(metrics)
 		}()
-		bak := importer.MinDeliverRowCnt
-		importer.MinDeliverRowCnt = 2
+		bak := importer.DefaultMinDeliverRowCnt
+		importer.DefaultMinDeliverRowCnt = 2
 		defer func() {
-			importer.MinDeliverRowCnt = bak
+			importer.DefaultMinDeliverRowCnt = bak
 		}()
 
 		dataWriter := mock.NewMockEngineWriter(ctrl)

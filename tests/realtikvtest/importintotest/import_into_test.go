@@ -513,26 +513,26 @@ func (s *mockGCSSuite) TestDeliverBytesRows() {
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
-	bak := importer.MinDeliverBytes
-	importer.MinDeliverBytes = 10
+	bak := importer.DefaultMinDeliverBytes
+	importer.DefaultMinDeliverBytes = 10
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
 	}...))
-	importer.MinDeliverBytes = bak
+	importer.DefaultMinDeliverBytes = bak
 
 	s.tk.MustExec("truncate table t")
-	bakCnt := importer.MinDeliverRowCnt
-	importer.MinDeliverRowCnt = 2
+	bakCnt := importer.DefaultMinDeliverRowCnt
+	importer.DefaultMinDeliverRowCnt = 2
 	loadDataSQL = fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-multi-load/min-deliver-bytes-rows.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows([]string{
 		"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44",
 		"5 test5 55", "6 test6 66", "7 test7 77", "8 test8 88", "9 test9 99",
 	}...))
-	importer.MinDeliverRowCnt = bakCnt
+	importer.DefaultMinDeliverRowCnt = bakCnt
 }
 
 func (s *mockGCSSuite) TestMultiValueIndex() {
