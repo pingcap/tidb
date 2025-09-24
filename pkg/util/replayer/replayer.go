@@ -127,7 +127,6 @@ func canWriteToFile(vfs afero.Fs, path string) bool {
 		logutil.BgLogger().Warn("failed to remove test file", zap.String("path", path), zap.Error(err))
 	}
 	return true
-
 }
 
 func canWriteToFileInternal(vfs afero.Fs, path string) bool {
@@ -142,8 +141,5 @@ func canWriteToFileInternal(vfs afero.Fs, path string) bool {
 		return false
 	}
 	err = file.Close()
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
