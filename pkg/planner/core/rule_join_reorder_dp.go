@@ -107,6 +107,10 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 		if visited[i] {
 			continue
 		}
+		// Reset the visited ID map.
+		for i := range nodeID2VisitID {
+			nodeID2VisitID[i] = -1
+		}
 		visitID2NodeID := s.bfsGraph(i, visited, adjacents, nodeID2VisitID)
 		nodeIDMask := uint(0)
 		for _, nodeID := range visitID2NodeID {
@@ -219,6 +223,10 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
 	var usedEqEdges []joinGroupEqEdge
 	for _, edge := range totalEqEdges {
+		// If one of the two nodes are not in the current subgraph, skip it.
+		if oldPos2NewPos[edge.nodeIDs[0]] < 0 || oldPos2NewPos[edge.nodeIDs[1]] < 0 {
+			continue
+		}
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
 		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])
 		if ((leftMask&(1<<lIdx)) > 0 && (rightMask&(1<<rIdx)) > 0) || ((leftMask&(1<<rIdx)) > 0 && (rightMask&(1<<lIdx)) > 0) {

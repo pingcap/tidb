@@ -91,12 +91,10 @@ func TestFileChunkProcess(t *testing.T) {
 			Table:  table,
 			Logger: logger,
 		},
-		&importer.TableImporter{
-			LoadDataController: &importer.LoadDataController{
-				ASTArgs:       &importer.ASTArgs{},
-				InsertColumns: table.VisibleCols(),
-				FieldMappings: fieldMappings,
-			},
+		&importer.LoadDataController{
+			ASTArgs:       &importer.ASTArgs{},
+			InsertColumns: table.VisibleCols(),
+			FieldMappings: fieldMappings,
 		},
 	)
 	require.NoError(t, err)
@@ -121,10 +119,10 @@ func TestFileChunkProcess(t *testing.T) {
 		defer func() {
 			tidbmetrics.UnregisterImportMetrics(metrics)
 		}()
-		bak := importer.MinDeliverRowCnt
-		importer.MinDeliverRowCnt = 2
+		bak := importer.DefaultMinDeliverRowCnt
+		importer.DefaultMinDeliverRowCnt = 2
 		defer func() {
-			importer.MinDeliverRowCnt = bak
+			importer.DefaultMinDeliverRowCnt = bak
 		}()
 
 		dataWriter := mock.NewMockEngineWriter(ctrl)
