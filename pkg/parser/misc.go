@@ -517,6 +517,7 @@ var tokenMap = map[string]int{
 	"LEVEL":                          level,
 	"LIKE":                           like,
 	"LIMIT":                          limit,
+	"LITE":                           lite,
 	"LINEAR":                         linear,
 	"LINES":                          lines,
 	"LIST":                           list,
