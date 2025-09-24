@@ -6933,23 +6933,13 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-<<<<<<< HEAD
-        sha256 = "cf22fd4de8f268791e27e2f12dd5889f501a741a0cc3f658c37cbd646c84d65a",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250923023316-ea4b866b82fa",
+        sha256 = "55b4cfd160957d249f2f2f5841fdc633706ef2ea69645e24c2188a5747186ced",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20250924063340-43ccdd099150",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250923023316-ea4b866b82fa.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250923023316-ea4b866b82fa.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250923023316-ea4b866b82fa.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250923023316-ea4b866b82fa.zip",
-=======
-        sha256 = "0b9c8af5f1dda40c386ee4412e5f56580bba391d787f9a91264a122ce1ea50ae",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20241225040645-f2266d6bf259",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20241225040645-f2266d6bf259.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20241225040645-f2266d6bf259.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20241225040645-f2266d6bf259.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20241225040645-f2266d6bf259.zip",
->>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250924063340-43ccdd099150.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250924063340-43ccdd099150.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250924063340-43ccdd099150.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20250924063340-43ccdd099150.zip",
         ],
     )
     go_repository(
