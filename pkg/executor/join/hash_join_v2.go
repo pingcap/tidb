@@ -53,7 +53,19 @@ var (
 	DisableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionLegacy
 	// HashJoinV2Strings is used for test
 	HashJoinV2Strings = []string{DisableHashJoinV2, EnableHashJoinV2}
+	// fakeSel is used when chunk does not have sel field
+	fakeSel []int
+	// the length of fakeSelLength, default max_chunk_size is 1024,
+	// we set fakeSel size to 4*max_chunk_size so it should be enough for most cases
+	fakeSelLength = 4096
 )
+
+func init() {
+	fakeSel = make([]int, fakeSelLength)
+	for i := range fakeSel {
+		fakeSel[i] = i
+	}
+}
 
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
