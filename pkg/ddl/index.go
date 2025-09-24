@@ -3409,7 +3409,7 @@ func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool
 // Don't confuse with temp index for add index.
 func isTempIndex(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	for _, idxCol := range idxInfo.Columns {
-		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
+		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil || idxCol.UsingChangingType {
 			return true
 		}
 	}

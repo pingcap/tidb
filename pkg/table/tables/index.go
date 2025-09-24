@@ -46,6 +46,7 @@ type index struct {
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
 	ectx                *exprstatic.ExprContext
+	castIndexCols       []int
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -65,11 +66,21 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-		ectx: exprstatic.NewExprContext(
+	}
+
+	for i, col := range index.idxInfo.Columns {
+		tblCol := index.tblInfo.Columns[col.Offset]
+		if col.UsingChangingType && tblCol.ChangingFieldType != nil {
+			index.castIndexCols = append(index.castIndexCols, i)
+		}
+	}
+
+	if len(index.castIndexCols) > 0 {
+		index.ectx = exprstatic.NewExprContext(
 			exprstatic.WithEvalCtx(
 				exprstatic.NewEvalContext(
 					exprstatic.WithSQLMode(
-						mysql.ModeStrictAllTables | mysql.ModeStrictTransTables)))),
+						mysql.ModeStrictAllTables | mysql.ModeStrictTransTables))))
 	}
 	return index
 }
@@ -97,16 +108,12 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 		}
 	}
 
-	if c.idxInfo.UsingChangingType {
-		for i, col := range c.idxInfo.Columns {
-			tblCol := c.tblInfo.Columns[col.Offset]
-			if tblCol.ChangingFieldType == nil {
-				continue
-			}
-			indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
-			if err != nil {
-				return
-			}
+	for _, i := range c.castIndexCols {
+		col := c.idxInfo.Columns[i]
+		tblCol := c.tblInfo.Columns[col.Offset]
+		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
+		if err != nil {
+			return
 		}
 	}
 
@@ -122,17 +129,13 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 	})
 
-	if c.idxInfo.UsingChangingType {
-		var err error
-		for i, col := range c.idxInfo.Columns {
-			tblCol := c.tblInfo.Columns[col.Offset]
-			if tblCol.ChangingFieldType == nil {
-				continue
-			}
-			indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+	var err error
+	for _, i := range c.castIndexCols {
+		col := c.idxInfo.Columns[i]
+		tblCol := c.tblInfo.Columns[col.Offset]
+		indexedValues[i], err = table.CastColumnValueToType(c.ectx, indexedValues[i], tblCol.ChangingFieldType, true, false)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 

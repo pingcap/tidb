@@ -161,7 +161,7 @@ func initializeChangingIndexes(
 			tmpIdx.State = model.StateNone
 			tmpIdx.ID = newIdxID
 			tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
-			tmpIdx.UsingChangingType = true
+			tmpIdx.Columns[info.Offset].UsingChangingType = true
 			UpdateIndexCol(tmpIdx.Columns[info.Offset], args.Column)
 			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 		} else {
@@ -171,7 +171,7 @@ func initializeChangingIndexes(
 			tmpIdx.State = model.StateNone
 			oldTempIdxID := tmpIdx.ID
 			tmpIdx.ID = newIdxID
-			tmpIdx.UsingChangingType = true
+			tmpIdx.Columns[info.Offset].UsingChangingType = true
 			UpdateIndexCol(tmpIdx.Columns[info.Offset], args.Column)
 			redundantIdxs = append(redundantIdxs, oldTempIdxID)
 		}
@@ -301,7 +301,6 @@ func rollbackModifyColumnJob(
 	newCol, oldCol *model.ColumnInfo) (ver int64, err error) {
 	if oldCol.ID == newCol.ID {
 		// If the not-null change is included, we should clean the flag info in oldCol.
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
 		if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
 			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
 			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
@@ -322,7 +321,6 @@ func rollbackModifyColumnJobWithReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
 	// If the not-null change is included, we should clean the flag info in oldCol.
-	tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
 	if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
 		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
 		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
@@ -358,7 +356,15 @@ func rollbackModifyColumnJobWithIndexReorg(
 	}
 
 	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
-	changingIdxInfos := allIdxs[len(allIdxs)/2:]
+	changingIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
+	for _, idx := range allIdxs {
+		for _, idxCol := range idx.Columns {
+			if idxCol.Name.L == oldCol.Name.L && idxCol.UsingChangingType {
+				changingIdxInfos = append(changingIdxInfos, idx)
+				break
+			}
+		}
+	}
 	for _, idx := range changingIdxInfos {
 		args.IndexIDs = append(args.IndexIDs, idx.ID)
 	}
@@ -1011,18 +1017,18 @@ func (w *worker) doModifyColumnIndexReorg(
 		updateObjectState(nil, changingIdxInfos, model.StatePublic)
 		moveChangingColumnToDest(tblInfo, oldCol, oldCol, pos)
 		moveIndexInfoToDest(tblInfo, oldCol, oldIdxInfos, changingIdxInfos)
+		markOldIndexesRemoving(oldIdxInfos, changingIdxInfos)
 		for i, idx := range changingIdxInfos {
 			for j, idxCol := range idx.Columns {
 				if idxCol.Name.L == oldName.L {
 					oldIdxInfos[i].Columns[j].Name = colName
 					oldIdxInfos[i].Columns[j].Offset = oldCol.Offset
+					oldIdxInfos[i].Columns[j].UsingChangingType = true
 					changingIdxInfos[i].Columns[j].Name = colName
 					changingIdxInfos[i].Columns[j].Offset = oldCol.Offset
+					changingIdxInfos[i].Columns[j].UsingChangingType = false
 				}
 			}
-			oldIdxInfos[i].UsingChangingType = true
-			changingIdxInfos[i].UsingChangingType = false
-			oldIdxInfos[i].Name, changingIdxInfos[i].Name = changingIdxInfos[i].Name, oldIdxInfos[i].Name
 		}
 
 		job.SchemaState = model.StatePublic
@@ -1031,6 +1037,35 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 	case model.StatePublic:
+		// The constraint that the first half of allIdxs is oldIdxInfos and the second half is changingIdxInfos
+		// isn't true now, so we need to find the oldIdxInfos again.
+		oldIdxInfos = oldIdxInfos[:0]
+		for _, idx := range allIdxs {
+			if strings.HasPrefix(idx.Name.O, removingObjPrefix) {
+				oldIdxInfos = append(oldIdxInfos, idx)
+			}
+		}
+		// All the old indexes has been deleted by previous modify column,
+		// we can just finish the job.
+		if len(oldIdxInfos) == 0 {
+			oldCol.ChangingFieldType = nil
+			oldCol.DelFlag(mysql.PreventNullInsertFlag)
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{oldCol})
+			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			args.PartitionIDs = getPartitionIDs(tblInfo)
+			job.FillFinishedArgs(args)
+			return ver, nil
+		}
+
 		switch oldIdxInfos[0].State {
 		case model.StateWriteOnly:
 			updateObjectState(nil, oldIdxInfos, model.StateDeleteOnly)

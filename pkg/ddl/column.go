@@ -419,7 +419,7 @@ func moveIndexInfoToDest(tblInfo *model.TableInfo, changingCol *model.ColumnInfo
 			if idxCol.ID == changingCol.ID {
 				continue // ignore current modifying column.
 			}
-			if idxCol.ChangeStateInfo != nil {
+			if idxCol.ChangeStateInfo != nil || ic.UsingChangingType {
 				hasOtherChangingCol = true
 				break
 			}
@@ -959,6 +959,17 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 	return nil
 }
 
+func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.IndexInfo) {
+	for i := range oldIdxs {
+		oldIdxName := oldIdxs[i].Name.O
+		publicName := ast.NewCIStr(getRemovingObjOriginName(oldIdxName))
+		removingName := ast.NewCIStr(getRemovingObjName(oldIdxName))
+
+		changingIdxs[i].Name = publicName
+		oldIdxs[i].Name = removingName
+	}
+}
+
 // markOldObjectRemoving changes the names of the old and new indexes/columns to mark them as removing and public respectively.
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
 	if oldCol.ID != changingCol.ID {
@@ -968,14 +979,7 @@ func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, chang
 		renameColumnTo(changingCol, changingIdxs, publicName)
 	}
 
-	for i := range oldIdxs {
-		oldIdxName := oldIdxs[i].Name.O
-		publicName := ast.NewCIStr(getRemovingObjOriginName(oldIdxName))
-		removingName := ast.NewCIStr(getRemovingObjName(oldIdxName))
-
-		changingIdxs[i].Name = publicName
-		oldIdxs[i].Name = removingName
-	}
+	markOldIndexesRemoving(oldIdxs, changingIdxs)
 }
 
 func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdxs []*model.IndexInfo) []int64 {
