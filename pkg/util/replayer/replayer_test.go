@@ -34,5 +34,5 @@ func TestPlanReplayerPathWithWritePrem(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	basePathFsMem := afero.NewBasePathFs(fs, "/")
 	path := GetPlanReplayerDirName(basePathFsMem)
-	require.Equal(t, config.GetGlobalConfig().Log.File.Filename, path)
+	require.Equal(t, filepath.Join(config.GetGlobalConfig().Log.File.Filename, "replayer"), path)
 }
