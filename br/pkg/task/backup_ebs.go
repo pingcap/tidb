@@ -184,10 +184,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	if !cfg.SkipPauseGCAndScheduler {
-		sp := utils.BRServiceSafePoint{
-			BackupTS: resolvedTs,
-			TTL:      utils.DefaultBRGCSafePointTTL,
-			ID:       utils.MakeSafePointID(),
+		sp := utils.ServiceSafePoint{
+			ServiceSafePointTS: resolvedTs,
+			TTL:                utils.DefaultBRGCSafePointTTL,
+			ID:                 utils.MakeSafePointID(),
 		}
 		log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
 		err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)

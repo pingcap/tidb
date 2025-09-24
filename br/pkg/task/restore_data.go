@@ -94,10 +94,10 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	// stop gc before restore tikv data
-	sp := utils.BRServiceSafePoint{
-		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+	sp := utils.ServiceSafePoint{
+		ServiceSafePointTS: restoreTS,
+		TTL:                utils.DefaultBRGCSafePointTTL,
+		ID:                 utils.MakeSafePointID(),
 	}
 
 	// TODO: since data restore does not have tidb up, it looks we can remove this keeper

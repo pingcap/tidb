@@ -1535,6 +1535,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}()
 	}
 
+<<<<<<< HEAD
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
 		PDCli:   mgr.GetPDClient(),
 		EtcdCli: mgr.GetDomain().GetEtcdClient(),
@@ -1548,8 +1549,19 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
 		ID:       utils.MakeSafePointID(),
+||||||| parent of c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
+	sp := utils.BRServiceSafePoint{
+		BackupTS: restoreTS,
+		TTL:      utils.DefaultBRGCSafePointTTL,
+		ID:       utils.MakeSafePointID(),
+=======
+	sp := utils.ServiceSafePoint{
+		ServiceSafePointTS: restoreTS,
+		TTL:                utils.DefaultBRGCSafePointTTL,
+		ID:                 utils.MakeSafePointID(),
+>>>>>>> c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
 	}
-	g.Record("BackupTS", backupMeta.EndVersion)
+	g.Record("ServiceSafePointTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	defer func() {
@@ -1558,7 +1570,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		gcSafePointKeeperCancel()
 		// set the ttl to 0 to remove the gc-safe-point
 		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
+		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp, cfg.KeyspaceName); err != nil {
 			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)

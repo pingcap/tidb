@@ -3796,7 +3796,7 @@ func buildBackupRestoreSchema(kind ast.BRIEKind) (*expression.Schema, types.Name
 	schema := newColumnsWithNames(5)
 	schema.Append(buildColumnWithName("", "Destination", mysql.TypeVarchar, 255))
 	schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
-	schema.Append(buildColumnWithName("", "BackupTS", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "ServiceSafePointTS", mysql.TypeLonglong, longlongSize))
 	if kind == ast.BRIEKindRestore {
 		schema.Append(buildColumnWithName("", "Cluster TS", mysql.TypeLonglong, longlongSize))
 	}

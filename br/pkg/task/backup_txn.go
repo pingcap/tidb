@@ -187,7 +187,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	g.Record("BackupTS", backupTS)
+	g.Record("ServiceSafePointTS", backupTS)
 
 	req := backuppb.BackupRequest{
 		ClusterId:        client.GetClusterID(),

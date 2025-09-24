@@ -486,8 +486,16 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
+<<<<<<< HEAD
 			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
+||||||| parent of c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
+=======
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The current snapshot restore want to restore cluster to the ServiceSafePointTS[%d], which is different from that[%d] recorded in checkpoint. "+
+>>>>>>> c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
 					"Perhaps you should specify the last full backup storage instead, "+
 					"or just clean the checkpoint %s if the cluster has been cleaned up.",
 				rc.backupMeta.EndVersion, meta.RestoredTS, snapshotCheckpointMetaManager,

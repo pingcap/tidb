@@ -15,6 +15,15 @@
 package keyspace
 
 import (
+<<<<<<< HEAD
+||||||| parent of c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
+	"context"
+	"encoding/binary"
+=======
+	"context"
+	"crypto/tls"
+	"encoding/binary"
+>>>>>>> c6fa9d6070 (GC: 8.5 keyspace GC for BR,Dumpling,Lightning (#1883))
 	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -78,4 +87,13 @@ func BuildAPIContext(keyspaceName string) pd.APIContext {
 		return pd.NewAPIContextV1()
 	}
 	return pd.NewAPIContextV2(keyspaceName)
+}
+
+// NewEtcdSafePointKVWithCodec is used to add prefix when set keyspace.
+func NewEtcdSafePointKVWithCodec(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
+	var etcdNameSpace string
+	if IsKeyspaceUseKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
+		etcdNameSpace = EtcdNamespace(codec)
+	}
+	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
 }

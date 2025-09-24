@@ -460,7 +460,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 	)
 
 	if bc.checkpointMeta != nil {
-		log.Info("reuse checkpoint BackupTS", zap.Uint64("backup-ts", bc.checkpointMeta.BackupTS))
+		log.Info("reuse checkpoint ServiceSafePointTS", zap.Uint64("backup-ts", bc.checkpointMeta.BackupTS))
 		return bc.checkpointMeta.BackupTS, nil
 	}
 	if ts > 0 {
@@ -511,7 +511,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	log.Info("backup encode timestamp", zap.Uint64("BackupTS", backupTS))
+	log.Info("backup encode timestamp", zap.Uint64("ServiceSafePointTS", backupTS))
 	return backupTS, nil
 }
 
