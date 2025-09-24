@@ -42,7 +42,7 @@ where ((('' = (
         order by c_0 desc
          limit 1)) is null));
 
-explain format='plan_tree' select
+explain format='brief' select
   subq_0.c_0 as c_0,
   subq_0.c_1 as c_1,
   subq_0.c_2 as c_2
