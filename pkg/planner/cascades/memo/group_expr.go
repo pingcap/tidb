@@ -25,11 +25,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+var _ base.GroupExpression = &GroupExpression{}
 
 // GroupExpression is a single expression from the equivalent list classes inside a group.
 // it is a node in the expression tree, while it takes groups as inputs. This kind of loose
@@ -173,6 +176,39 @@ func (e *GroupExpression) GetWrappedLogicalPlan() base.LogicalPlan {
 	return e.LogicalPlan
 }
 
+// GetChildStatsAndSchema overrides the logical plan interface implemented by BaseLogicalPlan.
+func (e *GroupExpression) GetChildStatsAndSchema() (stats0 *property.StatsInfo, schema0 *expression.Schema) {
+	intest.AssertFunc(func() bool {
+		switch e.GetWrappedLogicalPlan().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalApply:
+			return false
+		default:
+			return true
+		}
+	}, "GetChildStatsAndSchema should not be called on join GE, Please use getJoinChildStatsAndSchema.")
+	return e.Inputs[0].GetLogicalProperty().Stats, e.Inputs[0].GetLogicalProperty().Schema
+}
+
+// GetJoinChildStatsAndSchema overrides the logical plan interface implemented by BaseLogicalPlan.
+func (e *GroupExpression) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
+	intest.AssertFunc(func() bool {
+		switch e.GetWrappedLogicalPlan().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalApply:
+			return true
+		default:
+			return false
+		}
+	}, "GetJoinChildStatsAndSchema should not be called on non-join GE, Please use GetChildStatsAndSchema.")
+	stats0, schema0 = e.Inputs[0].GetLogicalProperty().Stats, e.Inputs[0].GetLogicalProperty().Schema
+	stats1, schema1 = e.Inputs[1].GetLogicalProperty().Stats, e.Inputs[1].GetLogicalProperty().Schema
+	return
+}
+
+// InputsLen returns the length of inputs.
+func (e *GroupExpression) InputsLen() int {
+	return len(e.Inputs)
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children
@@ -251,7 +287,7 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		// we pass GE rather than logical plan, it's a super set of LogicalPlan interface, which enable cascades
 		// framework to iterate its children, and then get their logical property. Meanwhile, we can also get basic
 		// wrapped logical plan from GE, so we can use same function pointer to handle logic inside.
-		return utilfuncp.ExhaustPhysicalPlans4LogicalCTE(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
 	case *logicalop.LogicalSort:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalSort(x, prop)
 	case *logicalop.LogicalTopN:
@@ -263,7 +299,7 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	case *logicalop.LogicalApply:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalApply(e, prop)
 	case *logicalop.LogicalLimit:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalLimit(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
 	case *logicalop.LogicalWindow:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalWindow(x, prop)
 	case *logicalop.LogicalExpand:
@@ -273,15 +309,15 @@ func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	case *logicalop.LogicalSequence:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalSequence(e, prop)
 	case *logicalop.LogicalSelection:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalSelection(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
 	case *logicalop.LogicalMaxOneRow:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
 	case *logicalop.LogicalUnionScan:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
 	case *logicalop.LogicalProjection:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalProjection(e, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalProjection(e, prop)
 	case *logicalop.LogicalAggregation:
-		return utilfuncp.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
+		return physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
 	case *logicalop.LogicalPartitionUnionAll:
 		return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
 	default:

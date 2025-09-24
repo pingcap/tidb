@@ -219,11 +219,11 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			require.NoError(t, err)
 			info.State = model.StatePublic
 
-			require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
-			indicesGenKV := getIndicesGenKV(info)
+			require.Equal(t, c.numOfIndexGenKV, importer.GetNumOfIndexGenKV(info), c.createSQL)
+			indicesGenKV := importer.GetIndicesGenKV(info)
 			var ukCountGenKV int
 			for _, g := range indicesGenKV {
-				if g.unique {
+				if g.Unique {
 					ukCountGenKV++
 				}
 			}
