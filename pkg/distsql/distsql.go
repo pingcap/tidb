@@ -16,10 +16,12 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -80,7 +82,22 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		EnabledRateLimitAction:     enabledRateLimitAction,
 		EventCb:                    eventCb,
 		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
+		TryCopLiteWorker:           &dctx.TryCopLiteWorker,
 	}
+
+	// Force the CopLiteWorker to be used or not used for testing purposes
+	failpoint.Inject("TryCopLiteWorker", func(val failpoint.Value) {
+		n, ok := val.(int)
+		if !ok {
+			panic(fmt.Sprintf("TryCopLiteWorker: expected int, got %T (%v)", val, val))
+		}
+
+		option.TryCopLiteWorker.Store(uint32(n))
+
+		logutil.Logger(ctx).Info("setting TryCopLiteWorker for test",
+			zap.String("value", option.TryCopLiteWorker.String()),
+		)
+	})
 
 	if kvReq.StoreType == kv.TiFlash {
 		ctx = SetTiFlashConfVarsInContext(ctx, dctx)
