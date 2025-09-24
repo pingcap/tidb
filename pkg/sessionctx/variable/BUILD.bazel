@@ -97,6 +97,7 @@ go_test(
         "mock_globalaccessor_test.go",
         "removed_test.go",
         "session_test.go",
+        "slow_log_test.go",
         "statusvar_test.go",
         "sysvar_test.go",
         "variable_test.go",
@@ -107,12 +108,19 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+<<<<<<< HEAD
+=======
+        "//pkg/config/kerneltype",
+        "//pkg/executor",
+        "//pkg/executor/join/joinversion",
+>>>>>>> 79d1306f621 (*: parse and match slow log trigger rules for multi-dimensional triggering (#63132))
         "//pkg/kv",
         "//pkg/parser",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
         "//pkg/testkit",
@@ -127,6 +135,7 @@ go_test(
         "//pkg/util/timeutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//util",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
