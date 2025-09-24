@@ -554,6 +554,10 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			tmpRan[0].LowExclude = indexRange.LowExclude
 			tmpRan[0].HighExclude = indexRange.HighExclude
 		}
+		// Safety check to prevent panic when accessing colsIDs[i]
+		if colsIDs == nil || i >= len(colsIDs) {
+			continue
+		}
 		colID := colsIDs[i]
 		var (
 			count       float64

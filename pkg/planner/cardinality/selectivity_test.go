@@ -362,7 +362,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
-	testKit.MustExec("set @@tidb_analyze_version=1")
+	testKit.MustExec("set @@tidb_analyze_version=2")
 	testKit.MustExec("analyze table t")
 	for i := range 10 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -383,24 +383,24 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID := table.Meta().Columns[0].ID
 	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30))
 	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
+	require.Equal(t, 2.0, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 4.7, count)
+	require.Equal(t, 4.0, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
 	require.NoError(t, err)
-	require.Equal(t, 4.7, count)
+	require.Equal(t, 4.0, count)
 
 	idxID := table.Meta().Indices[0].ID
 	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30), nil)
 	require.NoError(t, err)
-	require.Equal(t, 0.1, countResult.Est)
+	require.Equal(t, 1.0, countResult.Est)
 
 	countResult, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30), nil)
 	require.NoError(t, err)
-	require.Equal(t, 4.5, countResult.Est)
+	require.Equal(t, 2.0, countResult.Est)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
@@ -425,12 +425,12 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	colID = table.Meta().Columns[0].ID
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
 	require.NoError(t, err)
-	require.Equal(t, 1.0, count)
+	require.Equal(t, 0.001, count)
 
 	idxID = table.Meta().Indices[0].ID
 	countResult, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2), nil)
 	require.NoError(t, err)
-	require.Equal(t, 0.0, countResult.Est)
+	require.Equal(t, 1.0, countResult.Est)
 }
 
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
