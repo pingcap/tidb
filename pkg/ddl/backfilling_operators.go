@@ -1047,7 +1047,7 @@ func (src *TempIndexScanTaskSource) generateTasks() error {
 			break
 		}
 
-		batchTasks := src.getBatchTableScanTask(kvRanges, taskIDAlloc)
+		batchTasks := src.getBatchTempIndexScanTask(kvRanges, taskIDAlloc)
 		for _, task := range batchTasks {
 			select {
 			case <-src.ctx.Done():
@@ -1063,7 +1063,7 @@ func (src *TempIndexScanTaskSource) generateTasks() error {
 	return nil
 }
 
-func (src *TempIndexScanTaskSource) getBatchTableScanTask(
+func (src *TempIndexScanTaskSource) getBatchTempIndexScanTask(
 	kvRanges []kv.KeyRange,
 	taskIDAlloc *taskIDAllocator,
 ) []tempIndexScanTask {
