@@ -150,7 +150,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
-	execDetail := execdetails.ExecDetails{
+	execDetail := &execdetails.ExecDetails{
 		RequestCount: 2,
 		CopExecDetails: execdetails.CopExecDetails{
 			BackoffTime: time.Millisecond,
@@ -216,7 +216,6 @@ func TestSlowLogFormat(t *testing.T) {
 
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
-	memArbitration := time.Duration(54321)
 	resultFields := `# Txn_start_ts: 406649736972468225
 # Keyspace_name: keyspace_a
 # Keyspace_ID: 1
@@ -318,8 +317,7 @@ func TestSlowLogFormat(t *testing.T) {
 		RUDetails:         ruDetails,
 		StorageKV:         true,
 		StorageMPP:        false,
-
-		MemArbitration: memArbitration,
+		MemArbitration:    time.Duration(54321).Seconds(),
 	}
 	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
 	logItems.UsedStats.RecordUsedInfo(2, usedStats2)

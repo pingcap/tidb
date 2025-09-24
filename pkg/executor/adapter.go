@@ -638,8 +638,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
 		}
-		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
-		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+		// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
@@ -1729,7 +1729,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeTotal:         costTime,
 		IndexNames:        indexNames,
 		CopTasks:          stmtCtx.CopTasksDetails(),
-		ExecDetail:        execDetail,
+		ExecDetail:        &execDetail,
 		MemMax:            sessVars.MemTracker.MaxConsumed(),
 		DiskMax:           sessVars.DiskTracker.MaxConsumed(),
 		Succ:              succ,
@@ -1744,7 +1744,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		ResultRows:        stmtCtx.GetResultRowsCount(),
-		ExecRetryCount:    a.retryCount,
+		ExecRetryCount:    uint64(a.retryCount),
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
@@ -1755,8 +1755,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 		StorageKV:         stmtCtx.IsTiKV.Load(),
 		StorageMPP:        stmtCtx.IsTiFlash.Load(),
-
-		MemArbitration: stmtCtx.MemTracker.MemArbitration(),
+		MemArbitration:    stmtCtx.MemTracker.MemArbitration().Seconds(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -2059,7 +2058,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-	stmtExecInfo.MemArbitration = stmtCtx.MemTracker.MemArbitration()
+	stmtExecInfo.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
 
 	stmtsummaryv2.Add(stmtExecInfo)
 }

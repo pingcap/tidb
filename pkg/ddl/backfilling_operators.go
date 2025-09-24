@@ -779,9 +779,7 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 			w.srcChunkPool.Put(ck.Chunk)
 		}
 	}()
-	failpoint.Inject("injectPanicForIndexIngest", func() {
-		panic("mock panic")
-	})
+	failpoint.InjectCall("mockIndexIngestWorkerFault")
 
 	result := IndexWriteResult{
 		ID: ck.ID,

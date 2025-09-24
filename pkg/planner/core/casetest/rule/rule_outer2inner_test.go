@@ -82,3 +82,39 @@ func TestOuter2InnerIssue55886(t *testing.T) {
 		}
 	})
 }
+
+func TestIssue58836(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (id int primary key, name varchar(100));")
+	testKit.MustExec("insert into t values (1, null), (2, 1);")
+	testKit.MustQuery(`with tmp as (
+select
+row_number() over() as id,
+(select '1' from dual where id in (2)) as name
+from t
+)
+select 'ok' from dual
+where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows())
+	testKit.MustQuery(`explain format = 'plan_tree' with tmp as (
+select
+row_number() over() as id,
+(select '1' from dual where id in (2)) as name
+from t
+)
+select 'ok' from dual
+where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
+		`Projection root  ok->Column#13`,
+		`└─HashJoin root  CARTESIAN inner join`,
+		`  ├─TableDual(Build) root  rows:1`,
+		`  └─HashAgg(Probe) root  group by:Column#11, Column#12, funcs:firstrow(1)->Column#18`,
+		`    └─Selection root  eq("1", Column#11), eq(1, Column#12)`,
+		`      └─Window root  row_number()->Column#12 over(rows between current row and current row)`,
+		`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
+		`          ├─TableReader(Build) root  data:TableFullScan`,
+		`          │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo`,
+		`          └─Projection(Probe) root  1->Column#11`,
+		`            └─Selection root  eq(test.t.id, 2)`,
+		`              └─TableDual root  rows:1`))
+}

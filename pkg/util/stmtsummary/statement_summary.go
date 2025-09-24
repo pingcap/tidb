@@ -265,6 +265,7 @@ type StmtExecInfo struct {
 	CopTasks       *execdetails.CopTasksSummary
 	ExecDetail     execdetails.ExecDetails
 	MemMax         int64
+	MemArbitration float64
 	DiskMax        int64
 	StartTime      time.Time
 	IsInternal     bool
@@ -286,8 +287,6 @@ type StmtExecInfo struct {
 	PlanCacheUnqualified string
 
 	LazyInfo StmtExecLazyInfo
-
-	MemArbitration time.Duration
 }
 
 // StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
@@ -882,10 +881,10 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
 	}
-	memArbitration := sei.MemArbitration.Seconds()
-	ssStats.sumMemArbitration += memArbitration
-	if memArbitration > ssStats.maxMemArbitration {
-		ssStats.maxMemArbitration = memArbitration
+
+	ssStats.sumMemArbitration += sei.MemArbitration
+	if sei.MemArbitration > ssStats.maxMemArbitration {
+		ssStats.maxMemArbitration = sei.MemArbitration
 	}
 
 	ssStats.sumDisk += sei.DiskMax

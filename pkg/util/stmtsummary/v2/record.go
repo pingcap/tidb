@@ -402,10 +402,10 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	if info.MemMax > r.MaxMem {
 		r.MaxMem = info.MemMax
 	}
-	memArbitration := info.MemArbitration.Seconds()
-	r.SumMemArbitration += memArbitration
-	if memArbitration > r.MaxMemArbitration {
-		r.MaxMemArbitration = memArbitration
+
+	r.SumMemArbitration += info.MemArbitration
+	if info.MemArbitration > r.MaxMemArbitration {
+		r.MaxMemArbitration = info.MemArbitration
 	}
 	r.SumDisk += info.DiskMax
 	if info.DiskMax > r.MaxDisk {
@@ -713,8 +713,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		TiKVExecDetails:   &util.ExecDetails{},
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 		LazyInfo:          &mockLazyInfo{},
-
-		MemArbitration: 22222,
+		MemArbitration:    22222,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
