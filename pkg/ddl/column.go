@@ -652,7 +652,8 @@ type updateColumnWorker struct {
 
 	rowMap map[int64]types.Datum
 
-	checksumNeeded bool
+	checksumNeeded  bool
+	backfillStartTs uint64
 }
 
 func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
@@ -688,12 +689,13 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		vardef.EnableRowLevelChecksum.Store(true)
 	})
 	return &updateColumnWorker{
-		backfillCtx:    bCtx,
-		oldColInfo:     oldCol,
-		newColInfo:     newCol,
-		rowDecoder:     rowDecoder,
-		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		checksumNeeded: vardef.EnableRowLevelChecksum.Load(),
+		backfillCtx:     bCtx,
+		oldColInfo:      oldCol,
+		newColInfo:      newCol,
+		rowDecoder:      rowDecoder,
+		rowMap:          make(map[int64]types.Datum, len(decodeColMap)),
+		checksumNeeded:  vardef.EnableRowLevelChecksum.Load(),
+		backfillStartTs: reorgInfo.SnapshotVer,
 	}, nil
 }
 
@@ -735,7 +737,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
 	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, taskRange.physicalTable.RecordPrefix(),
-		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
+		w.backfillStartTs, taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
