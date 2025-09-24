@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -120,7 +121,7 @@ func ImplementMemoAndCost(rootGroup *memo.Group, planCounter *base.PlanCounterTp
 	if err = task.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = utilfuncp.GetPlanCost(task.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	cost, err = utilfuncp.GetPlanCost(task.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return task.Plan(), cost, err
 }
 
