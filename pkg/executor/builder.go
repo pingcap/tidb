@@ -1512,6 +1512,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 			return nil
 		}
 		us.usedIndex = colIdxes
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		}
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1526,7 +1529,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 			return nil
 		}
 		us.usedIndex = colIdxes
-		if len(us.usedIndex) == 0 {
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		} else {
 			for _, ic := range x.index.Columns {
 				for i, col := range x.columns {
 					if col.Name.L == ic.Name.L {
@@ -1550,7 +1555,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 			return nil
 		}
 		us.usedIndex = colIdxes
-		if len(us.usedIndex) == 0 {
+		if len(us.usedIndex) > 0 {
+			us.needExtraSorting = true
+		} else {
 			for _, ic := range x.index.Columns {
 				for i, col := range x.columns {
 					if col.Name.L == ic.Name.L {
@@ -1576,6 +1583,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 				return nil
 			}
 			us.usedIndex = colIdxes
+			us.needExtraSorting = true
 		}
 		us.partitionIDMap = x.partitionIDMap
 		us.conditions, us.conditionsWithVirCol = physicalop.SplitSelCondsWithVirtualColumn(v.Conditions)

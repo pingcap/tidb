@@ -98,7 +98,8 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 }
 
 func (m *memIndexReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
-	if m.keepOrder && (m.table.GetPartitionInfo() != nil || len(m.usedIndex) > 0) {
+	// If we need an extra to keep order, txnMemBufferIter is not supported.
+	if m.keepOrder && m.needExtraSorting {
 		data, err := m.getMemRows(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -175,7 +176,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		return nil, err
 	}
 
-	if m.keepOrder && (m.table.GetPartitionInfo() != nil || len(m.usedIndex) > 0) {
+	if m.keepOrder && m.needExtraSorting {
 		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
 			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
 			if err1 != nil {
@@ -403,8 +404,8 @@ func (iter *txnMemBufferIter) Close() {
 }
 
 func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
-	// txnMemBufferIter not supports keepOrder + partitionTable.
-	if m.keepOrder && (m.table.GetPartitionInfo() != nil || len(m.usedIndex) > 0) {
+	// If we need an extra to keep order, txnMemBufferIter is not supported.
+	if m.keepOrder && m.needExtraSorting {
 		data, err := m.getMemRows(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -458,7 +459,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		return nil, err
 	}
 
-	if m.keepOrder && (m.table.GetPartitionInfo() != nil || len(m.usedIndex) > 0) {
+	if m.keepOrder && m.needExtraSorting {
 		slices.SortFunc(m.addedRows, func(a, b []types.Datum) int {
 			ret, err1 := m.compare(m.ctx.GetSessionVars().StmtCtx, a, b)
 			if err1 != nil {
