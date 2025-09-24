@@ -9,8 +9,12 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 35,
+=======
+    shard_count = 40,
+>>>>>>> afe11b6a285 (planner: rewrite semi join when to predicate push down (#63436))
     deps = [
         "//pkg/config",
         "//pkg/domain",
