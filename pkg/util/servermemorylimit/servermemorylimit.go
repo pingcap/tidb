@@ -65,19 +65,15 @@ func (smqh *Handle) SetSessionManager(sm sessmgr.Manager) *Handle {
 // When the corresponding SQL try to acquire more memory(next Tracker.Consume() call), it will trigger panic and exit.
 // When this goroutine detects the `needKill` SQL has exited successfully, it will immediately trigger runtime.GC() to release memory resources.
 func (smqh *Handle) Run() {
-	tickInterval := time.Millisecond * time.Duration(50)
+	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := smqh.sm.Load().(sessmgr.Manager)
 	sessionToBeKilled := &sessionToBeKilled{}
-	var gMemStats *runtime.MemStats
 	for {
 		select {
 		case <-ticker.C:
-			if s := memory.ReadMemStats(); s != gMemStats {
-				gMemStats = s
-				memory.HandleGlobalMemArbitratorRuntime(gMemStats)
-			}
+			memory.HandleGlobalMemArbitratorRuntime(memory.ReadMemStats())
 			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryLimit.Load(), sm)
 		case <-smqh.exitCh:
 			return
