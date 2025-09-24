@@ -170,7 +170,7 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	row, err := getRowData(e.Columns, e.colIDs, handle.IntValue(), val, e.rd)
+	row, err := getRowData(e.Columns, e.colIDs, handle, val, e.rd)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -218,7 +218,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	row, err := getRowData(e.Columns, e.colIDs, handle.IntValue(), pair.Value, e.rd)
+	row, err := getRowData(e.Columns, e.colIDs, handle, pair.Value, e.rd)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -614,9 +614,9 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 }
 
 // getRowData decodes raw byte slice to row data.
-func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, value []byte, rd *rowcodec.BytesDecoder) ([][]byte, error) {
+func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle kv.Handle, value []byte, rd *rowcodec.BytesDecoder) ([][]byte, error) {
 	if rowcodec.IsNewFormat(value) {
-		return rd.DecodeToBytes(colIDs, kv.IntHandle(handle), value, nil)
+		return rd.DecodeToBytes(colIDs, handle, value, nil)
 	}
 	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
@@ -630,12 +630,13 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 		id := col.GetColumnId()
 		offset := colIDs[id]
 		if col.GetPkHandle() || id == model.ExtraHandleID {
+			intHdl := handle.IntValue()
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
 				// PK column is Unsigned.
-				handleDatum = types.NewUintDatum(uint64(handle))
+				handleDatum = types.NewUintDatum(uint64(intHdl))
 			} else {
-				handleDatum = types.NewIntDatum(handle)
+				handleDatum = types.NewIntDatum(intHdl)
 			}
 			handleData, err1 := codec.EncodeValue(time.UTC, nil, handleDatum)
 			if err1 != nil {

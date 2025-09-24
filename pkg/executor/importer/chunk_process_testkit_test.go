@@ -91,12 +91,10 @@ func TestFileChunkProcess(t *testing.T) {
 			Table:  table,
 			Logger: logger,
 		},
-		&importer.TableImporter{
-			LoadDataController: &importer.LoadDataController{
-				ASTArgs:       &importer.ASTArgs{},
-				InsertColumns: table.VisibleCols(),
-				FieldMappings: fieldMappings,
-			},
+		&importer.LoadDataController{
+			ASTArgs:       &importer.ASTArgs{},
+			InsertColumns: table.VisibleCols(),
+			FieldMappings: fieldMappings,
 		},
 	)
 	require.NoError(t, err)
@@ -121,10 +119,10 @@ func TestFileChunkProcess(t *testing.T) {
 		defer func() {
 			tidbmetrics.UnregisterImportMetrics(metrics)
 		}()
-		bak := importer.MinDeliverRowCnt
-		importer.MinDeliverRowCnt = 2
+		bak := importer.DefaultMinDeliverRowCnt
+		importer.DefaultMinDeliverRowCnt = 2
 		defer func() {
-			importer.MinDeliverRowCnt = bak
+			importer.DefaultMinDeliverRowCnt = bak
 		}()
 
 		dataWriter := mock.NewMockEngineWriter(ctrl)
@@ -161,7 +159,8 @@ func TestFileChunkProcess(t *testing.T) {
 		require.EqualValues(t, 3, checksumDataKVCnt)
 		require.EqualValues(t, 6, checksumIndexKVCnt)
 		require.EqualValues(t, 3, collector.Rows.Load())
-		require.EqualValues(t, len(sourceData), collector.Bytes.Load())
+		require.EqualValues(t, len(sourceData), collector.ReadBytes.Load())
+		require.EqualValues(t, int64(348), collector.Bytes.Load())
 		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
 		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
 		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)

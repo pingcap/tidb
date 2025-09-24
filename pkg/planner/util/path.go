@@ -383,30 +383,39 @@ func (c1 Col2Len) dominate(c2 Col2Len) bool {
 	return true
 }
 
-// CompareCol2Len will compare the two Col2Len maps. The last return value is used to indicate whether they are comparable.
-// When the second return value is true, the first return value:
-// (1) -1 means that c1 is worse than c2;
-// (2) 0 means that c1 equals to c2;
+// CompareCol2Len will compare the two Col2Len maps.
+// The first return value:
+// (1) -1 means that len(c1) is less than len(c2);
+// (2) 0 means that len(c1) equals to len(c2);
 // (3) 1 means that c1 is better than c2;
+// The 2nd return value is used to indicate whether they are comparable. If they are NOT comparable, then the caller
+// should use other criteria to determine whether the winner is justified.
 func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 	l1, l2 := len(c1), len(c2)
 	if l1 > l2 {
 		if c1.dominate(c2) {
 			return 1, true
 		}
-		return 0, false
+		return 1, false
 	}
 	if l1 < l2 {
 		if c2.dominate(c1) {
 			return -1, true
 		}
-		return 0, false
+		return -1, false
 	}
 	// If c1 and c2 have the same columns but have different lengths on some column, we regard c1 and c2 incomparable.
 	for colID, colLen2 := range c2 {
 		colLen1, ok := c1[colID]
-		if !ok || colLen1 != colLen2 {
+		if !ok {
 			return 0, false
+		}
+		if colLen1 != colLen2 {
+			// If lengths are not equal, return 1 if c1 is larger, or -1 if c2 is larger
+			if colLen1 > colLen2 {
+				return 1, false
+			}
+			return -1, false
 		}
 	}
 	return 0, true

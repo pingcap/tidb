@@ -110,7 +110,7 @@ func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContex
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ctx, partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -151,7 +151,7 @@ func optimizeByShuffle4StreamAgg(pp *physicalop.PhysicalStreamAgg, ctx base.Plan
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ctx, partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -211,7 +211,8 @@ func getEstimatedProbeCntFromProbeParents(probeParents []base.PhysicalPlan) floa
 	res := float64(1)
 	for _, pp := range probeParents {
 		switch pp.(type) {
-		case *physicalop.PhysicalApply, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+		case *physicalop.PhysicalApply, *physicalop.PhysicalIndexHashJoin,
+			*physicalop.PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
 			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
 				outer := pp.Children()[1-join.GetInnerChildIdx()]
 				res *= outer.StatsInfo().RowCount
@@ -226,7 +227,7 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 	for _, pp := range pps {
 		switch pp.(type) {
 		case *physicalop.PhysicalApply, *physicalop.PhysicalIndexHashJoin,
-			*PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+			*physicalop.PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
 			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
 				outerChildID := pp.Children()[1-join.GetInnerChildIdx()].ID()
 				actRows := int64(1)

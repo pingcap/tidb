@@ -18,7 +18,6 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/planner",
-        "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",

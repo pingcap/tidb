@@ -94,9 +94,10 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 
 // tasks are created in order, so they have increasing IDs starting from 1.
 func (c *resourceCtrlCaseContext) runTaskAsync(prefix string, concurrencies []int) {
+	scope := handle.GetTargetScope()
 	for i, concurrency := range concurrencies {
 		taskKey := fmt.Sprintf("%s-%d", prefix, i)
-		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, "", concurrency, "", 0, nil)
+		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, "", concurrency, scope, 0, nil)
 		require.NoError(c.T, err)
 		c.taskWG.RunWithLog(func() {
 			task := testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)

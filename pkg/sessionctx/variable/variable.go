@@ -467,7 +467,7 @@ func (sv *SysVar) SkipInit() bool {
 }
 
 // SkipSysvarCache returns true if the sysvar should not re-execute on peers
-// This doesn't make sense for the GC variables because they are based in tikv
+// NOTE: This doesn't make sense for the GC variables because they are based in tikv
 // tables. We'd effectively be reading and writing to the same table, which
 // could be in an unsafe manner. In future these variables might be converted
 // to not use a different table internally, but to do that we need to first

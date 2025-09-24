@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PhysicalCTE is for CTE.
@@ -45,6 +46,19 @@ type PhysicalCTE struct {
 
 	ReaderReceiver *PhysicalExchangeReceiver
 	StorageSender  *PhysicalExchangeSender
+}
+
+// ExhaustPhysicalPlans4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalCTE(p *logicalop.LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
+	if prop.IsFlashProp() {
+		pcte.StorageSender = PhysicalExchangeSender{
+			ExchangeType: tipb.ExchangeType_Broadcast,
+		}.Init(p.SCtx(), p.StatsInfo())
+	}
+	pcte.SetSchema(p.Schema())
+	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})
+	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
 }
 
 // Init only assigns type and context.

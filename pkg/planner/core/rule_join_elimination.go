@@ -42,9 +42,9 @@ type OuterJoinEliminator struct {
 func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	var innerChildIdx int
 	switch p.JoinType {
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		innerChildIdx = 1
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		innerChildIdx = 0
 	default:
 		return p, false, nil

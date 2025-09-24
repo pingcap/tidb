@@ -607,7 +607,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		if err := txn.changePendingToValid(ctx, sctx); err != nil {
-			logutil.BgLogger().Error("active transaction fail",
+			logutil.BgLogger().Warn("active transaction fail",
 				zap.Error(err))
 			txn.cleanup()
 			sctx.GetSessionVars().TxnCtx.StartTS = 0

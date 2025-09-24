@@ -115,21 +115,21 @@ func (a *AggregationPushDownSolver) collectAggFuncs(agg *logicalop.LogicalAggreg
 		index := a.getAggFuncChildIdx(aggFunc, leftChild.Schema(), rightChild.Schema())
 		switch index {
 		case 0:
-			if join.JoinType == logicalop.RightOuterJoin && !a.checkAllArgsColumn(aggFunc) {
+			if join.JoinType == base.RightOuterJoin && !a.checkAllArgsColumn(aggFunc) {
 				return false, nil, nil
 			}
 			leftAggFuncs = append(leftAggFuncs, aggFunc)
 		case 1:
-			if join.JoinType == logicalop.LeftOuterJoin && !a.checkAllArgsColumn(aggFunc) {
+			if join.JoinType == base.LeftOuterJoin && !a.checkAllArgsColumn(aggFunc) {
 				return false, nil, nil
 			}
 			rightAggFuncs = append(rightAggFuncs, aggFunc)
 		case 2:
 			// arguments are constant
 			switch join.JoinType {
-			case logicalop.LeftOuterJoin:
+			case base.LeftOuterJoin:
 				leftAggFuncs = append(leftAggFuncs, aggFunc)
-			case logicalop.RightOuterJoin:
+			case base.RightOuterJoin:
 				rightAggFuncs = append(rightAggFuncs, aggFunc)
 			default:
 				// either left or right is fine, ideally we'd better put this to the hash build side
@@ -216,7 +216,7 @@ func (*AggregationPushDownSolver) addGbyCol(ctx base.PlanContext, gbyCols []*exp
 
 // checkValidJoin checks if this join should be pushed across.
 func (*AggregationPushDownSolver) checkValidJoin(join *logicalop.LogicalJoin) bool {
-	return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
+	return join.JoinType == base.InnerJoin || join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin
 }
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
@@ -269,8 +269,8 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAg
 			return child, nil
 		}
 	}
-	nullGenerating := (join.JoinType == logicalop.LeftOuterJoin && childIdx == 1) ||
-		(join.JoinType == logicalop.RightOuterJoin && childIdx == 0)
+	nullGenerating := (join.JoinType == base.LeftOuterJoin && childIdx == 1) ||
+		(join.JoinType == base.RightOuterJoin && childIdx == 0)
 	agg, err := a.makeNewAgg(join.SCtx(), aggFuncs, gbyCols, oldAgg.PreferAggType, oldAgg.PreferAggToCop, blockOffset, nullGenerating)
 	if err != nil {
 		return nil, err
@@ -283,7 +283,7 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAg
 			Value:   types.NewDatum(0),
 			RetType: types.NewFieldType(mysql.TypeLong)}}
 	}
-	if (childIdx == 0 && join.JoinType == logicalop.RightOuterJoin) || (childIdx == 1 && join.JoinType == logicalop.LeftOuterJoin) {
+	if (childIdx == 0 && join.JoinType == base.RightOuterJoin) || (childIdx == 1 && join.JoinType == base.LeftOuterJoin) {
 		var existsDefaultValues bool
 		join.DefaultValues, existsDefaultValues = a.getDefaultValues(agg)
 		if !existsDefaultValues {
@@ -517,9 +517,9 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 					}
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-					if join.JoinType == logicalop.LeftOuterJoin {
+					if join.JoinType == base.LeftOuterJoin {
 						util.ResetNotNullFlag(join.Schema(), lChild.Schema().Len(), join.Schema().Len())
-					} else if join.JoinType == logicalop.RightOuterJoin {
+					} else if join.JoinType == base.RightOuterJoin {
 						util.ResetNotNullFlag(join.Schema(), 0, lChild.Schema().Len())
 					}
 					ruleutil.BuildKeyInfoPortal(join)

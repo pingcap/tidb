@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -112,6 +113,10 @@ func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 }
 
 func TestUpgradeVersion66(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -149,6 +154,10 @@ func TestUpgradeVersion66(t *testing.T) {
 }
 
 func TestUpgradeVersion74(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ctx := context.Background()
 
 	cases := []struct {
@@ -199,6 +208,9 @@ func TestUpgradeVersion74(t *testing.T) {
 }
 
 func TestUpgradeVersion75(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 	ctx := context.Background()
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -308,6 +320,10 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 
 // TestUpgradeVersionWithUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ with HTTP op.
 func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	mock := true
 	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
@@ -358,6 +374,10 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 
 // TestUpgradeVersionWithoutUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ without HTTP op.
 func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	mock := true
 	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
@@ -694,6 +714,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	wg := sync.WaitGroup{}
 	execDDL := func(query string) {
 		tk := testkit.NewTestKit(t, store)
+		tk.Session().SetValue(sessionctx.Initing, true)
 		tk.MustExec("use test")
 		_, err := tk.ExecWithContext(context.Background(), query)
 		require.NoError(t, err)
@@ -705,6 +726,12 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			defer wg.Done()
 			ch <- struct{}{}
 			tk := testkit.NewTestKit(t, store)
+			// we are running DDL on user table, it's not possible in normal
+			// upgrade process, we only use it to mock that another instance
+			// submits a DDL job on user table.
+			// we have to set sessionctx.Initing to avoid nextgen calculate resource
+			// params for this DDL.
+			tk.Session().SetValue(sessionctx.Initing, true)
 			tk.MustExec("use test")
 			_, err := tk.ExecWithContext(context.Background(), query)
 			if err != nil {

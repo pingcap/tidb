@@ -265,8 +265,7 @@ func GetRuntimeInfoForJob(
 	}
 
 	var (
-		taskMeta    TaskMeta
-		taskSummary importer.Summary
+		taskMeta TaskMeta
 
 		latestTime time.Time
 		ri         = &RuntimeInfo{
@@ -282,12 +281,6 @@ func GetRuntimeInfoForJob(
 	if task.Error != nil {
 		ri.ErrorMsg = task.Error.Error()
 		return ri, nil
-	}
-
-	if len(taskMeta.TaskResult) != 0 {
-		if err = json.Unmarshal(taskMeta.TaskResult, &taskSummary); err != nil {
-			return nil, errors.Trace(err)
-		}
 	}
 
 	summaries, err := dxfTaskMgr.GetAllSubtaskSummaryByStep(ctx, task.ID, task.Step)
@@ -316,18 +309,18 @@ func GetRuntimeInfoForJob(
 	}
 
 	if task.Step == proto.ImportStepPostProcess {
-		ri.ImportRows = taskSummary.ImportedRows
+		ri.ImportRows = taskMeta.Summary.ImportedRows
 	} else if task.Step != proto.ImportStepWriteAndIngest && task.Step != proto.ImportStepImport {
 		ri.ImportRows = 0
 	}
 
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
-		ri.Total = taskSummary.IngestSummary.Bytes
+		ri.Total = taskMeta.Summary.IngestSummary.Bytes
 	case proto.ImportStepEncodeAndSort:
-		ri.Total = taskSummary.EncodeSummary.Bytes
+		ri.Total = taskMeta.Summary.EncodeSummary.Bytes
 	case proto.ImportStepMergeSort:
-		ri.Total = taskSummary.MergeSummary.Bytes
+		ri.Total = taskMeta.Summary.MergeSummary.Bytes
 	}
 
 	if !latestTime.IsZero() {

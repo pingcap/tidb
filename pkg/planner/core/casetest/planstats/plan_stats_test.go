@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -181,7 +180,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // check idx(b)
 				sql: "select * from t USE INDEX(idx) where b >= 10",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
+					pr, ok := p.(*physicalop.PhysicalIndexLookUpReader)
 					require.True(t, ok)
 					pis, ok := pr.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 					require.True(t, ok)

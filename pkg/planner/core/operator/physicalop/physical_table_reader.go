@@ -15,28 +15,21 @@
 package physicalop
 
 import (
-	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -172,18 +165,6 @@ func (p *PhysicalTableReader) GetNetDataSize() float64 {
 	return p.TablePlan.StatsCount() * rowSize
 }
 
-// GetTblStats returns the tbl-stats of this plan, which contains all columns before pruning.
-func GetTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
-	switch x := copTaskPlan.(type) {
-	case *PhysicalTableScan:
-		return x.TblColHists
-	case *PhysicalIndexScan:
-		return x.TblColHists
-	default:
-		return GetTblStats(copTaskPlan.Children()[0])
-	}
-}
-
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -285,7 +266,7 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 // AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
-	appendChildCandidate(p, p.TablePlan, op)
+	AppendChildCandidate(p, p.TablePlan, op)
 }
 
 // ExplainInfo implements Plan interface.
@@ -307,30 +288,6 @@ func (*PhysicalTableReader) ExplainNormalizedInfo() string {
 // OperatorInfo return other operator information to be explained.
 func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
 	return "data:" + p.TablePlan.ExplainID().String()
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if p.TablePlan != nil {
-		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.TableScanAndPartitionInfos != nil {
-		return nil, false
-	}
-	return cloned, true
 }
 
 // ResolveIndices implements Plan interface.
@@ -389,25 +346,6 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 	}
 }
 
-// FlattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func FlattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
-	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = flattenTreePlan(p, plans)
-	for i := range len(plans) / 2 {
-		j := len(plans) - i - 1
-		plans[i], plans[j] = plans[j], plans[i]
-	}
-	return plans
-}
-
-func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
-	plans = append(plans, plan)
-	for _, child := range plan.Children() {
-		plans = flattenTreePlan(child, plans)
-	}
-	return plans
-}
-
 // setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
 func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
@@ -419,73 +357,17 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 	}
 }
 
-// GetDynamicAccessPartition get the dynamic access partition.
-func GetDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, physPlanPartInfo *PhysPlanPartInfo, asName string) (res *access.DynamicPartitionAccessObject) {
-	pi := tblInfo.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return nil
+// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
+func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
+	reader.PlanPartInfo = &PhysPlanPartInfo{
+		PruningConds:   sg.Source.AllConds,
+		PartitionNames: sg.Source.PartitionNames,
+		Columns:        sg.Source.TblCols,
+		ColumnNames:    sg.Source.OutputNames(),
 	}
-
-	res = &access.DynamicPartitionAccessObject{}
-	tblName := tblInfo.Name.O
-	if len(asName) > 0 {
-		tblName = asName
-	}
-	res.Table = tblName
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	db, ok := infoschema.SchemaByTable(is, tblInfo)
-	if ok {
-		res.Database = db.Name.O
-	}
-	tmp, ok := is.TableByID(context.Background(), tblInfo.ID)
-	if !ok {
-		res.Err = "partition table not found:" + strconv.FormatInt(tblInfo.ID, 10)
-		return res
-	}
-	tbl := tmp.(table.PartitionedTable)
-
-	idxArr, err := partitionpruning.PartitionPruning(sctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
-	if err != nil {
-		res.Err = "partition pruning error:" + err.Error()
-		return res
-	}
-
-	if len(idxArr) == 1 && idxArr[0] == rule.FullRange {
-		res.AllPartitions = true
-		return res
-	}
-
-	for _, idx := range idxArr {
-		res.Partitions = append(res.Partitions, pi.Definitions[idx].Name.O)
-	}
-	return res
-}
-
-// TODO: keep one replica is ok after all physical reader is migrated.
-func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp) {
-	candidate := &tracing.CandidatePlanTrace{
-		PlanTrace: &tracing.PlanTrace{
-			ID:          pp.ID(),
-			TP:          pp.TP(),
-			ExplainInfo: pp.ExplainInfo(),
-			// TODO: trace the cost
-		},
-	}
-	op.AppendCandidate(candidate)
-	pp.AppendChildCandidate(op)
-	op.GetTracer().Candidates[origin.ID()].AppendChildrenID(pp.ID())
-}
-
-// ResolveIndicesForVirtualColumn resolves dependent columns's indices for virtual columns.
-func ResolveIndicesForVirtualColumn(result []*expression.Column, schema *expression.Schema) error {
-	for _, col := range result {
-		if col.VirtualExpr != nil {
-			newExpr, err := col.VirtualExpr.ResolveIndices(schema)
-			if err != nil {
-				return err
-			}
-			col.VirtualExpr = newExpr
-		}
-	}
-	return nil
+	reader.SetStats(stats)
+	reader.SetSchema(schema)
+	reader.SetChildrenReqProps(props)
+	return reader
 }

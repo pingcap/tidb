@@ -24,11 +24,13 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -343,6 +345,10 @@ func createAddIndexTask(t *testing.T,
 
 	taskMetaBytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
+	ks := ""
+	if kerneltype.IsNextGen() {
+		ks = keyspace.System
+	}
 
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{
@@ -351,6 +357,7 @@ func createAddIndexTask(t *testing.T,
 			Step:        proto.StepInit,
 			State:       proto.TaskStatePending,
 			Concurrency: 16,
+			Keyspace:    ks,
 		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),

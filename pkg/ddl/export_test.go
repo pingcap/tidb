@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -51,11 +52,11 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 	opCtx, cancel := ddl.NewLocalOperatorCtx(context.Background(), 1)
 	defer cancel()
 	src := testutil.NewOperatorTestSource(ddl.TableScanTask{ID: 1, Start: startKey, End: endKey})
-	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, 0, nil, nil)
+	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, 0, nil, nil, &execute.TestCollector{})
 	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
-	operator.Compose[ddl.TableScanTask](src, scanOp)
-	operator.Compose[ddl.IndexRecordChunk](scanOp, sink)
+	operator.Compose(src, scanOp)
+	operator.Compose(scanOp, sink)
 
 	pipeline := operator.NewAsyncPipeline(src, scanOp, sink)
 	err := pipeline.Execute()
