@@ -60,7 +60,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, index idx(c2), index idx1(c1, c2));")
 
-	sql := "alter table t1 change c2 c2 mediumint;"
+	sql := "alter table t1 change c2 c2 varchar(16);"
 	// defaultBatchSize is equal to ddl.defaultBatchSize
 	base := defaultBatchSize * 8
 	// add some rows
@@ -650,4 +650,14 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	})
 	tk.MustExecToErr("alter table t modify column b tinyint not null")
 	tk.MustExec("admin check table t")
+}
+
+func TestXxx(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, c1 bigint, c2 varchar(16), index i1(c1), index i2(c2), index i3(c1, c2))")
+	tk.MustExec("insert into t values (1, 1, '1'), (2, 2, '2'), (3, 3, '3')")
+	tk.MustExec("alter table t modify column c1 int UNSIGNED")
 }

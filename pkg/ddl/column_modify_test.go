@@ -545,7 +545,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	})
 
 	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
-	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
+	tk.MustExec("alter table test.t change column c2 cC2 varchar(256) after `_col$_c2`")
 	require.NoError(t, checkErr)
 
 	tbl := external.GetTableByName(t, tk, "test", "t")

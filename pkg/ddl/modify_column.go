@@ -93,7 +93,6 @@ func getChangingCol(
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
-	skipRowReorg bool,
 ) (*model.ColumnInfo, error) {
 	changingCol := args.ChangingColumn
 	if changingCol == nil {
@@ -105,14 +104,6 @@ func getChangingCol(
 		changingCol.Name = ast.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 		InitAndAddColumnToTable(tblInfo, changingCol)
-
-		// For lossy modify column without row reorg, we mark the new column as generated
-		// to skip row reorg. Currently, virtual generated column is not supported to do
-		// modification, it's safe to add a new virtual generated column here.
-		if skipRowReorg {
-			changingCol.GeneratedExprString = getVirtualExpr(changingCol, oldCol.Name)
-			changingCol.GeneratedStored = false
-		}
 
 		var redundantIdxs []int64
 		indexesToChange := FindRelatedIndexesToChange(tblInfo, oldCol.Name)
@@ -147,6 +138,49 @@ func getChangingCol(
 	return changingCol, nil
 }
 
+func initializeChangingIndexes(
+	args *model.ModifyColumnArgs,
+	tblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo,
+) error {
+	if args.ChangingColumn != nil {
+		return nil
+	}
+
+	if err := checkColumnAlreadyExists(tblInfo, args); err != nil {
+		return errors.Trace(err)
+	}
+
+	var redundantIdxs []int64
+	indexesToChange := FindRelatedIndexesToChange(tblInfo, oldCol.Name)
+	for _, info := range indexesToChange {
+		newIdxID := AllocateIndexID(tblInfo)
+		if !info.isTemp {
+			// We create a temp index for each normal index.
+			tmpIdx := info.IndexInfo.Clone()
+			tmpIdx.State = model.StateNone
+			tmpIdx.ID = newIdxID
+			tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
+			tmpIdx.UsingChangingType = true
+			UpdateIndexCol(tmpIdx.Columns[info.Offset], args.Column)
+			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
+		} else {
+			// The index is a temp index created by previous modify column job(s).
+			// We can overwrite it to reduce reorg cost, because it will be dropped eventually.
+			tmpIdx := info.IndexInfo
+			tmpIdx.State = model.StateNone
+			oldTempIdxID := tmpIdx.ID
+			tmpIdx.ID = newIdxID
+			tmpIdx.UsingChangingType = true
+			UpdateIndexCol(tmpIdx.Columns[info.Offset], args.Column)
+			redundantIdxs = append(redundantIdxs, oldTempIdxID)
+		}
+	}
+	args.RedundantIdxs = redundantIdxs
+	args.ChangingColumn = args.Column.Clone()
+	return nil
+}
+
 func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyColumnArgs(job)
 	if err != nil {
@@ -176,9 +210,12 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		case ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck:
 			// For those column-type-change jobs which don't reorg the data
 			return rollbackModifyColumnJob(jobCtx, tblInfo, job, args.Column, oldCol)
-		case ModifyTypeIndexReorg, ModifyTypeReorg:
+		case ModifyTypeReorg:
 			// For those column-type-change jobs which reorg the data.
 			return rollbackModifyColumnJobWithReorg(jobCtx, tblInfo, job, oldCol, args)
+		case ModifyTypeIndexReorg:
+			// For those column-type-change jobs which reorg the index only.
+			return rollbackModifyColumnJobWithIndexReorg(jobCtx, tblInfo, job, oldCol, args)
 		}
 	}
 
@@ -229,16 +266,18 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return w.doModifyColumn(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
 	}
 
-	changingCol, err := getChangingCol(args, tblInfo, oldCol, args.ModifyColumnType == ModifyTypeIndexReorg)
+	if args.ModifyColumnType == ModifyTypeIndexReorg {
+		if err := initializeChangingIndexes(args, tblInfo, oldCol); err != nil {
+			return ver, errors.Trace(err)
+		}
+		return w.doModifyColumnIndexReorg(
+			jobCtx, job, dbInfo, tblInfo, oldCol, args)
+	}
+
+	changingCol, err := getChangingCol(args, tblInfo, oldCol)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-
-	if args.ModifyColumnType == ModifyTypeIndexReorg {
-		changingCol.State = job.SchemaState
-		return w.doModifyColumnIndexReorg(
-			jobCtx, job, dbInfo, tblInfo, changingCol, oldCol, args)
 	}
 
 	return w.doModifyColumnTypeWithData(
@@ -302,6 +341,34 @@ func rollbackModifyColumnJobWithReorg(
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	args.IndexIDs = changingIdxIDs
+	args.PartitionIDs = getPartitionIDs(tblInfo)
+	job.FillFinishedArgs(args)
+	return ver, nil
+}
+
+// rollbackModifyColumnJobWithReorg is used to rollback modify-column job which need to reorg the data.
+func rollbackModifyColumnJobWithIndexReorg(
+	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
+	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
+	// If the not-null change is included, we should clean the flag info in oldCol.
+	tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
+	if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
+		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
+		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
+	}
+
+	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+	changingIdxInfos := allIdxs[len(allIdxs)/2:]
+	for _, idx := range changingIdxInfos {
+		args.IndexIDs = append(args.IndexIDs, idx.ID)
+	}
+	removeOldIndexes(tblInfo, changingIdxInfos)
+
+	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	args.PartitionIDs = getPartitionIDs(tblInfo)
 	job.FillFinishedArgs(args)
 	return ver, nil
@@ -854,13 +921,16 @@ func (w *worker) doModifyColumnIndexReorg(
 	job *model.Job,
 	dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo,
-	changingCol, oldCol *model.ColumnInfo,
+	oldCol *model.ColumnInfo,
 	args *model.ModifyColumnArgs,
 ) (ver int64, err error) {
 	colName, pos := args.Column.Name, args.Position
 
-	changingIdxs := buildRelatedIndexInfos(tblInfo, changingCol.ID)
-	switch changingCol.State {
+	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+	oldIdxInfos := allIdxs[:len(allIdxs)/2]
+	changingIdxInfos := allIdxs[len(allIdxs)/2:]
+
+	switch changingIdxInfos[0].State {
 	case model.StateNone:
 		checked, err := checkModifyColumnData(
 			jobCtx.stepCtx, w,
@@ -874,15 +944,14 @@ func (w *worker) doModifyColumnIndexReorg(
 		}
 
 		// none -> delete only
-		updateObjectState(changingCol, changingIdxs, model.StateDeleteOnly)
+		updateObjectState(nil, changingIdxInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
-		args.ChangingColumn = changingCol
-		args.ChangingIdxs = changingIdxs
+		args.ChangingIdxs = changingIdxInfos
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
@@ -898,7 +967,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		}
 
 		// delete only -> write only
-		updateObjectState(changingCol, changingIdxs, model.StateWriteOnly)
+		updateObjectState(nil, changingIdxInfos, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -907,7 +976,7 @@ func (w *worker) doModifyColumnIndexReorg(
 		failpoint.InjectCall("afterModifyColumnStateDeleteOnly", job.ID)
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		updateObjectState(changingCol, changingIdxs, model.StateWriteReorganization)
+		updateObjectState(nil, changingIdxInfos, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -921,47 +990,40 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 
-		reorgElements := BuildElements(changingCol, changingIdxs)
+		tmpCol := args.Column.Clone()
+		tmpCol.GeneratedExprString = getVirtualExpr(args.Column, oldCol.Name)
+		tmpCol.GeneratedStored = false
+		reorgElements := BuildElements(nil, changingIdxInfos)
 		done, ver, err := doReorgWorkForModifyColumnWrapper(jobCtx, w, job, tbl, oldCol, reorgElements)
 		if !done {
 			return ver, err
 		}
 		failpoint.InjectCall("afterReorgWorkForModifyColumn")
 
-		updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, colName)
-		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
-		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
-		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
-
-		newCol := args.Column.Clone()
-		newCol.ChangingFieldType = oldCol.ChangingFieldType
-		newCol.Name = oldCol.Name
-		newCol.Offset = oldCol.Offset
-		newCol.FieldType = oldCol.FieldType
-		tblInfo.Columns[oldCol.Offset] = newCol
+		oldTp := oldCol.FieldType
+		oldName := oldCol.Name
+		tblInfo.Columns[oldCol.Offset] = args.Column.Clone()
+		tblInfo.Columns[oldCol.Offset].ChangingFieldType = &oldTp
+		tblInfo.Columns[oldCol.Offset].Offset = oldCol.Offset
 		oldCol = tblInfo.Columns[oldCol.Offset]
 
-		oldCol.FieldType, changingCol.FieldType = changingCol.FieldType, oldCol.FieldType
-		for i, idx := range changingIdxs {
-			for j, col := range idx.Columns {
-				if col.Name.L == changingCol.Name.L {
-					UpdateIndexCol(changingIdxInfos[i].Columns[j], oldCol)
-					UpdateIndexCol(oldIdxInfos[i].Columns[j], changingCol)
+		updateObjectState(nil, oldIdxInfos, model.StateWriteOnly)
+		updateObjectState(nil, changingIdxInfos, model.StatePublic)
+		moveChangingColumnToDest(tblInfo, oldCol, oldCol, pos)
+		moveIndexInfoToDest(tblInfo, oldCol, oldIdxInfos, changingIdxInfos)
+		for i, idx := range changingIdxInfos {
+			for j, idxCol := range idx.Columns {
+				if idxCol.Name.L == oldName.L {
+					oldIdxInfos[i].Columns[j].Name = colName
+					oldIdxInfos[i].Columns[j].Offset = oldCol.Offset
+					changingIdxInfos[i].Columns[j].Name = colName
+					changingIdxInfos[i].Columns[j].Offset = oldCol.Offset
 				}
 			}
+			oldIdxInfos[i].UsingChangingType = true
+			changingIdxInfos[i].UsingChangingType = false
+			oldIdxInfos[i].Name, changingIdxInfos[i].Name = changingIdxInfos[i].Name, oldIdxInfos[i].Name
 		}
-		changingCol.GeneratedExprString = getVirtualExpr(changingCol, colName)
-		oldCol, changingCol = changingCol, oldCol
-
-		updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
-		updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
-		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
-		moveChangingColumnToDest(tblInfo, changingCol, changingCol, pos)
-		moveOldColumnToBack(tblInfo, oldCol)
-		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
-		updateModifyingCols(oldCol, changingCol)
-
-		changingCol.Name = colName
 
 		job.SchemaState = model.StatePublic
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
@@ -969,22 +1031,21 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 	case model.StatePublic:
-		oldIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 		switch oldIdxInfos[0].State {
 		case model.StateWriteOnly:
-			updateObjectState(changingCol, oldIdxInfos, model.StateDeleteOnly)
-			moveOldColumnToBack(tblInfo, changingCol)
+			updateObjectState(nil, oldIdxInfos, model.StateDeleteOnly)
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
 		case model.StateDeleteOnly:
-			removedIdxIDs := removeOldObjects(tblInfo, changingCol, oldIdxInfos)
+			removedIdxIDs := make([]int64, 0, len(oldIdxInfos))
 			for _, idx := range oldIdxInfos {
 				removedIdxIDs = append(removedIdxIDs, idx.ID)
 			}
 			removeOldIndexes(tblInfo, oldIdxInfos)
 			oldCol.ChangingFieldType = nil
+			oldCol.DelFlag(mysql.PreventNullInsertFlag)
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{oldCol})
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 			if err != nil {
@@ -1008,7 +1069,7 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Errorf(errMsg)
 		}
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", oldIdxInfos[0].State)
 	}
 	return ver, errors.Trace(err)
 }
