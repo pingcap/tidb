@@ -1221,3 +1221,28 @@ func TestShowBindingDigestField(t *testing.T) {
 	result = tk.MustQuery("show global bindings;")
 	require.Equal(t, len(result.Rows()), 0)
 }
+
+func TestShowGrantsWithRoles(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER u")
+	tk.MustExec("CREATE USER r1")
+	tk.MustExec("CREATE USER r2")
+	tk.MustExec("CREATE TABLE t (c1 int, c2 int)")
+
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO u")
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO r1")
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO r2")
+	tk.MustExec("GRANT r1 TO u")
+	tk.MustExec("GRANT r2 TO u")
+	tk.MustExec("SET DEFAULT ROLE ALL to u")
+
+	usertk := testkit.NewTestKit(t, store)
+	require.NoError(t, usertk.Session().Auth(&auth.UserIdentity{Username: "u", Hostname: "%"}, nil, nil, nil))
+	usertk.MustQuery("show grants").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u'@'%'",
+		"GRANT SELECT(c1, c2) ON `test`.`t` TO 'u'@'%'",
+		"GRANT 'r1'@'%', 'r2'@'%' TO 'u'@'%'",
+	))
+}
