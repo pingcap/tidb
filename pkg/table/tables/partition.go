@@ -1149,22 +1149,42 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(tc types.Context, ec e
 		if lp.defaultPartitionIdx >= 0 {
 			return lp.defaultPartitionIdx, nil
 		}
-		if len(lp.ColPrunes) == 1 {
-			idx := lp.ColPrunes[0].ExprCol.Index
-			if idx >= 0 && idx < len(r) {
-				valueMsg, err := formatSinglePartitionValue(r[idx])
-				if err != nil {
-					return -1, errors.Trace(err)
-				}
-				return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
-			}
+		indices := make([]int, 0, len(lp.ColPrunes))
+		for _, colPrune := range lp.ColPrunes {
+			indices = append(indices, colPrune.ExprCol.Index)
 		}
-		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
+		valueMsg, err := formatPartitionValues(r, indices)
+		if err != nil {
+			return -1, errors.Trace(err)
+		}
+		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return location[0].PartIdx, nil
 }
 
-func formatSinglePartitionValue(d types.Datum) (string, error) {
+func formatPartitionValues(row []types.Datum, indices []int) (string, error) {
+	if len(indices) == 0 {
+		return "from column_list", nil
+	}
+	values := make([]string, 0, len(indices))
+	for _, idx := range indices {
+		if idx < 0 || idx >= len(row) {
+			return "", errors.Errorf("partition column index %d out of range", idx)
+		}
+		formatted, err := formatPartitionDatum(row[idx])
+		if err != nil {
+			return "", err
+		}
+		values = append(values, formatted)
+	}
+	if len(values) == 1 {
+		return values[0], nil
+	}
+	return "(" + strings.Join(values, ", ") + ")", nil
+}
+
+// TODO: keep the time format the same "2023-08-31 00:00:00" should be just "2023-08-31"
+func formatPartitionDatum(d types.Datum) (string, error) {
 	if d.IsNull() {
 		return "NULL", nil
 	}
@@ -1552,7 +1572,11 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.EvalContext
 		return 0, errors.Trace(lastError)
 	}
 	if idx >= len(upperBounds) {
-		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
+		valueMsg, err := formatPartitionValues(r, partitionExpr.ColumnOffset)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return idx, nil
 }
