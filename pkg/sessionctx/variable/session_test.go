@@ -156,8 +156,12 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
+<<<<<<< HEAD
 	execDetail := execdetails.ExecDetails{
 		BackoffTime:  time.Millisecond,
+=======
+	execDetail := &execdetails.ExecDetails{
+>>>>>>> 79d1306f621 (*: parse and match slow log trigger rules for multi-dimensional triggering (#63132))
 		RequestCount: 2,
 		ScanDetail: &util.ScanDetail{
 			ProcessedKeys: 20001,
