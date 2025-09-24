@@ -309,6 +309,9 @@ type PlanBuilder struct {
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
 
+	// noDecorrelate indicates whether decorrelation should be disabled for correlated aggregates in subqueries
+	noDecorrelate bool
+
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
@@ -481,6 +484,7 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.is = is
 	b.hintProcessor = processor
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
+	b.noDecorrelate = sctx.GetSessionVars().EnableNoDecorrelateInSelect
 	if savedBlockNames == nil {
 		return b, nil
 	}
@@ -513,6 +517,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.noDecorrelate = false
 
 	// Add more fields if they are safe to be reused.
 
@@ -716,7 +721,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
-		if vars.IsGlobal {
+		if vars.IsGlobal || vars.IsInstance {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or SYSTEM_VARIABLES_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"SYSTEM_VARIABLES_ADMIN"}, false, err)
 		}
@@ -727,6 +732,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 		assign := &expression.VarAssignment{
 			Name:          vars.Name,
 			IsGlobal:      vars.IsGlobal,
+			IsInstance:    vars.IsInstance,
 			IsSystem:      vars.IsSystem,
 			CanSPVariable: vars.CanSPVariable,
 		}
@@ -1208,6 +1214,14 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
+func isTiKVIndexByName(idxName pmodel.CIStr, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	// when the PKIsHandle of table is true, the primary key is not in the indices list.
+	if idxName.L == "primary" && tblInfo.PKIsHandle {
+		return true
+	}
+	return indexInfo != nil && !indexInfo.IsTiFlashLocalIndex()
+}
+
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -1329,20 +1343,12 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 		hasScanHint = true
 
-		if !isolationReadEnginesHasTiKV {
-			if hint.IndexNames != nil {
-				engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
-				err := fmt.Errorf("TiDB doesn't support index in the isolation read engines(value: '%v')", engineVals)
-				if i < indexHintsLen {
-					return nil, err
-				}
-				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			}
-			continue
-		}
 		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
+		if !isolationReadEnginesHasTiKV && hint.IndexNames == nil {
+			continue
+		}
 		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
 			if path := getTablePath(publicPaths); path != nil {
 				hasUseOrForce = true
@@ -1364,6 +1370,15 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
 				ignored = append(ignored, path)
+				continue
+			}
+			if isTiKVIndexByName(idxName, path.Index, tblInfo) && !isolationReadEnginesHasTiKV {
+				engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
+				if i < indexHintsLen {
+					return nil, err
+				}
+				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
 			// Currently we don't distinguish between "FORCE" and "USE" because

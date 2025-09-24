@@ -145,7 +145,7 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		return ver, errors.Trace(err)
 	}
 
-	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args.OldColumnName)
+	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

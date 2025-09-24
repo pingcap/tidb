@@ -34,6 +34,7 @@ import (
 
 	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
@@ -1112,6 +1113,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
+	EnableNoDecorrelateInSelect bool
+
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
@@ -2167,9 +2171,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
-		EnableSemiJoinRewrite:         DefOptEnableSemiJoinRewrite,
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
@@ -2405,8 +2409,33 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 	s.EnablePseudoForOutdatedStats = val
 }
 
-// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
+// GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead with adjusted.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
+	// For test purpose, you can enable this failpoint to get the unadjusted replica read.
+	failpoint.Inject("GetReplicaReadUnadjusted", func(_ failpoint.Value) {
+		failpoint.Return(s.replicaRead)
+	})
+	// Replica read only works for read-only statements.
+	if !s.StmtCtx.IsReadOnly {
+		if s.StmtCtx.HasReplicaReadHint {
+			const warnMsg = "Ignore replica read hint for non-read-only statement"
+			existWarnings := s.StmtCtx.GetWarnings()
+			hasWarning := false
+			for _, warn := range existWarnings {
+				if warn.Err.Error() == warnMsg {
+					hasWarning = true
+					break
+				}
+			}
+			if !hasWarning {
+				s.StmtCtx.AppendWarning(errors.New(warnMsg))
+			}
+		}
+		return kv.ReplicaReadLeader
+	}
+	if s.StmtCtx.RCCheckTS || s.RcWriteCheckTS {
+		return kv.ReplicaReadLeader
+	}
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}

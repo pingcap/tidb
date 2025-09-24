@@ -663,9 +663,14 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 			if err != nil {
 				return err
 			}
-			handle, err = kv.NewCommonHandle(b)
+			newHandle, err := kv.NewCommonHandle(b)
 			if err != nil {
 				return err
+			}
+			if ph, ok := handle.(kv.PartitionHandle); ok {
+				handle = kv.NewPartitionHandle(ph.PartitionID, newHandle)
+			} else {
+				handle = newHandle
 			}
 		}
 		// filter key/value by partitition id

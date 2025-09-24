@@ -49,7 +49,7 @@ type rowWithPartition struct {
 func processPanicAndLog(errOutputChan chan<- rowWithError, r any) {
 	err := util.GetRecoverError(r)
 	errOutputChan <- rowWithError{err: err}
-	logutil.BgLogger().Error("executor panicked", zap.Error(err), zap.Stack("stack"))
+	logutil.BgLogger().Warn("executor panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 // chunkWithMemoryUsage contains chunk and memory usage.

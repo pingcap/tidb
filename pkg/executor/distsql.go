@@ -1064,7 +1064,7 @@ func (w *indexWorker) syncErr(err error) {
 func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.SelectResult) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := util.GetRecoverError(r)
 			w.syncErr(err4Panic)
 			if err != nil {
@@ -1134,7 +1134,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	if len(handleOffset) == 0 {
 		handleOffset = []int{numColsWithoutPid - 1}
 	}
-	handles = make([]kv.Handle, 0, w.batchSize)
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
 	for len(handles) < w.batchSize {
@@ -1159,6 +1158,9 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		}
 		if chk.NumRows() == 0 {
 			return handles, retChk, nil
+		}
+		if handles == nil {
+			handles = make([]kv.Handle, 0, chk.NumRows())
 		}
 		for i := 0; i < chk.NumRows(); i++ {
 			w.scannedKeys++
@@ -1570,7 +1572,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
 			if ctx.Err() != context.Canceled {
-				logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+				logutil.Logger(ctx).Warn("table reader fetch next chunk failed", zap.Error(err))
 			}
 			return err
 		}

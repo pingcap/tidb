@@ -93,7 +93,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	err := r.setAutoAnalysisTimeWindow(parameters)
 	if err != nil {
-		statslogutil.StatsLogger().Error("Set auto analyze time window failed", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Set auto analyze time window failed", zap.Error(err))
 		return false
 	}
 	if !r.isWithinTimeWindow() {
@@ -103,7 +103,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
 		if err := r.jobs.Initialize(r.ctx); err != nil {
-			statslogutil.StatsLogger().Error("Failed to initialize the queue", zap.Error(err))
+			statslogutil.StatsErrVerboseSampleLogger().Error("Failed to initialize the queue", zap.Error(err))
 			return false
 		}
 		r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
@@ -115,7 +115,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			r.lastSeenPruneMode = currentPruneMode
 			err := r.jobs.Rebuild()
 			if err != nil {
-				statslogutil.StatsLogger().Error("Failed to rebuild the queue", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to rebuild the queue", zap.Error(err))
 				return false
 			}
 		}
@@ -128,7 +128,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	currentRunningJobs := r.worker.GetRunningJobs()
 	remainConcurrency := maxConcurrency - len(currentRunningJobs)
 	if remainConcurrency <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Info("No concurrency available")
+		statslogutil.StatsSampleLogger().Info("No concurrency available")
 		return false
 	}
 
@@ -150,7 +150,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			continue
 		}
 		if valid, failReason := job.ValidateAndPrepare(sctx); !valid {
-			statslogutil.SingletonStatsSamplerLogger().Info(
+			statslogutil.StatsSampleLogger().Info(
 				"Table not ready for analysis",
 				zap.String("reason", failReason),
 				zap.Stringer("job", job),
@@ -189,7 +189,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 		return true
 	}
 
-	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
+	statslogutil.StatsSampleLogger().Info("No tables to analyze")
 	return false
 }
 

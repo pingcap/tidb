@@ -357,6 +357,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
 				zap.Strings("diffTypes", diffTypes))
+			failpoint.InjectCall("afterLoadSchemaDiffs", is.SchemaMetaVersion())
 			return is, false, currentSchemaVersion, relatedChanges, nil
 		}
 		// We can fall back to full load, don't need to return the error.
@@ -969,8 +970,15 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
 	defer do.sysSessionPool.Put(se)
-	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
+	start, end, ok := autoanalyze.CheckAutoAnalyzeWindow(sctx)
+	if !ok {
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			statslogutil.StatsLogger().Warn("Kill auto analyze process because it exceeded the window",
+				zap.Uint64("processID", id),
+				zap.Time("now", time.Now()),
+				zap.String("start", start),
+				zap.String("end", end),
+			)
 			do.SysProcTracker().KillSysProcess(id)
 		}
 	}
@@ -2826,9 +2834,9 @@ func (do *Domain) initStats(ctx context.Context) {
 	}
 	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
-		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		statslogutil.StatsLogger().Error("Init stats failed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
+		statslogutil.StatsLogger().Info("Init stats succeed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)))
 	}
 }
 
@@ -2888,7 +2896,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Warn("Load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -3050,7 +3058,7 @@ func (do *Domain) autoAnalyzeWorker() {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
+		statslogutil.StatsLogger().Info("autoAnalyzeWorker exited.")
 	}()
 	for {
 		select {
