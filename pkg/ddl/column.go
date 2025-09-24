@@ -670,7 +670,7 @@ func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (old
 	return
 }
 
-func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext, startTs uint64) (*updateColumnWorker, error) {
+func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*updateColumnWorker, error) {
 	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblUpdateColRate, true)
 	if err != nil {
 		return nil, err
@@ -695,7 +695,7 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		rowDecoder:      rowDecoder,
 		rowMap:          make(map[int64]types.Datum, len(decodeColMap)),
 		checksumNeeded:  vardef.EnableRowLevelChecksum.Load(),
-		backfillStartTs: startTs,
+		backfillStartTs: reorgInfo.SnapshotVer,
 	}, nil
 }
 
