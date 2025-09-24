@@ -1149,9 +1149,38 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(tc types.Context, ec e
 		if lp.defaultPartitionIdx >= 0 {
 			return lp.defaultPartitionIdx, nil
 		}
+		if len(lp.ColPrunes) == 1 {
+			idx := lp.ColPrunes[0].ExprCol.Index
+			if idx >= 0 && idx < len(r) {
+				valueMsg, err := formatSinglePartitionValue(r[idx])
+				if err != nil {
+					return -1, errors.Trace(err)
+				}
+				return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
+			}
+		}
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
 	}
 	return location[0].PartIdx, nil
+}
+
+func formatSinglePartitionValue(d types.Datum) (string, error) {
+	if d.IsNull() {
+		return "NULL", nil
+	}
+	str, err := d.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	switch d.Kind() {
+	case types.KindString, types.KindBytes,
+		types.KindMysqlEnum, types.KindMysqlSet, types.KindMysqlJSON,
+		types.KindMysqlTime, types.KindMysqlDuration,
+		types.KindBinaryLiteral, types.KindMysqlBit:
+		str = strings.ReplaceAll(str, "'", "''")
+		return "'" + str + "'", nil
+	}
+	return str, nil
 }
 
 // GetDefaultIdx return the Default partitions index.
