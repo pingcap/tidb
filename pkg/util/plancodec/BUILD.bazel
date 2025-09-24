@@ -19,7 +19,7 @@ go_library(
         "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_skip2_go_qrcode//:go_default_library",
+        "@com_github_skip2_go_qrcode//:go-qrcode",
         "@org_uber_go_zap//:zap",
     ],
 )
