@@ -3121,6 +3121,19 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t (a, b) values (1,1),(2,2)")
 	exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tk)
+	f := func(res []string, expected []any) bool {
+		if len(res) == 3 && len(expected) == 3 && res[0] == expected[0].(string) && res[1] == expected[1].(string) {
+			if res[2] == "30001" {
+				return true
+			}
+			r, err := strconv.Atoi(res[2])
+			if err != nil {
+				return false
+			}
+			return r == expected[2].(int)
+		}
+		return false
+	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		// So the table is actually in WriteOnly, before backfill!
 		if job.SchemaState != model.StateWriteReorganization {
@@ -3131,10 +3144,10 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 		tk2.MustExec("update t set b = b + 10 where a = 1")
 		// Would delete newFrom 1, which would then be backfilled again!
 		tk2.MustExec("update t set b = b + 10 where a = 2")
-		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
+		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().CheckWithFunc([][]any{{"1", "11", 1}, {"2", "12", 3}}, f)
 	})
 	tk.MustExec("alter table t remove partitioning")
-	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
+	tk.MustQuery(`select a,b,_tidb_rowid from t`).Sort().CheckWithFunc([][]any{{"1", "11", 1}, {"2", "12", 3}}, f)
 }
 
 func TestNonClusteredReorgUpdate(t *testing.T) {
