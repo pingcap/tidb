@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -812,7 +811,7 @@ func getPlanCostVer14PhysicalMergeJoin(pp base.PhysicalPlan, taskType property.T
 }
 
 // getCost4PhysicalHashJoin computes cost of hash join operator itself.
-func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64, op *optimizetrace.PhysicalOptimizeOp) float64 {
+func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64) float64 {
 	p := pp.(*physicalop.PhysicalHashJoin)
 	buildCnt, probeCnt := lCnt, rCnt
 	build := p.Children()[0]
@@ -891,12 +890,6 @@ func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag
 	} else {
 		diskCost = 0
 	}
-	if op != nil {
-		setPhysicalHashJoinCostDetail(p, op, spill, buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
-			cpuCost, probeCost, memoryCost, diskCost, probeDiskCost,
-			diskFactor, memoryFactor, concurrencyFactor,
-			memQuota)
-	}
 	return cpuCost + memoryCost + diskCost
 }
 
@@ -916,7 +909,7 @@ func getPlanCostVer14PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 		p.PlanCost += childCost
 	}
 	p.PlanCost += p.GetCost(getCardinality(p.Children()[0], costFlag), getCardinality(p.Children()[1], costFlag),
-		taskType == property.MppTaskType, costFlag, nil)
+		taskType == property.MppTaskType, costFlag)
 	p.PlanCostInit = true
 	return p.PlanCost, nil
 }
@@ -1065,7 +1058,7 @@ func getPlanCostVer14PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 }
 
 // getCost4BatchPointGetPlan returns cost of the BatchPointGetPlan.
-func getCost4BatchPointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64 {
+func getCost4BatchPointGetPlan(pp base.PhysicalPlan) float64 {
 	p := pp.(*physicalop.BatchPointGetPlan)
 	cols := p.AccessCols()
 	if cols == nil {
@@ -1087,9 +1080,6 @@ func getCost4BatchPointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.Physical
 	cost += rowCount * rowSize * networkFactor
 	cost += rowCount * seekFactor
 	cost /= float64(scanConcurrency)
-	if opt != nil {
-		setBatchPointGetPlanCostDetail(p, opt, rowCount, rowSize, networkFactor, seekFactor, scanConcurrency)
-	}
 	return cost
 }
 
@@ -1100,13 +1090,13 @@ func getPlanCostVer14BatchPointGetPlan(pp base.PhysicalPlan, _ property.TaskType
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
 	}
-	p.PlanCost = p.GetCost(nil)
+	p.PlanCost = p.GetCost()
 	p.PlanCostInit = true
 	return p.PlanCost, nil
 }
 
 // getCost4PointGetPlan returns cost of the PointGetPlan.
-func getCost4PointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64 {
+func getCost4PointGetPlan(pp base.PhysicalPlan) float64 {
 	p := pp.(*physicalop.PointGetPlan)
 	cols := p.AccessCols()
 	if cols == nil {
@@ -1125,9 +1115,6 @@ func getCost4PointGetPlan(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptim
 	cost += rowSize * networkFactor
 	cost += seekFactor
 	cost /= float64(sessVars.DistSQLScanConcurrency())
-	if opt != nil {
-		setPointGetPlanCostDetail(p, opt, rowSize, networkFactor, seekFactor)
-	}
 	return cost
 }
 
@@ -1138,7 +1125,7 @@ func getPlanCostVer14PointGetPlan(pp base.PhysicalPlan, _ property.TaskType, opt
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
 	}
-	p.PlanCost = p.GetCost(nil)
+	p.PlanCost = p.GetCost()
 	p.PlanCostInit = true
 	return p.PlanCost, nil
 }
@@ -1245,4 +1232,3 @@ func getTableNetFactor(copTaskPlan base.PhysicalPlan) float64 {
 		return getTableNetFactor(x.Children()[0])
 	}
 }
-

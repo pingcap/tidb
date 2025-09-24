@@ -10,6 +10,7 @@ go_library(
         "//pkg/planner/cascades/memo",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
+        "//pkg/planner/util/costusage",
         "//pkg/planner/util/debugtrace",
         "//pkg/planner/util/optimizetrace",
         "//pkg/planner/util/utilfuncp",

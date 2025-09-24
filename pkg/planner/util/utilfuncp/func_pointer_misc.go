@@ -318,8 +318,7 @@ var GetPlanCostVer24PhysicalIndexReader func(pp base.PhysicalPlan, taskType prop
 	option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
 // GetCost4PhysicalHashJoin computes cost of hash join operator itself.
-var GetCost4PhysicalHashJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64,
-	op *optimizetrace.PhysicalOptimizeOp) float64
+var GetCost4PhysicalHashJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64) float64
 
 // GetPlanCostVer14PhysicalHashJoin calculates the cost of the plan if it has not been calculated yet
 // and returns the cost.
@@ -447,7 +446,7 @@ var GetPlanCostVer14PhysicalTableReader func(pp base.PhysicalPlan,
 	option *costusage.PlanCostOption) (float64, error)
 
 // GetCost4PointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
-var GetCost4PointGetPlan func(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64
+var GetCost4PointGetPlan func(pp base.PhysicalPlan) float64
 
 // GetPlanCostVer14PointGetPlan calculates the cost of the plan if it has not been calculated yet and returns the cost.
 var GetPlanCostVer14PointGetPlan func(pp base.PhysicalPlan, _ property.TaskType,
@@ -458,7 +457,7 @@ var GetPlanCostVer24PointGetPlan func(pp base.PhysicalPlan, taskType property.Ta
 	option *costusage.PlanCostOption) (costusage.CostVer2, error)
 
 // GetCost4BatchPointGetPlan returns cost of the BatchPointGetPlan.
-var GetCost4BatchPointGetPlan func(pp base.PhysicalPlan, opt *optimizetrace.PhysicalOptimizeOp) float64
+var GetCost4BatchPointGetPlan func(pp base.PhysicalPlan) float64
 
 // GetPlanCostVer14BatchPointGetPlan calculates the cost of the plan if it has not
 // been calculated yet and returns the cost.

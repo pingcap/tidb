@@ -130,8 +130,8 @@ func (p *PointGetPlan) Schema() *expression.Schema {
 }
 
 // GetCost returns cost of the PointGetPlan.
-func (p *PointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	return utilfuncp.GetCost4PointGetPlan(p, opt)
+func (p *PointGetPlan) GetCost() float64 {
+	return utilfuncp.GetCost4PointGetPlan(p)
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -585,8 +585,8 @@ func (p *BatchPointGetPlan) SetAccessCols(cols []*expression.Column) {
 }
 
 // GetCost implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	return utilfuncp.GetCost4BatchPointGetPlan(p, opt)
+func (p *BatchPointGetPlan) GetCost() float64 {
+	return utilfuncp.GetCost4BatchPointGetPlan(p)
 }
 
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for BatchPointGetPlan.
