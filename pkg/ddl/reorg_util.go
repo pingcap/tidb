@@ -156,6 +156,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
+		zap.Int64("jobID", job.ID),
 		zap.String("jobSchema", job.SchemaName),
 		zap.String("jobTable", job.TableName),
 		zap.Stringer("jobType", job.Type),
