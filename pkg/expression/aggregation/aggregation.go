@@ -248,7 +248,7 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	}
 	var ret bool
 	switch storeType {
-	case kv.TiFlash:
+	case kv.TiFlash, kv.TiCI:
 		ret = CheckAggPushFlash(ctx, aggFunc)
 	case kv.TiKV:
 		// TiKV does not support group_concat now
