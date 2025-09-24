@@ -181,5 +181,4 @@ FROM t0
 	tk.MustQuery(`select 1 from chqin where  '2008-05-28' NOT IN
 		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
 		Check(testkit.Rows())
-	// https://docs.pingcap.com/zh/tidb/stable/blocklist-control-plan/
 }
