@@ -84,17 +84,14 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 }
 
 // IngestIfQuotaExceeded implements BackendCtx.IngestIfQuotaExceeded interface.
-func (m *MockBackendCtx) IngestIfQuotaExceeded(_ context.Context, taskID, cnt int) error {
-	if m.checkpointMgr != nil {
-		m.checkpointMgr.FinishChunk(taskID, cnt)
-	}
+func (m *MockBackendCtx) IngestIfQuotaExceeded(_ context.Context) error {
 	return nil
 }
 
 // Ingest implements BackendCtx.Ingest interface.
 func (m *MockBackendCtx) Ingest(_ context.Context) error {
 	if m.checkpointMgr != nil {
-		return m.checkpointMgr.AdvanceWatermark(true)
+		return m.checkpointMgr.AdvanceWatermark()
 	}
 	return nil
 }
@@ -115,24 +112,10 @@ func (m *MockBackendCtx) TotalKeyCount() int {
 	return 0
 }
 
-// AddChunk implements CheckpointOperator interface.
-func (m *MockBackendCtx) AddChunk(id int, endKey kv.Key) {
-	if m.checkpointMgr != nil {
-		m.checkpointMgr.AddChunk(id, endKey)
-	}
-}
-
-// UpdateChunk implements CheckpointOperator interface.
-func (m *MockBackendCtx) UpdateChunk(id int, count int, done bool) {
-	if m.checkpointMgr != nil {
-		m.checkpointMgr.UpdateChunk(id, count, done)
-	}
-}
-
 // FinishChunk implements CheckpointOperator interface.
-func (m *MockBackendCtx) FinishChunk(id int, count int) {
+func (m *MockBackendCtx) FinishChunk(rg kv.KeyRange, count int, key kv.Key) {
 	if m.checkpointMgr != nil {
-		m.checkpointMgr.FinishChunk(id, count)
+		m.checkpointMgr.FinishChunk(rg, count, key)
 	}
 }
 
@@ -145,11 +128,18 @@ func (m *MockBackendCtx) GetImportTS() uint64 {
 }
 
 // AdvanceWatermark implements CheckpointOperator interface.
-func (m *MockBackendCtx) AdvanceWatermark(imported bool) error {
+func (m *MockBackendCtx) AdvanceWatermark() error {
 	if m.checkpointMgr != nil {
-		return m.checkpointMgr.AdvanceWatermark(imported)
+		return m.checkpointMgr.AdvanceWatermark()
 	}
 	return nil
+}
+
+func (m *MockBackendCtx) FilterUnimportedRanges(ranges []kv.KeyRange) []kv.KeyRange {
+	if m.checkpointMgr != nil {
+		return m.checkpointMgr.FilterUnimportedRanges(ranges)
+	}
+	return ranges
 }
 
 // GetLocalBackend returns the local backend.

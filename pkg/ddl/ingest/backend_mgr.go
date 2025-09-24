@@ -71,6 +71,8 @@ type BackendCtxBuilder struct {
 	useDistTask bool
 
 	checkDup bool
+
+	minimalStartKey kv.Key
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
@@ -84,9 +86,11 @@ func (b *BackendCtxBuilder) WithImportDistributedLock(etcdCli *clientv3.Client, 
 func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 	sessPool *sess.Pool,
 	physicalID int64,
+	start kv.Key,
 ) *BackendCtxBuilder {
 	b.sessPool = sessPool
 	b.physicalID = physicalID
+	b.minimalStartKey = start
 	return b
 }
 
@@ -96,12 +100,14 @@ func (b *BackendCtxBuilder) WithDistTaskCheckpointManagerParam(
 	physicalID int64,
 	updateFunc func(context.Context, int64, any) error,
 	getFunc func(context.Context, int64) (string, error),
+	start kv.Key,
 ) *BackendCtxBuilder {
 	b.subtaskID = subtaskID
 	b.physicalID = physicalID
 	b.updateFunc = updateFunc
 	b.getFunc = getFunc
 	b.useDistTask = true
+	b.minimalStartKey = start
 	return b
 }
 
@@ -145,6 +151,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 			pdCli,
 			b.updateFunc,
 			b.getFunc,
+			b.minimalStartKey,
 		)
 		if err != nil {
 			logutil.Logger(ctx).Warn("create distributed task checkpoint manager failed",
@@ -156,7 +163,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	} else {
 		// Use normal checkpoint manager
 		if b.sessPool != nil {
-			cpOp, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
+			cpOp, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli, b.minimalStartKey)
 			if err != nil {
 				logutil.Logger(ctx).Warn("create checkpoint manager failed",
 					zap.Int64("jobID", job.ID),

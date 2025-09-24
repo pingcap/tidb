@@ -155,6 +155,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 			r.ptbl.GetPhysicalID(),
 			r.GetCheckpointUpdateFunc(),
 			r.GetCheckpointFunc(),
+			sm.StartKey,
 		).
 		Build(r.backendCfg, r.backend)
 	if err != nil {
