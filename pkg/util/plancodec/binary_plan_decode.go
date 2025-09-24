@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/skip2/go-qrcode"
 )
 
 // DecodeBinaryPlan decode the binary plan and display it similar to EXPLAIN ANALYZE statement.
@@ -140,7 +141,7 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 			columnIndices = []int{0, 1, 3, 4, 5, 6, 7, 8, 9}
 		case types.ExplainFormatPlanTree:
 			columnIndices = []int{0, 2, 3, 4, 5, 6, 7, 8}
-		case types.ExplainFormatVerbose:
+		case types.ExplainFormatVerbose, types.ExplainFormatQRCode:
 			columnIndices = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 		}
 	} else {
@@ -149,7 +150,7 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 			columnIndices = []int{0, 1, 3, 4, 5}
 		case types.ExplainFormatPlanTree:
 			columnIndices = []int{0, 2, 3, 4, 5}
-		case types.ExplainFormatVerbose:
+		case types.ExplainFormatVerbose, types.ExplainFormatQRCode:
 			columnIndices = []int{0, 1, 2, 3, 4, 5}
 		}
 	}
@@ -161,7 +162,6 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 			result[i][j] = row[idx]
 		}
 	}
-
 	return result, nil
 }
 
@@ -369,4 +369,13 @@ func printAccessObject(pbAccessObjs []*tipb.AccessObject) string {
 		}
 	}
 	return strings.Join(strs, "")
+}
+
+// PrintAsQrCode prints the plan in a QR code format
+func PrintAsQrCode(binaryPlan string) string {
+	matrix, err := qrcode.New(binaryPlan, qrcode.Medium)
+	if err != nil {
+		panic(err)
+	}
+	return matrix.ToString(true)
 }

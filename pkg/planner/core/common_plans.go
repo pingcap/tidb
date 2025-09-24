@@ -722,6 +722,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatQRCode:
+		fieldNames = []string{"QRCode"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
@@ -883,6 +885,25 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatQRCode:
+		if e.Rows == nil || e.Analyze {
+			flat := FlattenPhysicalPlan(e.TargetPlan, true)
+			rows := ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl)
+			if e.Analyze &&
+				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
+				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
+				row := rows[0]
+				tracker := e.SCtx().GetSessionVars().MemTracker
+				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
+			}
+			var final strings.Builder
+			for _, row := range rows {
+				final.WriteString(strings.Join(row, "\t"))
+				final.WriteString("\n")
+			}
+			qrCode := plancodec.PrintAsQrCode(final.String())
+			e.Rows = [][]string{{qrCode}}
+		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
