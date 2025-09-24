@@ -507,7 +507,7 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 }
 
 func TestIssue60047(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -528,14 +528,15 @@ func TestIssue60047(t *testing.T) {
 
 	// parallel execute `insert ... on duplicate key update` and `alter table ... add column after ...`
 	var err error
-	hookFunc := func(job *model.Job) {
-		if job.SchemaState == model.StateWriteOnly {
-			tk1 := testkit.NewTestKit(t, store)
-			tk1.MustExec("use test")
-			val := 30 + rand.Intn(60)
-			insertSQL := fmt.Sprintf("insert into t(a, b, c) values(%v, %v, %v) on duplicate key update a=values(a), b=values(b), c=values(c)",
-				val, rand.Intn(90), strconv.FormatInt(int64(val), 10))
-			err = tk1.ExecToErr(insertSQL)
+	hookFunc := func() {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		val := 30 + rand.Intn(60)
+		insertSQL := fmt.Sprintf("insert into t(a, b, c) values(%v, %v, %v) on duplicate key update a=values(a), b=values(b), c=values(c)",
+			val, rand.Intn(90), strconv.FormatInt(int64(val), 10))
+		err2 := tk1.ExecToErr(insertSQL)
+		if err2 != nil {
+			err = err2
 		}
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", hookFunc)
