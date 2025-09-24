@@ -53,9 +53,12 @@ func TestElinimateProjectionWithExpressionIndex(t *testing.T) {
 		run_id CHAR(64) NOT NULL
 	);`)
 
-	tk.MustQuery(`SELECT close_time
-	FROM t1
-	LEFT JOIN t2
-	USING (namespace_id,run_id)
-	ORDER BY  coalesce(close_time, CAST('9999-12-31 23:59:59' AS DATETIME));`).Check(testkit.Rows())
+	// This issue can reproduce by running 20 times.
+	for i := 0; i < 20; i++ {
+		tk.MustQuery(`SELECT close_time
+		FROM t1
+		LEFT JOIN t2
+		USING (namespace_id,run_id)
+		ORDER BY  coalesce(close_time, CAST('9999-12-31 23:59:59' AS DATETIME));`).Check(testkit.Rows())
+	}
 }
