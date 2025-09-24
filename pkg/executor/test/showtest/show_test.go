@@ -1118,14 +1118,14 @@ func TestShowGrantsWithRoles(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE USER u")
-	tk.MustExec("CREATE USER u@'r1'")
-	tk.MustExec("CREATE USER u@'r2'")
+	tk.MustExec("CREATE USER r1")
+	tk.MustExec("CREATE USER r2")
 	tk.MustExec("CREATE TABLE t (c1 int, c2 int)")
 
-	tk.MustExec("GRANT select(c1, c2) ON test.t TO u@'r1'")
-	tk.MustExec("GRANT select(c1, c2) ON test.t TO u@'r2'")
-	tk.MustExec("GRANT u@'r1' TO u")
-	tk.MustExec("GRANT u@'r2' TO u")
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO r1")
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO r2")
+	tk.MustExec("GRANT r1 TO u")
+	tk.MustExec("GRANT r2 TO u")
 	tk.MustExec("SET DEFAULT ROLE ALL to u")
 
 	usertk := testkit.NewTestKit(t, store)
@@ -1133,6 +1133,6 @@ func TestShowGrantsWithRoles(t *testing.T) {
 	usertk.MustQuery("show grants").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'u'@'%'",
 		"GRANT SELECT(c1, c2) ON `test`.`t` TO 'u'@'%'",
-		"GRANT 'u'@'r1', 'u'@'r2' TO 'u'@'%'",
+		"GRANT 'r1'@'%', 'r2'@'%' TO 'u'@'%'",
 	))
 }
