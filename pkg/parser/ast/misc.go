@@ -4066,7 +4066,7 @@ func (lt *LeadingList) Restore(ctx *format.RestoreCtx, needParen bool) error {
 func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
 	ctx.WritePlain("(")
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		if n.HintName.L != "qb_name" {
 			ctx.WriteKeyWord("@")
 		}
@@ -4082,7 +4082,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 		return nil
 	}
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		ctx.WritePlain(" ")
 	}
 	// Hints with args except query block.
