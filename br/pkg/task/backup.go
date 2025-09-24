@@ -728,7 +728,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-	
+
 	if schemas != nil && schemas.Len() > 0 {
 		schemasConcurrency := min(cfg.TableConcurrency, uint(schemas.Len()))
 		err = schemas.BackupSchemas(
