@@ -20,11 +20,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // PlanReplayerTaskKey indicates key of a plan replayer task
@@ -79,9 +82,57 @@ func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistorica
 	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
 }
 
+var (
+	// PlanReplayerPath is plan replayer directory path
+	PlanReplayerPath string
+	// PlanReplayerPathOnce ensures PlanReplayerPath is initialized only once
+	PlanReplayerPathOnce sync.Once
+)
+
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is related to the process id.
 func GetPlanReplayerDirName() string {
-	tidbLogDir := filepath.Dir(config.GetGlobalConfig().TempDir)
-	return filepath.Join(tidbLogDir, "replayer")
+	PlanReplayerPathOnce.Do(func() {
+		tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
+		tidbLogDir = filepath.Join(tidbLogDir, "replayer")
+		if canWriteToFile(tidbLogDir) {
+			PlanReplayerPath = tidbLogDir
+			logutil.BgLogger().Info("use log dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
+		} else {
+			tidbLogDir := filepath.Dir(config.GetGlobalConfig().TempDir)
+			PlanReplayerPath = filepath.Join(tidbLogDir, "replayer")
+			logutil.BgLogger().Info("use temp dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
+		}
+	})
+	return PlanReplayerPath
+}
+
+func canWriteToFile(path string) bool {
+	if !canWriteToFileInternal(path) {
+		return false
+	}
+	// Clean up the test file after checking
+	err := os.Remove(path)
+	if err != nil {
+		logutil.BgLogger().Warn("Warning: failed to remove test file", zap.String("path", path), zap.Error(err))
+	}
+	return true
+
+}
+
+func canWriteToFileInternal(path string) bool {
+	// Open the file in write mode
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	// Try to write a single byte to the file
+	_, err = file.Write([]byte{0})
+	if err != nil {
+		return false
+	}
+
+	return true
 }
