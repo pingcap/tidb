@@ -79,7 +79,8 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	// we don't use DXF service for bootstrap/upgrade related DDL, so no need to
 	// calculate resources.
 	initing := sctx.Value(sessionctx.Initing) != nil
-	shouldCalResource := kerneltype.IsNextGen() && !initing
+	// some mock context may not have store, such as the schema tracker test.
+	shouldCalResource := kerneltype.IsNextGen() && !initing && sctx.GetStore() != nil
 	if (setReorgParam || setDistTaskParam) && shouldCalResource {
 		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), tbl)
 		var err error
@@ -155,6 +156,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	}
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
+		zap.Int64("jobID", job.ID),
 		zap.String("jobSchema", job.SchemaName),
 		zap.String("jobTable", job.TableName),
 		zap.Stringer("jobType", job.Type),

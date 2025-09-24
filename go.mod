@@ -32,7 +32,6 @@ require (
 	github.com/cockroachdb/pebble v1.1.4-0.20250120151818-5dd133a1e6fb
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.1
-	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/daixiang0/gci v0.13.6
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.1.1
@@ -90,7 +89,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20250915095348-efd5134a6d6c
-	github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e
+	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20250918015914-468cd6feb1dc
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -111,7 +110,7 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.10.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20250905073636-469a7adf7ae8
+	github.com/tikv/client-go/v2 v2.0.8-0.20250917111308-6cbd7e4f9761
 	github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
@@ -149,6 +148,7 @@ require (
 	gorm.io/gorm v1.25.12
 	honnef.co/go/tools v0.6.1
 	k8s.io/api v0.29.11
+	modernc.org/mathutil v1.7.1
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
@@ -350,7 +350,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect

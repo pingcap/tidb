@@ -41,7 +41,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 30,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/testkit/testsetup",
