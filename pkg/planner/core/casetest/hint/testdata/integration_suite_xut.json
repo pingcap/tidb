@@ -762,7 +762,7 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb_v6, v6.@sel_2), NO_DECORRELATE(@qb_v6) */ * from v6;",
         "Plan": [
-          "Projection root  test.t1.a->Column#1, test.t1.b->Column#2",
+          "Projection root  test.t1.a, test.t1.b",
           "└─Apply root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#7)",
           "  ├─TableReader(Build) root  data:TableFullScan",
           "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -843,7 +843,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t.a->Column#1, Column#4",
+          "  └─Projection mpp[tiflash]  test.t.a, Column#4",
           "    └─Projection mpp[tiflash]  Column#4, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:Column#6, funcs:sum(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.a",
           "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#5, test.t.a->Column#6",
@@ -858,7 +858,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t.a->Column#1, Column#4",
+          "  └─Projection mpp[tiflash]  test.t.a, Column#4",
           "    └─Projection mpp[tiflash]  Column#4, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:test.t.a, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.t.a)->test.t.a",
           "        └─ExchangeReceiver mpp[tiflash]  ",
@@ -874,7 +874,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t.a->Column#1, test.t.b->Column#2",
+          "  └─Projection mpp[tiflash]  test.t.a, test.t.b",
           "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
@@ -890,7 +890,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t.a->Column#1, test.t.b->Column#2",
+          "  └─Projection mpp[tiflash]  test.t.a, test.t.b",
           "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
