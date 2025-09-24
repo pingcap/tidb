@@ -1,0 +1,70 @@
+DROP TABLE IF EXISTS `t0`;
+CREATE TABLE `t0` (
+  `c0` int
+);
+INSERT INTO `t0` VALUES (61);
+DROP TABLE IF EXISTS `t1`;
+CREATE TABLE `t1` (
+  `c1` int,
+  `c2` double
+);
+INSERT INTO `t1` VALUES (NULL,0);
+DROP TABLE IF EXISTS `t2`;
+CREATE TABLE `t2` (
+  `c3` varchar(100),
+  `c4` varchar(100)
+) ;
+INSERT INTO `t2` VALUES (NULL,NULL);
+select
+  subq_0.c_0 as c_0,
+  subq_0.c_1 as c_1,
+  subq_0.c_2 as c_2
+from
+  (select
+        ref_1.c0 as c_0,
+        ref_0.c2 as c_1,
+        ref_0.c2 as c_2
+      from
+        (t1 as ref_0
+          right join (t0 as ref_1
+            )
+          on (ref_0.c1 = ref_1.c0 ))
+       ) as subq_0
+where ((('' = (
+      select
+          (' n1`')  as c_0
+        from
+          (t2 as ref_3
+            left join t2 as ref_4
+            on (ref_3.c4 = ref_4.c3 ))
+        where ((subq_0.c_1) <> (subq_0.c_2))
+          or (true)
+        order by c_0 desc
+         limit 1)) is null));
+
+explain format='plan_tree' select
+  subq_0.c_0 as c_0,
+  subq_0.c_1 as c_1,
+  subq_0.c_2 as c_2
+from
+  (select
+        ref_1.c0 as c_0,
+        ref_0.c2 as c_1,
+        ref_0.c2 as c_2
+      from
+        (t1 as ref_0
+          right join (t0 as ref_1
+            )
+          on (ref_0.c1 = ref_1.c0 ))
+       ) as subq_0
+where ((('' = (
+      select
+          (' n1`')  as c_0
+        from
+          (t2 as ref_3
+            left join t2 as ref_4
+            on (ref_3.c4 = ref_4.c3 ))
+        where ((subq_0.c_1) <> (subq_0.c_2))
+          or (true)
+        order by c_0 desc
+         limit 1)) is null));
