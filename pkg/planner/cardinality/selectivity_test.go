@@ -338,8 +338,8 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	// Search for a not found value based upon statistics - count should be >= 10 and <=40
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	require.NoError(t, err)
-	require.Truef(t, count < 41, "expected: between 10 to 40, got: %v", count)
-	require.Truef(t, count > 9, "expected: between 10 to 40, got: %v", count)
+	require.Truef(t, count < 45, "expected: between 35 to 45, got: %v", count)
+	require.Truef(t, count > 35, "expected: between 35 to 45, got: %v", count)
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {
@@ -491,12 +491,12 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
 			selectivity:              0.00617283950,
-			selectivityAfterIncrease: 0.00617283950,
+			selectivityAfterIncrease: 0.006378600823045267,
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
 			selectivity:              0.01234567901,
-			selectivityAfterIncrease: 0.01234567901,
+			selectivityAfterIncrease: 0.012551440329218106,
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -511,7 +511,7 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              5.870830440255832e-05,
-			selectivityAfterIncrease: 1.51329827770157e-05,
+			selectivityAfterIncrease: 0.005411522633744856,
 		},
 		{
 			exprs:                    longExpr,

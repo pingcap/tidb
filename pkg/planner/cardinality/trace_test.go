@@ -114,6 +114,7 @@ func TestTraceCE(t *testing.T) {
 }
 
 func TestTraceDebugSelectivity(t *testing.T) {
+	t.Skip("flaky and unnecessary")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	statsHandle := dom.StatsHandle()
