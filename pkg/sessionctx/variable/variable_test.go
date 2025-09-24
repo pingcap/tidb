@@ -581,6 +581,15 @@ func TestValidateWithRelaxedValidation(t *testing.T) {
 	require.Equal(t, "RandomText - should be valid SQL", val)
 }
 
+func TestValidateInternalSessionVariable(t *testing.T) {
+	vars := NewSessionVars(nil)
+	for _, n := range []string{vardef.TiDBRedactLog, vardef.TiDBInstancePlanCacheMaxMemSize} {
+		sv := GetSysVar(n)
+		_, err := sv.Validate(vars, "1", vardef.ScopeSession)
+		require.NotNil(t, err)
+	}
+}
+
 func TestInstanceConfigHasMatchingSysvar(t *testing.T) {
 	// This tests that each item in [instance] has a sysvar of the same name.
 	// The whole point of moving items to [instance] is to unify the name between

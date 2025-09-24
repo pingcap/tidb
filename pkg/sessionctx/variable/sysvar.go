@@ -1391,13 +1391,15 @@ var defaultSysVars = []*SysVar{
 		appendDeprecationWarning(vars, vardef.TiDBNonPreparedPlanCacheSize, vardef.TiDBSessionPlanCacheSize)
 		return normalizedValue, nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheMaxPlanSize, Value: strconv.FormatUint(vardef.DefTiDBPlanCacheMaxPlanSize, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
-		uVal, err := strconv.ParseUint(val, 10, 64)
-		if err == nil {
-			s.PlanCacheMaxPlanSize = uVal
-		}
-		return err
-	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheMaxPlanSize, Value: strconv.FormatUint(vardef.DefTiDBPlanCacheMaxPlanSize, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, InternalSessionVariable: true,
+		SetSession: func(s *SessionVars, val string) error {
+			uVal, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				s.PlanCacheMaxPlanSize = uVal
+			}
+			return err
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSessionPlanCacheSize, Aliases: []string{vardef.TiDBPrepPlanCacheSize}, Value: strconv.FormatUint(uint64(vardef.DefTiDBSessionPlanCacheSize), 10), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
@@ -2564,12 +2566,18 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRedactLog, Value: vardef.DefTiDBRedactLog, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Marker}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		s.EnableRedactLog = val
-		// NOTE: switch of errors is a singleton, thus we can not set it for different sessions
-		errors.RedactLogEnabled.Store(val)
-		return nil
-	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBRedactLog, Value: vardef.DefTiDBRedactLog, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Marker}, InternalSessionVariable: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			s.EnableRedactLog = val
+			// NOTE: switch of errors is a singleton, thus we can not set it for different sessions
+			errors.RedactLogEnabled.Store(val)
+			return nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableRedactLog = val
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBShardAllocateStep, Value: strconv.Itoa(vardef.DefTiDBShardAllocateStep), Type: vardef.TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = TidbOptInt64(val, vardef.DefTiDBShardAllocateStep)
 		return nil

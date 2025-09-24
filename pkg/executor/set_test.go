@@ -450,6 +450,9 @@ func TestSetVar(t *testing.T) {
 	tk.MustGetErrCode("set @@instance.tidb_redact_log=1", errno.ErrIncorrectGlobalLocalVar)
 
 	// test for tidb_redact_log
+	tk.MustGetErrCode(`set @@session.tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
+	tk.MustGetErrCode(`set @@tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
+	tk.MustGetErrCode(`set @@tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set global tidb_redact_log = 1")
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("ON"))
