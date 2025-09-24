@@ -886,23 +886,30 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatQRCode:
-		if e.Rows == nil || e.Analyze {
+		if e.Rows == nil {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			rows := ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl)
-			if e.Analyze &&
-				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
-				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
-				row := rows[0]
-				tracker := e.SCtx().GetSessionVars().MemTracker
-				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
-			}
-			var final strings.Builder
+			var tmp string
+			var result []string
 			for _, row := range rows {
-				final.WriteString(strings.Join(row, "\t"))
-				final.WriteString("\n")
+				tmp += strings.Join(row, "\t")
+				tmp += "\n"
+				if len(tmp) >= 1024 {
+					result = append(result, tmp)
+					tmp = ""
+				}
 			}
-			qrCode := plancodec.PrintAsQrCode(final.String())
-			e.Rows = [][]string{{qrCode}}
+			if len(tmp) > 0 {
+				result = append(result, tmp)
+			}
+			e.Rows = make([][]string, 0, 100)
+			for _, r := range result {
+				row, err := plancodec.PrintAsQrCode(r)
+				if err != nil {
+					return err
+				}
+				e.Rows = append(e.Rows, []string{row})
+			}
 		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
