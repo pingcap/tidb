@@ -70,7 +70,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	params := mux.Vars(req)
 	name := params[handler.FileName]
 	handler := downloadFileHandler{
-		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(), name),
+		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(nil), name),
 		fileName:           name,
 		infoGetter:         prh.infoGetter,
 		address:            prh.address,

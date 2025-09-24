@@ -565,7 +565,7 @@ func NewDomainWithEtcdClient(
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
-		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
+		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(nil), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
 	}

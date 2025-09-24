@@ -122,7 +122,7 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustQuery("plan replayer dump explain select * from t where a=10")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
 	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
@@ -154,7 +154,7 @@ func TestPlanReplayerCaptureSEM(t *testing.T) {
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustExec("create table t(id int)")
 	tk.MustQuery("plan replayer dump explain select * from t")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
@@ -207,7 +207,7 @@ func TestPlanReplayerContinuesCapture(t *testing.T) {
 	require.NotNil(t, task)
 	worker := prHandle.GetWorker()
 	success := worker.HandleTask(task)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
 	require.True(t, success)
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
@@ -219,10 +219,10 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	tk.MustExec("drop table if exists t_dump_single")
 	tk.MustExec("create table t_dump_single(a int)")
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
 	path := testdata.ConvertRowsToStrings(res.Rows())
 
-	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
+	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(nil), path[0]))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	for _, file := range reader.File {

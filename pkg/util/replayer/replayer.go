@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/spf13/afero"
 	"go.uber.org/zap"
 )
 
@@ -38,7 +39,7 @@ type PlanReplayerTaskKey struct {
 
 // GeneratePlanReplayerFile generates plan replayer file
 func GeneratePlanReplayerFile(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (*os.File, string, error) {
-	path := GetPlanReplayerDirName()
+	path := GetPlanReplayerDirName(nil)
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
@@ -91,15 +92,19 @@ var (
 
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is related to the process id.
-func GetPlanReplayerDirName() string {
+func GetPlanReplayerDirName(vfs afero.Fs) string {
+	if vfs == nil {
+		vfs = afero.NewOsFs()
+	}
 	PlanReplayerPathOnce.Do(func() {
 		tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
 		tidbLogDir = filepath.Join(tidbLogDir, "replayer")
-		if canWriteToFile(tidbLogDir) {
+		tidbLogDir = filepath.Clean(tidbLogDir)
+		if canWriteToFile(vfs, tidbLogDir) {
 			PlanReplayerPath = tidbLogDir
 			logutil.BgLogger().Info("use log dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
 		} else {
-			tidbLogDir := filepath.Dir(config.GetGlobalConfig().TempDir)
+			tidbLogDir := config.GetGlobalConfig().TempDir
 			PlanReplayerPath = filepath.Join(tidbLogDir, "replayer")
 			logutil.BgLogger().Info("use temp dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
 		}
@@ -107,32 +112,38 @@ func GetPlanReplayerDirName() string {
 	return PlanReplayerPath
 }
 
-func canWriteToFile(path string) bool {
-	if !canWriteToFileInternal(path) {
+func canWriteToFile(vfs afero.Fs, path string) bool {
+	now := time.Now()
+	timeStr := now.Format("20060102150405")
+	filename := fmt.Sprintf("test_%s.txt", timeStr)
+	path = filepath.Join(path, filename)
+	if !canWriteToFileInternal(vfs, path) {
+		logutil.BgLogger().Warn("cannot write to file", zap.String("path", path))
 		return false
 	}
 	// Clean up the test file after checking
-	err := os.Remove(path)
+	err := vfs.Remove(path)
 	if err != nil {
-		logutil.BgLogger().Warn("Warning: failed to remove test file", zap.String("path", path), zap.Error(err))
+		logutil.BgLogger().Warn("failed to remove test file", zap.String("path", path), zap.Error(err))
 	}
 	return true
 
 }
 
-func canWriteToFileInternal(path string) bool {
+func canWriteToFileInternal(vfs afero.Fs, path string) bool {
 	// Open the file in write mode
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0644)
+	file, err := vfs.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return false
 	}
-	defer file.Close()
-
 	// Try to write a single byte to the file
 	_, err = file.Write([]byte{0})
 	if err != nil {
 		return false
 	}
-
+	err = file.Close()
+	if err != nil {
+		return false
+	}
 	return true
 }
