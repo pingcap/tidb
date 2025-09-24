@@ -141,7 +141,7 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql boo
 			columnIndices = []int{0, 1, 3, 4, 5, 6, 7, 8, 9}
 		case types.ExplainFormatPlanTree:
 			columnIndices = []int{0, 2, 3, 4, 5, 6, 7, 8}
-		case types.ExplainFormatVerbose, types.ExplainFormatQRCode:
+		case types.ExplainFormatVerbose:
 			columnIndices = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 		}
 	} else {
@@ -372,10 +372,14 @@ func printAccessObject(pbAccessObjs []*tipb.AccessObject) string {
 }
 
 // PrintAsQrCode prints the plan in a QR code format
-func PrintAsQrCode(binaryPlan string) string {
+func PrintAsQrCode(binaryPlan string) (string, error) {
 	matrix, err := qrcode.New(binaryPlan, qrcode.Medium)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
-	return matrix.ToString(true)
+	result := matrix.ToString(true)
+
+	result = strings.Replace(result, "  ", " ", -1)
+	result = strings.Replace(result, "██", "◼︎", -1)
+	return matrix.ToString(true), nil
 }
