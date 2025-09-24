@@ -173,6 +173,11 @@ l_for:
 	for len(data) > 0 {
 		switch data[0] {
 		case flagShortValuePrefix:
+			if len(data) < 2 {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"insufficient data for short value header, need at least 2 bytes but only have %d",
+					len(data))
+			}
 			vlen := data[1]
 			if len(data) < int(vlen)+2 {
 				return errors.Annotatef(berrors.ErrInvalidArgument,
