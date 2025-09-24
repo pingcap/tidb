@@ -255,11 +255,31 @@ func (b *txnBackfillExecutor) currentWorkerSize() int {
 	return len(b.workers)
 }
 
+func getStartTS(sctx sessionctx.Context) (uint64, error) {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return 0, err
+	}
+	if !txn.Valid() {
+		return 0, nil
+	}
+	return txn.StartTS(), nil
+}
+
 func (b *txnBackfillExecutor) adjustWorkerSize() error {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	jc := b.jobCtx
 	workerCnt := b.expectedWorkerSize()
+	sessCtx, err := b.sessPool.Get()
+	defer b.sessPool.Put(sessCtx)
+	if err != nil {
+		return err
+	}
+	startTs, err := getStartTS(sessCtx)
+	if err != nil {
+		return err
+	}
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
 		var (
@@ -289,7 +309,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			runner = newBackfillWorker(b.ctx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
-			updateWorker, err := newUpdateColumnWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			updateWorker, err := newUpdateColumnWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc, startTs)
 			if err != nil {
 				return err
 			}
