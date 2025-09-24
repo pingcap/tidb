@@ -176,14 +176,15 @@ func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.indexUsageReporter != nil {
+	if e.indexUsageReporter != nil && e.stats != nil {
 		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
 		// We cannot distinguish how many rows are coming from each partition. Here, we calculate all index usages
 		// percentage according to the row counts for the whole table.
+		rows := e.RuntimeStats().GetActRows()
 		if e.idxInfo != nil {
-			e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, kvReqTotal, rows)
 		} else {
-			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, e.tblInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, e.tblInfo.ID, kvReqTotal, rows)
 		}
 	}
 	e.inited = 0
@@ -475,7 +476,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
-	txnCtx := sctx.GetSessionVars().TxnCtx
+	sessVars := sctx.GetSessionVars()
+
+	if err := checkMaxExecutionTimeExceeded(sctx); err != nil {
+		return err
+	}
+
+	txnCtx := sessVars.TxnCtx
 	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
 	if err != nil {
 		return err

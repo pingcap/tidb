@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 )
 
 func init() {
@@ -467,4 +469,131 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
+}
+
+func TestSplitRangeForTable(t *testing.T) {
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
+	require.NoError(t, err)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	tk.MustExec("CREATE TABLE t (c int)")
+	for i := range 1024 {
+		tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d)", i))
+	}
+
+	testcases := []struct {
+		caseName       string
+		enableDistTask string
+		globalSort     string
+	}{
+		{"local ingest", "off", ""},
+		{"dxf ingest", "on", ""},
+		{"dxf global-sort", "on", cloudStorageURI},
+	}
+	var addCnt, removeCnt int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt += 1
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt += 1
+	})
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = on;")
+		tk.MustExec("set global tidb_cloud_storage_uri = '';")
+	})
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
+
+			addCnt = 0
+			removeCnt = 0
+			tk.MustExec("alter table t add index i(c)")
+			require.Equal(t, addCnt, len(stores))
+			require.Equal(t, removeCnt, addCnt)
+			tk.MustExec("alter table t drop index i")
+		})
+	}
+}
+
+func TestSplitRangeForPartitionTable(t *testing.T) {
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	tk.MustExec("CREATE TABLE tp (id int primary key, c int) PARTITION BY HASH (id) PARTITIONS 2")
+	for i := range 1024 {
+		tk.MustExec(fmt.Sprintf("INSERT INTO tp VALUES (%d, %d)", i, i))
+	}
+
+	testcases := []struct {
+		caseName       string
+		enableDistTask string
+		globalSort     string
+	}{
+		{"local ingest", "off", ""},
+		{"dxf ingest", "on", ""},
+		{"dxf global-sort", "on", cloudStorageURI},
+	}
+	var addCnt, removeCnt int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt += 1
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt += 1
+	})
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = on;")
+		tk.MustExec("set global tidb_cloud_storage_uri = '';")
+	})
+	for _, tc := range testcases {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_dist_task = %s;", tc.enableDistTask))
+			tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s';", tc.globalSort))
+
+			addCnt = 0
+			removeCnt = 0
+			tk.MustExec("alter table tp add index i(c)")
+			require.Greater(t, addCnt, 0)
+			require.Equal(t, removeCnt, addCnt)
+			tk.MustExec("alter table tp drop index i")
+
+			addCnt = 0
+			removeCnt = 0
+			tk.MustExec("alter table tp add index gi(c) global")
+			require.Greater(t, addCnt, 0)
+			require.Equal(t, removeCnt, addCnt)
+			tk.MustExec("alter table tp drop index gi")
+		})
+	}
 }

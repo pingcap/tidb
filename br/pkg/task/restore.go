@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -897,7 +898,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	err = client.AllocTableIDs(ctx, tables)
+	idFrom, idEnd, err := client.AllocTableIDs(ctx, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1092,6 +1093,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	compactProtectStartKey, compactProtectEndKey := encodeCompactAndCheckKey(mgr.GetStorage().GetCodec(), idFrom, idEnd)
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
@@ -1099,6 +1101,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
 		// It's recommended to enable TiDB configure `split-table` instead.
 		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
+		compactProtectStartKey, compactProtectEndKey,
 		updateCh,
 	); err != nil {
 		return errors.Trace(err)
@@ -1608,6 +1611,12 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	}
 
 	return
+}
+
+func encodeCompactAndCheckKey(codec tikv.Codec, idFrom, idEnd int64) ([]byte, []byte) {
+	checkStartKey := tablecodec.EncodeTablePrefix(idFrom)
+	checkEndKey := tablecodec.EncodeTablePrefix(idEnd)
+	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool
