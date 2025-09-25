@@ -15,7 +15,6 @@
 package rule
 
 import (
-	"cmp"
 	"context"
 	"slices"
 
@@ -50,8 +49,6 @@ const (
 	lessThanOrEqualPredicate
 	greaterThanOrEqualPredicate
 	orPredicate
-	isNullColumnPredicate // i IS NULL
-	equalColumnPredicate  // col1 = col2
 	andPredicate
 	scalarPredicate
 	falsePredicate
@@ -89,7 +86,7 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 // - Comparison operators (`EQ`, `NE`, `LT`, `GT`, `LE`, `GE`).
 // - IN predicates with a list of constants.
 // If the expression doesn't match any of these recognized patterns, it returns an `otherPredicate` type.
-func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expression.Column, predicateType) {
+func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expression.Column, predicateType) {
 	switch v := expr.(type) {
 	case *expression.Constant:
 		return nil, logicalConstant(bc, expr)
@@ -97,18 +94,8 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 		if v.FuncName.L == ast.LogicOr {
 			return nil, orPredicate
 		}
-		cols := make([]*expression.Column, 0, 2)
-		defer func() {
-			// Sort the columns based on their UniqueID to ensure a consistent order.
-			slices.SortFunc(cols, func(i, j *expression.Column) int {
-				return cmp.Compare(i.UniqueID, j.UniqueID)
-			})
-		}()
 		if v.FuncName.L == ast.LogicAnd {
 			return nil, andPredicate
-		}
-		if col, ok := expression.IsIsNullColumn(v); ok {
-			return append(cols, col), isNullColumnPredicate
 		}
 		args := v.GetArgs()
 		if len(args) == 0 {
@@ -118,34 +105,30 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 		if !colOk {
 			return nil, otherPredicate
 		}
-		cols = append(cols, col)
 		if len(args) > 1 {
-			switch arg := args[1].(type) {
-			case *expression.Constant:
-			case *expression.Column:
-				cols = append(cols, arg)
-				return cols, equalColumnPredicate
+			if _, ok := args[1].(*expression.Constant); !ok {
+				return nil, otherPredicate
 			}
 		}
 		if v.FuncName.L == ast.NE {
-			return cols, notEqualPredicate
+			return col, notEqualPredicate
 		} else if v.FuncName.L == ast.EQ {
-			return cols, equalPredicate
+			return col, equalPredicate
 		} else if v.FuncName.L == ast.LT {
-			return cols, lessThanPredicate
+			return col, lessThanPredicate
 		} else if v.FuncName.L == ast.GT {
-			return cols, greaterThanPredicate
+			return col, greaterThanPredicate
 		} else if v.FuncName.L == ast.LE {
-			return cols, lessThanOrEqualPredicate
+			return col, lessThanOrEqualPredicate
 		} else if v.FuncName.L == ast.GE {
-			return cols, greaterThanOrEqualPredicate
+			return col, greaterThanOrEqualPredicate
 		} else if v.FuncName.L == ast.In {
 			for _, value := range args[1:] {
 				if _, ok := value.(*expression.Constant); !ok {
 					return nil, otherPredicate
 				}
 			}
-			return cols, inListPredicate
+			return col, inListPredicate
 		}
 		return nil, otherPredicate
 	default:
@@ -236,17 +219,14 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 		}
 	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
-	simplifiedPredicate = mergeExpression(sctx, simplifiedPredicate)
+	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
 
-// mergeExpression merges two expressions into one by simplifying
-// - in-list and not equal predicates on the same column by applying intersection of the two lists.
-// - (i=j) OR (i IS NULL AND j IS NULL) as i <=> j
-func mergeExpression(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
 		return predicates
 	}
@@ -262,9 +242,7 @@ func mergeExpression(sctx base.PlanContext, predicates []expression.Expression) 
 				sctx.GetExprCtx(),
 				ithPredicate,
 				jthPredicate)
-			if slices.EqualFunc(iCol, jCol, func(i, j *expression.Column) bool {
-				return i.Equals(j)
-			}) {
+			if iCol.Equals(jCol) {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
 					if maybeOverOptimized4PlanCache {
@@ -305,10 +283,9 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	var otherPred expression.Expression
 	col1, p1Type := FindPredicateType(ctx, p1)
 	col2, p2Type := FindPredicateType(ctx, p2)
-	if col1 == nil || (len(col1) != 1 || len(col2) != 1 || !col1[0].Equals(col2[0])) {
+	if col1 == nil || !col1.Equals(col2) {
 		return false
 	}
-	c1 := col1[0]
 	if p1Type == equalPredicate {
 		equalPred = p1
 		otherPred = p2
@@ -327,7 +304,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	if ok1 && ok2 {
 		evalCtx := ctx.GetExprCtx().GetEvalCtx()
 		// We have checked the equivalence between col1 and col2, so we can safely use col1's collation.
-		colCollate := c1.GetType(evalCtx).GetCollate()
+		colCollate := col1.GetType(evalCtx).GetCollate()
 		// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
 		// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
 		// If the collation is not compatible, we cannot simplify the expression.
