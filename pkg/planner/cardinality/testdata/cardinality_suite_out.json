@@ -1628,7 +1628,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -1642,7 +1646,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 50
+                    "Result": {
+                      "Est": 50,
+                      "MaxEst": 50,
+                      "MinEst": 50
+                    }
                   }
                 ]
               },
@@ -1717,7 +1725,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -1731,7 +1743,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1
+                    "Result": {
+                      "Est": 1,
+                      "MaxEst": 1,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -1807,7 +1823,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -1877,7 +1897,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -2040,7 +2064,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -2185,7 +2213,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -2199,7 +2231,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 51.67785234899329
+                    "Result": {
+                      "Est": 51.67785234899329,
+                      "MaxEst": 51.67785234899329,
+                      "MinEst": 51.67785234899329
+                    }
                   }
                 ]
               },
@@ -2280,7 +2316,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2294,7 +2334,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1.0335570469798658
+                    "Result": {
+                      "Est": 1.0335570469798658,
+                      "MaxEst": 1.0335570469798658,
+                      "MinEst": 1.0335570469798658
+                    }
                   }
                 ]
               },
@@ -2626,6 +2670,21 @@
                             "realtimeRowCount": 3080
                           },
                           {
+                            "commonPrefix": 0,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
+                            "unsigned": false
+                          },
+                          {
+                            "avgRowCount": 0,
+                            "boundL": -7000,
+                            "boundR": 11000,
+                            "histL": -1000,
+                            "histR": 5000,
+                            "lPercent": 0.8402777777777778,
+                            "rPercent": 0
+                          },
+                          {
                             "Result": 1.539230384807596
                           }
                         ]
@@ -2640,7 +2699,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 1.539230384807596
+                    "Result": {
+                      "Est": 1.539230384807596,
+                      "MaxEst": 30.8,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -2715,7 +2778,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2764,7 +2831,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2778,7 +2849,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2
+                    "Result": {
+                      "Est": 2,
+                      "MaxEst": 2,
+                      "MinEst": 2
+                    }
                   }
                 ]
               },
@@ -2910,6 +2985,21 @@
                                 "realtimeRowCount": 3080
                               },
                               {
+                                "commonPrefix": 0,
+                                "lScalar": 72057594037927940,
+                                "rScalar": 252201579132747780,
+                                "unsigned": false
+                              },
+                              {
+                                "avgRowCount": 0,
+                                "boundL": 252201579132747740,
+                                "boundR": 252201579132747840,
+                                "histL": 252201579132747780,
+                                "histR": 252201579132747800,
+                                "lPercent": 1,
+                                "rPercent": 0
+                              },
+                              {
                                 "Result": 1.539230384807596
                               }
                             ]
@@ -3008,7 +3098,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -3057,7 +3151,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3106,7 +3204,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3155,7 +3257,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3254,7 +3360,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -3303,7 +3413,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3352,7 +3466,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3401,7 +3519,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3657,7 +3779,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 154.37797031265498
+                    "Result": {
+                      "Est": 154.37797031265498,
+                      "MaxEst": 1100,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -3818,7 +3944,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -3832,7 +3962,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2.713087248322148
+                    "Result": {
+                      "Est": 2.713087248322148,
+                      "MaxEst": 2.713087248322148,
+                      "MinEst": 2.713087248322148
+                    }
                   }
                 ]
               },
