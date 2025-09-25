@@ -197,7 +197,7 @@ func TestRevokeColumnPriv(t *testing.T) {
 		Check(testkit.RowsWithSep("|", "|Select"))
 
 	// revoke column privilege should remove records from both mysql.columns_priv and mysql.tables_priv
-	tk.MustExec("REVOKE SELECT(c1) ON test.t1 FROM u1")
+	tk.MustExec("REVOKE SELECT(c1) ON t1 FROM u1")
 	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows("Select"))
 	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
