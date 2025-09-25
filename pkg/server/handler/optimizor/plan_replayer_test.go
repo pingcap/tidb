@@ -115,7 +115,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	defer server.Close()
 
 	filename, fileNameFromCapture := prepareData4PlanReplayer(t, client, dom)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 
 	// 2. check the contents of the plan replayer zip files.
 
@@ -275,7 +275,7 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	defer server.Close()
 
 	filename := prepareData4Issue56458(t, client, dom)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 
 	// 2. check the contents of the plan replayer zip files.
 	var filesInReplayer []string
@@ -382,7 +382,7 @@ func TestIssue43192(t *testing.T) {
 	defer server.Close()
 
 	filename := prepareData4Issue43192(t, client, dom)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 
 	// 2. check the contents of the plan replayer zip files.
 	var filesInReplayer []string

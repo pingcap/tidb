@@ -1939,7 +1939,7 @@ func checkMPPInExplain(t *testing.T, tk *testkit.TestKit, sql string) {
 }
 
 func TestMPPRecovery(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	srtore := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 

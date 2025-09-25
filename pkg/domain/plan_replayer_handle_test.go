@@ -95,7 +95,7 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	require.NotNil(t, task)
 	worker := prHandle.GetWorker()
 	success := worker.HandleTask(task)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	require.True(t, success)
 	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
 	// assert memory task consumed
@@ -133,11 +133,11 @@ func TestPlanReplayerGC(t *testing.T) {
 	startTime := time.Now()
 	time := startTime.UnixNano()
 	fileName := fmt.Sprintf("replayer_single_xxxxxx_%v.zip", time)
-	err := os.MkdirAll(replayer.GetPlanReplayerDirName(nil), os.ModePerm)
+	err := os.MkdirAll(replayer.GetPlanReplayerDirName(), os.ModePerm)
 	require.NoError(t, err)
 	tk.MustExec("insert into mysql.plan_replayer_status(sql_digest, plan_digest, token, instance) values" +
 		"('123','123','" + fileName + "','123')")
-	path := filepath.Join(replayer.GetPlanReplayerDirName(nil), fileName)
+	path := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
 	zf, err := os.Create(path)
 	require.NoError(t, err)
 	zf.Close()
@@ -189,7 +189,7 @@ SELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.colu
 	require.NotNil(t, task)
 	worker := prHandle.GetWorker()
 	success := worker.HandleTask(task)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName(nil))
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	require.True(t, success)
 	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
 	// assert memory task consumed

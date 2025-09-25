@@ -40,7 +40,7 @@ type PlanReplayerTaskKey struct {
 
 // GeneratePlanReplayerFile generates plan replayer file
 func GeneratePlanReplayerFile(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (*os.File, string, error) {
-	path := GetPlanReplayerDirName(nil)
+	path := GetPlanReplayerDirName()
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
@@ -93,15 +93,21 @@ var (
 
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is related to the process id.
-func GetPlanReplayerDirName(vfs afero.Fs) string {
-	if vfs == nil {
-		vfs = afero.NewOsFs()
+//
+// This VFS is only for testing purposes,
+// but in fact, this VFS has already implemented protocols such as S3 and NFS.
+// We hope it can be supported in the future.
+func GetPlanReplayerDirName(vfs ...afero.Fs) string {
+	var fs afero.Fs
+	fs = afero.NewOsFs()
+	if vfs != nil {
+		fs = vfs[0]
 	}
 	PlanReplayerPathOnce.Do(func() {
 		tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
 		tidbLogDir = filepath.Join(tidbLogDir, "replayer")
 		tidbLogDir = filepath.Clean(tidbLogDir)
-		if canWriteToFile(vfs, tidbLogDir) {
+		if canWriteToFile(fs, tidbLogDir) {
 			PlanReplayerPath = tidbLogDir
 			logutil.BgLogger().Info("use log dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
 		} else {
