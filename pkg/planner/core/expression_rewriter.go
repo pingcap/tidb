@@ -599,6 +599,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
+				er.asScalar = true
 				return inNode, false
 			}
 		}
