@@ -1668,8 +1668,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	sessVars.StmtCtx.ExecSuccess = succ
 	sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
-	slowItems := PrepareSlowLogItemsForRules(a.GoCtx, sessVars)
-	matchRules := ShouldWriteSlowLog(sessVars, slowItems)
+	globalRules := vardef.GlobalSlowLogRules.Load()
+	slowItems := PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
+	matchRules := ShouldWriteSlowLog(globalRules, sessVars, slowItems)
 	if (!enable || !matchRules) && !force {
 		return
 	}

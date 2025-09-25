@@ -29,9 +29,27 @@ type SlowLogRule struct {
 // SlowLogRules represents all slow log rules defined for the current scope (e.g., session/global).
 // The rules are evaluated using logical OR between them: if any rule matches, it triggers the slow log.
 type SlowLogRules struct {
-	RawRules           string              // Raw rule string before parsing.
-	AllConditionFields map[string]struct{} // Set of all unique field names used in all conditions.
-	Rules              []*SlowLogRule      // List of rules combined with logical OR.
+	RawRules string              // Raw rule string before parsing.
+	Fields   map[string]struct{} // All unique fields used in this rule set.
+	Rules    []*SlowLogRule      // List of rules combined with logical OR.
+}
+
+// SessionSlowLogRules represents the slow log rules effective for a specific session.
+// It embeds SlowLogRules and tracks additional session-level information.
+type SessionSlowLogRules struct {
+	*SlowLogRules
+	EffectiveFields           map[string]struct{} // All unique fields visible to this session (session + global rules).
+	GlobalRawRulesHash        uint64
+	NeedUpdateEffectiveFields bool // NeedUpdateEffectiveFields indicates whether EffectiveFields needs to be updated.
+}
+
+// NewSessionSlowLogRules creates a new SessionSlowLogRules instance from the given SlowLogRules.
+func NewSessionSlowLogRules(slRules *SlowLogRules) *SessionSlowLogRules {
+	return &SessionSlowLogRules{
+		SlowLogRules:              slRules,
+		EffectiveFields:           make(map[string]struct{}),
+		NeedUpdateEffectiveFields: true,
+	}
 }
 
 // GlobalSlowLogRules represents all slow log rules defined at the global scope.
@@ -41,6 +59,7 @@ type SlowLogRules struct {
 //
 // Rule evaluation is logical OR across all matched rule sets.
 type GlobalSlowLogRules struct {
-	RawRules string                  // Raw rule string before parsing.
-	RulesMap map[int64]*SlowLogRules // Mapping of ConnID → SlowLogRules.
+	RawRules     string                  // Raw rule string before parsing.
+	RawRulesHash uint64                  // Hash of RawRules for fast comparison.
+	RulesMap     map[int64]*SlowLogRules // Mapping of ConnID → SlowLogRules.
 }

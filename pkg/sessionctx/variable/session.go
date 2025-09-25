@@ -1206,7 +1206,7 @@ type SessionVars struct {
 
 	// SlowLogRules holds the set of user-defined rules that determine whether a SQL execution should be logged in the slow log.
 	// This allows flexible and fine-grained control over slow logging beyond the traditional single-threshold approach.
-	SlowLogRules *slowlogrule.SlowLogRules
+	SlowLogRules *slowlogrule.SessionSlowLogRules
 
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
@@ -2393,9 +2393,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
 	slowLogRules, err := ParseSessionSlowLogRules(vardef.DefTiDBSlowLogRules)
 	logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------- parse slow-log-rules %q", vardef.DefTiDBSlowLogRules), zap.Error(err))
-	if err == nil {
-		vars.SlowLogRules = slowLogRules
-	}
+	vars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(slowLogRules)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {

@@ -38,10 +38,10 @@ import (
 func newMockCtx() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
-	ctx.GetSessionVars().SlowLogRules = &slowlogrule.SlowLogRules{
-		Rules:              []*slowlogrule.SlowLogRule{},
-		AllConditionFields: make(map[string]struct{}),
-	}
+	ctx.GetSessionVars().SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
+		Rules:  []*slowlogrule.SlowLogRule{},
+		Fields: make(map[string]struct{}),
+	})
 	return ctx
 }
 
@@ -78,9 +78,9 @@ func TestMatchSingleRuleSingleCondition(t *testing.T) {
 	}
 	ctx.GetSessionVars().SlowLogRules.Rules = []*slowlogrule.SlowLogRule{rule}
 
-	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules)) // 200 >= 100
+	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules)) // 200 >= 100
 	items.MemMax = 50
-	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules)) // 50 < 100
+	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules)) // 50 < 100
 }
 
 func TestMatchStringConditions(t *testing.T) {
@@ -104,15 +104,15 @@ func TestMatchStringConditions(t *testing.T) {
 	}
 	ctx.GetSessionVars().SlowLogRules.Rules = []*slowlogrule.SlowLogRule{rule}
 
-	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 
 	// test SessionAlias
 	ctx.GetSessionVars().SessionAlias = "sea"
-	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 	// test Digest
 	ctx.GetSessionVars().SessionAlias = "seA"
 	items.Digest = "abC"
-	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 }
 
 func TestMatchSingleRuleMultipleConditions(t *testing.T) {
@@ -134,10 +134,10 @@ func TestMatchSingleRuleMultipleConditions(t *testing.T) {
 	}
 	ctx.GetSessionVars().SlowLogRules.Rules = []*slowlogrule.SlowLogRule{rule}
 
-	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 
 	items.Succ = false
-	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 }
 
 func TestMatchMultipleRulesOR(t *testing.T) {
@@ -163,14 +163,14 @@ func TestMatchMultipleRulesOR(t *testing.T) {
 		},
 	}
 
-	sessVars.SlowLogRules = &slowlogrule.SlowLogRules{Rules: []*slowlogrule.SlowLogRule{rule1, rule2}}
+	sessVars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{Rules: []*slowlogrule.SlowLogRule{rule1, rule2}})
 
 	// should match rule1, return true
-	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 
 	// change ExecRetryCount smaller -> no match
 	items.ExecRetryCount = 1
-	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	require.False(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 
 	// test string matching
 	items.Digest = "plan_digest"
@@ -179,8 +179,8 @@ func TestMatchMultipleRulesOR(t *testing.T) {
 			{Field: variable.SlowLogDigestStr, Threshold: "plan_digest"},
 		},
 	}
-	sessVars.SlowLogRules = &slowlogrule.SlowLogRules{Rules: []*slowlogrule.SlowLogRule{rule3}}
-	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	sessVars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{Rules: []*slowlogrule.SlowLogRule{rule3}})
+	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 }
 
 func TestMatchDifferentTypesAfterParse(t *testing.T) {
@@ -196,8 +196,8 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 
 	slowLogRules, err := variable.ParseSessionSlowLogRules(`Mem_max: 100, Exec_retry_count: 300, Succ: true, Query_time: 2.52, Resource_group: rg1`)
 	require.NoError(t, err)
-	ctx.GetSessionVars().SlowLogRules = slowLogRules
-	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules))
+	ctx.GetSessionVars().SlowLogRules.SlowLogRules = slowLogRules
+	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 }
 
 func TestParseSingleSlowLogField(t *testing.T) {
@@ -304,12 +304,12 @@ func TestParseSessionSlowLogRules(t *testing.T) {
 		strings.ToLower(variable.SlowLogResourceGroup):  {},
 	}
 	compareConditionsUnordered(t, rules[0].Conditions, slowLogRules.Rules[0].Conditions, rawRule)
-	require.Equal(t, allConditionFields, slowLogRules.AllConditionFields)
+	require.Equal(t, allConditionFields, slowLogRules.Fields)
 	// a rule that ends with a ';'
 	slowLogRules, err = variable.ParseSessionSlowLogRules(`Exec_retry_count: 10, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1;`)
 	require.NoError(t, err)
 	compareConditionsUnordered(t, rules[0].Conditions, slowLogRules.Rules[0].Conditions, rawRule)
-	require.Equal(t, allConditionFields, slowLogRules.AllConditionFields)
+	require.Equal(t, allConditionFields, slowLogRules.Fields)
 	// some rules
 	rawRule1 := "Exec_retry_count: 123, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1;"
 	rawRule2 := "Exec_retry_count: 124, DB: db2, Succ: false, Query_time: 1.5276"
@@ -336,7 +336,7 @@ func TestParseSessionSlowLogRules(t *testing.T) {
 	}
 	compareConditionsUnordered(t, rules[0].Conditions, slowLogRules.Rules[0].Conditions, rawRule1)
 	compareConditionsUnordered(t, rules[1].Conditions, slowLogRules.Rules[1].Conditions, rawRule2)
-	require.Equal(t, allConditionFields, slowLogRules.AllConditionFields)
+	require.Equal(t, allConditionFields, slowLogRules.Fields)
 
 	// return nil
 	slowLogRules, err = variable.ParseSessionSlowLogRules("  ")
@@ -409,7 +409,7 @@ func TestParseGlobalSlowLogRules(t *testing.T) {
 	require.NotNil(t, slowLogRuleSet)
 	require.Len(t, slowLogRuleSet.RulesMap, 1)
 	compareConditionsUnordered(t, rules[0].Conditions, slowLogRuleSet.RulesMap[123].Rules[0].Conditions, rawRule)
-	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[123].AllConditionFields)
+	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[123].Fields)
 	require.Nil(t, slowLogRuleSet.RulesMap[variable.UnsetConnID])
 
 	// empty raw rule returns empty map
@@ -451,18 +451,18 @@ func TestParseGlobalSlowLogRules(t *testing.T) {
 	require.Equal(t, "db1", slowLogRuleSet.RulesMap[123].Rules[0].Conditions[1].Threshold)
 	require.Len(t, slowLogRuleSet.RulesMap[123].Rules[1].Conditions, 1)
 	require.Equal(t, "", slowLogRuleSet.RulesMap[123].RawRules)
-	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[123].AllConditionFields)
+	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[123].Fields)
 	// Conn_ID: 456
 	require.Equal(t, "db2", slowLogRuleSet.RulesMap[456].Rules[0].Conditions[1].Threshold)
 	require.Equal(t, "", slowLogRuleSet.RulesMap[456].RawRules)
-	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[456].AllConditionFields)
+	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[456].Fields)
 	// Conn_ID: -1
 	require.Equal(t, "db3", slowLogRuleSet.RulesMap[variable.UnsetConnID].Rules[0].Conditions[0].Threshold)
 	require.Equal(t, "", slowLogRuleSet.RulesMap[variable.UnsetConnID].RawRules)
 	allConditionFields = map[string]struct{}{
 		strings.ToLower(variable.SlowLogDBStr): {},
 	}
-	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[variable.UnsetConnID].AllConditionFields)
+	require.Equal(t, allConditionFields, slowLogRuleSet.RulesMap[variable.UnsetConnID].Fields)
 	// Conn_ID: 789
 	require.Equal(t, uint64(789), slowLogRuleSet.RulesMap[789].Rules[0].Conditions[0].Threshold)
 }
@@ -502,7 +502,7 @@ func BenchmarkSlowLog(b *testing.B) {
 		strings.ToLower(variable.SlowLogQueryTimeStr):   {},
 		strings.ToLower(variable.SlowLogResourceGroup):  {},
 	}
-	se.GetSessionVars().SlowLogRules = &slowlogrule.SlowLogRules{AllConditionFields: allConditionFields, Rules: rules}
+	se.GetSessionVars().SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{Fields: allConditionFields, Rules: rules})
 	gSLRules := &slowlogrule.GlobalSlowLogRules{RulesMap: make(map[int64]*slowlogrule.SlowLogRules)}
 	gSLRules.RulesMap[int64(se.GetSessionVars().ConnectionID)] = &slowlogrule.SlowLogRules{
 		Rules: []*slowlogrule.SlowLogRule{

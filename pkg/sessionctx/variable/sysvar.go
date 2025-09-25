@@ -3663,12 +3663,13 @@ var defaultSysVars = []*SysVar{
 			if err != nil {
 				return err
 			}
-			s.SlowLogRules = slowLogRules
+			s.SlowLogRules.SlowLogRules = slowLogRules
+			s.SlowLogRules.NeedUpdateEffectiveFields = true
 			logutil.BgLogger().Warn(fmt.Sprintf("zzz----------------------------------------- SetSession, rules:%#v", s.SlowLogRules))
 			return nil
 		},
 		GetSession: func(vars *SessionVars) (string, error) {
-			if vars.SlowLogRules != nil {
+			if vars.SlowLogRules.SlowLogRules != nil {
 				logutil.BgLogger().Warn(fmt.Sprintf("zzz----------------------------------------- GetSession, rules:%#v", vars.SlowLogRules.RawRules))
 				return vars.SlowLogRules.RawRules, nil
 			}

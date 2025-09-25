@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -49,24 +48,32 @@ func mergeConditionFields(dst, src map[string]struct{}) {
 	}
 }
 
+func updateAllRuleFields(globalRules *slowlogrule.GlobalSlowLogRules, seVars *variable.SessionVars) {
+	if seVars.SlowLogRules.NeedUpdateEffectiveFields ||
+		globalRules.RawRulesHash != seVars.SlowLogRules.GlobalRawRulesHash {
+		allRuleFields := make(map[string]struct{})
+		if seVars.SlowLogRules.SlowLogRules != nil {
+			mergeConditionFields(allRuleFields, seVars.SlowLogRules.Fields)
+		}
+		if specificSessionRules, ok := globalRules.RulesMap[int64(seVars.ConnectionID)]; ok {
+			mergeConditionFields(allRuleFields, specificSessionRules.Fields)
+		}
+		if clusterRules, ok := globalRules.RulesMap[variable.UnsetConnID]; ok {
+			mergeConditionFields(allRuleFields, clusterRules.Fields)
+		}
+		seVars.SlowLogRules.EffectiveFields = allRuleFields
+		seVars.SlowLogRules.GlobalRawRulesHash = globalRules.RawRulesHash
+		seVars.SlowLogRules.NeedUpdateEffectiveFields = false
+	}
+}
+
 // PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by current session's SlowLogRules.
 // These pre-collected fields are later used for matching SQL execution details against the rules.
-func PrepareSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionVars) *variable.SlowQueryLogItems {
+func PrepareSlowLogItemsForRules(ctx context.Context, globalRules *slowlogrule.GlobalSlowLogRules, seVars *variable.SessionVars) *variable.SlowQueryLogItems {
 	items := &variable.SlowQueryLogItems{}
 
-	allConditionFields := make(map[string]struct{})
-	if seVars.SlowLogRules != nil {
-		mergeConditionFields(allConditionFields, seVars.SlowLogRules.AllConditionFields)
-	}
-	globalRules := vardef.GlobalSlowLogRules.Load().RulesMap
-	if specificSessionRules, ok := globalRules[int64(seVars.ConnectionID)]; ok {
-		mergeConditionFields(allConditionFields, specificSessionRules.AllConditionFields)
-	}
-	if clusterRules, ok := globalRules[variable.UnsetConnID]; ok {
-		mergeConditionFields(allConditionFields, clusterRules.AllConditionFields)
-	}
-
-	for field := range allConditionFields {
+	updateAllRuleFields(globalRules, seVars)
+	for field := range seVars.SlowLogRules.EffectiveFields {
 		if gs, ok := variable.SlowLogRuleFieldAccessors[field]; ok && gs.Setter != nil {
 			gs.Setter(ctx, seVars, items)
 		}
@@ -121,20 +128,19 @@ func Match(seVars *variable.SessionVars, items *variable.SlowQueryLogItems, rule
 // 3. All applicable rules are combined with logical OR.
 //
 // Returns true if any rule matches, otherwise false.
-func ShouldWriteSlowLog(seVars *variable.SessionVars, items *variable.SlowQueryLogItems) bool {
-	if isMatched := Match(seVars, items, seVars.SlowLogRules); isMatched {
+func ShouldWriteSlowLog(globalRules *slowlogrule.GlobalSlowLogRules, seVars *variable.SessionVars, items *variable.SlowQueryLogItems) bool {
+	if isMatched := Match(seVars, items, seVars.SlowLogRules.SlowLogRules); isMatched {
 		logutil.BgLogger().Warn("xx----------------------------------------------- true 00")
 		return isMatched
 	}
 
-	globalRules := vardef.GlobalSlowLogRules.Load().RulesMap
-	if specificSessionRules, ok := globalRules[int64(seVars.ConnectionID)]; ok {
+	if specificSessionRules, ok := globalRules.RulesMap[int64(seVars.ConnectionID)]; ok {
 		if isMatched := Match(seVars, items, specificSessionRules); isMatched {
 			logutil.BgLogger().Warn("xx----------------------------------------------- true 11")
 			return isMatched
 		}
 	}
-	if clusterRules, ok := globalRules[variable.UnsetConnID]; ok {
+	if clusterRules, ok := globalRules.RulesMap[variable.UnsetConnID]; ok {
 		if isMatched := Match(seVars, items, clusterRules); isMatched {
 			logutil.BgLogger().Warn("xx----------------------------------------------- true 22")
 			return isMatched
@@ -154,10 +160,8 @@ func CompleteSlowLogItemsForRules(ctx context.Context, seVars *variable.SessionV
 	}
 
 	for field, sg := range variable.SlowLogRuleFieldAccessors {
-		if seVars.SlowLogRules != nil {
-			if _, ok := seVars.SlowLogRules.AllConditionFields[field]; ok {
-				continue
-			}
+		if _, ok := seVars.SlowLogRules.EffectiveFields[field]; ok {
+			continue
 		}
 
 		if sg.Setter != nil {

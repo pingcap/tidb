@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"slices"
 	"strconv"
@@ -854,6 +855,11 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 // slowLogFieldRe is uses to compile field:value
 var slowLogFieldRe = regexp.MustCompile(`\s*(\w+)\s*:\s*([^,]+)\s*`)
 
+// UnsetConnID is a sentinel value (-1) for slow log rules without an explicit connection binding.
+//
+// Semantics:
+//   - Session scope: represents the current session.
+//   - Global scope: means no specific connection ID is set, i.e. the rule applies globally.
 const UnsetConnID = int64(-1)
 
 // ParseSlowLogFieldValue is exporting for testing.
@@ -950,15 +956,15 @@ func parseSlowLogRuleSet(rawRules string, allowConnID bool) (map[int64]*slowlogr
 		slowLogRules, ok := result[connID]
 		if !ok {
 			slowLogRules = &slowlogrule.SlowLogRules{
-				AllConditionFields: make(map[string]struct{}),
-				Rules:              make([]*slowlogrule.SlowLogRule, 0, len(rules)),
+				Fields: make(map[string]struct{}),
+				Rules:  make([]*slowlogrule.SlowLogRule, 0, len(rules)),
 			}
 			result[connID] = slowLogRules
 			logutil.BgLogger().Warn(fmt.Sprintf("xxx----------------------------------------- parseSlowLogRuleSet, allow:%v, id:%d, raw rules:%#v, rule:%#v",
 				allowConnID, connID, rules, slowLogRule))
 		}
 		for _, cond := range slowLogRule.Conditions {
-			slowLogRules.AllConditionFields[cond.Field] = struct{}{}
+			slowLogRules.Fields[cond.Field] = struct{}{}
 		}
 		slowLogRules.Rules = append(slowLogRules.Rules, slowLogRule)
 	}
@@ -1006,6 +1012,14 @@ func encodeRules(rules *slowlogrule.SlowLogRules) string {
 	return strB.String()
 }
 
+func calcHash(s string) (uint64, error) {
+	h := fnv.New64a()
+	if _, err := h.Write([]byte(s)); err != nil {
+		return 0, err
+	}
+	return h.Sum64(), nil
+}
+
 // ParseGlobalSlowLogRules parses raw rules and constructs a GlobalSlowLogRules object.
 // The result contains both the raw string and the rules map keyed by ConnID.
 // allowConnID = true is used here to support both ConnID-bound and default rules.
@@ -1019,13 +1033,19 @@ func ParseGlobalSlowLogRules(rawRules string) (*slowlogrule.GlobalSlowLogRules, 
 		rulesMap = make(map[int64]*slowlogrule.SlowLogRules)
 	}
 
-	retRawRules := make([]string, 0, len(rulesMap))
+	rawSlice := make([]string, 0, len(rulesMap))
 	for _, rules := range rulesMap {
-		retRawRules = append(retRawRules, encodeRules(rules))
+		rawSlice = append(rawSlice, encodeRules(rules))
 	}
 
+	rawRules = strings.Join(rawSlice, ";")
+	rawHash, err := calcHash(rawRules)
+	if err != nil {
+		return nil, err
+	}
 	return &slowlogrule.GlobalSlowLogRules{
-		RawRules: strings.Join(retRawRules, ";"),
-		RulesMap: rulesMap,
+		RawRules:     rawRules,
+		RawRulesHash: rawHash,
+		RulesMap:     rulesMap,
 	}, nil
 }
