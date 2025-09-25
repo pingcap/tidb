@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -78,14 +77,14 @@ func TestAddStatement(t *testing.T) {
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
-	samplePlan, _, _ := stmtExecInfo1.PlanGenerator()
 	key := &StmtDigestKey{}
 	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
+	samplePlan, _, _ := stmtExecInfo1.LazyInfo.GetEncodedPlan()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
 		endTime:              now + 1860,
-		sampleSQL:            stmtExecInfo1.OriginalSQL.String(),
+		sampleSQL:            stmtExecInfo1.LazyInfo.GetOriginalSQL(),
 		samplePlan:           samplePlan,
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		execCount:            1,
@@ -170,11 +169,9 @@ func TestAddStatement(t *testing.T) {
 	// greater than that of the first statement.
 	stmtExecInfo2 := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    stringutil.StringerStr("original_sql2"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
-		PlanGenerator:  emptyPlanGenerator,
 		User:           "user2",
 		TotalLatency:   20000,
 		ParseLatency:   200,
@@ -188,7 +185,7 @@ func TestAddStatement(t *testing.T) {
 			MaxWaitTime:       2500,
 			TotWaitTime:       40000,
 		},
-		ExecDetail: &execdetails.ExecDetails{
+		ExecDetail: execdetails.ExecDetails{
 			BackoffTime:  180,
 			RequestCount: 20,
 			CommitDetail: &util.CommitDetails{
@@ -241,6 +238,13 @@ func TestAddStatement(t *testing.T) {
 		Succeed:           true,
 		RUDetail:          util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
 		ResourceGroupName: "rg1",
+		LazyInfo: &mockLazyInfo{
+			originalSQL: "original_sql2",
+			plan:        "",
+			hintStr:     "",
+			binPlan:     "",
+			planDigest:  "",
+		},
 	}
 	stmtExecInfo2.StmtCtx.AddAffectedRows(200)
 	expectedSummaryElement.execCount++
@@ -311,11 +315,9 @@ func TestAddStatement(t *testing.T) {
 	// less than that of the first statement.
 	stmtExecInfo3 := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    stringutil.StringerStr("original_sql3"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
-		PlanGenerator:  emptyPlanGenerator,
 		User:           "user3",
 		TotalLatency:   1000,
 		ParseLatency:   50,
@@ -329,7 +331,7 @@ func TestAddStatement(t *testing.T) {
 			MaxWaitTime:       250,
 			TotWaitTime:       40,
 		},
-		ExecDetail: &execdetails.ExecDetails{
+		ExecDetail: execdetails.ExecDetails{
 			BackoffTime:  18,
 			RequestCount: 2,
 			CommitDetail: &util.CommitDetails{
@@ -383,6 +385,13 @@ func TestAddStatement(t *testing.T) {
 		Succeed:           true,
 		RUDetail:          util.NewRUDetailsWith(0.12, 0.34, 5*time.Microsecond),
 		ResourceGroupName: "rg1",
+		LazyInfo: &mockLazyInfo{
+			originalSQL: "original_sql3",
+			plan:        "",
+			hintStr:     "",
+			binPlan:     "",
+			planDigest:  "",
+		},
 	}
 	stmtExecInfo3.StmtCtx.AddAffectedRows(20000)
 	expectedSummaryElement.execCount++
@@ -457,12 +466,16 @@ func TestAddStatement(t *testing.T) {
 	// Test for plan too large
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
-	stmtExecInfo7.PlanGenerator = func() (string, string, any) {
-		buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
-		for i := range buf {
-			buf[i] = 'a'
-		}
-		return string(buf), "", nil
+	buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
+	for i := range buf {
+		buf[i] = 'a'
+	}
+	stmtExecInfo7.LazyInfo = &mockLazyInfo{
+		originalSQL: stmtExecInfo1.LazyInfo.GetOriginalSQL(),
+		plan:        string(buf),
+		hintStr:     "",
+		binPlan:     "",
+		planDigest:  "",
 	}
 	key = &StmtDigestKey{}
 	key.Init(stmtExecInfo7.SchemaName, stmtExecInfo7.Digest, "", stmtExecInfo7.PlanDigest, stmtExecInfo7.ResourceGroupName)
@@ -601,11 +614,9 @@ func generateAnyExecInfo() *StmtExecInfo {
 
 	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    stringutil.StringerStr("original_sql1"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
-		PlanGenerator:  emptyPlanGenerator,
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,
@@ -619,7 +630,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 			MaxWaitTime:       1500,
 			TotWaitTime:       1000,
 		},
-		ExecDetail: &execdetails.ExecDetails{
+		ExecDetail: execdetails.ExecDetails{
 			BackoffTime:  80,
 			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{
@@ -674,9 +685,40 @@ func generateAnyExecInfo() *StmtExecInfo {
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
+		LazyInfo: &mockLazyInfo{
+			originalSQL: "original_sql1",
+			plan:        "",
+			hintStr:     "",
+			binPlan:     "",
+			planDigest:  "",
+		},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
+}
+
+type mockLazyInfo struct {
+	originalSQL string
+	plan        string
+	hintStr     string
+	binPlan     string
+	planDigest  string
+}
+
+func (a *mockLazyInfo) GetOriginalSQL() string {
+	return a.originalSQL
+}
+
+func (a *mockLazyInfo) GetEncodedPlan() (p string, h string, e any) {
+	return a.plan, a.hintStr, nil
+}
+
+func (a *mockLazyInfo) GetBinaryPlan() string {
+	return a.binPlan
+}
+
+func (a *mockLazyInfo) GetPlanDigest() string {
+	return a.planDigest
 }
 
 func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryReader {
@@ -838,7 +880,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
+		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
 		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
@@ -1004,7 +1046,7 @@ func TestMaxSQLLength(t *testing.T) {
 	str := strings.Repeat("a", length)
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.OriginalSQL = stringutil.StringerStr(str)
+	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = str
 	stmtExecInfo1.NormalizedSQL = str
 	ssMap.AddStatement(stmtExecInfo1)
 
@@ -1099,7 +1141,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo2 := stmtExecInfo1
-	stmtExecInfo2.OriginalSQL = stringutil.StringerStr("original_sql2")
+	stmtExecInfo2.LazyInfo.(*mockLazyInfo).originalSQL = "original_sql2"
 	stmtExecInfo2.NormalizedSQL = "normalized_sql2"
 	stmtExecInfo2.Digest = "digest2"
 	ssMap.AddStatement(stmtExecInfo2)
@@ -1173,7 +1215,7 @@ func TestGetMoreThanCntBindableStmt(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.OriginalSQL = stringutil.StringerStr("insert 1")
+	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = "insert 1"
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	ssMap.AddStatement(stmtExecInfo1)
@@ -1400,7 +1442,7 @@ func TestPointGet(t *testing.T) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.PlanDigest = ""
-	stmtExecInfo1.PlanDigestGen = fakePlanDigestGenerator
+	stmtExecInfo1.LazyInfo.(*mockLazyInfo).plan = fakePlanDigestGenerator()
 	ssMap.AddStatement(stmtExecInfo1)
 	key := &StmtDigestKey{}
 	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", "", stmtExecInfo1.ResourceGroupName)

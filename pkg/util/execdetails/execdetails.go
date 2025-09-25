@@ -496,14 +496,14 @@ func (s *SyncExecDetails) GetExecDetails() ExecDetails {
 }
 
 // CopTasksDetails returns some useful information of cop-tasks during execution.
-func (s *SyncExecDetails) CopTasksDetails() CopTasksDetails {
+func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.detailsSummary.NumCopTasks
-	d := CopTasksDetails{NumCopTasks: n}
 	if n == 0 {
-		return d
+		return nil
 	}
+	d := &CopTasksDetails{NumCopTasks: n}
 	d.AvgProcessTime = s.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = s.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
@@ -593,7 +593,7 @@ type CopTasksSummary struct {
 
 // ToZapFields wraps the CopTasksDetails as zap.Fileds.
 func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
-	if d.NumCopTasks == 0 {
+	if d == nil || d.NumCopTasks == 0 {
 		return
 	}
 	fields = make([]zap.Field, 0, 10)
@@ -1566,6 +1566,17 @@ func (e *RuntimeStatsColl) GetRootStats(planID int) *RootRuntimeStats {
 		e.rootStats[planID] = runtimeStats
 	}
 	return runtimeStats
+}
+
+// GetPlanActRows returns the actual rows of the plan.
+func (e *RuntimeStatsColl) GetPlanActRows(planID int) int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtimeStats, exists := e.rootStats[planID]
+	if !exists {
+		return 0
+	}
+	return runtimeStats.GetActRows()
 }
 
 // GetCopStats gets the CopRuntimeStats specified by planID.

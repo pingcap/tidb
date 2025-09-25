@@ -30,7 +30,7 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.NormalizedSQL, record1.NormalizedSQL)
 	require.Equal(t, "db1.tb1,db2.tb2", record1.TableNames)
 	require.Equal(t, info.IsInternal, record1.IsInternal)
-	require.Equal(t, formatSQL(info.OriginalSQL.String()), record1.SampleSQL)
+	require.Equal(t, formatSQL(info.LazyInfo.GetOriginalSQL()), record1.SampleSQL)
 	require.Equal(t, info.Charset, record1.Charset)
 	require.Equal(t, info.Collation, record1.Collation)
 	require.Equal(t, info.PrevSQL, record1.PrevSQL)
