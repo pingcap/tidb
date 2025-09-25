@@ -1,23 +1,24 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "oomtest_test",
+    name = "planreplayer_test",
     timeout = "short",
-    srcs = ["oom_test.go"],
+    srcs = [
+        "main_test.go",
+        "plan_replayer_test.go",
+    ],
     flaky = True,
-    race = "on",
-    shard_count = 4,
+    shard_count = 5,
     deps = [
+        "//pkg/config",
+        "//pkg/meta/autoid",
         "//pkg/testkit",
+        "//pkg/testkit/testdata",
         "//pkg/testkit/testsetup",
-        "//pkg/util/memory",
-        "//pkg/util/set",
-        "//pkg/util/syncutil",
+        "//pkg/util/replayer",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
-        "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
     ],
 )
