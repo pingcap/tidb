@@ -97,21 +97,20 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 		if v.FuncName.L == ast.LogicOr {
 			return nil, orPredicate
 		}
+		cols := make([]*expression.Column, 0, 2)
+		defer func() {
+			// Sort the columns based on their UniqueID to ensure a consistent order.
+			slices.SortFunc(cols, func(i, j *expression.Column) int {
+				return cmp.Compare(i.UniqueID, j.UniqueID)
+			})
+		}()
 		if v.FuncName.L == ast.LogicAnd {
 			args := v.GetArgs()
-			expr1, ok1 := args[1].(*expression.ScalarFunction)
-			expr0, ok0 := args[0].(*expression.ScalarFunction)
-			result := make([]*expression.Column, 0, 2)
-			if ok0 && ok1 && expr0.FuncName.L == ast.IsNull && expr1.FuncName.L == ast.IsNull {
-				col0, ok0 := expr0.GetArgs()[0].(*expression.Column)
-				col1, ok1 := expr1.GetArgs()[0].(*expression.Column)
-				if ok0 && ok1 {
-					result = append(result, col0, col1)
-					slices.SortFunc(result, func(i, j *expression.Column) int {
-						return cmp.Compare(i.UniqueID, j.UniqueID)
-					})
-					return result, andIsNullTwoColumnPredicate
-				}
+			col0, ok0 := expression.IsIsNullColumn(args[0])
+			col1, ok1 := expression.IsIsNullColumn(args[1])
+			if ok0 && ok1 {
+				cols = append(cols, col0, col1)
+				return cols, andIsNullTwoColumnPredicate
 			}
 			return nil, andPredicate
 		}
@@ -119,7 +118,6 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 		if len(args) == 0 {
 			return nil, otherPredicate
 		}
-		cols := make([]*expression.Column, 0, len(args))
 		col, colOk := args[0].(*expression.Column)
 		if !colOk {
 			return nil, otherPredicate

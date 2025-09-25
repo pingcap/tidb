@@ -2287,3 +2287,14 @@ func IsConstNull(expr Expression) bool {
 	}
 	return false
 }
+
+// IsIsNullColumn checks if the expression is in the form of `isnull(col)`.
+func IsIsNullColumn(expr Expression) (*Column, bool) {
+	if e, ok := expr.(*ScalarFunction); ok {
+		if e.FuncName.L == ast.IsNull {
+			c, ok := e.GetArgs()[0].(*Column)
+			return c, ok
+		}
+	}
+	return nil, false
+}
