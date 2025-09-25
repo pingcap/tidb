@@ -105,8 +105,7 @@ func GetPlanReplayerDirName(vfs afero.Fs) string {
 			PlanReplayerPath = tidbLogDir
 			logutil.BgLogger().Info("use log dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
 		} else {
-			tidbLogDir := config.GetGlobalConfig().TempDir
-			PlanReplayerPath = filepath.Join(tidbLogDir, "replayer")
+			PlanReplayerPath = filepath.Join(config.GetGlobalConfig().TempDir, "replayer")
 			logutil.BgLogger().Info("use temp dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
 		}
 	})
