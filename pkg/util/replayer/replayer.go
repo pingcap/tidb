@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/afero"
 	"go.uber.org/zap"
@@ -121,25 +122,24 @@ func canWriteToFile(vfs afero.Fs, path string) bool {
 		logutil.BgLogger().Warn("cannot write to file", zap.String("path", path))
 		return false
 	}
-	// Clean up the test file after checking
-	err := vfs.Remove(path)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to remove test file", zap.String("path", path), zap.Error(err))
-	}
 	return true
 }
 
 func canWriteToFileInternal(vfs afero.Fs, path string) bool {
 	// Open the file in write mode
-	file, err := vfs.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0644)
+	file, err := vfs.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return false
 	}
+	defer func() {
+		err = file.Close()
+		intest.Assert(err == nil, "failed to close file")
+		if err == nil {
+			err = vfs.Remove(path)
+			intest.Assert(err == nil, "failed to delete file")
+		}
+	}()
 	// Try to write a single byte to the file
 	_, err = file.Write([]byte{0})
-	if err != nil {
-		return false
-	}
-	err = file.Close()
 	return err == nil
 }
