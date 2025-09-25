@@ -492,10 +492,10 @@ var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task
 var WindowIsTopN func(p base.LogicalPlan) (bool, uint64)
 
 // GetTaskPlanCost export the getTaskPlanCost from core pkg for cascades usage.
-var GetTaskPlanCost func(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float64, bool, error)
+var GetTaskPlanCost func(t base.Task) (float64, bool, error)
 
 // CompareTaskCost export the compareTaskCost from core pkg for cascades usage.
-var CompareTaskCost func(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (
+var CompareTaskCost func(curTask, bestTask base.Task) (
 	curIsBetter bool, err error)
 
 // GetPossibleAccessPaths is used in static pruning, when it is not needed, remove this func pointer.

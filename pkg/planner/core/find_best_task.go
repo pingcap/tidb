@@ -303,7 +303,7 @@ func enumeratePhysicalPlans4Task(
 		appendCandidate4PhysicalOptimizeOp(opt, baseLP, curTask.Plan(), prop)
 
 		// Get the most efficient one only by low-cost priority among all valid plans.
-		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
+		if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
 			return nil, 0, false, err
 		} else if curIsBetter {
 			bestTask = curTask
@@ -311,7 +311,7 @@ func enumeratePhysicalPlans4Task(
 
 		if hintApplicable {
 			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
-			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
+			if curIsBetter, err := compareTaskCost(curTask, preferTask); err != nil {
 				return nil, 0, false, err
 			} else if curIsBetter {
 				preferTask = curTask
@@ -575,12 +575,12 @@ func iterateChildPlan4LogicalSequence(
 }
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
-func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
-	curCost, curInvalid, err := getTaskPlanCost(curTask, op)
+func compareTaskCost(curTask, bestTask base.Task) (curIsBetter bool, err error) {
+	curCost, curInvalid, err := getTaskPlanCost(curTask)
 	if err != nil {
 		return false, err
 	}
-	bestCost, bestInvalid, err := getTaskPlanCost(bestTask, op)
+	bestCost, bestInvalid, err := getTaskPlanCost(bestTask)
 	if err != nil {
 		return false, err
 	}
@@ -595,7 +595,7 @@ func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOpti
 
 // getTaskPlanCost returns the cost of this task.
 // The second returned value indicates whether this task is valid.
-func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float64, bool, error) {
+func getTaskPlanCost(t base.Task) (float64, bool, error) {
 	if t.Invalid() {
 		return math.MaxFloat64, true, nil
 	}
@@ -888,7 +888,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 		goto END
 	}
 	appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
-	if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
+	if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
 		return nil, 0, err
 	} else if curIsBetter {
 		bestTask = curTask
@@ -1838,7 +1838,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 
 		if unenforcedTask != nil && !unenforcedTask.Invalid() {
-			curIsBest, cerr := compareTaskCost(unenforcedTask, t, opt)
+			curIsBest, cerr := compareTaskCost(unenforcedTask, t)
 			if cerr != nil {
 				err = cerr
 				return
@@ -1899,7 +1899,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 			appendCandidate(ds, idxMergeTask, prop, opt)
 
-			curIsBetter, err := compareTaskCost(idxMergeTask, t, opt)
+			curIsBetter, err := compareTaskCost(idxMergeTask, t)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -2008,7 +2008,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 					cntPlan++
 					planCounter.Dec(1)
 				}
-				curIsBetter, cerr := compareTaskCost(pointGetTask, t, opt)
+				curIsBetter, cerr := compareTaskCost(pointGetTask, t)
 				if cerr != nil {
 					return nil, 0, cerr
 				}
@@ -2044,7 +2044,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, tblTask, prop, opt)
-			curIsBetter, err := compareTaskCost(tblTask, t, opt)
+			curIsBetter, err := compareTaskCost(tblTask, t)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -2073,7 +2073,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			planCounter.Dec(1)
 		}
 		appendCandidate(ds, idxTask, prop, opt)
-		curIsBetter, err := compareTaskCost(idxTask, t, opt)
+		curIsBetter, err := compareTaskCost(idxTask, t)
 		if err != nil {
 			return nil, 0, err
 		}

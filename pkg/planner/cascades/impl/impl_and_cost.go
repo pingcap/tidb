@@ -131,7 +131,7 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 	// Check whether the child group is already optimized for the physical property.
 	task := group.GetBestTask(prop)
 	if task != nil {
-		taskCost, invalid, err := utilfuncp.GetTaskPlanCost(task, opt)
+		taskCost, invalid, err := utilfuncp.GetTaskPlanCost(task)
 		if err != nil || invalid {
 			return base.InvalidTask, 0, err
 		}
@@ -163,7 +163,7 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 		}
 		cntPlan += cnt
 		// update the best task across the logical alternatives.
-		if curIsBetter, err := utilfuncp.CompareTaskCost(task, bestTask, opt); err != nil {
+		if curIsBetter, err := utilfuncp.CompareTaskCost(task, bestTask); err != nil {
 			implErr = err
 			return false
 		} else if curIsBetter {
