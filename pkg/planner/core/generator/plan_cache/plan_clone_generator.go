@@ -80,22 +80,22 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		switch fullFieldName { // handle some fields specially
 		case "physicalop.PhysicalTableReader.TablePlans", "physicalop.PhysicalIndexLookUpReader.TablePlans",
 			"physicalop.PhysicalIndexMergeReader.TablePlans":
-			c.write("cloned.TablePlans = FlattenListOrTiFlashPushDownPlan(cloned.TablePlan)")
+			c.write("cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)")
 			continue
 		case "physicalop.PhysicalIndexReader.IndexPlans":
-			c.write("cloned.IndexPlans = FlattenListOrTiFlashPushDownPlan(cloned.IndexPlan)")
+			c.write("cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)")
 			continue
 		case "physicalop.PhysicalIndexLookUpReader.IndexPlans":
 			c.write("if cloned.IndexLookUpPushDown {")
 			c.write("cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(cloned.IndexPlan)")
 			c.write("} else {")
-			c.write("cloned.IndexPlans = FlattenListOrTiFlashPushDownPlan(cloned.IndexPlan)")
+			c.write("cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)")
 			c.write("}")
 			continue
 		case "physicalop.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
 			c.write("for i, plan := range cloned.PartialPlansRaw {")
-			c.write("cloned.PartialPlans[i] = FlattenListOrTiFlashPushDownPlan(plan)")
+			c.write("cloned.PartialPlans[i] = FlattenListPushDownPlan(plan)")
 			c.write("}")
 			continue
 		}

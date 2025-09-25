@@ -229,7 +229,7 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPus
 	if tryPushDownIndexLookUp {
 		p.tryPushDownLookUp(ctx)
 	}
-	p.TablePlans = FlattenListOrTiFlashPushDownPlan(p.TablePlan)
+	p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 	p.IndexPlans, p.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(p.IndexPlan)
 	return &p
 }

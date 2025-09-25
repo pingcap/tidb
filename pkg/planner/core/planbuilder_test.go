@@ -1080,7 +1080,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
 	checkPushDownIndexLookUpReaderCommon := func(r *physicalop.PhysicalIndexLookUpReader) {
 		require.True(t, r.IndexLookUpPushDown)
-		tablePlans := physicalop.FlattenListOrTiFlashPushDownPlan(r.TablePlan)
+		tablePlans := physicalop.FlattenListPushDownPlan(r.TablePlan)
 		require.Len(t, r.TablePlans, len(tablePlans))
 		planIDMap := make(map[int]struct{})
 		for i, p := range tablePlans {

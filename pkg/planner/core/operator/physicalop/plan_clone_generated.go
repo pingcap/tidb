@@ -314,7 +314,7 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		}
 		cloned.IndexPlan = IndexPlan.(base.PhysicalPlan)
 	}
-	cloned.IndexPlans = FlattenListOrTiFlashPushDownPlan(cloned.IndexPlan)
+	cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)
 	cloned.OutputColumns = utilfuncp.CloneColumnsForPlanCache(op.OutputColumns, nil)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
@@ -336,7 +336,7 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		}
 		cloned.TablePlan = TablePlan.(base.PhysicalPlan)
 	}
-	cloned.TablePlans = FlattenListOrTiFlashPushDownPlan(cloned.TablePlan)
+	cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	if op.TableScanAndPartitionInfos != nil {
 		return nil, false
@@ -369,9 +369,9 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	}
 	cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))
 	for i, plan := range cloned.PartialPlansRaw {
-		cloned.PartialPlans[i] = FlattenListOrTiFlashPushDownPlan(plan)
+		cloned.PartialPlans[i] = FlattenListPushDownPlan(plan)
 	}
-	cloned.TablePlans = FlattenListOrTiFlashPushDownPlan(cloned.TablePlan)
+	cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone()
@@ -405,7 +405,7 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 	if cloned.IndexLookUpPushDown {
 		cloned.IndexPlans, cloned.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(cloned.IndexPlan)
 	} else {
-		cloned.IndexPlans = FlattenListOrTiFlashPushDownPlan(cloned.IndexPlan)
+		cloned.IndexPlans = FlattenListPushDownPlan(cloned.IndexPlan)
 	}
 	if op.IndexPlansUnNatureOrders != nil {
 		cloned.IndexPlansUnNatureOrders = make(map[int]int, len(op.IndexPlansUnNatureOrders))
@@ -413,7 +413,7 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 			cloned.IndexPlansUnNatureOrders[k] = v
 		}
 	}
-	cloned.TablePlans = FlattenListOrTiFlashPushDownPlan(cloned.TablePlan)
+	cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)
 	if op.ExtraHandleCol != nil {
 		if op.ExtraHandleCol.SafeToShareAcrossSession() {
 			cloned.ExtraHandleCol = op.ExtraHandleCol

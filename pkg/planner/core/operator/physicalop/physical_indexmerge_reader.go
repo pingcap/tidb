@@ -80,11 +80,11 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.PartialPlansRaw))
 	for _, partialPlan := range p.PartialPlansRaw {
-		tempPlans := FlattenListOrTiFlashPushDownPlan(partialPlan)
+		tempPlans := FlattenListPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.TablePlan != nil {
-		p.TablePlans = FlattenListOrTiFlashPushDownPlan(p.TablePlan)
+		p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 		p.SetSchema(p.TablePlan.Schema())
 		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {

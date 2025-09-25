@@ -28,14 +28,14 @@ func connectOneChildPlans(plans ...base.PhysicalPlan) base.PhysicalPlan {
 	return plans[0]
 }
 
-func TestFlattenListOrTiFlashPushDownPlan(t *testing.T) {
+func TestFlattenListPushDownPlan(t *testing.T) {
 	plans := []base.PhysicalPlan{
 		&PhysicalLimit{},
 		&PhysicalSelection{},
 		&PhysicalProjection{},
 		&PhysicalTableReader{},
 	}
-	flatten := FlattenListOrTiFlashPushDownPlan(connectOneChildPlans(plans...))
+	flatten := FlattenListPushDownPlan(connectOneChildPlans(plans...))
 	require.Equal(t, len(plans), len(flatten))
 	require.Same(t, plans[0], flatten[3])
 	require.Same(t, plans[1], flatten[2])

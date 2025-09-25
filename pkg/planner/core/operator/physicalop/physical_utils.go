@@ -60,9 +60,9 @@ func flattenPlanWithPreorderTraversal(plan base.PhysicalPlan, plans []base.Physi
 	return plans
 }
 
-// FlattenListOrTiFlashPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-// It is used to flatten the plan tree for TiFlash or TiKV plan true that all parents have only one child.
-func FlattenListOrTiFlashPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
+// FlattenListPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+// It is used to flatten the plan tree that all parents have only one child.
+func FlattenListPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 	plans := make([]base.PhysicalPlan, 0, 5)
 	plans = flattenPlanWithPreorderTraversal(p, plans)
 	for i := range len(plans) / 2 {
