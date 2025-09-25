@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
@@ -2730,11 +2731,64 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
 	if e.IsFromRemote {
-		// TODO: do the real refresh stats
 		statslogutil.StatsLogger().Info("Refresh stats from remote", zap.String("sql", s.Text()))
-		return nil
+		return e.executeRefreshStatsOnCurrentInstance(ctx, s)
 	}
-	return broadcast(ctx, e.Ctx(), s.Text())
+	if s.IsClusterWide {
+		return broadcast(ctx, e.Ctx(), s.Text())
+	}
+	return e.executeRefreshStatsOnCurrentInstance(ctx, s)
+}
+
+func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	s.Dedup()
+	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
+	tableIDs := make([]int64, 0, len(s.RefreshObjects))
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].RefreshObjectScope == ast.RefreshObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, refreshObject := range s.RefreshObjects {
+			switch refreshObject.RefreshObjectScope {
+			case ast.RefreshObjectScopeDatabase:
+				tables, err := is.SchemaTableInfos(ctx, refreshObject.DBName)
+				if err != nil {
+					return err
+				}
+				if tables == nil {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
+					continue
+				}
+				for _, table := range tables {
+					tableIDs = append(tableIDs, table.ID)
+				}
+			case ast.RefreshObjectScopeTable:
+				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
+				if err != nil {
+					return err
+				}
+				if table == nil {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+					continue
+				}
+				tableIDs = append(tableIDs, table.ID)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+	}
+	// Note: tableIDs is empty means to refresh all tables.
+	h := domain.GetDomain(e.Ctx()).StatsHandle()
+	if s.RefreshMode != nil {
+		if *s.RefreshMode == ast.RefreshStatsModeLite {
+			return h.InitStatsLite(ctx, tableIDs...)
+		}
+		return h.InitStats(ctx, is, tableIDs...)
+	}
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	if liteInitStats {
+		return h.InitStatsLite(ctx, tableIDs...)
+	}
+	return h.InitStats(ctx, is, tableIDs...)
 }
 
 func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
