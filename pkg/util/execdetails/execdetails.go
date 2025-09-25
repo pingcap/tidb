@@ -471,17 +471,9 @@ func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 	if n == 0 {
 		return nil
 	}
-<<<<<<< HEAD
+	d := &CopTasksDetails{NumCopTasks: n}
 	d.AvgProcessTime = s.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = s.execDetails.TimeDetail.WaitTime / time.Duration(n)
-=======
-	d := &CopTasksDetails{NumCopTasks: n}
-	d.TotProcessTime = s.execDetails.TimeDetail.ProcessTime
-	d.AvgProcessTime = d.TotProcessTime / time.Duration(n)
-
-	d.TotWaitTime = s.execDetails.TimeDetail.WaitTime
-	d.AvgWaitTime = d.TotWaitTime / time.Duration(n)
->>>>>>> a3d60bcfc6c (executor: Optimize statement summary performance by avoiding heap memory allocation (#58023))
 
 	d.P90ProcessTime = time.Duration((s.detailsSummary.ProcessTimePercentile.GetPercentile(0.9)))
 	d.MaxProcessTime = s.detailsSummary.ProcessTimePercentile.GetMax().D

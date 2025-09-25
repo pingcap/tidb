@@ -669,14 +669,9 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	if len(binPlan) > MaxEncodedPlanSizeInBytes {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
-<<<<<<< HEAD
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
 		sampleSQL: formatSQL(sei.OriginalSQL.String()),
-=======
-	return &stmtSummaryStats{
-		sampleSQL: formatSQL(sei.LazyInfo.GetOriginalSQL()),
->>>>>>> a3d60bcfc6c (executor: Optimize statement summary performance by avoiding heap memory allocation (#58023))
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -755,30 +750,16 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	// coprocessor
-<<<<<<< HEAD
-	numCopTasks := int64(sei.CopTasks.NumCopTasks)
-	ssElement.sumNumCopTasks += numCopTasks
-	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
-		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
-		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
-	}
-	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
-		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
-		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
-=======
 	if sei.CopTasks != nil {
-		ssStats.sumNumCopTasks += int64(sei.CopTasks.NumCopTasks)
-		ssStats.sumCopProcessTime += sei.CopTasks.TotProcessTime
-		if sei.CopTasks.MaxProcessTime > ssStats.maxCopProcessTime {
-			ssStats.maxCopProcessTime = sei.CopTasks.MaxProcessTime
-			ssStats.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
+		ssElement.sumNumCopTasks += int64(sei.CopTasks.NumCopTasks)
+		if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
+			ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
+			ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
 		}
-		ssStats.sumCopWaitTime += sei.CopTasks.TotWaitTime
-		if sei.CopTasks.MaxWaitTime > ssStats.maxCopWaitTime {
-			ssStats.maxCopWaitTime = sei.CopTasks.MaxWaitTime
-			ssStats.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+		if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
+			ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
+			ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
 		}
->>>>>>> a3d60bcfc6c (executor: Optimize statement summary performance by avoiding heap memory allocation (#58023))
 	}
 
 	// TiKV
