@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +47,8 @@ func TestCalcMaxNodeCountByTableSize(t *testing.T) {
 	}
 	for i, tt := range tests {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			got := CalcMaxNodeCountByTableSize(tt.tableSize, tt.cores)
+			cal := NewRCCalc(tt.tableSize, tt.cores, 0, schstatus.GetDefaultTuneFactors())
+			got := cal.CalcMaxNodeCountForAddIndex()
 			require.Equal(t, tt.expected, got, fmt.Sprintf("tableSize:%d cores:%d", tt.tableSize, tt.cores))
 		})
 	}
@@ -77,7 +79,8 @@ func TestCalcMaxNodeCountByDataSize(t *testing.T) {
 	}
 	for i, tt := range tests {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			got := CalcMaxNodeCountByDataSize(tt.dataSize, tt.cores)
+			calc := NewRCCalc(tt.dataSize, tt.cores, 0, schstatus.GetDefaultTuneFactors())
+			got := calc.CalcMaxNodeCountForImportInto()
 			require.Equal(t, tt.expected, got,
 				fmt.Sprintf("dataSize:%d cores:%d", tt.dataSize, tt.cores))
 		})
@@ -106,7 +109,8 @@ func TestCalcConcurrencyByDataSize(t *testing.T) {
 		{1, 5, 1},
 	}
 	for _, tt := range tests {
-		require.Equal(t, tt.expected, CalcConcurrencyByDataSize(tt.dataSize, tt.cores),
+		calc := NewRCCalc(tt.dataSize, tt.cores, 0, schstatus.GetDefaultTuneFactors())
+		require.Equal(t, tt.expected, calc.CalcConcurrency(),
 			fmt.Sprintf("dataSize:%d cores:%d", tt.dataSize, tt.cores))
 	}
 }
@@ -146,6 +150,55 @@ func TestCalcDistSQLConcurrency(t *testing.T) {
 	for i, tt := range tests {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
 			require.Equal(t, tt.expected, CalcDistSQLConcurrency(tt.c, tt.n, tt.nc))
+		})
+	}
+}
+
+func TestIndexSizeRatio(t *testing.T) {
+	tests := []struct {
+		dataSize       int64
+		cores          int
+		indexSizeRatio float64
+		expectedC      int
+		expectedN      int
+	}{
+		{100 * units.GiB, 8, 0, 4, 1},
+		{100 * units.GiB, 8, 1.0, 8, 1},
+		{100 * units.GiB, 8, 1.5, 8, 1},
+		{100 * units.GiB, 8, 2.0, 8, 2},
+	}
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			calc := NewRCCalc(tt.dataSize, tt.cores, tt.indexSizeRatio, schstatus.GetDefaultTuneFactors())
+			require.Equal(t, tt.expectedC, calc.CalcConcurrency())
+			require.Equal(t, tt.expectedN, calc.CalcMaxNodeCountForImportInto())
+		})
+	}
+}
+
+func TestTuneFactors(t *testing.T) {
+	tests := []struct {
+		dataSize      int64
+		cores         int
+		amplifyFactor float64
+		expectedC     int
+		importN       int
+		addIndexN     int
+	}{
+		{100 * units.GiB, 8, 1, 4, 1, 1},
+		{1000 * units.GiB, 8, 1, 8, 5, 5},
+		{1000 * units.GiB, 8, 1.5, 8, 8, 8},
+		{1000 * units.GiB, 8, 2, 8, 10, 10},
+		{1000 * units.GiB, 8, 10, 8, 50, 50},
+		{100 * units.TiB, 8, 2, 8, 64, 60},
+		{100 * units.TiB, 8, 5, 8, 160, 150},
+	}
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			calc := NewRCCalc(tc.dataSize, tc.cores, 0, &schstatus.TuneFactors{AmplifyFactor: tc.amplifyFactor})
+			require.Equal(t, tc.expectedC, calc.CalcConcurrency())
+			require.Equal(t, tc.importN, calc.CalcMaxNodeCountForImportInto())
+			require.Equal(t, tc.addIndexN, calc.CalcMaxNodeCountForAddIndex())
 		})
 	}
 }

@@ -839,9 +839,7 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 		}
 	}
 
-	failpoint.Inject("injectPanicForIndexIngest", func() {
-		panic("mock panic")
-	})
+	failpoint.InjectCall("mockIndexIngestWorkerFault")
 
 	result := IndexWriteResult{ID: ck.ID}
 	w.initSessCtx()
