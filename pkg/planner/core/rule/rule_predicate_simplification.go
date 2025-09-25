@@ -50,8 +50,8 @@ const (
 	lessThanOrEqualPredicate
 	greaterThanOrEqualPredicate
 	orPredicate
-	andIsNullTwoColumnPredicate //(i IS NULL AND j IS NULL)
-	equalColumnPredicate        // col1 = col2
+	isNullColumnPredicate // i IS NULL
+	equalColumnPredicate  // col1 = col2
 	andPredicate
 	scalarPredicate
 	falsePredicate
@@ -105,14 +105,10 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 			})
 		}()
 		if v.FuncName.L == ast.LogicAnd {
-			args := v.GetArgs()
-			col0, ok0 := expression.IsIsNullColumn(args[0])
-			col1, ok1 := expression.IsIsNullColumn(args[1])
-			if ok0 && ok1 {
-				cols = append(cols, col0, col1)
-				return cols, andIsNullTwoColumnPredicate
-			}
 			return nil, andPredicate
+		}
+		if col, ok := expression.IsIsNullColumn(v); ok {
+			return append(cols, col), isNullColumnPredicate
 		}
 		args := v.GetArgs()
 		if len(args) == 0 {
@@ -269,21 +265,7 @@ func mergeExpression(sctx base.PlanContext, predicates []expression.Expression) 
 			if slices.EqualFunc(iCol, jCol, func(i, j *expression.Column) bool {
 				return i.Equals(j)
 			}) {
-				if iType == equalColumnPredicate && jType == andIsNullTwoColumnPredicate {
-					v := ithPredicate.(*expression.ScalarFunction)
-					predicates[i] = expression.NewFunctionInternal(
-						sctx.GetExprCtx(),
-						ast.NullEQ,
-						v.RetType, expression.DeepCopyColumns(iCol)...)
-					removeValues = append(removeValues, j)
-				} else if iType == andIsNullTwoColumnPredicate && jType == equalColumnPredicate {
-					v := jthPredicate.(*expression.ScalarFunction)
-					predicates[j] = expression.NewFunctionInternal(
-						sctx.GetExprCtx(),
-						ast.NullEQ,
-						v.RetType, expression.DeepCopyColumns(jCol)...)
-					removeValues = append(removeValues, i)
-				} else if iType == notEqualPredicate && jType == inListPredicate {
+				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
 					if maybeOverOptimized4PlanCache {
 						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
