@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -87,15 +86,15 @@ func (la *LogicalAggregation) ExplainInfo() string {
 // ReplaceExprColumns implements base.Plan.<5th> interface.
 func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
-		for _, aggExpr := range agg.Args {
-			ruleutil.ResolveExprAndReplace(aggExpr, replace)
+		for i, aggExpr := range agg.Args {
+			agg.Args[i] = ruleutil.ResolveExprAndReplace(aggExpr, replace)
 		}
-		for _, orderExpr := range agg.OrderByItems {
-			ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
+		for i, orderExpr := range agg.OrderByItems {
+			agg.OrderByItems[i].Expr = ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
 		}
 	}
-	for _, gbyItem := range la.GroupByItems {
-		ruleutil.ResolveExprAndReplace(gbyItem, replace)
+	for i, gbyItem := range la.GroupByItems {
+		la.GroupByItems[i] = ruleutil.ResolveExprAndReplace(gbyItem, replace)
 	}
 }
 
@@ -290,11 +289,6 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 	}
 	la.PossibleProperties = resultProperties
 	return resultProperties
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalAggregation(la, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

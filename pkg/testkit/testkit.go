@@ -780,3 +780,9 @@ func LoadTableStats(fileName string, dom *domain.Domain) error {
 	}
 	return nil
 }
+
+// MockGCSavePoint mocks a GC save point. It's used in tests that need to set TiDB snapshot.
+func (tk *TestKit) MockGCSavePoint() {
+	safePoint := "20160102-15:04:05 -0700"
+	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%s', '') ON DUPLICATE KEY UPDATE variable_value = '%s', comment=''`, safePoint, safePoint))
+}

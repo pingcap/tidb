@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -66,8 +65,8 @@ func (p *LogicalProjection) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Exprs {
-		ruleutil.ResolveExprAndReplace(expr, replace)
+	for i, expr := range p.Exprs {
+		p.Exprs[i] = ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 
@@ -270,7 +269,7 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 			continue
 		}
 		clonePredicate := predicate.Clone()
-		ruleutil.ResolveExprAndReplace(clonePredicate, replace)
+		clonePredicate = ruleutil.ResolveExprAndReplace(clonePredicate, replace)
 		result = append(result, clonePredicate)
 	}
 	return result
@@ -359,11 +358,6 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 		}
 	}
 	return newProperties
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalProjection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalProjection(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

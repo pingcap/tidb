@@ -92,7 +92,14 @@ type Progress struct {
 type SubtaskSummary struct {
 	// RowCnt and Bytes are updated by the collector.
 	RowCnt atomic.Int64 `json:"row_count,omitempty"`
-	Bytes  atomic.Int64 `json:"bytes,omitempty"`
+	// Bytes is the number of bytes to process.
+	Bytes atomic.Int64 `json:"bytes,omitempty"`
+	// ReadBytes is the number of bytes that read from the source.
+	ReadBytes atomic.Int64 `json:"read_bytes,omitempty"`
+	// PutReqCnt is the number of put requests to the external storage.
+	PutReqCnt atomic.Uint64 `json:"put_request_count,omitempty"`
+	// GetReqCnt is the number of get requests to the external storage.
+	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
 
 	// Progresses are the history of data processed, which is used to get a
 	// smoother speed for each subtask.
@@ -165,28 +172,51 @@ func (s *SubtaskSummary) UpdateTime() time.Time {
 func (s *SubtaskSummary) Reset() {
 	s.RowCnt.Store(0)
 	s.Bytes.Store(0)
+	s.ReadBytes.Store(0)
+	s.PutReqCnt.Store(0)
+	s.GetReqCnt.Store(0)
 	s.Progresses = s.Progresses[:0]
 	s.Update()
 }
 
 // Collector is the interface for collecting subtask metrics.
 type Collector interface {
-	// Add is used collects metrics.
+	// Accepted is used collects metrics.
+	// The difference between Accepted and Processed is that Accepted is called
+	// when the data is accepted to be processed.
+	Accepted(bytes int64)
+	// Processed is used collects metrics.
 	// `bytes` is the number of bytes processed, and `rows` is the number of rows processed.
 	// The meaning of `bytes` may vary by scenario, for example:
 	//   - During encoding, it represents the number of bytes read from the source data file.
 	//   - During merge sort, it represents the number of bytes merged.
-	Add(bytes, rows int64)
+	Processed(bytes, rows int64)
 }
+
+// NoopCollector is a no-op implementation of Collector.
+type NoopCollector struct{}
+
+// Accepted implements Collector.Accepted
+func (*NoopCollector) Accepted(_ int64) {}
+
+// Processed implements Collector.Processed
+func (*NoopCollector) Processed(_, _ int64) {}
 
 // TestCollector is an implementation used for test.
 type TestCollector struct {
-	Bytes atomic.Int64
-	Rows  atomic.Int64
+	NoopCollector
+	ReadBytes atomic.Int64
+	Bytes     atomic.Int64
+	Rows      atomic.Int64
 }
 
-// Add implements Collector.Add
-func (c *TestCollector) Add(bytes, rows int64) {
+// Accepted implements Collector.Accepted
+func (c *TestCollector) Accepted(bytes int64) {
+	c.ReadBytes.Add(bytes)
+}
+
+// Processed implements Collector.Processed
+func (c *TestCollector) Processed(bytes, rows int64) {
 	c.Bytes.Add(bytes)
 	c.Rows.Add(rows)
 }

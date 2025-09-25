@@ -1809,7 +1809,11 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
-		if !v.IsGlobal && !sysVar.HasSessionScope() {
+		if v.IsInstance && !sysVar.HasInstanceScope() {
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION or GLOBAL")
+			return
+		}
+		if !v.IsGlobal && !v.IsInstance && !sysVar.HasSessionScope() {
 			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 			return
 		}
@@ -1818,7 +1822,7 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 	var err error
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
-	} else if v.IsGlobal {
+	} else if v.IsGlobal || v.IsInstance {
 		val, err = sessionVars.GetGlobalSystemVar(er.ctx, name)
 	} else {
 		val, err = sessionVars.GetSessionOrGlobalSystemVar(er.ctx, name)

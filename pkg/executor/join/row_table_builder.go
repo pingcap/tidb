@@ -160,9 +160,13 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 	physicalRows := chk.Column(0).Rows()
 
 	if b.usedRows == nil {
-		b.selRows = resizeSlice(b.selRows, logicalRows)
-		for i := range logicalRows {
-			b.selRows[i] = i
+		if logicalRows <= fakeSelLength {
+			b.selRows = fakeSel[:logicalRows]
+		} else {
+			b.selRows = make([]int, logicalRows)
+			for i := range logicalRows {
+				b.selRows[i] = i
+			}
 		}
 		b.usedRows = b.selRows
 	}

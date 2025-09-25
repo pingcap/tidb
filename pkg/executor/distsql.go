@@ -377,8 +377,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
-	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
-	if e.byItems == nil || len(e.partitions) <= 1 {
+	if !needMergeSort(e.byItems, len(e.partitions)) {
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
 			return err
@@ -798,7 +797,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			results = append(results, result)
 		}
-		if len(results) > 1 && len(e.byItems) != 0 {
+		if needMergeSort(e.byItems, len(results)) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
@@ -1042,7 +1041,7 @@ func (w *indexWorker) syncErr(err error) {
 func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.SelectResult) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := util.GetRecoverError(r)
 			w.syncErr(err4Panic)
 			if err != nil {
@@ -1231,7 +1230,7 @@ func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := util.GetRecoverError(r)
 			task.doneCh <- err
 		}
@@ -1568,7 +1567,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
 			if ctx.Err() != context.Canceled {
-				logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+				logutil.Logger(ctx).Warn("table reader fetch next chunk failed", zap.Error(err))
 			}
 			return err
 		}
@@ -1673,4 +1672,8 @@ func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 		planIDs = append(planIDs, p.ID())
 	}
 	return planIDs
+}
+
+func needMergeSort(byItems []*plannerutil.ByItems, kvRangesCount int) bool {
+	return len(byItems) > 0 && kvRangesCount > 1
 }

@@ -55,7 +55,7 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
-	onClose OnCloseFunc,
+	onClose OnWriterCloseFunc,
 	checkHotspot bool,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(

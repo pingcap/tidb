@@ -1425,6 +1425,10 @@ func TestApplyCache(t *testing.T) {
 }
 
 func TestCollectDMLRuntimeStats(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	})
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

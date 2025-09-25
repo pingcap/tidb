@@ -110,7 +110,8 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	if kerneltype.IsNextGen() {
-		if err2 := e.controller.CalResourceParams(ctx); err2 != nil {
+		ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
+		if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
 			return err2
 		}
 	}

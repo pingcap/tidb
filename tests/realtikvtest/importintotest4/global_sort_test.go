@@ -26,16 +26,22 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 func urlEqual(t *testing.T, expected, actual string) {
@@ -191,6 +197,9 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	var allData []string
 	for i := range 10 {
 		var content []byte
@@ -213,8 +222,54 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
-	s.tk.MustQuery(importSQL)
+	result := s.tk.MustQuery(importSQL + ", detached").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	var task *proto.Task
+	s.Eventually(func() bool {
+		task, err = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		s.NoError(err)
+		return task.State == proto.TaskStateSucceed
+	}, 30*time.Second, 300*time.Millisecond)
+
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
+
+	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepEncodeAndSort)
+	s.NoError(err)
+	s.Len(subtasks, 1)
+	v := &execute.SubtaskSummary{}
+	err = json.Unmarshal([]byte(subtasks[0].Summary), &v)
+	s.NoError(err)
+	s.Equal(int64(10000), v.RowCnt.Load())
+	s.Equal(int64(147780), v.Bytes.Load())
+	s.Greater(v.PutReqCnt.Load(), uint64(0))
+	s.Equal(uint64(0), v.GetReqCnt.Load())
+	logutil.BgLogger().Info("subtasks", zap.Any("subtasks", v))
+
+	subtasks, err = taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
+	s.NoError(err)
+	s.Len(subtasks, 4)
+	totalRows := int64(0)
+	totalBytes := int64(0)
+	totalPutReq := uint64(0)
+	totalGetReq := uint64(0)
+	for i, subtask := range subtasks {
+		v = &execute.SubtaskSummary{}
+		err = json.Unmarshal([]byte(subtask.Summary), &v)
+		s.NoError(err)
+		totalRows += v.RowCnt.Load()
+		totalBytes += v.Bytes.Load()
+		totalPutReq += v.PutReqCnt.Load()
+		totalGetReq += v.GetReqCnt.Load()
+		logutil.BgLogger().Info("subtasks", zap.Int("seq", i), zap.Any("subtasks", v))
+	}
+	s.Greater(totalRows, int64(0))  // Fixme: why not 10000?
+	s.Greater(totalBytes, int64(0)) // Fixme: unstable
+	s.Equal(uint64(0), totalPutReq)
+	s.Greater(totalGetReq, uint64(0))
 }
 
 func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
@@ -278,4 +333,57 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
+}
+
+func (s *mockGCSSuite) TestSplitRangeForTable() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("In next-gen scenario we don't need 'force_partition_range' to import data")
+	}
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
+		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.2.csv"},
+		Content:     []byte("4,foo4,bar4,123\n5,foo5,bar5,223\n6,foo6,bar6,323\n"),
+	})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.prepareAndUseDB("gsort_basic")
+	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
+		key(a), key(c,d), key(d));`)
+
+	var addCnt, removeCnt int
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+		addCnt += 1
+	})
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+		removeCnt += 1
+	})
+	dom, err := session.GetDomain(s.store)
+	require.NoError(s.T(), err)
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
+	require.NoError(s.T(), err)
+
+	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s' with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
+	result := s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	require.Greater(s.T(), addCnt, 0)
+	require.Equal(s.T(), removeCnt, addCnt)
+
+	addCnt = 0
+	removeCnt = 0
+	s.tk.MustExec("truncate t")
+	importSQL = fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'`, gcsEndpoint)
+	result = s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	require.Equal(s.T(), addCnt, 2*len(stores))
+	require.Equal(s.T(), removeCnt, addCnt)
+
+	addCnt = 0
+	removeCnt = 0
+	s.tk.MustExec("create table dst like t")
+	s.tk.MustExec(`import into dst FROM select * from t`)
+	require.Equal(s.T(), addCnt, 2*len(stores))
+	require.Equal(s.T(), removeCnt, addCnt)
 }

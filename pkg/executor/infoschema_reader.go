@@ -125,7 +125,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		// Why not just activate the txn here (sctx.Txn(true)) and do it in Open() instead?
 		// Because it could DATA RACE here and in Open() it's safe.
 		if sctx.GetSessionVars().InTxn() {
-			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(sctx.GetSessionVars().TxnCtx.StartTS)
+			ts := sctx.GetSessionVars().TxnCtx.StartTS
+			if sctx.GetSessionVars().SnapshotTS != 0 {
+				ts = sctx.GetSessionVars().SnapshotTS
+			}
+			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(ts)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1147,6 +1151,11 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 
 	cols, ordinalPos := e.extractor.ListColumns(tbl)
 	for i, col := range cols {
+		// Skip non-public columns
+		if col.State != model.StatePublic {
+			continue
+		}
+
 		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
@@ -2778,7 +2787,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 				for _, p := range pi.Definitions {
 					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
 					if err != nil {
-						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+						logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
 					}
 					progress += progressOfPartition
 				}
@@ -2787,7 +2796,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 				var err error
 				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
 				if err != nil {
-					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+					logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
 				}
 			}
 			progressString := types.TruncateFloatToString(progress, 2)

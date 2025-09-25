@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,23 +48,23 @@ type TableKVEncoder struct {
 // exported for test.
 func NewTableKVEncoder(
 	config *encode.EncodingConfig,
-	ti *TableImporter,
+	ctrl *LoadDataController,
 ) (*TableKVEncoder, error) {
-	return newTableKVEncoderInner(config, ti, ti.FieldMappings, ti.InsertColumns)
+	return newTableKVEncoderInner(config, ctrl, ctrl.FieldMappings, ctrl.InsertColumns)
 }
 
 // NewTableKVEncoderForDupResolve creates a new TableKVEncoder for duplicate resolution.
 func NewTableKVEncoderForDupResolve(
 	config *encode.EncodingConfig,
-	ti *TableImporter,
+	ctrl *LoadDataController,
 ) (*TableKVEncoder, error) {
-	mappings, _ := ti.tableVisCols2FieldMappings()
-	return newTableKVEncoderInner(config, ti, mappings, ti.Table.VisibleCols())
+	mappings, _ := ctrl.tableVisCols2FieldMappings()
+	return newTableKVEncoderInner(config, ctrl, mappings, ctrl.Table.VisibleCols())
 }
 
 func newTableKVEncoderInner(
 	config *encode.EncodingConfig,
-	ti *TableImporter,
+	ctrl *LoadDataController,
 	fieldMappings []*FieldMapping,
 	insertColumns []*table.Column,
 ) (*TableKVEncoder, error) {
@@ -71,7 +72,7 @@ func newTableKVEncoderInner(
 	if err != nil {
 		return nil, err
 	}
-	colAssignExprs, _, err := ti.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
+	colAssignExprs, _, err := ctrl.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
 	if err != nil {
 		return nil, err
 	}
@@ -235,4 +236,34 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 func (en *TableKVEncoder) Close() error {
 	en.SessionCtx.Close()
 	return nil
+}
+
+// GetNumOfIndexGenKV gets the number of indices that generate index KVs.
+func GetNumOfIndexGenKV(tblInfo *model.TableInfo) int {
+	return len(GetIndicesGenKV(tblInfo))
+}
+
+// GenKVIndex is used to store index info that generates index KVs.
+type GenKVIndex struct {
+	name   string
+	Unique bool
+}
+
+// GetIndicesGenKV gets all indices that generate index KVs.
+func GetIndicesGenKV(tblInfo *model.TableInfo) map[int64]GenKVIndex {
+	res := make(map[int64]GenKVIndex, len(tblInfo.Indices))
+	for _, idxInfo := range tblInfo.Indices {
+		// all public non-primary index generates index KVs
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
+			continue
+		}
+		res[idxInfo.ID] = GenKVIndex{
+			name:   idxInfo.Name.L,
+			Unique: idxInfo.Unique,
+		}
+	}
+	return res
 }

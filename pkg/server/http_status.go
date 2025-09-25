@@ -250,6 +250,7 @@ func (s *Server) startHTTPServer() {
 	if kerneltype.IsNextGen() {
 		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Status")
 		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule")
+		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
 	}
 
 	// HTTP path for transaction GC states.

@@ -314,6 +314,10 @@ func (em *engineManager) closeEngine(
 			}
 			ts = oracle.ComposeTS(physical, logical)
 		}
+		onClose := func(*external.ReaderSummary) {}
+		if externalCfg.OnReaderClose != nil {
+			onClose = externalCfg.OnReaderClose
+		}
 		externalEngine := external.NewExternalEngine(
 			ctx,
 			store,
@@ -331,6 +335,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.MemCapacity,
 			externalCfg.OnDup,
 			"",
+			onClose,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -524,12 +529,16 @@ func (em *engineManager) engineFileSizes() (res []backend.EngineFileSize) {
 
 func (em *engineManager) close() {
 	for _, e := range em.externalEngine {
-		_ = e.Close()
+		if err := e.Close(); err != nil {
+			em.logger.Warn("close external engine failed", zap.String("id", e.ID()), zap.Error(err))
+		}
 	}
 	em.externalEngine = map[uuid.UUID]engineapi.Engine{}
 	allLocalEngines := em.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
-		_ = e.Close()
+		if err := e.Close(); err != nil {
+			em.logger.Warn("close local engine failed", zap.String("id", e.ID()), zap.Error(err))
+		}
 		e.unlock()
 	}
 	em.engines = sync.Map{}

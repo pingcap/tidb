@@ -417,84 +417,84 @@ func TestGlobalBinding(t *testing.T) {
 		tk.MustExec("create index index_t on t(i,s)")
 
 		_, err := tk.Exec("create global " + testSQL.createSQL)
-		require.NoError(t, err, "err %v", err)
+		require.NoErrorf(t, err, "testSQL: %+v", testSQL)
 
 		if testSQL.overlaySQL != "" {
 			_, err = tk.Exec("create global " + testSQL.overlaySQL)
-			require.NoError(t, err)
+			require.NoErrorf(t, err, "testSQL: %+v", testSQL)
 		}
 
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
 		_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
-		require.True(t, matched)
-		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
-		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
-		require.Equal(t, "test", binding.Db)
-		require.Equal(t, bindinfo.StatusEnabled, binding.Status)
-		require.NotNil(t, binding.Charset)
-		require.NotNil(t, binding.Collation)
-		require.NotNil(t, binding.CreateTime)
-		require.NotNil(t, binding.UpdateTime)
+		require.Truef(t, matched, "testSQL %+v", testSQL)
+		require.Equalf(t, testSQL.originSQL, binding.OriginalSQL, "testSQL %+v", testSQL)
+		require.Equalf(t, testSQL.bindSQL, binding.BindSQL, "testSQL %+v", testSQL)
+		require.Equalf(t, "test", binding.Db, "testSQL %+v", testSQL)
+		require.Equalf(t, bindinfo.StatusEnabled, binding.Status, "testSQL %+v", testSQL)
+		require.NotNilf(t, binding.Charset, "testSQL %+v", testSQL)
+		require.NotNilf(t, binding.Collation, "testSQL %+v", testSQL)
+		require.NotNilf(t, binding.CreateTime, "testSQL %+v", testSQL)
+		require.NotNilf(t, binding.UpdateTime, "testSQL %+v", testSQL)
 
 		rs, err := tk.Exec("show global bindings")
-		require.NoError(t, err)
+		require.NoErrorf(t, err, "testSQL %+v", testSQL)
 		chk := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
-		require.NoError(t, err)
-		require.Equal(t, 1, chk.NumRows())
+		require.NoErrorf(t, err, "testSQL %+v", testSQL)
+		require.Equalf(t, 1, chk.NumRows(), "testSQL %+v", testSQL)
 		row := chk.GetRow(0)
-		require.Equal(t, testSQL.originSQL, row.GetString(0))
-		require.Equal(t, testSQL.bindSQL, row.GetString(1))
-		require.Equal(t, "test", row.GetString(2))
-		require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
-		require.NotNil(t, row.GetTime(4))
-		require.NotNil(t, row.GetTime(5))
-		require.NotNil(t, row.GetString(6))
-		require.NotNil(t, row.GetString(7))
+		require.Equalf(t, testSQL.originSQL, row.GetString(0), "testSQL %+v", testSQL)
+		require.Equalf(t, testSQL.bindSQL, row.GetString(1), "testSQL %+v", testSQL)
+		require.Equalf(t, "test", row.GetString(2), "testSQL %+v", testSQL)
+		require.Equalf(t, bindinfo.StatusEnabled, row.GetString(3), "testSQL %+v", testSQL)
+		require.NotNilf(t, row.GetTime(4), "testSQL %+v", testSQL)
+		require.NotNilf(t, row.GetTime(5), "testSQL %+v", testSQL)
+		require.NotNilf(t, row.GetString(6), "testSQL %+v", testSQL)
+		require.NotNilf(t, row.GetString(7), "testSQL %+v", testSQL)
 
 		bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
 		err = bindHandle.LoadFromStorageToCache(true)
-		require.NoError(t, err)
-		require.Equal(t, 1, len(bindHandle.GetAllBindings()))
+		require.NoErrorf(t, err, "testSQL %+v", testSQL)
+		require.Equalf(t, 1, len(bindHandle.GetAllBindings()), "testSQL %+v", testSQL)
 
 		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		binding, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
-		require.True(t, matched)
-		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
-		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
-		require.Equal(t, "test", binding.Db)
-		require.Equal(t, bindinfo.StatusEnabled, binding.Status)
-		require.NotNil(t, binding.Charset)
-		require.NotNil(t, binding.Collation)
-		require.NotNil(t, binding.CreateTime)
-		require.NotNil(t, binding.UpdateTime)
+		require.Truef(t, matched, "testSQL %+v", testSQL)
+		require.Equalf(t, testSQL.originSQL, binding.OriginalSQL, "testSQL %+v", testSQL)
+		require.Equalf(t, testSQL.bindSQL, binding.BindSQL, "testSQL %+v", testSQL)
+		require.Equalf(t, "test", binding.Db, "testSQL %+v", testSQL)
+		require.Equalf(t, bindinfo.StatusEnabled, binding.Status, "testSQL %+v", testSQL)
+		require.NotNilf(t, binding.Charset, "testSQL %+v", testSQL)
+		require.NotNilf(t, binding.Collation, "testSQL %+v", testSQL)
+		require.NotNilf(t, binding.CreateTime, "testSQL %+v", testSQL)
+		require.NotNilf(t, binding.UpdateTime, "testSQL %+v", testSQL)
 
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
-		require.Equal(t, uint64(1), tk.Session().AffectedRows())
-		require.NoError(t, err)
+		require.Equalf(t, uint64(1), tk.Session().AffectedRows(), "testSQL %+v", testSQL)
+		require.NoErrorf(t, err, "testSQL %+v", testSQL)
 		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		_, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
-		require.False(t, matched) // dropped
+		require.Falsef(t, matched, "testSQL %+v", testSQL) // dropped
 		bindHandle = bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
 		err = bindHandle.LoadFromStorageToCache(true)
-		require.NoError(t, err)
-		require.Equal(t, 0, len(bindHandle.GetAllBindings()))
+		require.NoErrorf(t, err, "testSQL %+v", testSQL)
+		require.Equalf(t, 0, len(bindHandle.GetAllBindings()), "testSQL %+v", testSQL)
 
 		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		_, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
-		require.False(t, matched) // dropped
+		require.Falsef(t, matched, "testSQL %+v", testSQL) // dropped
 
 		rs, err = tk.Exec("show global bindings")
-		require.NoError(t, err)
+		require.NoErrorf(t, err, "testSQL %+v", testSQL)
 		chk = rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
-		require.NoError(t, err)
-		require.Equal(t, 0, chk.NumRows())
+		require.NoErrorf(t, err, "testSQL %+v", testSQL)
+		require.Equalf(t, 0, chk.NumRows(), "testSQL %+v", testSQL)
 
 		_, err = tk.Exec("delete from mysql.bind_info where source != 'builtin'")
-		require.NoError(t, err)
+		require.NoErrorf(t, err, "testSQL %+v", testSQL)
 	}
 }
 
@@ -660,8 +660,8 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 	for _, test := range tests {
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)
 		n, digest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
-		require.Equal(t, test.normalized, n)
-		require.Equal(t, test.digest, digest)
+		require.Equalf(t, test.normalized, n, "sql: %s", test.sql)
+		require.Equalf(t, test.digest, digest, "sql: %s", test.sql)
 	}
 }
 
@@ -846,8 +846,8 @@ func TestBindingQueryInList(t *testing.T) {
 	inList := []string{"(1)", "(1, 2)", "(1, 2, 3)"}
 	for _, bindingInList := range inList {
 		tk.MustExec(`create global binding using select * from t where a in ` + bindingInList)
-		require.NoError(t, dom.BindingHandle().LoadFromStorageToCache(true))
-		require.Equal(t, len(tk.MustQuery(`show global bindings`).Rows()), 1)
+		require.NoErrorf(t, dom.BindingHandle().LoadFromStorageToCache(true), "bindingInList: %+v", bindingInList)
+		require.Equalf(t, 1, len(tk.MustQuery(`show global bindings`).Rows()), "bindingInList: %+v", bindingInList)
 
 		for _, queryInList := range inList {
 			tk.MustQuery(`select * from t where a in ` + queryInList)
@@ -855,8 +855,8 @@ func TestBindingQueryInList(t *testing.T) {
 		}
 
 		tk.MustExec(`drop global binding for select * from t where a in ` + bindingInList)
-		require.NoError(t, dom.BindingHandle().LoadFromStorageToCache(true))
-		require.Equal(t, len(tk.MustQuery(`show global bindings`).Rows()), 0)
+		require.NoErrorf(t, dom.BindingHandle().LoadFromStorageToCache(true), "bindingInList: %+v", bindingInList)
+		require.Equalf(t, 0, len(tk.MustQuery(`show global bindings`).Rows()), "bindingInList: %+v", bindingInList)
 	}
 }
 

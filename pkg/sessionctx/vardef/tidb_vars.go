@@ -1110,7 +1110,7 @@ const (
 	TiDBPipelinedDmlResourcePolicy = "tidb_pipelined_dml_resource_policy"
 	// TiDBEnableBatchDML enables batch dml.
 	TiDBEnableBatchDML = "tidb_enable_batch_dml"
-	// TiDBStatsCacheMemQuota records stats cache quota
+	// TiDBStatsCacheMemQuota records stats cache quota.
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"

@@ -17,6 +17,7 @@ go_library(
         "//pkg/planner/cascades/util",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/property",
         "//pkg/planner/util/optimizetrace",
         "//pkg/planner/util/utilfuncp",

@@ -255,12 +255,6 @@ type LogicalPlan interface {
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
 	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
 
-	// ExhaustPhysicalPlans generates all possible plans that can match the required property.
-	// It will return:
-	// 1. All possible plans that can match the required property.
-	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	ExhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
-
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
 
@@ -301,6 +295,38 @@ type LogicalPlan interface {
 	// GetWrappedLogicalPlan return the wrapped logical plan inside a group expression.
 	// For logicalPlan implementation, it just returns itself as well.
 	GetWrappedLogicalPlan() LogicalPlan
+
+	// GetChildStatsAndSchema gets the stats and schema of the first child.
+	GetChildStatsAndSchema() (*property.StatsInfo, *expression.Schema)
+
+	// GetJoinChildStatsAndSchema gets the stats and schema of both children.
+	GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema)
+}
+
+// GroupExpression is the interface for group expression.
+type GroupExpression interface {
+	LogicalPlan
+	// IsExplored return whether this gE has explored rule i.
+	IsExplored(i uint) bool
+	// InputsLen returns the length of inputs.
+	InputsLen() int
+}
+
+// GetGEAndLogical is get the possible group expression and logical operator from common super pointer.
+func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpression, proj T) {
+	switch x := super.(type) {
+	case T:
+		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
+		// to downcast as the every specific logical operator.
+		proj = x
+	case GroupExpression:
+		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
+		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
+		// get the specific logical operator inside.
+		ge = x
+		proj = ge.GetWrappedLogicalPlan().(T)
+	}
+	return ge, proj
 }
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.

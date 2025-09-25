@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -43,6 +44,52 @@ type PhysicalProjection struct {
 	// for the expressions of Projection which is child of Union operator.
 	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
+}
+
+// ExhaustPhysicalPlans4LogicalProjection will be called by LogicalLimit in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	ge, p := base.GetGEAndLogical[*logicalop.LogicalProjection](super)
+	var childSchema *expression.Schema
+	if ge != nil {
+		_, childSchema = ge.GetChildStatsAndSchema()
+	} else {
+		_, childSchema = p.GetChildStatsAndSchema()
+	}
+	newProp, ok := p.TryToGetChildProp(prop)
+	if !ok {
+		return nil, true, nil
+	}
+	newProps := []*property.PhysicalProperty{newProp}
+	// generate a mpp task candidate if mpp mode is allowed
+	ctx := p.SCtx()
+	pushDownCtx := util.GetPushDownCtx(ctx)
+	// lift the recursive check of canPushToCop(tiFlash)
+	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() &&
+		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
+		mppProp := newProp.CloneEssentialFields()
+		mppProp.TaskTp = property.MppTaskType
+		newProps = append(newProps, mppProp)
+	}
+	// lift the recursive check of canPushToCop(tikv)
+	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown &&
+		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) &&
+		expression.ProjectionBenefitsFromPushedDown(p.Exprs, childSchema.Len()) {
+		copProp := newProp.CloneEssentialFields()
+		copProp.TaskTp = property.CopSingleReadTaskType
+		newProps = append(newProps, copProp)
+	}
+
+	ret := make([]base.PhysicalPlan, 0, len(newProps))
+	newProps = admitIndexJoinProps(newProps, prop)
+	for _, newProp := range newProps {
+		proj := PhysicalProjection{
+			Exprs:            p.Exprs,
+			CalculateNoDelay: p.CalculateNoDelay,
+		}.Init(ctx, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
+		proj.SetSchema(p.Schema())
+		ret = append(ret, proj)
+	}
+	return ret, true, nil
 }
 
 // Clone implements op.PhysicalPlan interface.

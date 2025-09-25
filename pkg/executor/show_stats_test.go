@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -150,6 +151,9 @@ func TestShowStatsHistograms(t *testing.T) {
 }
 
 func TestShowStatsBuckets(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -214,6 +218,9 @@ func TestShowStatsBucketWithDateNullValue(t *testing.T) {
 }
 
 func TestShowStatsHasNullValue(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -278,6 +285,9 @@ func TestShowStatsHasNullValue(t *testing.T) {
 }
 
 func TestShowPartitionStats(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -473,6 +483,10 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[0][10])
 
 	tk.MustExec("delete from mysql.analyze_jobs")
+	if kerneltype.IsNextGen() {
+		t.Log("analyze V1 cannot support in the next gen")
+		return
+	}
 	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	rows = tk.MustQuery("show analyze status").Sort().Rows()

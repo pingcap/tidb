@@ -10,11 +10,11 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//pkg/parser/format",
-        "@com_github_cznic_mathutil//:mathutil",
-        "@com_github_cznic_sortutil//:sortutil",
-        "@com_github_cznic_strutil//:strutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_modernc_mathutil//:mathutil",
         "@org_modernc_parser//yacc",
+        "@org_modernc_sortutil//:sortutil",
+        "@org_modernc_strutil//:strutil",
         "@org_modernc_y//:y",
     ],
 )

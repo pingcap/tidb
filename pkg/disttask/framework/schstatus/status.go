@@ -16,6 +16,7 @@ package schstatus
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -69,12 +70,17 @@ const (
 	PauseScaleInFlag Flag = "pause_scale_in"
 )
 
-// TTLFlag represents the status of a flag in the scheduler.
-// currently, we only have one flag: 'pause_scale_in'
-type TTLFlag struct {
-	Enabled    bool          `json:"enabled,omitempty"`
+// TTLInfo represents the TTL info of a flag or resource tune factors in the
+// scheduler.
+type TTLInfo struct {
 	TTL        time.Duration `json:"ttl,omitempty"`
 	ExpireTime time.Time     `json:"expire_time,omitempty"`
+}
+
+// TTLFlag represents a flag with TTL in the scheduler.
+type TTLFlag struct {
+	Enabled bool `json:"enabled,omitempty"`
+	TTLInfo
 }
 
 // String implements fmt.Stringer interface for TTLFlag.
@@ -104,6 +110,12 @@ type Status struct {
 
 // String implements fmt.Stringer interface for Status.
 func (s *Status) String() string {
-	bytes, _ := json.Marshal(s)
+	bak := *s
+	if len(bak.TiDBWorker.BusyNodes) > 5 {
+		bak.TiDBWorker.BusyNodes = bak.TiDBWorker.BusyNodes[:5]
+		bak.TiDBWorker.BusyNodes = append(bak.TiDBWorker.BusyNodes,
+			Node{ID: fmt.Sprintf("... too many nodes, total %d busy nodes ...", len(s.TiDBWorker.BusyNodes))})
+	}
+	bytes, _ := json.Marshal(&bak)
 	return string(bytes)
 }

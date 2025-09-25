@@ -361,7 +361,24 @@ type RefreshStatsStmt struct {
 	stmtNode
 
 	RefreshObjects []*RefreshObject
+	// RefreshMode is non-nil when a refresh strategy is explicitly specified.
+	RefreshMode *RefreshStatsMode
+	// IsClusterWide indicates whether the refresh operation is for the entire cluster.
+	IsClusterWide bool
 }
+
+// RefreshStatsMode represents the refresh strategy requested by the user.
+type RefreshStatsMode int
+
+const (
+	// RefreshStatsModeLite forces a lite statistics refresh.
+	// Same as lite-init-stats=true in the configuration file.
+	RefreshStatsModeLite RefreshStatsMode = iota
+
+	// RefreshStatsModeFull forces a full statistics refresh.
+	// Same as lite-init-stats=false in the configuration file.
+	RefreshStatsModeFull
+)
 
 func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("REFRESH STATS ")
@@ -372,6 +389,22 @@ func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := refreshObject.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore RefreshStatsStmt.RefreshObjects[%d]", index)
 		}
+	}
+	if n.RefreshMode != nil {
+		switch *n.RefreshMode {
+		case RefreshStatsModeLite:
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("LITE")
+		case RefreshStatsModeFull:
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("FULL")
+		default:
+			return errors.Errorf("invalid refresh stats mode: %d", *n.RefreshMode)
+		}
+	}
+	if n.IsClusterWide {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("CLUSTER")
 	}
 	return nil
 }

@@ -249,5 +249,10 @@ func (*MockWriter) LockForWrite() func() {
 	return func() {}
 }
 
+// WrittenBytes implements Writer.WrittenBytes interface.
+func (*MockWriter) WrittenBytes() int64 {
+	return 0
+}
+
 // MockExecAfterWriteRow is only used for test.
 var MockExecAfterWriteRow func()

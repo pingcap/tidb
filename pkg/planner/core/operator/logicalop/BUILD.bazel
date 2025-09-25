@@ -41,6 +41,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/expression/aggregation",
+        "//pkg/expression/exprctx",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",
@@ -56,6 +57,7 @@ go_library(
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule/util",
         "//pkg/planner/funcdep",
+        "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/coreusage",

@@ -4,6 +4,7 @@ go_library(
     name = "mock",
     srcs = [
         "backend.go",
+        "common.go",
         "encode.go",
         "importer.go",
         "mock_cluster.go",
@@ -18,6 +19,7 @@ go_library(
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",
+        "//pkg/lightning/common",
         "//pkg/lightning/verification",
         "//pkg/meta/model",
         "//pkg/server",

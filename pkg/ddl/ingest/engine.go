@@ -41,6 +41,7 @@ type Writer interface {
 	// To enable uniqueness check, the handle should be non-empty.
 	WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error
 	LockForWrite() (unlock func())
+	WrittenBytes() int64
 }
 
 // engineInfo is the engine for one index reorg task, each task will create several new writers under the
@@ -127,9 +128,10 @@ func (ei *engineInfo) Close(cleanup bool) {
 
 // writerContext is used to keep a lightning local writer for each backfill worker.
 type writerContext struct {
-	ctx    context.Context
-	lWrite backend.EngineWriter
-	fLock  *sync.RWMutex
+	ctx          context.Context
+	lWrite       backend.EngineWriter
+	fLock        *sync.RWMutex
+	writtenBytes int64
 }
 
 // CreateWriter creates a new writerContext.
@@ -207,6 +209,7 @@ func (wCtx *writerContext) WriteRow(ctx context.Context, key, idxVal []byte, han
 	if handle != nil {
 		kvs[0].RowID = handle.Encoded()
 	}
+	wCtx.writtenBytes += int64(len(key) + len(idxVal))
 	row := kv.MakeRowsFromKvPairs(kvs)
 	return wCtx.lWrite.AppendRows(ctx, nil, row)
 }
@@ -217,4 +220,9 @@ func (wCtx *writerContext) LockForWrite() (unlock func()) {
 	return func() {
 		wCtx.fLock.RUnlock()
 	}
+}
+
+// WrittenBytes returns the number of bytes written by this writer.
+func (wCtx *writerContext) WrittenBytes() int64 {
+	return wCtx.writtenBytes
 }

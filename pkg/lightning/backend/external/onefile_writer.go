@@ -57,6 +57,7 @@ type OneFileWriter struct {
 	// Statistic information per writer.
 	totalSize uint64
 	totalCnt  uint64
+	putReqCnt uint64
 	rc        *rangePropertiesCollector
 
 	// file information.
@@ -68,7 +69,7 @@ type OneFileWriter struct {
 	dataWriter     storage.ExternalFileWriter
 	statWriter     storage.ExternalFileWriter
 
-	onClose OnCloseFunc
+	onClose OnWriterCloseFunc
 	closed  bool
 
 	// for duplicate detection.
@@ -102,14 +103,18 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
 	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    w.partSize})
+		PartSize:    w.partSize,
+		OnUpload:    func() { w.putReqCnt++ },
+	})
 	if err != nil {
 		return err
 	}
 	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
 	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    MinUploadPartSize})
+		PartSize:    MinUploadPartSize,
+		OnUpload:    func() { w.putReqCnt++ },
+	})
 	if err != nil {
 		w.logger.Info("create stat writer failed", zap.Error(err))
 		_ = dataWriter.Close(ctx)
@@ -303,6 +308,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: mStats,
 		ConflictInfo:       conflictInfo,
+		PutRequestCount:    w.putReqCnt,
 	})
 	w.totalCnt = 0
 	w.totalSize = 0
