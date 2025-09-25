@@ -1183,15 +1183,32 @@ func formatPartitionValues(row []types.Datum, indices []int) (string, error) {
 	return "(" + strings.Join(values, ", ") + ")", nil
 }
 
-// TODO: keep the time format the same "2023-08-31 00:00:00" should be just "2023-08-31"
 func formatPartitionDatum(d types.Datum) (string, error) {
 	if d.IsNull() {
 		return "NULL", nil
 	}
-	str, err := d.ToString()
-	if err != nil {
-		return "", errors.Trace(err)
+
+	var (
+		str string
+		err error
+	)
+
+	if d.Kind() == types.KindMysqlTime {
+		t := d.GetMysqlTime()
+		str = t.String()
+		if t.Type() == mysql.TypeDatetime && t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Microsecond() == 0 {
+			str, err = t.DateFormat("%Y-%m-%d")
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+		}
+	} else {
+		str, err = d.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
 	}
+
 	switch d.Kind() {
 	case types.KindString, types.KindBytes,
 		types.KindMysqlEnum, types.KindMysqlSet, types.KindMysqlJSON,
