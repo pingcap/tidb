@@ -119,6 +119,15 @@ func (s *storeTokenChannelMap) ShouldBlock() bool {
 	return true
 }
 
+func newMutexList() []*sync.Mutex {
+	list := make([]*sync.Mutex, 0, INGEST_MUTEX_COUNT)
+	for range INGEST_MUTEX_COUNT {
+		lock := new(sync.Mutex)
+		list = append(list, lock)
+	}
+	return list
+}
+
 func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeTokenChannelMap {
 	storeTokenChannelMap := &storeTokenChannelMap{
 		sync.RWMutex{},
@@ -247,6 +256,8 @@ func (s *tokenStats) printIngestStr() string {
 	return b.String()
 }
 
+const INGEST_MUTEX_COUNT = 100000
+
 type SnapFileImporter struct {
 	cipher     *backuppb.CipherInfo
 	apiVersion kvrpcpb.APIVersion
@@ -257,6 +268,7 @@ type SnapFileImporter struct {
 
 	downloadTokensMap *storeTokenChannelMap
 	ingestTokensMap   *storeTokenChannelMap
+	ingestMutexList   []*sync.Mutex
 
 	closeCallbacks        []func(*SnapFileImporter) error
 	beforeIngestCallbacks []func(context.Context, restore.BatchBackupFileSet) (afterIngest func() error, err error)
@@ -346,6 +358,7 @@ func NewSnapFileImporter(
 		importClient:        options.importClient,
 		downloadTokensMap:   newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
 		ingestTokensMap:     newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
+		ingestMutexList:     newMutexList(),
 		rewriteMode:         options.rewriteMode,
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 		concurrencyPerStore: options.concurrencyPerStore,
@@ -971,15 +984,19 @@ func (importer *SnapFileImporter) ingest(
 		return nil
 	}
 	leaderStoreId := info.Leader.GetStoreId()
+	lock := importer.ingestMutexList[info.Region.Id]
+	lock.Lock()
 	tokenCh := importer.ingestTokensMap.acquireTokenCh(leaderStoreId, importer.concurrencyPerStore)
 	importer.stats.waitForTokenStatsI(leaderStoreId)
 	select {
 	case <-ctx.Done():
+		lock.Unlock()
 		return ctx.Err()
 	case <-tokenCh:
 		importer.stats.takenForTokenStatsI(leaderStoreId)
 	}
 	defer func() {
+		lock.Unlock()
 		importer.releaseToken(tokenCh)
 		importer.stats.releaseForTokenStatsI(leaderStoreId)
 	}()
