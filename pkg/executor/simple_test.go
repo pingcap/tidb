@@ -51,7 +51,7 @@ func TestRefreshTableStats(t *testing.T) {
 	tbl2StatsUpdated := handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
 	require.NotSame(t, tbl1Stats, tbl1StatsUpdated)
 	require.Same(t, tbl2Stats, tbl2StatsUpdated)
-	tk.MustExec("REFRESH STATS *.* FULL CLUSTER")
+	tk.MustExec("REFRESH STATS *.* FULL")
 	tbl2StatsUpdated = handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
 	require.NotSame(t, tbl2Stats, tbl2StatsUpdated)
 }
