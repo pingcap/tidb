@@ -446,12 +446,12 @@ func (p *PhysicalIndexScan) InitSchemaForTiKVIndex(idxExprCols []*expression.Col
 		indexCols = append(indexCols, extraPhysTblCol)
 	}
 
-	if p.Index.IsFulltextIndexOnTiCI() {
+	if p.Index.IsTiCIIndex() {
 		indexCols = append(indexCols, &expression.Column{
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 			ID:       model.ExtraVersionID,
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			OrigName: model.ExtraVersionIDName.O,
+			OrigName: model.ExtraVersionName.O,
 		})
 	}
 
