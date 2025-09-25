@@ -566,7 +566,6 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		var (
 			count       float64
 			selectivity float64
-			err         error
 			foundStats  bool
 		)
 		if !statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
@@ -600,9 +599,6 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		}
 		if !foundStats {
 			continue
-		}
-		if err != nil {
-			return 0, 0, 0, false, err
 		}
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
 		minSel *= selectivity
