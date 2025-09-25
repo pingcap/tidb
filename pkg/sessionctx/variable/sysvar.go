@@ -1397,7 +1397,7 @@ var defaultSysVars = []*SysVar{
 		appendDeprecationWarning(vars, vardef.TiDBNonPreparedPlanCacheSize, vardef.TiDBSessionPlanCacheSize)
 		return normalizedValue, nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession | vardef.ScopeInstance, Name: vardef.TiDBPlanCacheMaxPlanSize, Value: strconv.FormatUint(vardef.DefTiDBPlanCacheMaxPlanSize, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheMaxPlanSize, Value: strconv.FormatUint(vardef.DefTiDBPlanCacheMaxPlanSize, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
 			s.PlanCacheMaxPlanSize = uVal
