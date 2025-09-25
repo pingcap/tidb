@@ -17,7 +17,6 @@ package rule
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
