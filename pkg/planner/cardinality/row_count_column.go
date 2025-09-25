@@ -336,9 +336,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 	if allowZeroEst {
 		minCount = 0
 	}
-	totalCount.Est = mathutil.Clamp(totalCount.Est, minCount, float64(realtimeRowCount))
-	totalCount.MinEst = mathutil.Clamp(totalCount.MinEst, minCount, float64(realtimeRowCount))
-	totalCount.MaxEst = mathutil.Clamp(totalCount.MaxEst, minCount, float64(realtimeRowCount))
+	totalCount.Clamp(totalCount, minCount, float64(realtimeRowCount))
 	return totalCount, nil
 }
 

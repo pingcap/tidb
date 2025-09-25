@@ -709,9 +709,9 @@ func (r *RowEstimate) DivideAll(f float64) {
 
 // Clamp clamps all three fields of the RowEstimate to the given min and max values.
 func (r *RowEstimate) Clamp(r1 RowEstimate, f1, f2 float64) {
-	r.Est = mathutil.Clamp(r.Est, f1, f2)
-	r.MinEst = mathutil.Clamp(r.MinEst, f1, f2)
-	r.MaxEst = mathutil.Clamp(r.MaxEst, f1, f2)
+	r.Est = mathutil.Clamp(r1.Est, f1, f2)
+	r.MinEst = mathutil.Clamp(r1.MinEst, f1, f2)
+	r.MaxEst = mathutil.Clamp(r1.MaxEst, f1, f2)
 }
 
 // TotalRowCount returns the total count of this histogram.
@@ -1204,10 +1204,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+	// percentInHist is the percentage of rows that were included in the histogram.
+	// This is used to scale back the out-of-range estimate.
+	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
+	addedOutOfRangePct := min(1.0-percentInHist, 0.5)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * 0.5) * totalPercent
+	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
 
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always

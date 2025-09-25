@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -392,9 +391,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 	if allowZeroEst {
 		minCount = 0
 	}
-	totalCount.Est = mathutil.Clamp(totalCount.Est, minCount, float64(realtimeRowCount))
-	totalCount.MinEst = mathutil.Clamp(totalCount.MinEst, minCount, float64(realtimeRowCount))
-	totalCount.MaxEst = mathutil.Clamp(totalCount.MaxEst, minCount, float64(realtimeRowCount))
+	totalCount.Clamp(totalCount, minCount, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
