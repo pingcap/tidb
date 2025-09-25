@@ -737,7 +737,7 @@ insert into t values  (1, 'a');
 insert into t values (1, 'd');
 Error 1062 (23000): Duplicate entry '1' for key 't.idx'
 insert into t values (100, 'd');
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 100
 admin check table t;
 insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null);
 select * from t partition (p0) order by id;
@@ -1048,13 +1048,13 @@ location	id	a
 s	13	2
 s	14	14
 insert into t values  ('w', 5, 5);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('w', 5)
 insert into t values  ('s', 5, 5);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('s', 5)
 insert into t values  ('s', 100, 5);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('s', 100)
 insert into t values  ('x', 1, 5);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('x', 1)
 delete from t;
 insert into t values  ('w', 1, 1),('w', 2, 2),('w', 3, 3);
 update t set a=2 where a=1;
@@ -1140,7 +1140,7 @@ w	2	4
 e	8	9
 n	11	15
 update t set id=id+3 where location='w' and id in (1,2);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('w', 5)
 select * from t order by id;
 location	id	a
 w	1	4
@@ -1176,13 +1176,13 @@ e	5	5
 n	9	9
 n	10	10
 replace into t values  ('w', 5, 5);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('w', 5)
 replace into t values  ('s', 5, 5);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('s', 5)
 replace into t values  ('s', 100, 5);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('s', 100)
 replace into t values  ('x', 1, 5);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value ('x', 1)
 delete from t where location='w' and id=2;
 select * from t order by id;
 location	id	a
@@ -1349,9 +1349,9 @@ select count(1) from t;
 count(1)
 4
 insert into t (a) values (11);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 11
 update t set a=a+10 where a = 2;
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 12
 drop table if exists t;
 create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
 insert into t (a) values (1),(3),(5),(7),(9);
@@ -1394,9 +1394,9 @@ select count(1) from t;
 count(1)
 4
 insert into t (a) values (11);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 11
 update t set a=a+10 where a = 2;
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 12
 drop table if exists t;
 drop table if exists t;
 create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));
