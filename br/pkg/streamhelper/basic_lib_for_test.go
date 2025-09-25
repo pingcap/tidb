@@ -195,6 +195,10 @@ func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.Subsc
 	return trivialFlushStream{c: ch, cx: ctx}, nil
 }
 
+func (f *fakeStore) FlushNow(_ context.Context, _ *logbackup.FlushNowRequest, _ ...grpc.CallOption) (*logbackup.FlushNowResponse, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) SetSupportFlushSub(b bool) {
 	f.clientMu.Lock()
 	defer f.clientMu.Unlock()

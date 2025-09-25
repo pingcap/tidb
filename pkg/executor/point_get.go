@@ -272,10 +272,11 @@ func (e *PointGetExecutor) Close() error {
 		tableID := e.tblInfo.ID
 		physicalTableID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
+		rows := e.RuntimeStats().GetActRows()
 		if e.idxInfo != nil {
-			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, kvReqTotal, rows)
 		} else {
-			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, kvReqTotal, rows)
 		}
 	}
 	e.done = false
@@ -586,7 +587,13 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 
 	if e.lock {
 		seVars := e.Ctx().GetSessionVars()
-		lockCtx, err := newLockCtx(e.Ctx(), e.lockWaitTime, 1)
+		lockWaitTime := e.lockWaitTime
+
+		if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+			return nil, err
+		}
+
+		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1)
 		if err != nil {
 			return nil, err
 		}

@@ -91,6 +91,11 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	return nil
 }
 
+// GetAllocRange returns the prealloced range
+func (p *PreallocIDs) GetAllocRange() (int64, int64) {
+	return p.allocedFrom, p.end
+}
+
 // Prealloced checks whether a table ID has been successfully allocated.
 func (p *PreallocIDs) Prealloced(tid int64) bool {
 	return p.allocedFrom <= tid && tid < p.end

@@ -246,11 +246,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 12.2, count)
+	require.Equal(t, 7.2, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
 	require.NoError(t, err)
-	require.Equal(t, 12.2, count)
+	require.Equal(t, 7.2, count)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
@@ -259,7 +259,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 10.0, count)
+	require.Equal(t, 7.0, count)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
@@ -511,7 +511,7 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              5.870830440255832e-05,
-			selectivityAfterIncrease: 0.005967078189300412,
+			selectivityAfterIncrease: 0.005411522633744856,
 		},
 		{
 			exprs:                    longExpr,

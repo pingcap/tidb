@@ -29,7 +29,7 @@ import (
 func BenchmarkResetContextOfStmt(b *testing.B) {
 	stmt := &ast.SelectStmt{}
 	ctx := mock.NewContext()
-	domain.BindDomain(ctx, &domain.Domain{})
+	ctx.BindDomain(&domain.Domain{})
 	for i := 0; i < b.N; i++ {
 		executor.ResetContextOfStmt(ctx, stmt)
 	}
@@ -40,8 +40,8 @@ func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
 	importStmt := &ast.ImportIntoStmt{}
 	insertCtx := mock.NewContext()
 	importCtx := mock.NewContext()
-	domain.BindDomain(insertCtx, &domain.Domain{})
-	domain.BindDomain(importCtx, &domain.Domain{})
+	insertCtx.BindDomain(&domain.Domain{})
+	importCtx.BindDomain(&domain.Domain{})
 	for _, modeStr := range []string{
 		"",
 		"IGNORE_SPACE",

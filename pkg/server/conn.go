@@ -1206,7 +1206,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				server_metrics.DisconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
-				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
+				logutil.Logger(ctx).Warn("result undetermined, close this connection", zap.Error(err))
 				server_metrics.DisconnectErrorUndetermined.Inc()
 				// If commit failed on 2PC-Commit , close  this connection and write audit log.
 				if te, ok := originErr.(*terror.Error); ok {

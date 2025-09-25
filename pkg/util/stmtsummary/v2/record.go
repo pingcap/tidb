@@ -257,15 +257,17 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		r.MaxCompileLatency = info.CompileLatency
 	}
 	// Coprocessor
-	numCopTasks := int64(info.CopTasks.NumCopTasks)
-	r.SumNumCopTasks += numCopTasks
-	if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
-		r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
-		r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
-	}
-	if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
-		r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
-		r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
+	if info.CopTasks != nil {
+		numCopTasks := int64(info.CopTasks.NumCopTasks)
+		r.SumNumCopTasks += numCopTasks
+		if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
+			r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
+			r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
+		}
+		if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
+			r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
+			r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
+		}
 	}
 	// TiKV
 	r.SumProcessTime += info.ExecDetail.TimeDetail.ProcessTime
@@ -627,14 +629,10 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       10,
-			AvgProcessTime:    1000,
-			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
-			AvgWaitTime:       100,
-			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 		},
