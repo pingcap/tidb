@@ -984,7 +984,7 @@ func (importer *SnapFileImporter) ingest(
 		return nil
 	}
 	leaderStoreId := info.Leader.GetStoreId()
-	lock := importer.ingestMutexList[info.Region.Id]
+	lock := importer.ingestMutexList[info.Region.Id%INGEST_MUTEX_COUNT]
 	lock.Lock()
 	tokenCh := importer.ingestTokensMap.acquireTokenCh(leaderStoreId, importer.concurrencyPerStore)
 	importer.stats.waitForTokenStatsI(leaderStoreId)
