@@ -57,11 +57,11 @@ func TestFlattenTreePushDownPlan(t *testing.T) {
 	//  Should have order: IndexScan1, Projection, Limit2, IndexScan2, TableScan, IndexLookUp2, IndexLookUp1, Limit1
 
 	limit1 := &PhysicalLimit{}
-	indexLoopUp1 := &PhysicalIndexLookUp{}
+	indexLoopUp1 := &PhysicalLocalIndexLookUp{}
 	limit2 := &PhysicalLimit{}
 	projection := &PhysicalProjection{}
 	indexScan1 := &PhysicalIndexScan{}
-	indexLoopUp2 := &PhysicalIndexLookUp{}
+	indexLoopUp2 := &PhysicalLocalIndexLookUp{}
 	indexScan2 := &PhysicalIndexScan{}
 	tableScan := &PhysicalTableScan{}
 

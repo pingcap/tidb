@@ -309,7 +309,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		case *physicalop.PhysicalIndexHashJoin:
 			label[plan.InnerChildIdx] = ProbeSide
 			label[1-plan.InnerChildIdx] = BuildSide
-		case *physicalop.PhysicalIndexLookUp:
+		case *physicalop.PhysicalLocalIndexLookUp:
 			label[0] = BuildSide
 			label[1] = ProbeSide
 			indexOfINLProbeChild = 1

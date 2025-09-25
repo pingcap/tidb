@@ -254,17 +254,17 @@ func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
 	// Currently, it's hard to estimate how many rows can be looked up locally when push-down.
 	// So we just use the row count as 0 of tablePlan in TiDB side which displays all lookup
 	// can be performed in the TiKV side.
-	scalePlanStatusInfoAsZeroRecursively(ctx.GetSessionVars(), p.TablePlan)
+	resetRowCountAsZeroRecursively(ctx.GetSessionVars(), p.TablePlan)
 	// The status info of IndexLookupReader should be the same as indexPlan in the push-down mode if
 	// all lookup can be performed in the TiKV side.
 	p.SetStats(p.IndexPlan.StatsInfo())
 	p.IndexLookUpPushDown = true
 }
 
-func scalePlanStatusInfoAsZeroRecursively(vars *variable.SessionVars, p base.PhysicalPlan) {
+func resetRowCountAsZeroRecursively(vars *variable.SessionVars, p base.PhysicalPlan) {
 	p.SetStats(p.StatsInfo().Scale(vars, 0))
 	for _, child := range p.Children() {
-		scalePlanStatusInfoAsZeroRecursively(vars, child)
+		resetRowCountAsZeroRecursively(vars, child)
 	}
 }
 

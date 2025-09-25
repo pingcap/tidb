@@ -43,7 +43,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		physicalop.PhysicalHashJoin{}, physicalop.PhysicalMergeJoin{}, physicalop.PhysicalIndexJoin{},
 		physicalop.PhysicalIndexHashJoin{},
 		physicalop.PhysicalIndexReader{}, physicalop.PhysicalTableReader{}, physicalop.PhysicalIndexMergeReader{},
-		physicalop.PhysicalIndexLookUpReader{}, physicalop.PhysicalIndexLookUp{},
+		physicalop.PhysicalIndexLookUpReader{}, physicalop.PhysicalLocalIndexLookUp{},
 		physicalop.BatchPointGetPlan{}, physicalop.PointGetPlan{},
 		physicalop.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{},
 	}
