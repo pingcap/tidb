@@ -1173,22 +1173,27 @@ func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *m
 	return indexInfo != nil && !indexInfo.IsColumnarIndex()
 }
 
-func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo) bool {
+func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
 	unSupportedReason := ""
+	sessionVars := ctx.GetSessionVars()
 	if tblInfo.IsCommonHandle {
 		unSupportedReason = "common handle table is not supported"
-	}
-
-	if tblInfo.Partition != nil {
+	} else if tblInfo.Partition != nil {
 		unSupportedReason = "partition table is not supported"
-	}
-
-	if tblInfo.TempTableType != model.TempTableNone {
+	} else if tblInfo.TempTableType != model.TempTableNone {
 		unSupportedReason = "temporary table is not supported"
-	}
-
-	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+	} else if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		unSupportedReason = "cached table is not supported"
+	} else if index.MVIndex {
+		unSupportedReason = "multi-valued index is not supported"
+	} else if !sessionVars.IsIsolation(ast.RepeatableRead) {
+		unSupportedReason = "transaction isolation level is not REPEATABLE-READ"
+	} else if sessionVars.GetReplicaRead() != kv.ReplicaReadLeader {
+		unSupportedReason = "only leader read is supported"
+	} else if sessionVars.TxnCtx.IsStaleness {
+		unSupportedReason = "stale read is not supported"
+	} else if sessionVars.SnapshotTS != 0 {
+		unSupportedReason = "historical read is not supported"
 	}
 
 	if unSupportedReason != "" {
@@ -1387,7 +1392,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				// Currently we only support to hint the index look up push down for comment-style sql hints.
 				// So only i >= indexHintsLen may have the hints here.
 				_, path.IsIndexLookUpPushDown = indexLookUpPushDownHints[i]
-				if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo) {
+				if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index) {
 					continue
 				}
 			}
