@@ -92,7 +92,7 @@ const (
 		CREATE TABLE IF NOT EXISTS %s.%s (
 			id tinyint(1) PRIMARY KEY,
 			task_id bigint NOT NULL,
-			source_dir varchar(256) NOT NULL,
+			source_dir varchar(2048) NOT NULL,
 			backend varchar(16) NOT NULL,
 			importer_addr varchar(256),
 			tidb_host varchar(128) NOT NULL,
