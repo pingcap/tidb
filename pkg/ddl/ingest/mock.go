@@ -135,6 +135,7 @@ func (m *MockBackendCtx) AdvanceWatermark() error {
 	return nil
 }
 
+// FilterUnimportedRanges implements CheckpointOperator interface.
 func (m *MockBackendCtx) FilterUnimportedRanges(ranges []kv.KeyRange) []kv.KeyRange {
 	if m.checkpointMgr != nil {
 		return m.checkpointMgr.FilterUnimportedRanges(ranges)
