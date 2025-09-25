@@ -159,9 +159,24 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, all
 	return htc.rowTables[workerID][partitionID].segments[segNum-1]
 }
 
+func (htc *hashTableContext) removeCurrentRowSegment(workerID, partitionID int) {
+	segNum := len(htc.rowTables[workerID][partitionID].segments)
+	if segNum == 0 {
+		return
+	}
+
+	htc.rowTables[workerID][partitionID].segments = htc.rowTables[workerID][partitionID].segments[:segNum-1]
+}
+
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, false)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
+	if len(seg.hashValues) == 0 {
+		// Remove empty segment
+		htc.removeCurrentRowSegment(workerID, partitionID)
+		return
+	}
+
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.initTaggedBits()
 	seg.finalized = true
