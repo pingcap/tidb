@@ -32,7 +32,6 @@ require (
 	github.com/cockroachdb/pebble v1.1.4-0.20250120151818-5dd133a1e6fb
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.1
-	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/daixiang0/gci v0.13.6
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.1.1
@@ -149,6 +148,7 @@ require (
 	gorm.io/gorm v1.25.12
 	honnef.co/go/tools v0.6.1
 	k8s.io/api v0.29.11
+	modernc.org/mathutil v1.7.1
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
@@ -213,7 +213,6 @@ require (
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	modernc.org/mathutil v1.7.1 // indirect
 )
 
 require (

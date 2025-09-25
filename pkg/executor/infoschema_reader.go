@@ -125,7 +125,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		// Why not just activate the txn here (sctx.Txn(true)) and do it in Open() instead?
 		// Because it could DATA RACE here and in Open() it's safe.
 		if sctx.GetSessionVars().InTxn() {
-			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(sctx.GetSessionVars().TxnCtx.StartTS)
+			ts := sctx.GetSessionVars().TxnCtx.StartTS
+			if sctx.GetSessionVars().SnapshotTS != 0 {
+				ts = sctx.GetSessionVars().SnapshotTS
+			}
+			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(ts)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
