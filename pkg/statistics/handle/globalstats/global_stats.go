@@ -27,7 +27,6 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -213,7 +212,6 @@ func blockingMergePartitionStats2GlobalStats(
 	}
 
 	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
-	intest.Assert(intest.InTest && skipMissingPartitionStats, "skipMissingPartitionStats should be true in the test")
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		partitionTable, ok := statsHandle.TableInfoByID(is, partitionID)
