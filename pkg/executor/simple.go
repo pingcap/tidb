@@ -2730,14 +2730,29 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 }
 
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	sql := s.Text()
 	if e.IsFromRemote {
-		statslogutil.StatsLogger().Info("Refresh stats from remote", zap.String("sql", s.Text()))
-		return e.executeRefreshStatsOnCurrentInstance(ctx, s)
+		if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully refreshed statistics from remote", zap.String("sql", sql))
+		return nil
 	}
 	if s.IsClusterWide {
-		return broadcast(ctx, e.Ctx(), s.Text())
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast refresh stats command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
 	}
-	return e.executeRefreshStatsOnCurrentInstance(ctx, s)
+	if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully refreshed statistics on the current instance", zap.String("sql", sql))
+	return nil
 }
 
 func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
@@ -2835,7 +2850,6 @@ func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 		return errors.Trace(err)
 	}
 
-	logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
 	return nil
 }
 
