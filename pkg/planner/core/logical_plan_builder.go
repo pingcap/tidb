@@ -4505,7 +4505,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsAnalyzed()
 				skipMissingPartition := b.ctx.GetSessionVars().SkipMissingPartitionStats
-				intest.Assert(b.ctx.GetSessionVars().InRestrictedSQL && skipMissingPartition, "the tidb_skip_missing_partition_stats should always be enabled in the internal sql")
+				intest.AssertFunc(func() bool {
+					if b.ctx.GetSessionVars().InRestrictedSQL {
+						return skipMissingPartition
+					}
+					return true
+				}, "the tidb_skip_missing_partition_stats should always be enabled in the internal sql")
 				// If we already enabled the tidb_skip_missing_partition_stats, the global stats can be treated as exist.
 				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, skipMissingPartition)
 
