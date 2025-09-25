@@ -1122,6 +1122,7 @@ func TestShowGrantsWithRoles(t *testing.T) {
 	tk.MustExec("CREATE USER r2")
 	tk.MustExec("CREATE TABLE t (c1 int, c2 int)")
 
+	tk.MustExec("GRANT select(c1, c2) ON test.t TO u")
 	tk.MustExec("GRANT select(c1, c2) ON test.t TO r1")
 	tk.MustExec("GRANT select(c1, c2) ON test.t TO r2")
 	tk.MustExec("GRANT r1 TO u")
