@@ -98,12 +98,12 @@ var (
 // but in fact, this VFS has already implemented protocols such as S3 and NFS.
 // it can be supported in the future.
 func GetPlanReplayerDirName(vfs ...afero.Fs) string {
-	var fs afero.Fs
-	fs = afero.NewOsFs()
-	if vfs != nil {
-		fs = vfs[0]
-	}
 	PlanReplayerPathOnce.Do(func() {
+		var fs afero.Fs
+		fs = afero.NewOsFs()
+		if vfs != nil {
+			fs = vfs[0]
+		}
 		tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
 		tidbLogDir = filepath.Join(tidbLogDir, "replayer")
 		tidbLogDir = filepath.Clean(tidbLogDir)
@@ -132,7 +132,7 @@ func canWriteToFile(vfs afero.Fs, path string) bool {
 
 func canWriteToFileInternal(vfs afero.Fs, path string) bool {
 	// Open the file in write mode
-	file, err := vfs.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+	file, err := vfs.OpenFile(path, os.O_RDWR|os.O_CREATE, os.ModePerm)
 	if err != nil {
 		return false
 	}
