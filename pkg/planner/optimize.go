@@ -143,20 +143,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node, sessVars) {
-		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
-		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
-		if hasTiFlashAccess {
-			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-		}
-		defer func() {
-			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
-			if hasTiFlashAccess {
-				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-			}
-		}()
-	}
-
 	// handle the execute statement
 	if execAST, ok := node.(*ast.ExecuteStmt); ok {
 		p, names, err := OptimizeExecStmt(ctx, sctx, execAST, is)
@@ -197,6 +183,21 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
 		sessVars.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("SET_VAR is used in the SQL"))
+	}
+
+	// This should be handled after `set_var`
+	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node, sessVars) {
+		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
+		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
+		if hasTiFlashAccess {
+			delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		}
+		defer func() {
+			sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = false
+			if hasTiFlashAccess {
+				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			}
+		}()
 	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
