@@ -151,6 +151,9 @@ func initializeChangingIndexes(
 		return errors.Trace(err)
 	}
 
+	tmpCol := oldCol.Clone()
+	tmpCol.FieldType = args.Column.FieldType
+
 	var redundantIdxs []int64
 	indexesToChange := FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 	for _, info := range indexesToChange {
@@ -162,7 +165,7 @@ func initializeChangingIndexes(
 			tmpIdx.ID = newIdxID
 			tmpIdx.Name = ast.NewCIStr(genChangingIndexUniqueName(tblInfo, info.IndexInfo))
 			tmpIdx.Columns[info.Offset].UsingChangingType = true
-			UpdateIndexCol(tmpIdx.Columns[info.Offset], args.Column)
+			UpdateIndexCol(tmpIdx.Columns[info.Offset], tmpCol)
 			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 		} else {
 			// The index is a temp index created by previous modify column job(s).
@@ -172,7 +175,7 @@ func initializeChangingIndexes(
 			oldTempIdxID := tmpIdx.ID
 			tmpIdx.ID = newIdxID
 			tmpIdx.Columns[info.Offset].UsingChangingType = true
-			UpdateIndexCol(tmpIdx.Columns[info.Offset], args.Column)
+			UpdateIndexCol(tmpIdx.Columns[info.Offset], tmpCol)
 			redundantIdxs = append(redundantIdxs, oldTempIdxID)
 		}
 	}
@@ -301,6 +304,7 @@ func rollbackModifyColumnJob(
 	newCol, oldCol *model.ColumnInfo) (ver int64, err error) {
 	if oldCol.ID == newCol.ID {
 		// If the not-null change is included, we should clean the flag info in oldCol.
+		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
 		if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
 			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
 			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
@@ -321,6 +325,7 @@ func rollbackModifyColumnJobWithReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
 	// If the not-null change is included, we should clean the flag info in oldCol.
+	tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
 	if mysql.HasPreventNullInsertFlag(oldCol.GetFlag()) {
 		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
 		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
@@ -933,10 +938,27 @@ func (w *worker) doModifyColumnIndexReorg(
 	colName, pos := args.Column.Name, args.Position
 
 	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
-	oldIdxInfos := allIdxs[:len(allIdxs)/2]
-	changingIdxInfos := allIdxs[len(allIdxs)/2:]
+	oldIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
+	changingIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
 
-	switch changingIdxInfos[0].State {
+	var state model.SchemaState
+	if job.SchemaState == model.StatePublic {
+		state = model.StatePublic
+		// The constraint that the first half of allIdxs is oldIdxInfos and
+		// the second half is changingIdxInfos isn't true now, so we need to
+		// find the oldIdxInfos again.
+		for _, idx := range allIdxs {
+			if strings.HasPrefix(idx.Name.O, removingObjPrefix) {
+				oldIdxInfos = append(oldIdxInfos, idx)
+			}
+		}
+	} else {
+		changingIdxInfos = allIdxs[len(allIdxs)/2:]
+		oldIdxInfos = allIdxs[:len(allIdxs)/2]
+		state = changingIdxInfos[0].State
+	}
+
+	switch state {
 	case model.StateNone:
 		checked, err := checkModifyColumnData(
 			jobCtx.stepCtx, w,
@@ -1037,14 +1059,6 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 	case model.StatePublic:
-		// The constraint that the first half of allIdxs is oldIdxInfos and the second half is changingIdxInfos
-		// isn't true now, so we need to find the oldIdxInfos again.
-		oldIdxInfos = oldIdxInfos[:0]
-		for _, idx := range allIdxs {
-			if strings.HasPrefix(idx.Name.O, removingObjPrefix) {
-				oldIdxInfos = append(oldIdxInfos, idx)
-			}
-		}
 		// All the old indexes has been deleted by previous modify column,
 		// we can just finish the job.
 		if len(oldIdxInfos) == 0 {

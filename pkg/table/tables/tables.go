@@ -800,6 +800,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 
 	for _, col := range t.Columns {
 		if col.ChangingFieldType != nil {
+			intest.Assert(col.State == model.StatePublic, "ChangingFieldType should only be set for public columns")
 			if err := checkDataWithModifyColumn(r[col.Offset], col.ChangingFieldType); err != nil {
 				return nil, err
 			}
