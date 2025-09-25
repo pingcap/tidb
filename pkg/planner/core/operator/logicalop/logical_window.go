@@ -175,15 +175,15 @@ func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
-		for _, arg := range desc.Args {
-			ruleutil.ResolveExprAndReplace(arg, replace)
+		for i, arg := range desc.Args {
+			desc.Args[i] = ruleutil.ResolveExprAndReplace(arg, replace)
 		}
 	}
-	for _, item := range p.PartitionBy {
-		ruleutil.ResolveColumnAndReplace(item.Col, replace)
+	for i, item := range p.PartitionBy {
+		p.PartitionBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
-	for _, item := range p.OrderBy {
-		ruleutil.ResolveColumnAndReplace(item.Col, replace)
+	for i, item := range p.OrderBy {
+		p.OrderBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
 }
 

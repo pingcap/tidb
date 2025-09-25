@@ -104,8 +104,8 @@ func (p *LogicalProjection) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Exprs {
-		ruleutil.ResolveExprAndReplace(expr, replace)
+	for i, expr := range p.Exprs {
+		p.Exprs[i] = ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 
@@ -313,7 +313,7 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 			continue
 		}
 		clonePredicate := predicate.Clone()
-		ruleutil.ResolveExprAndReplace(clonePredicate, replace)
+		clonePredicate = ruleutil.ResolveExprAndReplace(clonePredicate, replace)
 		result = append(result, clonePredicate)
 	}
 	return result

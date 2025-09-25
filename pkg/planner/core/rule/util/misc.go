@@ -19,27 +19,44 @@ import (
 )
 
 // ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
+func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) expression.Expression {
 	switch expr := origin.(type) {
 	case *expression.Column:
-		ResolveColumnAndReplace(expr, replace)
+		return ResolveColumnAndReplace(expr, replace)
 	case *expression.CorrelatedColumn:
-		ResolveColumnAndReplace(&expr.Column, replace)
-	case *expression.ScalarFunction:
-		for _, arg := range expr.GetArgs() {
-			ResolveExprAndReplace(arg, replace)
+		newCol, changed := resolveColumnAndReplace(&expr.Column, replace)
+		if !changed {
+			return expr
 		}
+		newExpr := expr.Clone().(*expression.CorrelatedColumn)
+		newExpr.Data = expr.Data
+		newExpr.Column = *newCol
+		return newExpr
+	case *expression.ScalarFunction:
+		for i, arg := range expr.GetArgs() {
+			expr.GetArgs()[i] = ResolveExprAndReplace(arg, replace)
+		}
+		return expr
 	}
+	return origin
 }
 
 // ResolveColumnAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
+func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) *expression.Column {
+	newCol, _ := resolveColumnAndReplace(origin, replace)
+	return newCol
+}
+
+func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) (*expression.Column, bool) {
 	dst := replace[string(origin.HashCode())]
 	if dst != nil {
-		retType, inOperand := origin.RetType, origin.InOperand
-		*origin = *dst
-		origin.RetType, origin.InOperand = retType, inOperand
+		// To avoid origin column is shared by multiple operators,
+		// need to clone it before modification.
+		newCol := dst.Clone().(*expression.Column)
+		newCol.RetType, newCol.InOperand = origin.RetType, origin.InOperand
+		return newCol, true
 	}
+	return origin, false
 }
 
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
