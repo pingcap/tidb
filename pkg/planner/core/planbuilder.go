@@ -1196,6 +1196,14 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 		unSupportedReason = "historical read is not supported"
 	}
 
+	if !ctx.GetSessionVars().IsIsolation(ast.RepeatableRead) {
+		unSupportedReason = "transaction isolation level is not REPEATABLE-READ"
+	}
+
+	if ctx.GetSessionVars().GetReplicaRead() != kv.ReplicaReadLeader {
+		unSupportedReason = "only leader read is supported"
+	}
+
 	if unSupportedReason != "" {
 		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
 		return false
