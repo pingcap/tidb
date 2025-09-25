@@ -169,11 +169,11 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 func getUserStoreAndTable(
 	ctx context.Context,
 	d *ddl,
-	schrStore kv.Storage,
+	schStore kv.Storage,
 	taskKeyspace string,
 	job *model.Job,
 ) (kv.Storage, table.Table, error) {
-	store := schrStore
+	store := schStore
 	if taskKeyspace != d.store.GetKeyspace() {
 		taskMgr, err := diststorage.GetTaskManager()
 		if err != nil {
