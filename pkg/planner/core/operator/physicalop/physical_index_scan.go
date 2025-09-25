@@ -444,7 +444,7 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 			ID:       model.ExtraVersionID,
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			OrigName: model.ExtraVersionIDName.O,
+			OrigName: model.ExtraVersionName.O,
 		})
 	}
 

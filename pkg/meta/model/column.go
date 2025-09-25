@@ -316,7 +316,7 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 func NewExtraVersionColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
 		ID:   ExtraVersionID,
-		Name: ExtraVersionIDName,
+		Name: ExtraVersionName,
 	}
 	colInfo.SetType(mysql.TypeLonglong)
 	colInfo.SetFlag(mysql.NotNullFlag)
