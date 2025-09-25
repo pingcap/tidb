@@ -341,19 +341,11 @@ func SubTestIntColumnRanges() func(*testing.T) {
 			return
 		}
 		count = countEst.Est
-		if err != nil {
-			return
-		}
-		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(2000)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
-		count = countEst.Est
 		if err != nil {
 			return
 		}
