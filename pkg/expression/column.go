@@ -873,8 +873,8 @@ func SortColumns(cols []*Column) []*Column {
 	return sorted
 }
 
-// DeepCopyColumns deep copies and sorts columns based on UniqueID.
-func DeepCopyColumns(cols []*Column) []Expression {
+// DeepCopyExpression makes a deep copy of []*Column to []Expression.
+func DeepCopyExpression(cols ...Expression) []Expression {
 	cpy := make([]Expression, 0, len(cols))
 	for _, col := range cols {
 		cpy = append(cpy, col.Clone())
