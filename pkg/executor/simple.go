@@ -2767,7 +2767,7 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 			case ast.RefreshObjectScopeDatabase:
 				tables, err := is.SchemaTableInfos(ctx, refreshObject.DBName)
 				if err != nil {
-					return err
+					return errors.Trace(err)
 				}
 				if tables == nil {
 					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
@@ -2779,7 +2779,7 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 			case ast.RefreshObjectScopeTable:
 				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
 				if err != nil {
-					return err
+					return errors.Trace(err)
 				}
 				if table == nil {
 					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
