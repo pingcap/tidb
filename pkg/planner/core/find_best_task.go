@@ -1098,7 +1098,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	predicateResult := accessResult + riskResult + eqOrInResult
 
 	// totalSum is the aggregate score of all comparison metrics
-	totalSum := predicateResult + scanResult + matchResult + globalResult
+	totalSum := accessResult + scanResult + matchResult + globalResult
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics

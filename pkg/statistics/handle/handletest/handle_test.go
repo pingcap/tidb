@@ -99,9 +99,6 @@ func TestColumnIDs(t *testing.T) {
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// At that time, we should get c2's stats instead of c1's.
 	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
-	if err != nil {
-		return
-	}
 	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)

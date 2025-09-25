@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -685,6 +686,13 @@ func (r *RowEstimate) AddAll(f float64) {
 	r.MaxEst += f
 }
 
+// Subtract subtracts two RowEstimates together, storing result in the first RowEstimate.
+func (r *RowEstimate) Subtract(r1 RowEstimate) {
+	r.Est -= r1.Est
+	r.MinEst -= r1.MinEst
+	r.MaxEst -= r1.MaxEst
+}
+
 // MultiplyAll multiplies all three fields of the RowEstimate by a float64 value and stores the result.
 func (r *RowEstimate) MultiplyAll(f float64) {
 	r.Est *= f
@@ -697,6 +705,13 @@ func (r *RowEstimate) DivideAll(f float64) {
 	r.Est /= f
 	r.MinEst /= f
 	r.MaxEst /= f
+}
+
+// Clamp clamps all three fields of the RowEstimate to the given min and max values.
+func (r *RowEstimate) Clamp(r1 RowEstimate, f1, f2 float64) {
+	r.Est = mathutil.Clamp(r.Est, f1, f2)
+	r.MinEst = mathutil.Clamp(r.MinEst, f1, f2)
+	r.MaxEst = mathutil.Clamp(r.MaxEst, f1, f2)
 }
 
 // TotalRowCount returns the total count of this histogram.
@@ -1069,7 +1084,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
 	oneValue := float64(0)
 	if histNDV > 0 {
-		oneValue = hg.NotNullCount() / max(float64(histNDV), outOfRangeBetweenRate) // avoid inaccurate selectivity caused by small NDV
+		oneValue = max(1, hg.NotNullCount()/max(float64(histNDV), outOfRangeBetweenRate)) // avoid inaccurate selectivity caused by small NDV
 	}
 
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
@@ -1199,7 +1214,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// account for at least 1% of the total row count as a worst case for "addedRows".
 	// We inflate this here so ONLY to impact the MaxEst value.
 	if modifyCount == 0 || addedRows == 0 {
-		addedRows = max(addedRows, float64(realtimeRowCount)*0.01)
+		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
@@ -1208,27 +1223,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
 		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
 		result.Est = max(result.Est, oneValue)
-		result.MinEst = max(result.MinEst, oneValue)
-		result.MaxEst = max(result.MaxEst, oneValue)
+		result.MinEst = 1
+		result.MaxEst = max(result.Est, addedRows)
 		return result
 	}
 
 	// Use oneValue as lower bound and provide meaningful min/max estimates
 	finalEst := max(avgRowCount, oneValue)
-
-	// Minimum could be as low as 1.
-	minEst := min(oneValue, 1)
-
 	// Maximum could be as high as all added rows.
-	maxEst := max(oneValue, addedRows)
-
-	// Ensure min <= est <= max
-	minEst = min(minEst, finalEst)
-	maxEst = max(maxEst, finalEst)
+	maxEst := max(finalEst, addedRows)
 
 	return RowEstimate{
 		Est:    finalEst,
-		MinEst: minEst,
+		MinEst: 1, // Assume a minimum of 1 row qualifies
 		MaxEst: maxEst,
 	}
 }

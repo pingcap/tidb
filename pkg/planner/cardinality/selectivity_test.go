@@ -391,17 +391,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 2.0, count)
 
 	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
-	if err != nil {
-		return
-	}
 	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 4.0, count)
 
 	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
-	if err != nil {
-		return
-	}
 	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 4.0, count)
@@ -424,9 +418,6 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	colID = table.Meta().Columns[0].ID
 	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30))
-	if err != nil {
-		return
-	}
 	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
@@ -441,9 +432,6 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	colID = table.Meta().Columns[0].ID
 	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
-	if err != nil {
-		return
-	}
 	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 0.001, count)
@@ -620,9 +608,6 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	require.Equal(t, 1.0, count)
 
 	countEst, err = cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(6, 6))
-	if err != nil {
-		return
-	}
 	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)

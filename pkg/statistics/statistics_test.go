@@ -238,9 +238,6 @@ func SubTestColumnRange() func(*testing.T) {
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0] = types.MinNotNullDatum()
 		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 99900, int(count))
@@ -249,26 +246,17 @@ func SubTestColumnRange() func(*testing.T) {
 		ran[0].HighVal[0] = types.NewIntDatum(2000)
 		ran[0].HighExclude = true
 		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 2500, int(count))
 		ran[0].LowExclude = false
 		ran[0].HighExclude = false
 		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 2500, int(count))
 		ran[0].LowVal[0] = ran[0].HighVal[0]
 		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100, int(count))
@@ -277,9 +265,6 @@ func SubTestColumnRange() func(*testing.T) {
 		ran[0].LowVal[0] = types.Datum{}
 		ran[0].HighVal[0] = types.MaxValueDatum()
 		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
@@ -288,26 +273,17 @@ func SubTestColumnRange() func(*testing.T) {
 		ran[0].HighVal[0] = types.NewIntDatum(2000)
 		ran[0].HighExclude = true
 		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 9998, int(count))
 		ran[0].LowExclude = false
 		ran[0].HighExclude = false
 		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 10000, int(count))
 		ran[0].LowVal[0] = ran[0].HighVal[0]
 		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
@@ -335,38 +311,25 @@ func SubTestIntColumnRanges() func(*testing.T) {
 			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
 		var countEst RowEstimate
-		var count float64
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
-		count = countEst.Est
+		count := countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(2000)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1000, int(count))
 		ran[0].LowVal[0].SetInt64(1001)
 		ran[0].HighVal[0].SetInt64(1999)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 998, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(1000)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
@@ -377,36 +340,24 @@ func SubTestIntColumnRanges() func(*testing.T) {
 			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0].SetUint64(1000)
 		ran[0].HighVal[0].SetUint64(2000)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1000, int(count))
 		ran[0].LowVal[0].SetUint64(1001)
 		ran[0].HighVal[0].SetUint64(1999)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 998, int(count))
 		ran[0].LowVal[0].SetUint64(1000)
 		ran[0].HighVal[0].SetUint64(1000)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
@@ -415,45 +366,30 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		ran[0].LowVal[0].SetInt64(math.MinInt64)
 		ran[0].HighVal[0].SetInt64(math.MaxInt64)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(2000)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1001, int(count))
 		ran[0].LowVal[0].SetInt64(1001)
 		ran[0].HighVal[0].SetInt64(1999)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 999, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(1000)
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 
 		tbl.RealtimeCount *= 10
 		countEst, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
-		if err != nil {
-			return
-		}
 		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
