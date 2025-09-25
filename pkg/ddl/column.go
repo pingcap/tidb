@@ -50,6 +50,7 @@ import (
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -653,6 +654,7 @@ type updateColumnWorker struct {
 	rowMap map[int64]types.Datum
 
 	checksumNeeded bool
+	backfillStartTS uint64
 }
 
 func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
@@ -694,6 +696,7 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		checksumNeeded: vardef.EnableRowLevelChecksum.Load(),
+		backfillStartTS: reorgInfo.SnapshotVer,
 	}, nil
 }
 
@@ -734,8 +737,20 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
+
+	// The real snapTS used would be max(backfillTS, txnStartTS - 9min)
+	// @@tikv_gc_life_time global session variable minimal value is 10min, this constraint
+	// is unlikey to change, so it should be safe as a cheap way to avoid ErrTxnAbortedByGC
+	snapTS := w.backfillStartTS
+	txnTS := txn.StartTS()
+	t1 := oracle.GetTimeFromTS(txnTS)
+	t2 := oracle.GetTimeFromTS(snapTS)
+	if t1.Sub(t2) > 9 * time.Minute {
+		snapTS = oracle.GoTimeToTS(t1.Add(-9 * time.Minute))
+	}
+
 	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, taskRange.physicalTable.RecordPrefix(),
-		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
+		snapTS, taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
