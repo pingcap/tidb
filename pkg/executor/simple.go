@@ -2779,6 +2779,10 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 			case ast.RefreshObjectScopeTable:
 				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
 				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+						continue
+					}
 					return errors.Trace(err)
 				}
 				if table == nil {

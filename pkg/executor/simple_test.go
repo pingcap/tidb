@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -58,4 +59,32 @@ func TestRefreshTableStats(t *testing.T) {
 	tbl2StatsUpdated = handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
 	require.NotSame(t, tbl2Stats, tbl2StatsUpdated)
 	require.NotNil(t, tbl2StatsUpdated.GetIdx(1), "index stats should be loaded in full mode")
+}
+
+func TestRefreshStatsWarningsForMissingObjects(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("analyze table t all columns")
+
+	vars := tk.Session().GetSessionVars()
+
+	vars.StmtCtx.SetWarnings(nil)
+	tk.MustExec("refresh stats missing_db.*")
+	warnings := vars.StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Equal(t, infoschema.ErrDatabaseNotExists.FastGenByArgs("missing_db").Error(), warnings[0].Err.Error())
+
+	vars.StmtCtx.SetWarnings(nil)
+	tk.MustExec("refresh stats test.t_missing, test.t")
+	warnings = vars.StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Equal(t, infoschema.ErrTableNotExists.FastGenByArgs("test", "t_missing").Error(), warnings[0].Err.Error())
+
+	vars.StmtCtx.SetWarnings(nil)
+	tk.MustExec("refresh stats test.t")
+	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
 }
