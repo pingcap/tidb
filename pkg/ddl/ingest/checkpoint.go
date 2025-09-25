@@ -172,12 +172,12 @@ type ProcessedRange struct {
 type CheckpointManager struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	logger        *zap.Logger
-	physicalID    int64
 	localStoreDir string
 	pdCli         pd.Client
+	logger        *zap.Logger
+	physicalID    int64
 
-	// Strategy for checkpoint storage
+	// strategy for checkpoint storage
 	storage CheckpointStorage
 
 	// Derived and unchanged after the initialization.
@@ -190,11 +190,11 @@ type CheckpointManager struct {
 	// pendingFinishedRanges: locally written, not yet merged, closed intervals
 	pendingFinishedRanges []ProcessedRange
 	// importedRanges: imported but not fully contiguous from watermark, closed intervals
-	importedRanges []ProcessedRange
-	// importedKeyLowWatermark: first not-yet-imported key (half-open boundary)
+	importedRanges   []ProcessedRange
 	localWrittenRows int
 
 	// Persisted to the storage.
+	// importedKeyLowWatermark: first not-yet-imported key
 	importedKeyLowWatermark kv.Key
 	flushedKeyCnt           int
 	importedKeyCnt          int
@@ -250,7 +250,7 @@ func newCheckpointManagerWithStorage(
 	return cm, nil
 }
 
-// NewCheckpointManager creates a new checkpoint manager with reorg storage
+// NewCheckpointManager creates a new checkpoint manager with normal storage
 func NewCheckpointManager(
 	ctx context.Context,
 	sessPool *sess.Pool,
@@ -269,7 +269,7 @@ func NewCheckpointManager(
 	return newCheckpointManagerWithStorage(ctx, storage, physicalID, localStoreDir, pdCli, startKey)
 }
 
-// NewCheckpointManagerForDistTask creates a new checkpoint manager with distributed task storage
+// NewCheckpointManagerForDistTask creates a new checkpoint manager with DXF task storage
 func NewCheckpointManagerForDistTask(
 	ctx context.Context,
 	subtaskID int64,
@@ -337,19 +337,13 @@ func (s *CheckpointManager) FinishChunk(rg kv.KeyRange, delta int, prevTailKey k
 	s.mu.Unlock()
 }
 
-// canPromoteWatermark reports whether the first imported range can extend the low watermark.
-func canPromoteWatermark(r ProcessedRange, low kv.Key) bool {
-	if len(r.PrevTailKey) > 0 {
-		return r.PrevTailKey.Cmp(low) <= 0
-	}
-	return r.StartKey.Cmp(low) <= 0
-}
-
 // AdvanceWatermark merges finished local ranges, advances the low watermark if contiguous,
 // allocates a new TS and persists checkpoint.
 func (s *CheckpointManager) AdvanceWatermark() error {
 	failpoint.Inject("resignAfterFlush", func() {
+		// used in a manual test
 		ResignOwnerForTest.Store(true)
+		// wait until ResignOwnerForTest is processed
 		for ResignOwnerForTest.Load() {
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -398,6 +392,14 @@ func (s *CheckpointManager) AdvanceWatermark() error {
 		return err
 	}
 	return s.updateCheckpoint()
+}
+
+// canPromoteWatermark reports whether the first imported range can extend the low watermark.
+func canPromoteWatermark(r ProcessedRange, low kv.Key) bool {
+	if len(r.PrevTailKey) > 0 {
+		return r.PrevTailKey.Cmp(low) <= 0
+	}
+	return r.StartKey.Cmp(low) <= 0
 }
 
 // mergeAndCompactRanges merges (pending + existing) ranges into non-overlapping sorted segments.
@@ -479,8 +481,9 @@ func toKeyRanges(rs []ProcessedRange) []kv.KeyRange {
 	return out
 }
 
-// subtractRanges subtracts imported ranges from input (both treated as closed intervals conceptually,
-// implemented using half-open kv.KeyRange semantics).
+// subtractRanges subtracts imported ranges from input
+// input: half-open [StartKey, EndKey)
+// imported: closed [StartKey, EndKey]
 func subtractRanges(input []kv.KeyRange, imported []kv.KeyRange) []kv.KeyRange {
 	if len(imported) == 0 || len(input) == 0 {
 		return input
@@ -519,7 +522,7 @@ func subtractOne(a, b kv.KeyRange) []kv.KeyRange {
 		out = append(out, kv.KeyRange{StartKey: a.StartKey.Clone(), EndKey: b.StartKey.Clone()})
 	}
 	if b.EndKey.Cmp(a.EndKey) < 0 {
-		// right residual: start after b.End (since b is closed)
+		// right residual: start after b.End
 		out = append(out, kv.KeyRange{StartKey: b.EndKey.Clone().Next(), EndKey: a.EndKey.Clone()})
 	}
 	return out
@@ -639,9 +642,9 @@ type ReorgCheckpoint struct {
 
 // JobCheckpointVersionCurrent is the current version of the checkpoint.
 const (
+	JobCheckpointVersionCurrent = JobCheckpointVersion2
 	JobCheckpointVersion1       = 1
 	JobCheckpointVersion2       = 2
-	JobCheckpointVersionCurrent = JobCheckpointVersion2
 )
 
 func (s *CheckpointManager) resumeOrInitCheckpoint() error {
@@ -699,11 +702,14 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 	if s.ts > 0 {
 		return nil
 	}
+	// if TS is not set, we need to allocate a TS and save it to the storage before
+	// continue.
 	p, l, err := s.pdCli.GetTS(s.ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.ts = oracle.ComposeTS(p, l)
+	ts := oracle.ComposeTS(p, l)
+	s.ts = ts
 	return s.updateCheckpointImpl()
 }
 

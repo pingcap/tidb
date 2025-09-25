@@ -60,11 +60,11 @@ type BackendCtxBuilder struct {
 	etcdClient *clientv3.Client
 	importTS   uint64
 
-	// For normal checkpoint manager
+	// For Non-DXF checkpoint manager
 	sessPool   *sess.Pool
 	physicalID int64
 
-	// For distributed task checkpoint manager
+	// For DXF checkpoint manager
 	subtaskID   int64
 	updateFunc  func(context.Context, int64, any) error
 	getFunc     func(context.Context, int64) (string, error)
@@ -86,11 +86,11 @@ func (b *BackendCtxBuilder) WithImportDistributedLock(etcdCli *clientv3.Client, 
 func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 	sessPool *sess.Pool,
 	physicalID int64,
-	start kv.Key,
+	startKey kv.Key,
 ) *BackendCtxBuilder {
 	b.sessPool = sessPool
 	b.physicalID = physicalID
-	b.minimalStartKey = start
+	b.minimalStartKey = startKey
 	return b
 }
 
@@ -142,7 +142,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 
 	// Create checkpoint manager based on the configuration
 	if b.useDistTask {
-		// Use distributed task checkpoint manager
+		// Use DXF checkpoint manager
 		cpOp, err = NewCheckpointManagerForDistTask(
 			ctx,
 			b.subtaskID,
@@ -154,14 +154,14 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 			b.minimalStartKey,
 		)
 		if err != nil {
-			logutil.Logger(ctx).Warn("create distributed task checkpoint manager failed",
+			logutil.Logger(ctx).Warn("create DXF checkpoint manager failed",
 				zap.Int64("jobID", job.ID),
 				zap.Int64("subtaskID", b.subtaskID),
 				zap.Error(err))
 			return nil, err
 		}
 	} else {
-		// Use normal checkpoint manager
+		// Use Non-DXF checkpoint manager
 		if b.sessPool != nil {
 			cpOp, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli, b.minimalStartKey)
 			if err != nil {
@@ -178,7 +178,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	fpCpOp := cpOp
 	if fpCpOp == nil {
 		var nilMgr *CheckpointManager
-		fpCpOp = nilMgr // typed-nil that implements CheckpointOperator
+		fpCpOp = nilMgr
 	}
 	failpoint.InjectCall("mockNewBackendContext", b.job, fpCpOp, &mockBackend)
 	if mockBackend != nil {

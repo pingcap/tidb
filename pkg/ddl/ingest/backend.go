@@ -57,7 +57,7 @@ type BackendCtx interface {
 	// FinishAndUnregisterEngines is only used in local disk based ingest.
 	FinishAndUnregisterEngines(opt UnregisterOpt) error
 
-	// IngestIfQuotaExceeded updates the task and count to checkpoint manager, and try to ingest them to disk or TiKV
+	// IngestIfQuotaExceeded try to ingest data to disk or TiKV
 	// according to the last ingest time or the usage of local disk.
 	IngestIfQuotaExceeded(ctx context.Context) error
 
