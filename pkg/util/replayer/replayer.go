@@ -96,7 +96,7 @@ var (
 //
 // This VFS is only for testing purposes,
 // but in fact, this VFS has already implemented protocols such as S3 and NFS.
-// We hope it can be supported in the future.
+// it can be supported in the future.
 func GetPlanReplayerDirName(vfs ...afero.Fs) string {
 	var fs afero.Fs
 	fs = afero.NewOsFs()
