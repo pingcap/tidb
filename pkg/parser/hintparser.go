@@ -1321,6 +1321,7 @@ yynewstate:
 			for _, item := range yyS[yypt-1].leadingList.Items {
 				if t, ok := item.(*ast.HintTable); ok && t.QBName.L != "" {
 					parser.yyVAL.hint.QBName = t.QBName
+					t.QBName = ast.CIStr{}
 					break
 				}
 			}

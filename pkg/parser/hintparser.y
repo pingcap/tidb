@@ -258,7 +258,8 @@ TableOptimizerHintOpt:
 		for _, item := range $3.Items {
             if t, ok := item.(*ast.HintTable); ok && t.QBName.L != "" {
                 $$.QBName = t.QBName
-                break
+				t.QBName = ast.CIStr{} 
+				break
             }
         }
 	}

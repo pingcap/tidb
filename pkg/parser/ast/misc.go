@@ -4028,8 +4028,7 @@ func (ht *HintTable) RestoreInLeading(ctx *format.RestoreCtx) {
 	}
 }
 
-// Restore restores a LeadingList hint expression.
-func (lt *LeadingList) Restore(ctx *format.RestoreCtx, needParen bool) error {
+func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needParen bool) error {
 	if lt == nil || len(lt.Items) == 0 {
 		return nil
 	}
@@ -4045,11 +4044,21 @@ func (lt *LeadingList) Restore(ctx *format.RestoreCtx, needParen bool) error {
 
 		switch t := item.(type) {
 		case *HintTable:
-			t.RestoreInLeading(ctx)
+			if i == 0 && qbName.L != "" {
+				tableWithQB := *t
+				tableWithQB.QBName = qbName
+				tableWithQB.RestoreInLeading(ctx)
+				qbName = CIStr{} // clear after use
+			} else {
+				t.RestoreInLeading(ctx)
+			}
+
 		case *LeadingList:
-			if err := t.Restore(ctx, true); err != nil {
+			// child list should not inherit outer QBName.
+			if err := t.RestoreWithQB(ctx, CIStr{}, true); err != nil {
 				return err
 			}
+
 		default:
 			return fmt.Errorf("unexpected type in LeadingList: %T", t)
 		}
@@ -4095,7 +4104,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(int64))
 	case "leading":
 		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
-			if err := list.Restore(ctx, false); err != nil {
+			if err := list.RestoreWithQB(ctx, n.QBName, false); err != nil {
 				return err
 			}
 		} else {
@@ -4103,9 +4112,17 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(", ")
 				}
-				table.RestoreInLeading(ctx)
+				// if outer layer has QBName add it to the first table.
+				if i == 0 && n.QBName.L != "" {
+					tableWithQB := *(&table) // shallow copy
+					tableWithQB.QBName = n.QBName
+					tableWithQB.RestoreInLeading(ctx)
+				} else {
+					table.RestoreInLeading(ctx)
+				}
 			}
 		}
+
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
 		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",
 		"no_index_join", "no_index_hash_join", "no_index_merge_join":
