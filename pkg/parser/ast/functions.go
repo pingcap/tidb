@@ -56,7 +56,7 @@ const (
 	BitNeg             = "bitneg"
 	IntDiv             = "intdiv"
 	LogicXor           = "xor"
-	NullEQ             = "nulleq"
+	NullEQ             = "nulleq" // NULL safe equal operator "<=>". it is the same as `IS NOT DISTINCT FROM` in SQL standard.
 	UnaryPlus          = "unaryplus"
 	UnaryMinus         = "unaryminus"
 	In                 = "in"

@@ -873,6 +873,15 @@ func SortColumns(cols []*Column) []*Column {
 	return sorted
 }
 
+// DeepCopyColumns deep copies and sorts columns based on UniqueID.
+func DeepCopyColumns(cols []*Column) []Expression {
+	cpy := make([]Expression, 0, len(cols))
+	for _, col := range cols {
+		cpy = append(cpy, col.Clone())
+	}
+	return cpy
+}
+
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
 	return slices.ContainsFunc(cols, func(c *Column) bool {
