@@ -1021,17 +1021,33 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 	// MaxCountAfterAccess tracks the worst case "CountAfterAccess", accounting for scenarios that could
 	// increase our row estimation, thus lhs/rhsRiskRatio represents the "risk" of the CountAfterAccess value.
 	// Lower value means less risk that the actual row count is higher than the estimated one.
-	if lhs.path.MaxCountAfterAccess > 0 && rhs.path.MaxCountAfterAccess > 0 {
+	if lhs.path.MaxCountAfterAccess > lhs.path.CountAfterAccess {
 		lhsRiskRatio = lhs.path.MaxCountAfterAccess / lhs.path.CountAfterAccess
+	}
+	if rhs.path.MaxCountAfterAccess > rhs.path.CountAfterAccess {
 		rhsRiskRatio = rhs.path.MaxCountAfterAccess / rhs.path.CountAfterAccess
 	}
+	sumLhs := lhs.path.CountAfterAccess + lhs.path.MaxCountAfterAccess
+	sumRhs := rhs.path.CountAfterAccess + rhs.path.MaxCountAfterAccess
 	// lhs has lower risk
-	if lhsRiskRatio < rhsRiskRatio && lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
-		return 1, lhsRiskRatio
+	if lhsRiskRatio < rhsRiskRatio {
+		if lhs.path.CountAfterAccess <= rhs.path.CountAfterAccess {
+			return 1, lhsRiskRatio
+		}
+		if sumLhs < sumRhs && lhs.path.MinCountAfterAccess > 0 &&
+			(lhs.path.MinCountAfterAccess <= rhs.path.MinCountAfterAccess || lhs.path.CountAfterIndex <= rhs.path.CountAfterIndex) {
+			return 1, lhsRiskRatio
+		}
 	}
 	// rhs has lower risk
-	if rhsRiskRatio < lhsRiskRatio && rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
-		return -1, rhsRiskRatio
+	if rhsRiskRatio < lhsRiskRatio {
+		if rhs.path.CountAfterAccess <= lhs.path.CountAfterAccess {
+			return -1, rhsRiskRatio
+		}
+		if sumRhs < sumLhs && rhs.path.MinCountAfterAccess > 0 &&
+			(rhs.path.MinCountAfterAccess <= lhs.path.MinCountAfterAccess || rhs.path.CountAfterIndex <= lhs.path.CountAfterIndex) {
+			return -1, rhsRiskRatio
+		}
 	}
 	return 0, 0
 }
@@ -1079,12 +1095,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
+	predicateResult := accessResult + riskResult + eqOrInResult
+
 	// totalSum is the aggregate score of all comparison metrics
-	// riskResult is excluded because more work is required.
-	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
-	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
-	// bound was applied, etc.)
-	totalSum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
+	totalSum := predicateResult + scanResult + matchResult + globalResult
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
@@ -1117,13 +1131,22 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
+	leftIsBetter := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
+	rightIsBetter := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 && !comparable2 {
+		// These aren't comparable - but compare risk and other metrics to see if we can determine a clear winner
+		if riskResult > 0 && leftIsBetter && totalSum > 1 {
+			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+		}
+		if riskResult < 0 && rightIsBetter && totalSum < -1 {
+			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+		}
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
+	if leftIsBetter && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && totalSum < 0 {
+	if rightIsBetter && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result

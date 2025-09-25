@@ -177,8 +177,9 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	sctx := mock.NewContext()
 
 	// Test a specific range first (900, 900) - should be out of range
-	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, 0, false)
+	countEst, err := cardinality.GetColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, 0, false)
 	require.NoError(t, err)
+	count := countEst.Est
 	// Because the mock data is uniform distribution, the result should be predictable
 	require.Truef(t, count < 5.5, "expected: around 5.0, got: %v", count)
 	require.Truef(t, count > 4.5, "expected: around 5.0, got: %v", count)
@@ -200,7 +201,8 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
 
 	for i, ran := range input {
-		count, err = cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		countEst, err = cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -328,7 +330,8 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	statsSuiteData.LoadTestCases(t, &input, &output)
 
 	// Test a specific range first - range [300, 500) should be affected by deletion
-	count, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(300, 500), statsTblAfterDelete.RealtimeCount, 1000, false)
+	countEst, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(300, 500), statsTblAfterDelete.RealtimeCount, 1000, false)
+	count := countEst.Est
 	require.NoError(t, err)
 	// After deletion, this range should estimate approximately 1 value since all data in [300, 500) was deleted
 	require.Truef(t, count < 20, "expected: less than 20, got: %v", count)
@@ -338,7 +341,8 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	modifyCount := int64(1000) // Number of deleted rows
 
 	for i, ran := range input {
-		count, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		countEst, err := cardinality.GetColumnRowCount(sctx, colAfterDelete, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		count := countEst.Est
 		require.NoError(t, err)
 
 		testdata.OnRecord(func() {
@@ -381,15 +385,24 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	sctx := mock.NewContext()
 	colID := table.Meta().Columns[0].ID
-	count, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30))
+	countEst, err := cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(30, 30))
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 2.0, count)
 
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
+	if err != nil {
+		return
+	}
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 4.0, count)
 
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
+	if err != nil {
+		return
+	}
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 4.0, count)
 
@@ -410,7 +423,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	colID = table.Meta().Columns[0].ID
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30))
+	if err != nil {
+		return
+	}
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
@@ -423,7 +440,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	colID = table.Meta().Columns[0].ID
-	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
+	countEst, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
+	if err != nil {
+		return
+	}
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 0.001, count)
 
@@ -460,12 +481,14 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	// Search for a found value == 10.0
 	sctx := mock.NewContext()
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
-	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(5, 5), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	countEst, err := cardinality.GetColumnRowCount(sctx, col, getRange(5, 5), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 10.0, count)
 
 	// Search for a not found value with zero modifyCount. Defaults to count == 1.0
-	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	countEst, err = cardinality.GetColumnRowCount(sctx, col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
@@ -477,7 +500,8 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	statsTblNew := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	// Search for a not found value based upon statistics - count should be > 20 and < 40
-	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
+	countEst, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Truef(t, count < 40, "expected: between 20 to 40, got: %v", count)
 	require.Truef(t, count > 20, "expected: between 20 to 40, got: %v", count)
@@ -590,11 +614,16 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	require.Equal(t, 1.0, countResult.Est)
 
 	colID := table.Meta().Columns[0].ID
-	count, err := cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(7, 7))
+	countEst, err := cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(7, 7))
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, err = cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(6, 6))
+	countEst, err = cardinality.GetRowCountByIntColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(6, 6))
+	if err != nil {
+		return
+	}
+	count = countEst.Est
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 }
@@ -929,7 +958,8 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+		countEst, err := cardinality.GetColumnRowCount(sctx, col, getRange(ran.Start, ran.End), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+		count := countEst.Est
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -1878,18 +1908,22 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	ModifyCount := RealTimeCount * 2
 
 	// Search for range outside of histogram buckets
-	test, _ := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), int64(0), int64(0), false)
+	testEst, _ := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), int64(0), int64(0), false)
+	test := testEst.Est
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
-	count, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	countEst, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	count := countEst.Est
 	require.NoError(t, err)
 	require.Less(t, test, count)
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
-	count2, err2 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	countEst2, err2 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	count2 := countEst2.Est
 	require.NoError(t, err2)
 	// Result of count2 should be larger than count because the risk ratio is higher
 	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
-	count3, err3 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	countEst3, err3 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	count3 := countEst3.Est
 	require.NoError(t, err3)
 	// Result of count3 should be larger because the risk ratio is higher
 	require.Less(t, count2, count3)
@@ -1928,7 +1962,8 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 
 	// Get baseline estimation for value 11 which should be 1
-	baselineCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	baselineCountEst, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	baselineCount := baselineCountEst.Est
 	require.NoError(t, err)
 	require.Equal(t, baselineCount, float64(1))
 
@@ -1945,7 +1980,8 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
 
-	insufficientCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	insufficientCountEst, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	insufficientCount := insufficientCountEst.Est
 	require.NoError(t, err)
 
 	// Should be close to baseline since heuristic didn't trigger
@@ -1964,14 +2000,16 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
 
-	enhancedCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	enhancedCountEst, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	enhancedCount := enhancedCountEst.Est
 	require.NoError(t, err)
 
 	// Should be much higher due to heuristic
 	require.InDelta(t, 100.09, enhancedCount, 0.1, "Enhanced count should be approximately 100.09")
 
 	// Verify other end values don't trigger heuristic
-	otherCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(3, 3), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	otherCountEst, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(3, 3), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	otherCount := otherCountEst.Est
 	require.NoError(t, err)
 	require.InDelta(t, 109.99, otherCount, 0.1, "Other value count should be approximately 109.99")
 

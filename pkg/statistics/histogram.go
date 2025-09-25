@@ -1072,12 +1072,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		oneValue = hg.NotNullCount() / max(float64(histNDV), outOfRangeBetweenRate) // avoid inaccurate selectivity caused by small NDV
 	}
 
-	// We may have missed the true lowest/highest values due to sampling - and we are out of
-	// range without any modifications. So return oneValue to avoid underestimation.
-	if modifyCount == 0 {
-		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
-	}
-
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
@@ -1199,6 +1193,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
 	avgRowCount = (addedRows * 0.5) * totalPercent
+
+	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
+	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
+	// account for at least 1% of the total row count as a worst case for "addedRows".
+	// We inflate this here so ONLY to impact the MaxEst value.
+	if modifyCount == 0 || addedRows == 0 {
+		addedRows = max(addedRows, float64(realtimeRowCount)*0.01)
+	}
 
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
