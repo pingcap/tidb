@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -52,9 +53,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	runtimeStatsColl := sc.RuntimeStatsColl
 
 	// For PointGet and BatchPointGet
-	planID := 3
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
-	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
+	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, 1, 2024)
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
@@ -63,11 +62,11 @@ func TestIndexUsageReporter(t *testing.T) {
 	}, time.Second*5, time.Millisecond)
 
 	// For Index Scan
-	planID = 4
+	planID := 4
 	rows := uint64(2024)
 	zero := uint64(0)
 	executorID := "test-executor"
-	runtimeStatsColl.GetOrCreateCopStats(planID, "test-store").RecordOneCopTask("1", &tipb.ExecutorExecutionSummary{
+	runtimeStatsColl.RecordOneCopTask(planID, kv.TiKV, &tipb.ExecutorExecutionSummary{
 		TimeProcessedNs: &zero,
 		NumProducedRows: &rows,
 		NumIterations:   &zero,
@@ -87,9 +86,7 @@ func TestIndexUsageReporter(t *testing.T) {
 		Version:       statistics.PseudoVersion,
 		RealtimeCount: 100,
 	})
-	planID = 4
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
-	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
+	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, 1, 2024)
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()

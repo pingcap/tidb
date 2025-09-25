@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -785,7 +786,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
@@ -876,7 +877,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		e := executorBuilder.Build(p)
@@ -2987,22 +2988,41 @@ func TestDecimalDivPrecisionIncrement(t *testing.T) {
 }
 
 func TestIssue48756(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t (id INT, a VARBINARY(20), b BIGINT)")
-	tk.MustExec(`INSERT INTO t VALUES(1, _binary '2012-05-19 09:06:07', 20120519090607),
-(1, _binary '2012-05-19 09:06:07', 20120519090607),
-(2, _binary '12012-05-19 09:06:07', 120120519090607),
-(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
-	tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").Sort().Check(testkit.Rows(
-		"2012-05-18 08:05:05.999998",
-		"<nil>",
-	))
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1292 Incorrect time value: '120120519090607'",
-		"Warning 1105 ",
-	))
+	for useCopLiteWorker := range 2 {
+		t.Run(fmt.Sprintf("TryCopLiteWorker=%d", useCopLiteWorker), func(t *testing.T) {
+			// Inject the TryCopLiteWorker value into the current session's DistSQL context
+			testfailpoint.Enable(t,
+				"github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker",
+				fmt.Sprintf("return(%d)", useCopLiteWorker),
+			)
+
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("CREATE TABLE t (id INT, a VARBINARY(20), b BIGINT)")
+			tk.MustExec(`INSERT INTO t VALUES
+				(1, _binary '2012-05-19 09:06:07', 20120519090607),
+				(1, _binary '2012-05-19 09:06:07', 20120519090607),
+				(2, _binary '12012-05-19 09:06:07', 120120519090607),
+				(2, _binary '12012-05-19 09:06:07', 120120519090607)`)
+
+			tk.MustQuery("SELECT SUBTIME(BIT_OR(b), '1 1:1:1.000002') FROM t GROUP BY id").
+				Sort().
+				Check(testkit.Rows(
+					"2012-05-18 08:05:05.999998",
+					"<nil>",
+				))
+
+			warnings := tk.MustQuery("show warnings").Rows()
+			require.Len(t, warnings, 2)
+			require.Equal(t, "Warning", warnings[0][0], "generates a warning")
+			require.Equal(t, "1292", warnings[0][1], "expected error code")
+			require.Equal(t, "Incorrect time value: '120120519090607'", warnings[0][2],
+				"expected error message")
+			require.Equal(t, "Warning", warnings[1][0], "generates a warning")
+			require.Equal(t, "1105", warnings[1][1], "expected error code")
+		})
+	}
 }
 
 func TestIssue50308(t *testing.T) {

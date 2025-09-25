@@ -461,7 +461,8 @@ func (c *constraintsGroup) MergeTransformableRoles() {
 func GetRangeStartAndEndKeyHex(rangeBundleID string) (startKey string, endKey string) {
 	startKey, endKey = "", ""
 	if rangeBundleID == TiDBBundleRangePrefixForMeta {
-		startKey = hex.EncodeToString(metaPrefix)
+		// Use codec.EncodeBytes to properly encode the meta prefix in table mode
+		startKey = hex.EncodeToString(codec.EncodeBytes(nil, metaPrefix))
 		endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(0)))
 	}
 	return startKey, endKey

@@ -51,6 +51,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/execdetails",
+        "//pkg/util/hack",
         "//pkg/util/plancodec",
         "//pkg/util/ppcpuusage",
         "@com_github_pingcap_log//:log",

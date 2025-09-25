@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/filter"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -124,6 +125,7 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *logicalop.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
+		intest.Assert(!ds.SCtx().GetSessionVars().InRestrictedSQL, "system table should have been skipped in restricted SQL mode")
 		return
 	}
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to

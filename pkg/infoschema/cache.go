@@ -17,9 +17,12 @@ package infoschema
 import (
 	"sort"
 	"sync"
+	"time"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -41,6 +44,9 @@ type InfoCache struct {
 	// first known schema version records the first known schema version, all schemas between [firstKnownSchemaVersion, latest)
 	// are known as long as we keep the DDL history correctly.
 	firstKnownSchemaVersion int64
+
+	lastCheckVersion int64
+	lastCheckTime    time.Time
 }
 
 type schemaAndTimestamp struct {
@@ -290,6 +296,8 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	return nil
 }
 
+const gcCheckInterval = 128
+
 // Insert will **TRY** to insert the infoschema into the cache.
 // It only promised to cache the newest infoschema.
 // It returns 'true' if it is cached, 'false' otherwise.
@@ -300,6 +308,14 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	defer h.mu.Unlock()
 
 	version := is.SchemaMetaVersion()
+	if h.lastCheckVersion == 0 {
+		h.lastCheckVersion = version
+		h.lastCheckTime = time.Now()
+	} else if version > h.lastCheckVersion+gcCheckInterval && time.Since(h.lastCheckTime) > time.Minute {
+		h.lastCheckVersion = version
+		h.lastCheckTime = time.Now()
+		go h.gcOldVersion()
+	}
 
 	// assume this is the timestamp order as well
 	i := sort.Search(len(h.cache), func(i int) bool {
@@ -371,4 +387,26 @@ func (h *InfoCache) InsertEmptySchemaVersion(version int64) {
 			}
 		}
 	}
+}
+
+func (h *InfoCache) gcOldVersion() {
+	tikvStore, ok := h.r.Store().(helper.Storage)
+	if !ok {
+		return
+	}
+
+	newHelper := helper.NewHelper(tikvStore)
+	version, err := meta.GetOldestSchemaVersion(newHelper)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to GC old schema version", zap.Error(err))
+		return
+	}
+	start := time.Now()
+	deleted, total := h.Data.GCOldVersion(version)
+	logutil.BgLogger().Info("GC compact old schema version",
+		zap.Int64("current version", h.lastCheckVersion),
+		zap.Int64("oldest version", version),
+		zap.Int("deleted", deleted),
+		zap.Int64("total", total),
+		zap.Duration("takes", time.Since(start)))
 }

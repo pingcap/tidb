@@ -633,6 +633,21 @@ func (r *reorgInfo) String() string {
 		"Ingest mode:" + strconv.FormatBool(isEnabled)
 }
 
+// UpdateConfigFromSysTbl updates the reorg config from system table.
+func (r *reorgInfo) UpdateConfigFromSysTbl(ctx context.Context) {
+	latestJob, err := r.jobCtx.sysTblMgr.GetJobByID(ctx, r.ID)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to get latest job from system table",
+			zap.Int64("jobID", r.ID), zap.Error(err))
+		return
+	}
+	if latestJob.State == model.JobStateRunning && latestJob.IsAlterable() {
+		r.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
+		r.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+		r.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
+	}
+}
+
 func constructOneRowTableScanPB(
 	physicalTableID int64,
 	tblInfo *model.TableInfo,
