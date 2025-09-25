@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -87,7 +88,10 @@ func (p PhysicalLocalIndexLookUp) Init(ctx base.PlanContext, indexPlan base.Phys
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalLocalIndexLookUp) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalLocalIndexLookUp) ToPB(_ *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	if storeType != kv.TiKV {
+		return nil, errors.Errorf("unsupported store type %v for LocalIndexLookUp", storeType)
+	}
 	return &tipb.Executor{
 		Tp: tipb.ExecType_TypeIndexLookUp,
 		IndexLookup: &tipb.IndexLookUp{
