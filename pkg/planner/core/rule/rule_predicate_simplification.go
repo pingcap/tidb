@@ -596,6 +596,10 @@ func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [
 		andList := expression.SplitCNFItems(andFunc)
 		isNullCols := expression.ExtractIsNullColumns(andList)
 		for i := range equalConditionList {
+			if len(andList) == len(columnsSets) {
+				// all predicates in this AND list have been simplified.
+				break
+			}
 			cols := equalConditionColsList[i]
 			if slices.ContainsFunc(cols, func(i *expression.Column) bool {
 				_, ok := isNullCols[i.UniqueID]
