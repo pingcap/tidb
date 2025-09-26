@@ -3960,6 +3960,22 @@ type HintTable struct {
 	PartitionList []CIStr
 }
 
+func FlattenLeadingList(list *LeadingList) []HintTable {
+	if list == nil {
+		return nil
+	}
+	var result []HintTable
+	for _, item := range list.Items {
+		switch t := item.(type) {
+		case *HintTable:
+			result = append(result, *t)
+		case *LeadingList:
+			result = append(result, FlattenLeadingList(t)...)
+		}
+	}
+	return result
+}
+
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	if !ctx.Flags.HasWithoutSchemaNameFlag() {
 		if ht.DBName.L != "" {

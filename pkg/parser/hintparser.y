@@ -251,11 +251,15 @@ TableOptimizerHintOpt:
 	}
 |   "LEADING" '(' QueryBlockOpt LeadingTableList ')'
 {
-    $$ = &ast.TableOptimizerHint{
+    h := &ast.TableOptimizerHint{
         HintName: ast.NewCIStr($1),
         QBName:   ast.NewCIStr($3),
         HintData: $4,
     }
+	if leadingList, ok := h.HintData.(*ast.LeadingList); ok{
+		h.Tables = ast.FlattenLeadingList(leadingList)
+	}
+	$$ = h
 }
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{

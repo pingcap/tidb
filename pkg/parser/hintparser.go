@@ -1306,11 +1306,15 @@ yynewstate:
 		}
 	case 10:
 		{
-			parser.yyVAL.hint = &ast.TableOptimizerHint{
+			h := &ast.TableOptimizerHint{
 				HintName: ast.NewCIStr(yyS[yypt-4].ident),
 				QBName:   ast.NewCIStr(yyS[yypt-2].ident),
 				HintData: yyS[yypt-1].leadingList,
 			}
+			if leadingList, ok := h.HintData.(*ast.LeadingList); ok {
+				h.Tables = ast.FlattenLeadingList(leadingList)
+			}
+			parser.yyVAL.hint = h
 		}
 	case 11:
 		{

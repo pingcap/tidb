@@ -761,21 +761,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
-				var sb strings.Builder
-				ctx := format.NewRestoreCtx(0, &sb)
-				if err := hint.Restore(ctx); err != nil {
-					return nil, 0, err
-				}
-				errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
-				warnHandler.SetHintWarning(errMsg)
-				continue
-			}
-		case HintLeading:
-			// Leading table information is in HintData, not in hint.Tables.
-			//leading := hint.HintData.(*ast.LeadingList)
-			if hint.HintData == nil {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
 				if err := hint.Restore(ctx); err != nil {
@@ -890,31 +877,10 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			cteMerge = true
 		case HintLeading:
+			if leadingHintCnt == 0 {
+				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			}
 			leadingHintCnt++
-			// get LeadingList
-			leadingList, ok := hint.HintData.(*ast.LeadingList)
-			if !ok || len(leadingList.Items) == 0 {
-				warnHandler.SetHintWarning("Hint LEADING is inapplicable. Please specify the table names in the arguments.")
-				continue
-			}
-
-			// Extract the first-level table names from LeadingList
-			// take the top-level HintTable and convert it using tableNames2HintTableInfo.
-			var topLevelTables []ast.HintTable
-			for _, item := range leadingList.Items {
-				if t, ok := item.(*ast.HintTable); ok {
-					topLevelTables = append(topLevelTables, *t)
-				}
-			}
-
-			// QBName needs to be assigned back to the first top-level table.
-			if hint.QBName.L != "" && len(topLevelTables) > 0 {
-				topLevelTables[0].QBName = hint.QBName
-			}
-
-			leadingJoinOrder = append(leadingJoinOrder,
-				tableNames2HintTableInfo(currentDB, hint.HintName.L, topLevelTables, hintProcessor, currentLevel, warnHandler)...)
-
 		case HintSemiJoinRewrite:
 			if !handlingExistsSubquery && !handlingInSubquery {
 				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not IN/EXISTS clause.")
