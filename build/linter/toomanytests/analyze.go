@@ -58,10 +58,11 @@ func isTestFile(file *token.File) bool {
 }
 
 func checkRule(pkg string) int {
+	pkg = strings.Split(pkg, ":")[0]
 	switch pkg {
-	case "github.com/pingcap/tidb/pkg/planner/core":
+	case "pkg/planner/core":
 		return 288
-	case "github.com/pingcap/tidb/pkg/executor/test/analyzetest":
+	case "pkg/executor/test/analyzetest":
 		return 54
 	default:
 		return 50
