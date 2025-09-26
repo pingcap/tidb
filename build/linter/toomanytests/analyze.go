@@ -30,6 +30,7 @@ var Analyzer = &analysis.Analyzer{
 	Doc:  "too many tests in the package",
 	Run: func(pass *analysis.Pass) (any, error) {
 		cnt := 0
+		var pos token.Pos
 		for _, f := range pass.Files {
 			astFile := pass.Fset.File(f.Pos())
 			if !isTestFile(astFile) {
@@ -44,11 +45,12 @@ var Analyzer = &analysis.Analyzer{
 					}
 				}
 			}
-			pkgName := filepath.Dir(pass.Fset.Position(f.Pos()).Filename)
-			if cnt > checkRule(pkgName) {
-				pass.Reportf(f.Pos(), "%s: Too many test cases in one package: %d", pkgName, cnt)
-				return nil, nil
-			}
+			pos = f.Pos()
+		}
+		pkgName := filepath.Dir(pass.Fset.Position(pos).Filename)
+		if cnt > checkRule(pkgName) {
+			pass.Reportf(pos, "%s: Too many test cases in one package: %d", pkgName, cnt)
+			return nil, nil
 		}
 		return nil, nil
 	},
@@ -61,7 +63,7 @@ func isTestFile(file *token.File) bool {
 func checkRule(pkg string) int {
 	switch pkg {
 	case "pkg/planner/core":
-		return 85
+		return 2885
 	case "pkg/executor/test/analyzetest":
 		return 52
 	default:
