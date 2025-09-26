@@ -3960,6 +3960,9 @@ type HintTable struct {
 	PartitionList []CIStr
 }
 
+// FlattenLeadingList collects all HintTable nodes from a possibly nested LeadingList into a flat slice.
+// Note:
+//   - Only table names are preserved.
 func FlattenLeadingList(list *LeadingList) []HintTable {
 	if list == nil {
 		return nil
@@ -4018,18 +4021,14 @@ func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needP
 
 		switch t := item.(type) {
 		case *HintTable:
-			tmp := *t
-
-			// left element must have a QBName that needs to be injected and is not the QBName provided by the table.
 			if i == 0 && currentQBName.L != "" && !qbOnTable {
 				ctx.WriteKeyWord("@")
 				ctx.WriteName(currentQBName.String())
 				ctx.WritePlain(" ")
-
-				tmp.Restore(ctx)
+				t.Restore(ctx)
 				currentQBName = CIStr{}
 			} else {
-				tmp.Restore(ctx)
+				t.Restore(ctx)
 			}
 		case *LeadingList:
 			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
