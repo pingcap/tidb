@@ -578,7 +578,7 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 			oldlist = append(oldlist, predicate)
 		}
 	}
-	if len(equalConditionList) > 0 {
+	if len(equalConditionList) < 1 || len(andPredicateList) < 1 {
 		return predicates
 	}
 	var isSimplified bool
