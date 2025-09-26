@@ -15,7 +15,6 @@
 package logicalop
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -145,7 +144,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) (b
 			p.Exprs = slices.Delete(p.Exprs, i, i+1)
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, nil)
 	selfUsedCols := expression.ExtractColumnsFromExpressions(p.Exprs, nil)
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols)
