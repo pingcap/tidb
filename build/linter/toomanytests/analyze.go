@@ -17,6 +17,7 @@ package toomanytests
 import (
 	"go/ast"
 	"go/token"
+	"path/filepath"
 	"strings"
 
 	"github.com/pingcap/tidb/build/linter/util"
@@ -59,6 +60,7 @@ func isTestFile(file *token.File) bool {
 
 func checkRule(pkg string) int {
 	pkg = strings.Split(pkg, ":")[0]
+	pkg = filepath.Dir(pkg)
 	switch pkg {
 	case "pkg/planner/core":
 		return 288
