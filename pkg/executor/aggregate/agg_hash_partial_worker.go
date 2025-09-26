@@ -69,6 +69,8 @@ type HashAggPartialWorker struct {
 
 	// It's useful when spill is triggered and the fetcher could know when partial workers finish their works.
 	inflightChunkSync *sync.WaitGroup
+
+	fileNamePrefixForTest string
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -296,7 +298,7 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 		w.spilledChunksIO = make([]*chunk.DataInDiskByChunks, spilledPartitionNum)
 		for i := 0; i < spilledPartitionNum; i++ {
 			w.tmpChksForSpill[i] = w.spillHelper.getNewSpillChunkFunc()
-			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillHelper.spillChunkFieldTypes)
+			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillHelper.spillChunkFieldTypes, w.fileNamePrefixForTest)
 			if w.spillHelper.diskTracker != nil {
 				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
 			}

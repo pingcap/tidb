@@ -70,7 +70,7 @@ func TestDataInDiskByChunks(t *testing.T) {
 	numChk, numRow := 100, 1000
 	chks, fields := initChunks(numChk, numRow)
 	addAuxDataForChunks(chks)
-	dataInDiskByChunks := NewDataInDiskByChunks(fields)
+	dataInDiskByChunks := NewDataInDiskByChunks(fields, "")
 	defer dataInDiskByChunks.Close()
 
 	for _, chk := range chks {
