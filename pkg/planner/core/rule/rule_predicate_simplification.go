@@ -610,7 +610,7 @@ func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [
 				equalConditionList[i] = expression.NewFunctionInternal(sctx.GetExprCtx(),
 					ast.NullEQ,
 					types.NewFieldType(mysql.TypeTiny),
-					expression.DeepCopyExpression(cols[0], cols[1])...)
+					cols[0], cols[1])
 				columnsSets[cols[0].UniqueID] = struct{}{}
 				columnsSets[cols[1].UniqueID] = struct{}{}
 				isSimplified = true
