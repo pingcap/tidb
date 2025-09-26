@@ -319,7 +319,7 @@ func (s *CheckpointManager) TotalKeyCount() int {
 // delta: written rows in this batch;
 // prevTailKey: the last key of the previous chunk to help stitch/merge continuous ranges.
 func (s *CheckpointManager) FinishChunk(rg kv.KeyRange, delta int, prevTailKey kv.Key) {
-	if len(rg.StartKey) == 0 || len(rg.EndKey) == 0 || rg.StartKey.Cmp(rg.EndKey) >= 0 {
+	if len(rg.StartKey) == 0 || len(rg.EndKey) == 0 || rg.StartKey.Cmp(rg.EndKey) > 0 {
 		s.logger.Warn("FinishChunk skip invalid range",
 			zap.String("start", hex.EncodeToString(rg.StartKey)),
 			zap.String("end", hex.EncodeToString(rg.EndKey)),
@@ -413,7 +413,7 @@ func mergeAndCompactRanges(rs []ProcessedRange) []ProcessedRange {
 	}
 	tmp := make([]ProcessedRange, 0, len(rs))
 	for _, r := range rs {
-		if len(r.StartKey) == 0 || len(r.EndKey) == 0 || r.StartKey.Cmp(r.EndKey) >= 0 {
+		if len(r.StartKey) == 0 || len(r.EndKey) == 0 || r.StartKey.Cmp(r.EndKey) > 0 {
 			continue
 		}
 		tmp = append(tmp, r)
@@ -698,6 +698,9 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 		return nil
 	}
 	s.logger.Info("checkpoint not found")
+	if len(s.initialStartKey) > 0 {
+		s.importedKeyLowWatermark = s.initialStartKey.Clone()
+	}
 
 	if s.ts > 0 {
 		return nil
