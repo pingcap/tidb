@@ -276,4 +276,4 @@ set @@session.default_collation_for_utf8mb4=default;
 drop table if exists tb0;
 create table tb0 (c0 bigint unsigned not null);
 select 1 as col from tb0 where ((true not in (select 1)) not in (tb0.c0));
-explain select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));
+explain format='plan_tree' select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));
