@@ -1095,6 +1095,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
 	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
 
+	// predicateResult is separated out. An index may "win" because it has a better
+	// accessResult - but that access has high risk.
+	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
+	// accessResult. The high risk will negate that accessResult with erOrIn being the
+	// tiebreaker or equalizer.
 	predicateResult := accessResult + riskResult + eqOrInResult
 
 	// totalSum is the aggregate score of all comparison metrics
@@ -1134,7 +1139,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	leftIsBetter := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
 	rightIsBetter := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 && !comparable2 {
-		// These aren't comparable - but compare risk and other metrics to see if we can determine a clear winner
+		// These aren't comparable - but compare risk and other metrics to see if we
+		// can determine a clear winner. Checking > 1 and < -1 means that the winner
+		// must win on at least 2 of the metrics below.
+		// This is to prevent a case where x wins on 1 metric but loses badly on another.
+		// Other checks in this logic only require > 0 or < 0 (1 metric is enough).
 		if riskResult > 0 && leftIsBetter && totalSum > 1 {
 			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 		}
