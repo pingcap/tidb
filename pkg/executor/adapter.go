@@ -1662,9 +1662,12 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	cfg := config.GetGlobalConfig()
-	enable := cfg.Instance.EnableSlowLog.Load()
 	// If the level is Debug, or trace is enabled, print slow logs anyway.
 	force := log.GetLevel() <= zapcore.DebugLevel || trace.IsEnabled()
+	if !cfg.Instance.EnableSlowLog.Load() && !force {
+		return
+	}
+
 	sessVars := a.Ctx.GetSessionVars()
 	sessVars.StmtCtx.ExecSuccess = succ
 	sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
@@ -1677,10 +1680,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	} else {
 		matchRules = ShouldWriteSlowLog(globalRules, sessVars, slowItems)
 	}
-	if (!enable || !matchRules) && !force {
+	if !matchRules && !force {
 		return
 	}
 
+	if slowItems == nil {
+		slowItems = &variable.SlowQueryLogItems{}
+	}
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {

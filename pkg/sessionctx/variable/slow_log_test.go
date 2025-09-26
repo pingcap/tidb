@@ -26,10 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -282,6 +280,7 @@ func TestParseSessionSlowLogRules(t *testing.T) {
 	// a rule that ends without a ';'
 	slowLogRules, err := variable.ParseSessionSlowLogRules(`Conn_ID: 123, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1`)
 	require.EqualError(t, err, "do not allow ConnID value:123")
+	require.Nil(t, slowLogRules)
 	rawRule := `Exec_retry_count: 10, DB: db1, Succ: true, Query_time: 0.5276, Resource_group: rg1`
 	slowLogRules, err = variable.ParseSessionSlowLogRules(rawRule)
 	require.NoError(t, err)
@@ -484,62 +483,6 @@ func BenchmarkSlowLog(b *testing.B) {
 	require.NoError(b, err)
 
 	ts := oracle.GoTimeToTS(time.Now())
-	rules := []*slowlogrule.SlowLogRule{
-		{
-			Conditions: []slowlogrule.SlowLogCondition{
-				{Field: strings.ToLower(variable.SlowLogExecRetryCount), Threshold: uint64(10)},
-				{Field: strings.ToLower(variable.SlowLogDBStr), Threshold: "db1"},
-				{Field: strings.ToLower(variable.SlowLogSucc), Threshold: false},
-				{Field: strings.ToLower(variable.SlowLogQueryTimeStr), Threshold: 0.5276},
-				{Field: strings.ToLower(variable.SlowLogResourceGroup), Threshold: "rg1"},
-			},
-		},
-	}
-	allConditionFields := map[string]struct{}{
-		strings.ToLower(variable.SlowLogExecRetryCount): {},
-		strings.ToLower(variable.SlowLogDBStr):          {},
-		strings.ToLower(variable.SlowLogSucc):           {},
-		strings.ToLower(variable.SlowLogQueryTimeStr):   {},
-		strings.ToLower(variable.SlowLogResourceGroup):  {},
-	}
-	se.GetSessionVars().SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{Fields: allConditionFields, Rules: rules})
-	gSLRules := &slowlogrule.GlobalSlowLogRules{RulesMap: make(map[int64]*slowlogrule.SlowLogRules)}
-	gSLRules.RulesMap[int64(se.GetSessionVars().ConnectionID)] = &slowlogrule.SlowLogRules{
-		Rules: []*slowlogrule.SlowLogRule{
-			{
-				Conditions: []slowlogrule.SlowLogCondition{
-					{variable.SlowLogSucc, false},
-					{variable.SlowLogSessAliasStr, "sessA"},
-					{variable.SlowLogPDTotal, "5.123"},
-					{variable.SlowLogExecRetryCount, "8"},
-					{variable.SlowLogKVTotal, "12.123"},
-				},
-			},
-		},
-	}
-	gSLRules.RulesMap[variable.UnsetConnID] = &slowlogrule.SlowLogRules{
-		Rules: []*slowlogrule.SlowLogRule{
-			{
-				Conditions: []slowlogrule.SlowLogCondition{
-					{variable.SlowLogSucc, false},
-					{variable.SlowLogSessAliasStr, "sessA"},
-					{variable.SlowLogPDTotal, "5.123"},
-					{variable.SlowLogExecRetryCount, "8"},
-					{variable.SlowLogResourceGroup, "rg1"},
-				},
-			},
-			{
-				Conditions: []slowlogrule.SlowLogCondition{
-					{variable.SlowLogIsInternalStr, false},
-					{variable.SlowLogDBStr, "dbA"},
-					{variable.SlowLogBackoffTotal, "9.123"},
-					{execdetails.TotalKeysStr, "54321"},
-					{variable.SlowLogResourceGroup, "rg2"},
-				},
-			},
-		},
-	}
-	vardef.GlobalSlowLogRules.Store(gSLRules)
 
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {

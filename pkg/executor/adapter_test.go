@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,9 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestFormatSQL(t *testing.T) {
@@ -169,13 +173,13 @@ func TestShouldWriteSlowLog(t *testing.T) {
 	t.Run("no rules return false", func(t *testing.T) {
 		// default value
 		tk.MustQuery(`show variables like "tidb_slow_log_rules"`).Check(
-			testkit.Rows("tidb_slow_log_rules query_time:0.3"),
+			testkit.Rows("tidb_slow_log_rules "),
 		)
 		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
-			testkit.Rows("query_time:0.3"),
+			testkit.Rows(""),
 		)
 		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
-			testkit.Rows("query_time:0.3"),
+			testkit.Rows(""),
 		)
 
 		tk.MustExec(`set session tidb_slow_log_rules=""`)
@@ -330,4 +334,50 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		seVars.SessionAlias = "sessA"
 		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
 	})
+}
+
+func TestWriteSlowLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t(a int);`)
+	tk.MustExec(`insert into t values (1), (2)`)
+
+	core, recorded := observer.New(zap.WarnLevel)
+	logger := zap.New(core)
+	prev := logutil.SlowQueryLogger
+	logutil.SlowQueryLogger = logger
+	defer func() { logutil.SlowQueryLogger = prev }()
+
+	sql := "select * from t where a = 1;"
+	checkWriteSlowLog := func(expectWrite bool) {
+		tk.MustExec(sql)
+		if !expectWrite {
+			require.Equal(t, 0, recorded.Len())
+		} else {
+			require.NotEqual(t, 0, recorded.Len())
+		}
+
+		writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
+			if entry.Level == zap.WarnLevel && strings.Contains(entry.Message, sql) {
+				return true
+			}
+			return false
+		})
+		require.Equal(t, expectWrite, writeMsg)
+	}
+
+	// tidb_slow_log_threshold is 300ms and tidb_slow_log_rules is empty
+	checkWriteSlowLog(false)
+
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	checkWriteSlowLog(true)
+
+	tk.MustExec("set tidb_slow_log_threshold=5000;")
+	tk.MustExec(`set session tidb_slow_log_rules="Succ:true"`)
+	checkWriteSlowLog(true)
+
+	tk.MustExec(`set global tidb_slow_log_rules="Succ:true"`)
+	checkWriteSlowLog(true)
 }

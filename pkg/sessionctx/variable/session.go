@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
-	"fmt"
 	"maps"
 	"math"
 	"math/rand"
@@ -2391,9 +2390,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(vardef.StatsLoadSyncWait.Load())
 	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
-	slowLogRules, err := ParseSessionSlowLogRules(vardef.DefTiDBSlowLogRules)
-	logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------- parse slow-log-rules %q", vardef.DefTiDBSlowLogRules), zap.Error(err))
-	vars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(slowLogRules)
+	vars.SlowLogRules = slowlogrule.NewSessionSlowLogRules(nil)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
