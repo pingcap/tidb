@@ -3406,10 +3406,12 @@ func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool
 }
 
 // isTempIndex checks whether the index is a temp index created by modify column.
-// Don't confuse with temp index for add index.
+// There are two types of temp index:
+// 1. The index contains a temp column that is newly added, indicated by ChangeStateInfo
+// 2. The index contains a old column changing its type in place, indicated by UsingChangingType
 func isTempIndex(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	for _, idxCol := range idxInfo.Columns {
-		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil || idxCol.UsingChangingType {
+		if idxCol.UsingChangingType || tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
 			return true
 		}
 	}

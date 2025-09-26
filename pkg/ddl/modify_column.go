@@ -169,7 +169,7 @@ func initializeChangingIndexes(
 			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 		} else {
 			// The index is a temp index created by previous modify column job(s).
-			// We can overwrite it to reduce reorg cost, because it will be dropped eventually.
+			// We can just allocate a new ID, and gc the old one later.
 			tmpIdx := info.IndexInfo
 			tmpIdx.State = model.StateNone
 			oldTempIdxID := tmpIdx.ID
@@ -958,6 +958,29 @@ func (w *worker) doModifyColumnIndexReorg(
 		state = changingIdxInfos[0].State
 	}
 
+	finishFunc := func() (ver int64, err error) {
+		removedIdxIDs := make([]int64, 0, len(oldIdxInfos))
+		for _, idx := range oldIdxInfos {
+			removedIdxIDs = append(removedIdxIDs, idx.ID)
+		}
+		removeOldIndexes(tblInfo, oldIdxInfos)
+		oldCol.ChangingFieldType = nil
+		oldCol.DelFlag(mysql.PreventNullInsertFlag)
+
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		// Refactor the job args to add the old index ids into delete range table.
+		rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
+		args.IndexIDs = rmIdxs
+		args.PartitionIDs = getPartitionIDs(tblInfo)
+		job.FillFinishedArgs(args)
+		return ver, nil
+	}
+
 	switch state {
 	case model.StateNone:
 		checked, err := checkModifyColumnData(
@@ -1059,49 +1082,18 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 	case model.StatePublic:
-		// All the old indexes has been deleted by previous modify column,
-		// we can just finish the job.
 		if len(oldIdxInfos) == 0 {
-			oldCol.ChangingFieldType = nil
-			oldCol.DelFlag(mysql.PreventNullInsertFlag)
-
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-			args.PartitionIDs = getPartitionIDs(tblInfo)
-			job.FillFinishedArgs(args)
-			return ver, nil
+			// All the old indexes has been deleted by previous modify column,
+			// we can just finish the job.
+			return finishFunc()
 		}
 
 		switch oldIdxInfos[0].State {
 		case model.StateWriteOnly:
 			updateObjectState(nil, oldIdxInfos, model.StateDeleteOnly)
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
+			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		case model.StateDeleteOnly:
-			removedIdxIDs := make([]int64, 0, len(oldIdxInfos))
-			for _, idx := range oldIdxInfos {
-				removedIdxIDs = append(removedIdxIDs, idx.ID)
-			}
-			removeOldIndexes(tblInfo, oldIdxInfos)
-			oldCol.ChangingFieldType = nil
-			oldCol.DelFlag(mysql.PreventNullInsertFlag)
-
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-			// Finish this job.
-			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-			// Refactor the job args to add the old index ids into delete range table.
-			rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
-			args.IndexIDs = rmIdxs
-			args.PartitionIDs = getPartitionIDs(tblInfo)
-			job.FillFinishedArgs(args)
+			return finishFunc()
 		default:
 			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
 			intest.Assert(false, errMsg)

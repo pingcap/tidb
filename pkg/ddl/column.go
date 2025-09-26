@@ -410,23 +410,31 @@ func moveOldColumnToBack(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) {
 	tblInfo.MoveColumnInfo(oldCol.Offset, dest)
 }
 
+// indexContainsOtherReorg checks if the index still contains other changing columns
+func indexContainsOtherReorg(
+	tblInfo *model.TableInfo,
+	idx *model.IndexInfo,
+	currentChangingCol *model.ColumnInfo,
+) bool {
+	for _, idxCol := range idx.Columns {
+		tblCol := tblInfo.Columns[idxCol.Offset]
+		if tblCol.ID == currentChangingCol.ID {
+			continue // ignore current changing column.
+		}
+		if idxCol.UsingChangingType || tblCol.ChangeStateInfo != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
 func moveIndexInfoToDest(tblInfo *model.TableInfo, changingCol *model.ColumnInfo,
 	oldIdxInfos, changingIdxInfos []*model.IndexInfo) {
 	for i, cIdx := range changingIdxInfos {
-		hasOtherChangingCol := false
-		for _, ic := range cIdx.Columns {
-			idxCol := tblInfo.Columns[ic.Offset]
-			if idxCol.ID == changingCol.ID {
-				continue // ignore current modifying column.
-			}
-			if idxCol.ChangeStateInfo != nil || ic.UsingChangingType {
-				hasOtherChangingCol = true
-				break
-			}
-		}
-		// For the indexes that still contains other changing column, skip swaping it now.
-		// We leave the swaping work to the last modify column job.
-		if !hasOtherChangingCol {
+		// For the index that still contains other changing column,
+		// we leave the swaping work to the last modify column job.
+		if !indexContainsOtherReorg(tblInfo, cIdx, changingCol) {
 			swapIndexInfoByID(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
 		}
 	}
