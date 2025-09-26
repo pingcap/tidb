@@ -15,7 +15,6 @@
 package rule
 
 import (
-	"cmp"
 	"context"
 	"slices"
 
@@ -55,7 +54,7 @@ const (
 	falsePredicate
 	// TruePredicate TODO: make it lower case after rule_decorrelate is migrated.
 	TruePredicate
-	equalColumnPredicate // col1 = col2
+	equalColumnPredicate // col1 = col2 or col1 <=> col2
 	otherPredicate
 )
 
@@ -97,12 +96,6 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 			return nil, orPredicate
 		}
 		cols := make([]*expression.Column, 0, 2)
-		defer func() {
-			// Sort the columns based on their UniqueID to ensure a consistent order.
-			slices.SortFunc(cols, func(i, j *expression.Column) int {
-				return cmp.Compare(i.UniqueID, j.UniqueID)
-			})
-		}()
 		if v.FuncName.L == ast.LogicAnd {
 			return nil, andPredicate
 		}
@@ -118,30 +111,34 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 		if len(args) > 1 {
 			switch arg := args[1].(type) {
 			case *expression.Constant:
+				switch v.FuncName.L {
+				case ast.NE:
+					return cols, notEqualPredicate
+				case ast.EQ:
+					return cols, equalPredicate
+				case ast.LT:
+					return cols, lessThanPredicate
+				case ast.GT:
+					return cols, greaterThanPredicate
+				case ast.LE:
+					return cols, lessThanOrEqualPredicate
+				case ast.GE:
+					return cols, greaterThanOrEqualPredicate
+				case ast.In:
+					for _, value := range args[1:] {
+						if _, ok := value.(*expression.Constant); !ok {
+							return nil, otherPredicate
+						}
+					}
+					return cols, inListPredicate
+				}
 			case *expression.Column:
-				cols = append(cols, arg)
-				return cols, equalColumnPredicate
-			}
-		}
-		if v.FuncName.L == ast.NE {
-			return cols, notEqualPredicate
-		} else if v.FuncName.L == ast.EQ {
-			return cols, equalPredicate
-		} else if v.FuncName.L == ast.LT {
-			return cols, lessThanPredicate
-		} else if v.FuncName.L == ast.GT {
-			return cols, greaterThanPredicate
-		} else if v.FuncName.L == ast.LE {
-			return cols, lessThanOrEqualPredicate
-		} else if v.FuncName.L == ast.GE {
-			return cols, greaterThanOrEqualPredicate
-		} else if v.FuncName.L == ast.In {
-			for _, value := range args[1:] {
-				if _, ok := value.(*expression.Constant); !ok {
-					return nil, otherPredicate
+				switch v.FuncName.L {
+				case ast.EQ, ast.NullEQ:
+					cols = append(cols, arg)
+					return cols, equalColumnPredicate
 				}
 			}
-			return cols, inListPredicate
 		}
 		return nil, otherPredicate
 	default:
