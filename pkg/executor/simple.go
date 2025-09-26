@@ -2802,6 +2802,11 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 				intest.Assert(false, "No other scopes should be here")
 			}
 		}
+		// If all specified databases or tables do not exist, we do nothing.
+		if len(tableIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to refresh stats")
+			return nil
+		}
 	}
 	// Note: tableIDs is empty means to refresh all tables.
 	h := domain.GetDomain(e.Ctx()).StatsHandle()

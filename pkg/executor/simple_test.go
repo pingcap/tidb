@@ -96,6 +96,28 @@ func TestRefreshStatsWarningsForMissingObjects(t *testing.T) {
 	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
 }
 
+func TestRefreshAllNonExistentTables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
+	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
+
+	is := dom.InfoSchema()
+	handle := dom.StatsHandle()
+	ctx := context.Background()
+	tbl1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl1Meta := tbl1.Meta()
+	tbl1Stats := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	tk.MustExec("refresh stats missing_db.*, t2")
+	tbl1StatsUpdated := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
+	require.Same(t, tbl1Stats, tbl1StatsUpdated)
+}
+
 func TestRefreshStatsRequiresDefaultDB(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
