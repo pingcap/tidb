@@ -133,3 +133,15 @@ func TestRefreshStatsRequiresDefaultDB(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetDBError("refresh stats t1", plannererrors.ErrNoDB)
 }
+
+func TestRefreshStatsWhenDatabaseIsEmpty(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	vars := tk.Session().GetSessionVars()
+	vars.StmtCtx.SetWarnings(nil)
+	tk.MustExec("refresh stats test.*")
+	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+}

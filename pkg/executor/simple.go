@@ -2798,13 +2798,21 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 		for _, refreshObject := range s.RefreshObjects {
 			switch refreshObject.RefreshObjectScope {
 			case ast.RefreshObjectScopeDatabase:
+				exists := is.SchemaExists(refreshObject.DBName)
+				if !exists {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
 				tables, err := is.SchemaTableInfos(ctx, refreshObject.DBName)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if tables == nil {
-					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
-					statslogutil.StatsLogger().Warn("Failed to find database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+				if len(tables) == 0 {
+					// Note: We do not warn about databases without tables because we cannot issue a warning
+					// for every such database when refreshing with `REFRESH STATS *.*`.(Technically, we can, but no point to do so.)
+					// Instead, we simply log the information to remain consistent across all cases.
+					statslogutil.StatsLogger().Info("No table in the database when refreshing stats", zap.String("db", refreshObject.DBName.O))
 					continue
 				}
 				for _, table := range tables {
