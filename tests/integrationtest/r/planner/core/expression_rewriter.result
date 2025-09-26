@@ -433,3 +433,16 @@ select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
 collation(_utf8mb4'@a' collate utf8mb4_general_ci)
 utf8mb4_general_ci
 set @@session.default_collation_for_utf8mb4=default;
+drop table if exists tb0;
+create table tb0 (c0 bigint unsigned not null);
+select 1 as col from tb0 where ((true not in (select 1)) not in (tb0.c0));
+col
+explain select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));
+id	estRows	task	access object	operator info
+Projection_7	8000.00	root		1->Column#5
+└─Selection_9	8000.00	root		ne(Column#4, planner__core__expression_rewriter.tb0.c0)
+  └─HashJoin_18	10000.00	root		CARTESIAN anti left outer semi join, left side:TableReader_20
+    ├─Projection_23(Build)	1.00	root		0->Column#9
+    │ └─TableDual_25	1.00	root		rows:1
+    └─TableReader_20(Probe)	10000.00	root		data:TableFullScan_19
+      └─TableFullScan_19	10000.00	cop[tikv]	table:tb0	keep order:false, stats:pseudo
