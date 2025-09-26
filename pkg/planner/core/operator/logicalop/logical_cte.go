@@ -159,7 +159,7 @@ func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logical
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	if topN != nil {
-		return topN.AttachChild(p, nil)
+		return topN.AttachChild(p)
 	}
 	return p
 }

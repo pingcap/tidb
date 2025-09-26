@@ -146,7 +146,7 @@ func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	if err != nil {
 		return nil, p.self, err
 	}
-	AddSelection(p.self, newChild, rest, 0, nil)
+	AddSelection(p.self, newChild, rest, 0)
 	return nil, p.self, nil
 }
 
@@ -180,7 +180,7 @@ func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 
 // PushDownTopN implements the LogicalPlan.<5th> interface.
 func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
-	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, nil)
+	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan)
 }
 
 // DeriveTopN implements the LogicalPlan.<6th> interface.

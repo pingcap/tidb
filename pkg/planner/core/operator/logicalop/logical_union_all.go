@@ -52,7 +52,7 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 		if err != nil {
 			return nil, nil, err
 		}
-		AddSelection(p, newChild, retCond, i, nil)
+		AddSelection(p, newChild, retCond, i)
 	}
 	return nil, p, nil
 }
@@ -135,7 +135,7 @@ func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Lo
 		p.Children()[i] = child.PushDownTopN(newTopN)
 	}
 	if topN != nil {
-		return topN.AttachChild(p, nil)
+		return topN.AttachChild(p)
 	}
 	return p
 }

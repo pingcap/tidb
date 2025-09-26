@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -110,9 +109,9 @@ func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logic
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
-	child := p.Children()[0].PushDownTopN(p.convertToTopN(nil))
+	child := p.Children()[0].PushDownTopN(p.convertToTopN())
 	if topN != nil {
-		return topN.AttachChild(child, nil)
+		return topN.AttachChild(child)
 	}
 	return child
 }
@@ -171,7 +170,7 @@ func (p *LogicalLimit) GetPartitionBy() []property.SortItem {
 	return p.PartitionBy
 }
 
-func (p *LogicalLimit) convertToTopN(opt *optimizetrace.LogicalOptimizeOp) *LogicalTopN {
+func (p *LogicalLimit) convertToTopN() *LogicalTopN {
 	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, PreferLimitToCop: p.PreferLimitToCop}.Init(p.SCtx(), p.QueryBlockOffset())
 	return topn
 }

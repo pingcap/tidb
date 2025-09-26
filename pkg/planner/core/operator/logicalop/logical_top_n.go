@@ -23,7 +23,6 @@ import (
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -197,7 +196,7 @@ func (lt *LogicalTopN) IsLimit() bool {
 
 // AttachChild set p as topn's child, for difference with LogicalPlan.SetChild().
 // AttachChild will tracer the children change while SetChild doesn't.
-func (lt *LogicalTopN) AttachChild(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (lt *LogicalTopN) AttachChild(p base.LogicalPlan) base.LogicalPlan {
 	// Remove this TopN if its child is a TableDual.
 	dual, isDual := p.(*LogicalTableDual)
 	if isDual {

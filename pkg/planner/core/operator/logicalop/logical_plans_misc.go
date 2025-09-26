@@ -84,7 +84,7 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 }
 
 // AddSelection adds a LogicalSelection to the given LogicalPlan.
-func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int) {
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
@@ -110,8 +110,7 @@ func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 }
 
 // pushDownTopNForBaseLogicalPlan can be moved when LogicalTopN has been moved to logicalop.
-func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.LogicalPlan,
-	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	s := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -122,7 +121,7 @@ func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.Lo
 		p.Children()[i] = child.PushDownTopN(nil)
 	}
 	if topN != nil {
-		return topN.AttachChild(p, opt)
+		return topN.AttachChild(p)
 	}
 	return p
 }

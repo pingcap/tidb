@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
@@ -259,8 +258,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	if err != nil {
 		return nil, nil, err
 	}
-	AddSelection(p, lCh, leftRet, 0, nil)
-	AddSelection(p, rCh, rightRet, 1, nil)
+	AddSelection(p, lCh, leftRet, 0)
+	AddSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
@@ -472,10 +471,10 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 	topnEliminated := false
 	switch p.JoinType {
 	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
-		p.Children()[0], topnEliminated = p.pushDownTopNToChild(topN, 0, nil)
+		p.Children()[0], topnEliminated = p.pushDownTopNToChild(topN, 0)
 		p.Children()[1] = p.Children()[1].PushDownTopN(nil)
 	case base.RightOuterJoin:
-		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1, nil)
+		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1)
 		p.Children()[0] = p.Children()[0].PushDownTopN(nil)
 	default:
 		return p.BaseLogicalPlan.PushDownTopN(topN)
@@ -493,7 +492,7 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 			// If the topN has no order by items, simply return the join itself.
 			return p.Self()
 		}
-		return topN.AttachChild(p.Self(), nil)
+		return topN.AttachChild(p.Self())
 	}
 	return p.Self()
 }
@@ -1256,7 +1255,7 @@ func (p *LogicalJoin) MergeSchema() {
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
 // When it's outer join and there's unique key information. The TopN can be totally pushed down to the join.
 // We just need reserve the ORDER informaion
-func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool) {
+func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) (base.LogicalPlan, bool) {
 	if topN == nil {
 		return p.Children()[idx].PushDownTopN(nil), false
 	}
