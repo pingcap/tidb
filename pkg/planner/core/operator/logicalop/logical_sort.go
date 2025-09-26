@@ -68,7 +68,7 @@ func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column)
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	var cols []*expression.Column
-	ls.ByItems, cols = pruneByItems(ls, ls.ByItems, nil)
+	ls.ByItems, cols = pruneByItems(ls, ls.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
 	ls.Children()[0], err = ls.Children()[0].PruneColumns(parentUsedCols)

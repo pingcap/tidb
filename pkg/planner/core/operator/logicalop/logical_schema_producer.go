@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -118,7 +117,7 @@ func (s *LogicalSchemaProducer) SetSchemaAndNames(schema *expression.Schema, nam
 }
 
 // InlineProjection prunes unneeded columns inline an executor.
-func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
+func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Column) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
 	if len(parentUsedCols) == 0 {

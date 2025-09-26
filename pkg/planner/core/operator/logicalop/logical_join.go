@@ -394,7 +394,7 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		joinCol := p.Schema().Columns[len(p.Schema().Columns)-1]
 		parentUsedCols = append(parentUsedCols, joinCol)
 	}
-	p.InlineProjection(parentUsedCols, nil)
+	p.InlineProjection(parentUsedCols)
 	return p, nil
 }
 

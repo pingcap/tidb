@@ -89,7 +89,7 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) (base.L
 		return nil, err
 	}
 	p.SetSchema(nil)
-	p.InlineProjection(savedUsedCols, nil)
+	p.InlineProjection(savedUsedCols)
 	return p, nil
 }
 

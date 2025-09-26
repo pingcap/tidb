@@ -85,7 +85,7 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) (base.L
 	snapParentUsedCols := make([]*expression.Column, 0, len(parentUsedCols))
 	snapParentUsedCols = append(snapParentUsedCols, parentUsedCols...)
 
-	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, nil)
+	lt.ByItems, cols = pruneByItems(lt, lt.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
 	lt.Children()[0], err = child.PruneColumns(parentUsedCols)
@@ -99,7 +99,7 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) (base.L
 	if len(snapParentUsedCols) == 0 {
 		lt.SetSchema(nil)
 	}
-	lt.InlineProjection(snapParentUsedCols, nil)
+	lt.InlineProjection(snapParentUsedCols)
 
 	return lt, nil
 }
