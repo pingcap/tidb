@@ -25,5 +25,12 @@ func TestInExprRewriteBug(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tb0 (c0 bigint unsigned not null);")
-	tk.MustQuery("select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));").Check(testkit.Rows())
+	tk.MustQuery("explain format='plan_tree' select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));").Check(testkit.Rows(
+		`Projection root  1->Column#5`,
+		`└─Selection root  ne(Column#4, test.tb0.c0)`,
+		`  └─HashJoin root  CARTESIAN anti left outer semi join, left side:TableReader`,
+		`    ├─Projection(Build) root  0->Column#9`,
+		`    │ └─TableDual root  rows:1`,
+		`    └─TableReader(Probe) root  data:TableFullScan`,
+		`      └─TableFullScan cop[tikv] table:tb0 keep order:false, stats:pseudo`))
 }
