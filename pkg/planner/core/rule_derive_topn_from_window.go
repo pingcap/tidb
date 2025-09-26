@@ -108,9 +108,9 @@ func windowIsTopN(lp base.LogicalPlan) (bool, uint64) {
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (*DeriveTopNFromWindow) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*DeriveTopNFromWindow) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.DeriveTopN(opt), planChanged, nil
+	return p.DeriveTopN(), planChanged, nil
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

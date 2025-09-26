@@ -17,7 +17,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"maps"
 	"slices"
 
@@ -240,7 +239,6 @@ func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan, opt 
 	tracer.traceJoinReorder(p)
 	p, err := s.optimizeRecursive(p.SCtx(), p, tracer)
 	tracer.traceJoinReorder(p)
-	appendJoinReorderTraceStep(tracer, p, opt)
 	return p, planChanged, err
 }
 
@@ -713,32 +711,6 @@ func (*baseSingleGroupJoinOrderSolver) calcJoinCumCost(join base.LogicalPlan, lN
 // Name implements the base.LogicalOptRule.<1st> interface.
 func (*JoinReOrderSolver) Name() string {
 	return "join_reorder"
-}
-
-func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	if len(tracer.initial) < 1 || len(tracer.final) < 1 {
-		return
-	}
-	action := func() string {
-		return fmt.Sprintf("join order becomes %v from original %v", tracer.final, tracer.initial)
-	}
-	reason := func() string {
-		buffer := bytes.NewBufferString("join cost during reorder: [")
-		var joins []string
-		for join := range tracer.cost {
-			joins = append(joins, join)
-		}
-		slices.Sort(joins)
-		for i, join := range joins {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			fmt.Fprintf(buffer, "[%s, cost:%v]", join, tracer.cost[join])
-		}
-		buffer.WriteString("]")
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(plan.ID(), plan.TP(), reason, action)
 }
 
 func allJoinOrderToString(tt []*tracing.PlanTrace) string {

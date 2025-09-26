@@ -79,17 +79,17 @@ func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column)
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
-func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	child := lt.Children()[0]
 	var cols []*expression.Column
 
 	snapParentUsedCols := make([]*expression.Column, 0, len(parentUsedCols))
 	snapParentUsedCols = append(snapParentUsedCols, parentUsedCols...)
 
-	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
+	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, nil)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
-	lt.Children()[0], err = child.PruneColumns(parentUsedCols, opt)
+	lt.Children()[0], err = child.PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *op
 	if len(snapParentUsedCols) == 0 {
 		lt.SetSchema(nil)
 	}
-	lt.InlineProjection(snapParentUsedCols, opt)
+	lt.InlineProjection(snapParentUsedCols, nil)
 
 	return lt, nil
 }
@@ -218,21 +218,9 @@ func (lt *LogicalTopN) AttachChild(p base.LogicalPlan, opt *optimizetrace.Logica
 			PartitionBy:      lt.GetPartitionBy(),
 		}.Init(lt.SCtx(), lt.QueryBlockOffset())
 		limit.SetChildren(p)
-		appendTopNPushDownTraceStep(limit, p, opt)
 		return limit
 	}
 	// Then lt must be topN.
 	lt.SetChildren(p)
-	appendTopNPushDownTraceStep(lt, p, opt)
 	return lt
-}
-
-func appendTopNPushDownTraceStep(parent base.LogicalPlan, child base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		return fmt.Sprintf("%v_%v is added as %v_%v's parent", parent.TP(), parent.ID(), child.TP(), child.ID())
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v is pushed down", parent.TP())
-	}
-	opt.AppendStepToCurrent(parent.ID(), parent.TP(), reason, action)
 }

@@ -102,13 +102,11 @@ func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expre
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
-		AppendTableDualTraceStep(child, dual, conditions, opt)
 		return
 	}
 	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
-	AppendAddSelectionTraceStep(p, child, selection, opt)
 }
 
 // pushDownTopNForBaseLogicalPlan can be moved when LogicalTopN has been moved to logicalop.
@@ -121,7 +119,7 @@ func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.Lo
 	}
 	p := s.Self()
 	for i, child := range p.Children() {
-		p.Children()[i] = child.PushDownTopN(nil, opt)
+		p.Children()[i] = child.PushDownTopN(nil)
 	}
 	if topN != nil {
 		return topN.AttachChild(p, opt)
