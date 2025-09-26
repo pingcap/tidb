@@ -17,6 +17,7 @@ package toomanytests
 import (
 	"go/ast"
 	"go/token"
+	"path/filepath"
 	"strings"
 
 	"github.com/pingcap/tidb/build/linter/util"
@@ -43,9 +44,9 @@ var Analyzer = &analysis.Analyzer{
 					}
 				}
 			}
-			pkgName := pass.Pkg.Path()
+			pkgName := filepath.Dir(pass.Fset.Position(f.Pos()).Filename)
 			if cnt > checkRule(pkgName) {
-				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pkgName)
+				pass.Reportf(f.Pos(), "%s: Too many test cases in one package: %d", pkgName, cnt)
 				return nil, nil
 			}
 		}
