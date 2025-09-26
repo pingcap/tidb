@@ -17,7 +17,6 @@ package toomanytests
 import (
 	"go/ast"
 	"go/token"
-	"path/filepath"
 	"strings"
 
 	"github.com/pingcap/tidb/build/linter/util"
@@ -44,9 +43,9 @@ var Analyzer = &analysis.Analyzer{
 					}
 				}
 			}
-			pkgName := pass.Pkg.Path()
-			if cnt > checkRule(pkgName) {
-				pass.Reportf(f.Pos(), "%s: Too many test cases in one package: count: %d", pkgName, cnt)
+			pkg := pass.Pkg.Path()
+			if cnt > checkRule(pkg) {
+				pass.Reportf(f.Pos(), "%s: Too many test cases in one package: count: %d", pkg, cnt)
 				return nil, nil
 			}
 		}
@@ -59,13 +58,11 @@ func isTestFile(file *token.File) bool {
 }
 
 func checkRule(pkg string) int {
-	pkg = strings.Split(pkg, ":")[0]
-	pkg = filepath.Dir(pkg)
 	switch pkg {
-	case "pkg/planner/core":
+	case "github.com/pingcap/tidb/pkg/planner/core":
 		return 288
-	case "pkg/executor/test/analyzetest":
-		return 54
+	case "github.com/pingcap/tidb/pkg/executor/test/analyzetest":
+		return 52
 	default:
 		return 50
 	}
