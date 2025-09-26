@@ -1748,7 +1748,6 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 	if err != nil {
 		return 0
 	}
-	defer clean()
 	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
 	err = lock.IsUsedLock(lockName)
 	if err != nil {
