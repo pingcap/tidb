@@ -137,9 +137,10 @@ func Selectivity(
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
 			var cnt float64
+			var cntEst statistics.RowEstimate
 			if colStats.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
-				cntEst, err := GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
+				cntEst, err = GetRowCountByIntColumnRanges(ctx, coll, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
@@ -147,7 +148,7 @@ func Selectivity(
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 				continue
 			}
-			cntEst, err := GetRowCountByColumnRanges(ctx, coll, id, ranges)
+			cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}

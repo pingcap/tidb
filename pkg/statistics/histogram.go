@@ -1078,7 +1078,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}()
 	}
 	if hg.Len() == 0 {
-		return RowEstimate{Est: 0, MinEst: 0, MaxEst: 0}
+		return DefaultRowEst(0)
 	}
 
 	// oneValue assumes "one value qualifes", and is used as a lower bound.
@@ -1132,7 +1132,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// make sure l < r
 	if l >= r {
-		return RowEstimate{Est: 0, MinEst: 0, MaxEst: 0}
+		return DefaultRowEst(0)
 	}
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
@@ -1218,6 +1218,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// account for at least 1% of the total row count as a worst case for "addedRows".
 	// We inflate this here so ONLY to impact the MaxEst value.
 	if modifyCount == 0 || addedRows == 0 {
+		if realtimeRowCount <= 0 {
+			realtimeRowCount = int64(hg.TotalRowCount())
+		}
 		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
 

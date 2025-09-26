@@ -195,10 +195,8 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 				tempResult, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang}, nil)
 				count = tempResult.Est
 			} else {
-				countEst, err := GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
-				if err != nil {
-					return 0, errors.Trace(err)
-				}
+				var countEst statistics.RowEstimate
+				countEst, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
 				count = countEst.Est
 			}
 			if err != nil {

@@ -456,7 +456,8 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 			}
 			colID = idxCols[i].UniqueID
 			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
-			countEst, err := GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			var countEst statistics.RowEstimate
+			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 			if err != nil {
 				return 0, 0, errors.Trace(err)
 			}

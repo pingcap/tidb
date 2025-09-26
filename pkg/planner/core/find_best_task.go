@@ -1136,26 +1136,28 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	leftIsBetter := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
-	rightIsBetter := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
+	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
+	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
 	if !comparable1 && !comparable2 {
 		// These aren't comparable - but compare risk and other metrics to see if we
 		// can determine a clear winner. Checking > 1 and < -1 means that the winner
 		// must win on at least 2 of the metrics below.
 		// This is to prevent a case where x wins on 1 metric but loses badly on another.
 		// Other checks in this logic only require > 0 or < 0 (1 metric is enough).
-		if riskResult > 0 && leftIsBetter && totalSum > 1 {
+		if riskResult > 0 && leftDidNotLose && totalSum > 1 {
 			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 		}
-		if riskResult < 0 && rightIsBetter && totalSum < -1 {
+		if riskResult < 0 && rightDidNotLose && totalSum < -1 {
 			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 		}
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if leftIsBetter && totalSum > 0 {
+	// leftDidNotLose, but one of the metrics is a win
+	if leftDidNotLose && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if rightIsBetter && totalSum < 0 {
+	// rightDidNotLose, but one of the metrics is a win
+	if rightDidNotLose && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
