@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1294,6 +1295,9 @@ func TestMultiSchemaReorganizeNoPKBackfillDML(t *testing.T) {
 // TestMultiSchemaTruncatePartitionWithGlobalIndex to show behavior when
 // truncating a partition with a global index
 func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Managing schema version manually needs to be inproved for this test in nextgen")
+	}
 	// TODO: Also test non-int PK, multi-column PK
 	createSQL := `create table t (a int primary key, b varchar(255), c varchar(255) default 'Filler', unique key uk_b (b) global) partition by hash (a) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {
