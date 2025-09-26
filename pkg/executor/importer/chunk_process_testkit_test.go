@@ -190,7 +190,7 @@ func TestFileChunkProcess(t *testing.T) {
 		)
 		err2 := processor.Process(ctx)
 		require.ErrorIs(t, err2, common.ErrEncodeKV)
-		require.ErrorContains(t, err2, "encoding 2-th row in this chunk")
+		require.ErrorContains(t, err2, "encoding 2-th data row in this chunk")
 		require.ErrorContains(t, err2, "at offset 6")
 		require.True(t, ctrl.Satisfied())
 	})
