@@ -581,15 +581,19 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 	if len(equalConditionList) > 0 {
 		return predicates
 	}
-	equalConditionList, andPredicateList = doEqualOrNullSimplification(sctx, equalConditionColsList, equalConditionList, andPredicateList)
-	oldlist = append(oldlist, equalConditionList...)
-	oldlist = append(oldlist, andPredicateList...)
-	return oldlist
+	var isSimplified bool
+	equalConditionList, andPredicateList, isSimplified = doEqualOrNullSimplification(sctx, equalConditionColsList, equalConditionList, andPredicateList)
+	if isSimplified {
+		equalConditionList = append(equalConditionList, andPredicateList...)
+		equalConditionList = append(equalConditionList, oldlist...)
+		return equalConditionList
+	}
+	return predicates
 }
 
 // doEqualOrNullSimplification tries to simplify equal conditions with IsNull predicates.
 func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [][]*expression.Column,
-	equalConditionList, andPredicateList []expression.Expression) (equalConditions, andPredicates []expression.Expression) {
+	equalConditionList, andPredicateList []expression.Expression) (equalConditions, andPredicates []expression.Expression, isSimplified bool) {
 	columnsSets := make(map[int64]struct{}, len(equalConditionColsList)*2)
 	for andPredicateIdx, predicate := range andPredicateList {
 		andFunc := predicate.(*expression.ScalarFunction)
@@ -612,6 +616,7 @@ func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [
 					expression.DeepCopyExpression(cols[0], cols[1])...)
 				columnsSets[cols[0].UniqueID] = struct{}{}
 				columnsSets[cols[1].UniqueID] = struct{}{}
+				isSimplified = true
 				// Pleas don't skip this equalConditionList, maybe it can remove more IsNull predicates.
 			}
 		}
@@ -633,7 +638,7 @@ func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [
 	andPredicateList = slices.DeleteFunc(andPredicateList, func(expr expression.Expression) bool {
 		return expr == nil
 	})
-	return equalConditionList, andPredicateList
+	return equalConditionList, andPredicateList, isSimplified
 }
 
 func removeIsNullPredicates(andList []expression.Expression, columnsSets map[int64]struct{}) []expression.Expression {
