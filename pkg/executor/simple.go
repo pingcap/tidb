@@ -2731,6 +2731,17 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 }
 
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.RefreshObjects {
+			switch obj.RefreshObjectScope {
+			case ast.RefreshObjectScopeDatabase, ast.RefreshObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Refresh stats broadcast requires database-qualified names")
 	// Note: Restore the statement to a SQL string so we can broadcast fully qualified
 	// table names to every instance. For example, `REFRESH STATS tbl` executed in
 	// database `db` must be sent as `REFRESH STATS db.tbl`; otherwise a peer without
