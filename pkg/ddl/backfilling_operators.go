@@ -221,7 +221,10 @@ func NewWriteIndexToExternalStoragePipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
+		ctx, copCtx, sessPool, jobID, subtaskID,
+		tbl, indexes, extStore, srcChkPool, writerCnt,
+		onClose, memSizePerIndex, reorgMeta,
+	)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -382,6 +385,8 @@ func (*TableScanTaskSource) String() string {
 // TableScanOperator scans table records in given key ranges from kv store.
 type TableScanOperator struct {
 	*operator.AsyncOperator[TableScanTask, IndexRecordChunk]
+	logger     *zap.Logger
+	totalCount *atomic.Int64
 }
 
 // NewTableScanOperator creates a new TableScanOperator.
@@ -392,6 +397,7 @@ func NewTableScanOperator(
 	srcChkPool chan *chunk.Chunk,
 	concurrency int,
 ) *TableScanOperator {
+	totalCount := new(atomic.Int64)
 	pool := workerpool.NewWorkerPool(
 		"TableScanOperator",
 		util.DDL,
@@ -403,11 +409,20 @@ func NewTableScanOperator(
 				sessPool:   sessPool,
 				se:         nil,
 				srcChkPool: srcChkPool,
+				totalCount: totalCount,
 			}
 		})
 	return &TableScanOperator{
 		AsyncOperator: operator.NewAsyncOperator[TableScanTask, IndexRecordChunk](ctx, pool),
+		logger:        logutil.Logger(ctx),
+		totalCount:    totalCount,
 	}
+}
+
+// Close implements operator.Operator interface.
+func (o *TableScanOperator) Close() error {
+	o.logger.Info("table scan operator total count", zap.Int64("count", o.totalCount.Load()))
+	return o.AsyncOperator.Close()
 }
 
 type tableScanWorker struct {
@@ -416,6 +431,7 @@ type tableScanWorker struct {
 	sessPool   opSessPool
 	se         *session.Session
 	srcChkPool chan *chunk.Chunk
+	totalCount *atomic.Int64
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
@@ -477,6 +493,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				return err
 			}
 			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
+			w.totalCount.Add(int64(srcChk.NumRows()))
 			sender(idxResult)
 		}
 		return rs.Close()
@@ -511,6 +528,8 @@ func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
 // WriteExternalStoreOperator writes index records to external storage.
 type WriteExternalStoreOperator struct {
 	*operator.AsyncOperator[IndexRecordChunk, IndexWriteResult]
+	logger     *zap.Logger
+	totalCount *atomic.Int64
 }
 
 // NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
@@ -529,6 +548,7 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 ) *WriteExternalStoreOperator {
+	totalCount := new(atomic.Int64)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -558,12 +578,22 @@ func NewWriteExternalStoreOperator(
 					writers:      writers,
 					srcChunkPool: srcChunkPool,
 					reorgMeta:    reorgMeta,
+					totalCount:   totalCount,
 				},
 			}
 		})
 	return &WriteExternalStoreOperator{
 		AsyncOperator: operator.NewAsyncOperator[IndexRecordChunk, IndexWriteResult](ctx, pool),
+		logger:        logutil.Logger(ctx),
+		totalCount:    totalCount,
 	}
+}
+
+// Close implements operator.Operator interface.
+func (o *WriteExternalStoreOperator) Close() error {
+	o.logger.Info("write external storage operator total count",
+		zap.Int64("count", o.totalCount.Load()))
+	return o.AsyncOperator.Close()
 }
 
 // IndexWriteResult contains the result of writing index records to ingest engine.
@@ -690,6 +720,8 @@ type indexIngestBaseWorker struct {
 
 	writers      []ingest.Writer
 	srcChunkPool chan *chunk.Chunk
+	// only available in global sort
+	totalCount *atomic.Int64
 }
 
 func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk, send func(IndexWriteResult)) {
@@ -710,6 +742,9 @@ func (w *indexIngestBaseWorker) HandleTask(rs IndexRecordChunk, send func(IndexW
 		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", rs.ID))
 		send(result)
 		return
+	}
+	if w.totalCount != nil {
+		w.totalCount.Add(int64(count))
 	}
 	result.Added = count
 	result.Next = nextKey
