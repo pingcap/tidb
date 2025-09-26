@@ -48,7 +48,7 @@ func TestRefreshTableStats(t *testing.T) {
 	tbl1Stats := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
 	tbl2Meta := tbl2.Meta()
 	tbl2Stats := handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
-	tk.MustExec("refresh stats t1")
+	tk.MustExec("refresh stats t1, test.t1")
 	tbl1StatsUpdated := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
 	tbl2StatsUpdated := handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
 	require.NotSame(t, tbl1Stats, tbl1StatsUpdated)
@@ -63,7 +63,7 @@ func TestRefreshTableStats(t *testing.T) {
 }
 
 func TestRefreshStatsWarningsForMissingObjects(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -91,7 +91,7 @@ func TestRefreshStatsWarningsForMissingObjects(t *testing.T) {
 }
 
 func TestRefreshStatsRequiresDefaultDB(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetDBError("refresh stats t1", plannererrors.ErrNoDB)
