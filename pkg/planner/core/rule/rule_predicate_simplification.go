@@ -588,7 +588,6 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 }
 
 // doEqualOrNullSimplification tries to simplify equal conditions with IsNull predicates.
-// It modifies equalConditionList and andPredicateList in place.
 func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [][]*expression.Column,
 	equalConditionList, andPredicateList []expression.Expression) (equalConditions, andPredicates []expression.Expression) {
 	columnsSets := make(map[int64]struct{}, len(equalConditionColsList)*2)
