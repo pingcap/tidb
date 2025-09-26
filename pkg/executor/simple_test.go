@@ -86,7 +86,13 @@ func TestRefreshStatsWarningsForMissingObjects(t *testing.T) {
 	require.Equal(t, infoschema.ErrTableNotExists.FastGenByArgs("test", "t_missing").Error(), warnings[0].Err.Error())
 
 	vars.StmtCtx.SetWarnings(nil)
-	tk.MustExec("refresh stats test.t")
+	tk.MustExec("refresh stats t, t1")
+	warnings = vars.StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Equal(t, infoschema.ErrTableNotExists.FastGenByArgs("test", "t1").Error(), warnings[0].Err.Error())
+
+	vars.StmtCtx.SetWarnings(nil)
+	tk.MustExec("refresh stats t")
 	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
 }
 
