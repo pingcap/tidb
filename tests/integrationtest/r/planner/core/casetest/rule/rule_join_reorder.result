@@ -2180,10 +2180,11 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 select /*+ leading(t3, t2@sel_2) */ * from (select t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b;
 b	a	b
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
-Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 select * from (select /*+ leading(t1, t3@sel_1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b;
 b	a	b
+Level	Code	Message
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
 select /*+ leading(t3) */ * from (select /*+ leading(t1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b;
 b	a	b
 Level	Code	Message
@@ -4794,7 +4795,7 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b) eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -4809,7 +4810,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b) eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -4824,7 +4826,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b) eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -4839,7 +4842,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b) eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -4854,7 +4858,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:Projection, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)
@@ -4885,7 +4890,7 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)
@@ -4899,7 +4904,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)
@@ -4913,7 +4919,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)
@@ -4927,7 +4934,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)
@@ -4941,7 +4949,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:Projection, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -4974,7 +4983,7 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -4989,7 +4998,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -5004,7 +5014,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -5019,7 +5030,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -5034,7 +5046,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:Projection, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -5065,7 +5078,7 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -5079,7 +5092,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -5093,7 +5107,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -5107,7 +5122,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -5121,7 +5137,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
@@ -5191,7 +5208,8 @@ Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, Colum
         └─Selection	cop[tikv]		gt(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
@@ -5227,7 +5245,8 @@ Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, Colum
         └─Selection	cop[tikv]		gt(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t4.b)]
@@ -5251,7 +5270,8 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
   └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.b))
     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t4, t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -5320,7 +5340,8 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
   └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.b))
     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t4.b)]
@@ -5342,7 +5363,8 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
   └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.b))
     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t4, t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -5407,7 +5429,8 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
   └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.b))
     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3);
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -5444,26 +5467,21 @@ IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__c
   ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
   │ └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:.__planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:.__planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:.__planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)
-│ ├─StreamAgg(Build)	root		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(.__planner__core__casetest__rule__rule_join_reorder.t3.a)->.__planner__core__casetest__rule__rule_join_reorder.t3.a
-│ │ └─IndexReader	root		index:StreamAgg
-│ │   └─StreamAgg	cop[tikv]		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, 
-│ │     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true
-│ └─IndexLookUp(Probe)	root		
-│   ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
-│   │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
-│   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
-  │ └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b
+└─HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a) eq(.__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
+  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		CARTESIAN inner join
+    ├─StreamAgg(Build)	root		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(.__planner__core__casetest__rule__rule_join_reorder.t3.a)->.__planner__core__casetest__rule__rule_join_reorder.t3.a
+    │ └─IndexReader	root		index:StreamAgg
+    │   └─StreamAgg	cop[tikv]		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, 
+    │     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
 IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:.__planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)
@@ -5480,26 +5498,21 @@ IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__c
   ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
   │ └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:.__planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:.__planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:.__planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)
-│ ├─StreamAgg(Build)	root		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(.__planner__core__casetest__rule__rule_join_reorder.t3.a)->.__planner__core__casetest__rule__rule_join_reorder.t3.a
-│ │ └─IndexReader	root		index:StreamAgg
-│ │   └─StreamAgg	cop[tikv]		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, 
-│ │     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true
-│ └─IndexLookUp(Probe)	root		
-│   ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
-│   │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
-│   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
-  │ └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b
+└─HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a) eq(.__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
+  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		CARTESIAN inner join
+    ├─StreamAgg(Build)	root		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(.__planner__core__casetest__rule__rule_join_reorder.t3.a)->.__planner__core__casetest__rule__rule_join_reorder.t3.a
+    │ └─IndexReader	root		index:StreamAgg
+    │   └─StreamAgg	cop[tikv]		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, 
+    │     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
 IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:.__planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)
@@ -5516,8 +5529,6 @@ IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__c
   ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
   │ └─IndexRangeScan	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		Null-aware anti semi join, left side:Projection, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5548,7 +5559,7 @@ HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__plann
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5562,7 +5573,8 @@ HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__plann
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5576,7 +5588,8 @@ HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__plann
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5590,7 +5603,8 @@ HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__plann
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5604,7 +5618,8 @@ HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__plann
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3);
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -5649,7 +5664,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5663,7 +5679,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5677,7 +5694,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5691,7 +5709,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
@@ -5713,7 +5732,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
@@ -5721,7 +5740,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
@@ -5729,7 +5748,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	task	access object	operator info
 TableDual	root		rows:0
@@ -5737,41 +5756,39 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t4@sel_2, t1) */ * from t1 join (select * from t4) t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b, .__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t3.b
-└─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__casetest__rule__rule_join_reorder.t4.a, inner key:.__planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)
-  ├─HashJoin(Build)	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t3.b, .__planner__core__casetest__rule__rule_join_reorder.t4.b)]
-  │ ├─TableReader(Build)	root		data:Selection
-  │ │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t3.b))
-  │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-  │ └─TableReader(Probe)	root		data:Selection
-  │   └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.a)), not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.b))
-  │     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─IndexLookUp(Probe)	root		
-    ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
-    │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t4.a)], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t4.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+  └─HashJoin(Probe)	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.a)), not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.b))
+    │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t4, t1) in optimizer hint /*+ LEADING(t4, t1) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t4) in optimizer hint /*+ LEADING(t4, t1) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t4@sel_2) */ * from (select * from t4) t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t3.b
-└─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:.__planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:.__planner__core__casetest__rule__rule_join_reorder.t4.a, equal cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t4.a)
-  ├─HashJoin(Build)	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t3.b, .__planner__core__casetest__rule__rule_join_reorder.t2.b)]
-  │ ├─TableReader(Build)	root		data:Selection
-  │ │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t3.b))
-  │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-  │ └─TableReader(Probe)	root		data:Selection
-  │   └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a)), not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.b))
-  │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─IndexLookUp(Probe)	root		
-    ├─Selection(Build)	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.a))
-    │ └─IndexRangeScan	cop[tikv]	table:t4, index:a(a)	range: decided by [eq(.__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+  └─HashJoin(Probe)	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t4.a)]
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a)), not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.b))
+    │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.a))
+        └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t4) in optimizer hint /*+ LEADING(t2, t4) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t4) in optimizer hint /*+ LEADING(t2, t4) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join (select * from t4) t3 on t2.b=t3.b;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -5819,7 +5836,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
         └─Limit	cop[tikv]		offset:0, count:1
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
@@ -5853,7 +5871,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
         └─Limit	cop[tikv]		offset:0, count:1
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t1) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
@@ -5871,7 +5890,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
         └─Limit	cop[tikv]		offset:0, count:1
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
@@ -5889,7 +5909,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
         └─Limit	cop[tikv]		offset:0, count:1
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
@@ -5907,7 +5928,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
         └─Limit	cop[tikv]		offset:0, count:1
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
@@ -6790,7 +6812,7 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b) eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -6805,7 +6827,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)
@@ -6833,7 +6856,7 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)
@@ -6846,7 +6869,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:Projection, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -6879,7 +6903,7 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.b))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -6894,7 +6918,8 @@ HashJoin	root		semi join, left side:HashJoin, equal:[eq(.__planner__core__casete
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where not exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -6922,7 +6947,7 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -6935,7 +6960,8 @@ HashJoin	root		anti semi join, left side:HashJoin, equal:[eq(.__planner__core__c
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
@@ -7006,7 +7032,8 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
       └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
         └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t4, t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 right join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -7071,7 +7098,8 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
       └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
         └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t1) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:gt(.__planner__core__casetest__rule__rule_join_reorder.t1.a, Column#13)
@@ -7093,7 +7121,8 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
       └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
         └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t4, t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -7158,7 +7187,8 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
       └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
         └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a in (select t3.a from t3);
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -7180,36 +7210,33 @@ Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__pl
           └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
-├─StreamAgg(Build)	root		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(.__planner__core__casetest__rule__rule_join_reorder.t3.a)->.__planner__core__casetest__rule__rule_join_reorder.t3.a
-│ └─IndexReader	root		index:StreamAgg
-│   └─StreamAgg	cop[tikv]		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, 
-│     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
-└─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
-      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+HashJoin	root		left outer join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)]
+├─HashJoin(Build)	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)]
+│ ├─StreamAgg(Build)	root		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(.__planner__core__casetest__rule__rule_join_reorder.t3.a)->.__planner__core__casetest__rule__rule_join_reorder.t3.a
+│ │ └─IndexReader	root		index:StreamAgg
+│ │   └─StreamAgg	cop[tikv]		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, 
+│ │     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
+│ └─TableReader(Probe)	root		data:Selection
+│   └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
+│     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
+    └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
-├─StreamAgg(Build)	root		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(.__planner__core__casetest__rule__rule_join_reorder.t3.a)->.__planner__core__casetest__rule__rule_join_reorder.t3.a
-│ └─IndexReader	root		index:StreamAgg
-│   └─StreamAgg	cop[tikv]		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, 
-│     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
-└─HashJoin(Probe)	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t2.a)]
+Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b
+└─HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a) eq(.__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
-      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+  │ └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
+  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		CARTESIAN inner join
+    ├─StreamAgg(Build)	root		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(.__planner__core__casetest__rule__rule_join_reorder.t3.a)->.__planner__core__casetest__rule__rule_join_reorder.t3.a
+    │ └─IndexReader	root		index:StreamAgg
+    │   └─StreamAgg	cop[tikv]		group by:.__planner__core__casetest__rule__rule_join_reorder.t3.a, 
+    │     └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t2.a))
+        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -7237,7 +7264,7 @@ HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__plann
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -7251,7 +7278,8 @@ HashJoin	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(.__plann
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where exists (select t3.a from t3);
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t2.a, .__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -7274,7 +7302,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where not exists (select t3.a from t3);
 id	task	access object	operator info
 HashJoin	root		right outer join, left side:HashJoin, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t4.b)]
@@ -7316,7 +7344,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#10, ScalarQueryCol#11, ScalarQueryCo
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4@sel_2, t1) */ * from t1 join (select * from t4) t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__planner__core__casetest__rule__rule_join_reorder.t1.b, .__planner__core__casetest__rule__rule_join_reorder.t4.a, .__planner__core__casetest__rule__rule_join_reorder.t4.b, .__planner__core__casetest__rule__rule_join_reorder.t3.a, .__planner__core__casetest__rule__rule_join_reorder.t3.b
@@ -7332,7 +7361,7 @@ Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, .__pl
       └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t1.a))
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t4, t1) in optimizer hint /*+ LEADING(t4, t1) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t4) in optimizer hint /*+ LEADING(t4, t1) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t2, t4@sel_2) */ * from (select * from t4) t1 right join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t3.b)]
@@ -7347,7 +7376,7 @@ HashJoin	root		inner join, equal:[eq(.__planner__core__casetest__rule__rule_join
     └─Selection	cop[tikv]		not(isnull(.__planner__core__casetest__rule__rule_join_reorder.t4.a))
       └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t4) in optimizer hint /*+ LEADING(t2, t4) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t4) in optimizer hint /*+ LEADING(t2, t4) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a right join (select * from t4) t3 on t2.b=t3.b;
 id	task	access object	operator info
 HashJoin	root		right outer join, left side:Projection, equal:[eq(.__planner__core__casetest__rule__rule_join_reorder.t2.b, .__planner__core__casetest__rule__rule_join_reorder.t4.b)]
@@ -7392,7 +7421,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
         └─Limit	cop[tikv]		offset:0, count:1
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t1, t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
@@ -7424,7 +7454,8 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
         └─Limit	cop[tikv]		offset:0, count:1
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t2, t1) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 right join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		.__planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column#15
@@ -7441,4 +7472,5 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
         └─Limit	cop[tikv]		offset:0, count:1
           └─IndexFullScan	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
 Level	Code	Message
-Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
+Warning	1815	leading hint is inapplicable, check if the leading hint table is valid

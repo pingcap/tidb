@@ -82,7 +82,7 @@ import (
 	hintResourceGroup       "RESOURCE_GROUP"
 	hintQBName              "QB_NAME"
 	hintHypoIndex           "HYPO_INDEX"
-	
+
 	/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
@@ -125,7 +125,7 @@ import (
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
-	
+
 	/* Other keywords */
 	hintOLAP            "OLAP"
 	hintOLTP            "OLTP"
@@ -188,7 +188,7 @@ import (
 	PartitionListOpt "optional partition name list in optimizer hint"
 
 %type	<leadingList>
-    LeadingTableList "leading table list"
+	LeadingTableList "leading table list"
 
 %type	<leadingElement>
 	LeadingTableElement "leading element (table or list)"
@@ -249,20 +249,14 @@ TableOptimizerHintOpt:
 		h.HintName = ast.NewCIStr($1)
 		$$ = h
 	}
-|	"LEADING" '(' LeadingTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{
-			HintName: ast.NewCIStr($1),
-			HintData: $3,
-		}
-		for _, item := range $3.Items {
-            if t, ok := item.(*ast.HintTable); ok && t.QBName.L != "" {
-                $$.QBName = t.QBName
-				t.QBName = ast.CIStr{} 
-				break
-            }
-        }
-	}
+|   "LEADING" '(' QueryBlockOpt LeadingTableList ')'
+{
+    $$ = &ast.TableOptimizerHint{
+        HintName: ast.NewCIStr($1),
+        QBName:   ast.NewCIStr($3),
+        HintData: $4,
+    }
+}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
 	{
 		parser.warnUnsupportedHint($1)
@@ -428,46 +422,26 @@ HintStorageTypeAndTable:
 	}
 
 LeadingTableList:
-    LeadingTableElement
+	LeadingTableElement
     {
         $$ = &ast.LeadingList{Items: []interface{}{$1}}
-	}
+    }
 |   LeadingTableList ',' LeadingTableElement
-    {
-        $$ = &ast.LeadingList{Items: append($1.Items, $3)}
+	{
+		$$ = $1
+        $$ .Items = append($$.Items, $3)
     }
 
 LeadingTableElement:
-    HintTable
-    {
-        tmp := $1
-		tmp.FormatStyle = ast.QBNameAfterTable
-		$$ = &tmp
-    }
-|   hintSingleAtIdentifier Identifier PartitionListOpt
-    {
-		tmp := ast.HintTable{
-			TableName:     ast.NewCIStr($2),
-            QBName:        ast.NewCIStr($1),
-            PartitionList: $3,
-			FormatStyle:   ast.QBNameBeforeTable,
-		}
+	HintTable
+	{
+		tmp := $1
 		$$ = &tmp
 	}
-|   hintSingleAtIdentifier Identifier '.' Identifier PartitionListOpt
-    {
-        tmp := ast.HintTable{
-            DBName:        ast.NewCIStr($2),
-            TableName:     ast.NewCIStr($4),
-            QBName:        ast.NewCIStr($1),
-            PartitionList: $5,
-        }
-        $$ = &tmp
-    }
-|   '(' LeadingTableList ')'
-    {
-        $$ = $2
-    }
+|	'(' LeadingTableList ')'
+	{
+		$$ = $2
+	}
 
 QueryBlockOpt:
 	/* empty */
@@ -711,7 +685,7 @@ SupportedTableLevelOptimizerHintName:
 |	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
-"INDEX_MERGE"
+	"INDEX_MERGE"
 /* NO_INDEX_MERGE is currently a nullary hint in TiDB */
 |	"MRR"
 |	"NO_MRR"

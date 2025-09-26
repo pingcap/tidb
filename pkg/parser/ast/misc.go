@@ -3958,17 +3958,7 @@ type HintTable struct {
 	TableName     CIStr
 	QBName        CIStr
 	PartitionList []CIStr
-
-	// FormatStyle specifies how the query block name is written:
-	//   QBNameAfterTable:  t1@sel1
-	//   QBNameBeforeTable: @sel1 t1
-	FormatStyle int
 }
-
-const (
-	QBNameAfterTable  = iota // e.g. "t1@sel1"
-	QBNameBeforeTable        // e.g. "@sel1 t1"
-)
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	if !ctx.Flags.HasWithoutSchemaNameFlag() {
@@ -3995,47 +3985,15 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
-// RestoreInLeading is a variant of Restore, used specifically when printing inside LEADING hints.
-// It respects the FormatStyle (e.g. @qb table vs table@qb).
-func (ht *HintTable) RestoreInLeading(ctx *format.RestoreCtx) {
-	if ht.FormatStyle == QBNameBeforeTable && ht.QBName.L != "" {
-		ctx.WriteKeyWord("@")
-		ctx.WriteName(ht.QBName.String())
-		ctx.WritePlain(" ")
-	}
-
-	if !ctx.Flags.HasWithoutSchemaNameFlag() && ht.DBName.L != "" {
-		ctx.WriteName(ht.DBName.String())
-		ctx.WriteKeyWord(".")
-	}
-
-	ctx.WriteName(ht.TableName.String())
-
-	if ht.FormatStyle == QBNameAfterTable && ht.QBName.L != "" {
-		ctx.WriteKeyWord("@")
-		ctx.WriteName(ht.QBName.String())
-	}
-
-	if len(ht.PartitionList) > 0 {
-		ctx.WriteKeyWord(" PARTITION(")
-		for i, p := range ht.PartitionList {
-			if i > 0 {
-				ctx.WritePlain(", ")
-			}
-			ctx.WriteName(p.String())
-		}
-		ctx.WritePlain(")")
-	}
-}
-
-func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needParen bool) error {
+func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needParen bool, isTop bool, qbOnTable bool) error {
 	if lt == nil || len(lt.Items) == 0 {
 		return nil
 	}
-
 	if needParen {
 		ctx.WritePlain("(")
 	}
+
+	currentQBName := qbName // hint level QBName
 
 	for i, item := range lt.Items {
 		if i > 0 {
@@ -4044,20 +4002,27 @@ func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needP
 
 		switch t := item.(type) {
 		case *HintTable:
-			if i == 0 && qbName.L != "" {
-				tableWithQB := *t
-				tableWithQB.QBName = qbName
-				tableWithQB.RestoreInLeading(ctx)
-				qbName = CIStr{} // clear after use
+			tmp := *t
+
+			// left element must have a QBName that needs to be injected and is not the QBName provided by the table.
+			if i == 0 && currentQBName.L != "" && !qbOnTable {
+				// @qb table format
+				ctx.WriteKeyWord("@")
+				ctx.WriteName(currentQBName.String())
+				ctx.WritePlain(" ")
+
+				tmp.Restore(ctx)
+				currentQBName = CIStr{}
+
 			} else {
-				t.RestoreInLeading(ctx)
+				tmp.Restore(ctx)
 			}
 
 		case *LeadingList:
-			// child list should not inherit outer QBName.
-			if err := t.RestoreWithQB(ctx, CIStr{}, true); err != nil {
+			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
 				return err
 			}
+			currentQBName = CIStr{}
 
 		default:
 			return fmt.Errorf("unexpected type in LeadingList: %T", t)
@@ -4104,7 +4069,12 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(int64))
 	case "leading":
 		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
-			if err := list.RestoreWithQB(ctx, n.QBName, false); err != nil {
+			// if table level QBName or not
+			qbOnTable := false
+			if len(n.Tables) > 0 && n.Tables[0].QBName.L != "" {
+				qbOnTable = true
+			}
+			if err := list.RestoreWithQB(ctx, n.QBName, false, true, qbOnTable); err != nil {
 				return err
 			}
 		} else {
@@ -4112,13 +4082,11 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(", ")
 				}
-				// if outer layer has QBName add it to the first table.
 				if i == 0 && n.QBName.L != "" {
-					tableWithQB := *(&table) // shallow copy
-					tableWithQB.QBName = n.QBName
-					tableWithQB.RestoreInLeading(ctx)
+					tmp := *(&table)
+					tmp.Restore(ctx)
 				} else {
-					table.RestoreInLeading(ctx)
+					table.Restore(ctx)
 				}
 			}
 		}
