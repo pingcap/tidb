@@ -87,6 +87,8 @@ func init() {
 		}
 		return 0
 	}
+
+	tikv.SetIsTempIndexKey(IsTempIndexKey)
 }
 
 // TablePrefix returns table's prefix 't'.
