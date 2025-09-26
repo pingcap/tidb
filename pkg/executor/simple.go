@@ -2757,6 +2757,11 @@ func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStat
 
 func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
 	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.RefreshObjects)
+		s.Dedup()
+		return origCount == len(s.RefreshObjects)
+	}, "RefreshObjects should be deduplicated in the building phase")
 	tableIDs := make([]int64, 0, len(s.RefreshObjects))
 	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].RefreshObjectScope == ast.RefreshObjectScopeGlobal
 	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
