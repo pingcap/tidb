@@ -30,7 +30,7 @@ func TestRefreshTableStats(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
 	tk.MustExec("create table t2 (a int, b int, index idx(a))")
@@ -101,7 +101,7 @@ func TestRefreshAllNonExistentTables(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
 	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
@@ -116,6 +116,15 @@ func TestRefreshAllNonExistentTables(t *testing.T) {
 	tk.MustExec("refresh stats missing_db.*, t2")
 	tbl1StatsUpdated := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
 	require.Same(t, tbl1Stats, tbl1StatsUpdated)
+}
+
+func TestRefreshStatsNoTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("refresh stats *.*")
 }
 
 func TestRefreshStatsRequiresDefaultDB(t *testing.T) {
