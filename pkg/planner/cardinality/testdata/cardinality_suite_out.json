@@ -29,42 +29,42 @@
       {
         "Start": 900,
         "End": 950,
-        "Count": 67
+        "Count": 13
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 62
+        "Count": 13
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 57
+        "Count": 13
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 52
+        "Count": 13
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 41
+        "Count": 13
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 59
+        "Count": 13
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 38
+        "Count": 13
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 18
+        "Count": 13
       },
       {
         "Start": 1500,
@@ -79,12 +79,12 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 873
+        "Count": 763
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 381
+        "Count": 13
       },
       {
         "Start": 300,
@@ -94,17 +94,17 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 122
+        "Count": 13
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 101
+        "Count": 13
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 872
+        "Count": 763
       },
       {
         "Start": 200,
@@ -114,17 +114,17 @@
       {
         "Start": 0,
         "End": 100,
-        "Count": 80
+        "Count": 13
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 132
+        "Count": 13
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 60
+        "Count": 13
       }
     ]
   },
