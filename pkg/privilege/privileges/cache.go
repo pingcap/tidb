@@ -1835,7 +1835,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		return true
 	})
 	for k, v := range columnPrivTable {
-		privCols := privOnColumnsToString(v)
+		privCols := privOnColumnsToString(v, sqlMode)
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
@@ -2062,10 +2062,10 @@ func (p *MySQLPrivilege) fetchSchemaPrivileges(users, hosts []string) (rows [][]
 }
 
 type columnStr = string
-type columnStrs = []columnStr
+type columnStrs = map[columnStr]struct{}
 type privOnColumns = map[mysql.PrivilegeType]columnStrs
 
-func privOnColumnsToString(p privOnColumns) string {
+func privOnColumnsToString(p privOnColumns, sqlMode mysql.SQLMode) string {
 	var buf bytes.Buffer
 	idx := 0
 	for _, priv := range mysql.AllColumnPrivs {
@@ -2079,11 +2079,16 @@ func privOnColumnsToString(p privOnColumns) string {
 		}
 		privStr := PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
 		fmt.Fprintf(&buf, "%s(", privStr)
-		for i, col := range v {
+		columns := make([]columnStr, 0, len(v))
+		for col := range v {
+			columns = append(columns, col)
+		}
+		slices.Sort(columns)
+		for i, col := range columns {
 			if i > 0 {
 				fmt.Fprintf(&buf, ", ")
 			}
-			buf.WriteString(col)
+			buf.WriteString(stringutil.Escape(col, sqlMode))
 		}
 		buf.WriteString(")")
 		idx++
@@ -2092,7 +2097,7 @@ func privOnColumnsToString(p privOnColumns) string {
 }
 
 func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPrivTable map[string]privOnColumns, sqlMode mysql.SQLMode) bool {
-	if record.baseRecord.fullyMatch(user, host) {
+	if record.baseRecord.match(user, host) {
 		recordKey := stringutil.Escape(record.DB, sqlMode) + "." + stringutil.Escape(record.TableName, sqlMode)
 
 		privColumns, ok := columnPrivTable[recordKey]
@@ -2102,8 +2107,10 @@ func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPriv
 
 		for _, priv := range mysql.AllColumnPrivs {
 			if priv&record.ColumnPriv > 0 {
-				old := privColumns[priv]
-				privColumns[priv] = append(old, record.ColumnName)
+				if privColumns[priv] == nil {
+					privColumns[priv] = make(map[columnStr]struct{})
+				}
+				privColumns[priv][record.ColumnName] = struct{}{}
 				columnPrivTable[recordKey] = privColumns
 			}
 		}
