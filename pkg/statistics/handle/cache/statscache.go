@@ -219,7 +219,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			)
 			// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 			if err != nil {
-				statslogutil.StatsLogger().Error(
+				statslogutil.StatsLogger().Warn(
 					"error occurred when read table stats",
 					zap.String("table", tableInfo.Name.O),
 					zap.Error(err),

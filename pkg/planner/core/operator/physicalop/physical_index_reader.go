@@ -139,12 +139,12 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 }
 
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for IndexMergeReader.
-func (p *PhysicalIndexReader) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalIndexReader) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexReader(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for IndexMergeReader.
-func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, args ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalIndexReader(p, taskType, option, args...)
 }
 

@@ -599,6 +599,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
+				// Expect its left and right child to be a scalar value.
+				er.asScalar = true
 				return inNode, false
 			}
 		}

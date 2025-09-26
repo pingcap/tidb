@@ -903,49 +903,57 @@ func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
 	}()
 }
 
-func TestUpgradeVersion245Primary(t *testing.T) {
+func TestUpgradeBDRPrimary(t *testing.T) {
+	fromVersion := 244
+	if kerneltype.IsNextGen() {
+		fromVersion = 250
+	}
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	seV244 := session.CreateSessionAndSetID(t, store)
+	seVLow := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(244))
+	err = m.FinishBootstrap(int64(fromVersion))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	revertVersionAndVariables(t, seV244, 244)
+	revertVersionAndVariables(t, seVLow, fromVersion)
 	require.NoError(t, err)
-	session.MustExec(t, seV244, "ADMIN SET BDR ROLE PRIMARY")
+	session.MustExec(t, seVLow, "ADMIN SET BDR ROLE PRIMARY")
 	store.SetOption(session.StoreBootstrappedKey, nil)
-	ver, err := session.GetBootstrapVersion(seV244)
+	ver, err := session.GetBootstrapVersion(seVLow)
 	require.NoError(t, err)
-	require.Equal(t, int64(244), ver)
+	require.Equal(t, int64(fromVersion), ver)
 	dom.Close()
 	newVer, err := session.BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = session.GetBootstrapVersion(seV244)
+	ver, err = session.GetBootstrapVersion(seVLow)
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 	newVer.Close()
 }
 
-func TestUpgradeVersion245Secondary(t *testing.T) {
+func TestUpgradeBDRSecondary(t *testing.T) {
+	fromVersion := 244
+	if kerneltype.IsNextGen() {
+		fromVersion = 250
+	}
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	seV244 := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(244))
+	err = m.FinishBootstrap(int64(fromVersion))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	revertVersionAndVariables(t, seV244, 244)
+	revertVersionAndVariables(t, seV244, fromVersion)
 	require.NoError(t, err)
 	session.MustExec(t, seV244, "ADMIN SET BDR ROLE SECONDARY")
 	store.SetOption(session.StoreBootstrappedKey, nil)
 	ver, err := session.GetBootstrapVersion(seV244)
 	require.NoError(t, err)
-	require.Equal(t, int64(244), ver)
+	require.Equal(t, int64(fromVersion), ver)
 	dom.Close()
 	newVer, err := session.BootstrapSession(store)
 	require.NoError(t, err)

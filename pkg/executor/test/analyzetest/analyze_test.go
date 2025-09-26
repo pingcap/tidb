@@ -129,6 +129,7 @@ func TestAnalyzeReplicaReadFollower(t *testing.T) {
 	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
 	tk.MustExec("analyze table t")
 }
+
 func TestAnalyzeRestrict(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
