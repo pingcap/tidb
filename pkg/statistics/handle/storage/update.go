@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
@@ -75,6 +74,7 @@ func UpdateStatsMeta(
 				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
 				id, delta.Count, delta.Delta)
 		}
+<<<<<<< HEAD
 		cache.TableRowStatsCache.Invalidate(id)
 	}
 	return err
@@ -99,6 +99,57 @@ func DumpTableStatColSizeToKV(sctx sessionctx.Context, id int64, delta variable.
 		"values %s on duplicate key update tot_col_size = GREATEST(0, tot_col_size + values(tot_col_size))", strings.Join(values, ","))
 	_, _, err := statsutil.ExecRows(sctx, sql)
 	return errors.Trace(err)
+=======
+	}
+
+	// Lock the stats_meta and stats_table_locked tables using SELECT FOR UPDATE to prevent write conflicts.
+	// This ensures that we acquire the necessary locks before attempting to update the tables, reducing the likelihood
+	// of encountering lock conflicts during the update process.
+	lockedTableIDsStr := strings.Join(lockedTableIDs, ",")
+	if lockedTableIDsStr != "" {
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_table_locked where table_id in (%s) for update", lockedTableIDsStr)); err != nil {
+			return err
+		}
+	}
+
+	unlockedTableIDsStr := strings.Join(unlockedTableIDs, ",")
+	if unlockedTableIDsStr != "" {
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_meta where table_id in (%s) for update", unlockedTableIDsStr)); err != nil {
+			return err
+		}
+	}
+	// Execute locked updates
+	if len(lockedValues) > 0 {
+		sql := fmt.Sprintf("insert into mysql.stats_table_locked (version, table_id, modify_count, count) values %s "+
+			"on duplicate key update version = values(version), modify_count = modify_count + values(modify_count), "+
+			"count = count + values(count)", strings.Join(lockedValues, ","))
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
+			return err
+		}
+	}
+
+	// Execute unlocked updates with positive delta
+	if len(unlockedPosValues) > 0 {
+		sql := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, modify_count, count) values %s "+
+			"on duplicate key update version = values(version), modify_count = modify_count + values(modify_count), "+
+			"count = count + values(count)", strings.Join(unlockedPosValues, ","))
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
+			return err
+		}
+	}
+
+	// Execute unlocked updates with negative delta
+	if len(unlockedNegValues) > 0 {
+		sql := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, modify_count, count) values %s "+
+			"on duplicate key update version = values(version), modify_count = modify_count + values(modify_count), "+
+			"count = if(count > values(count), count - values(count), 0)", strings.Join(unlockedNegValues, ","))
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
+			return err
+		}
+	}
+
+	return nil
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287))
 }
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
