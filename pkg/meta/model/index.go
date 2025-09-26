@@ -345,7 +345,7 @@ type IndexColumn struct {
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing
 	Length            int  `json:"length"`
-	UsingChangingType bool `json:"using_changing_type"` // Whether the index is using changing type.
+	UsingChangingType bool `json:"using_changing_type,omitempty"` // Whether the index is using changing type.
 }
 
 // Clone clones IndexColumn.
