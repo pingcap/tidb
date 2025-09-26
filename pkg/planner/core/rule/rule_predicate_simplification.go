@@ -55,8 +55,8 @@ const (
 	falsePredicate
 	// TruePredicate TODO: make it lower case after rule_decorrelate is migrated.
 	TruePredicate
-	andTwoisNullColumnPredicate // i IS NULL and j is null
-	equalColumnPredicate        // col1 = col2
+	andPredicateWithIsNullColumns // a is null AND b is null ...
+	equalColumnPredicate          // col1 = col2
 	otherPredicate
 )
 
@@ -105,12 +105,10 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) ([]*expr
 			})
 		}()
 		if v.FuncName.L == ast.LogicAnd {
-			if args := v.GetArgs(); len(args) == 2 {
-				col1, ok1 := expression.IsIsNullColumn(args[1])
-				col0, ok0 := expression.IsIsNullColumn(args[0])
-				if ok1 && ok0 {
-					return []*expression.Column{col0, col1}, andTwoisNullColumnPredicate
-				}
+			args := v.GetArgs()
+			cols := expression.ExtractIsNullColumns(args)
+			if len(cols) > 0 {
+				return cols, andPredicateWithIsNullColumns
 			}
 			return nil, andPredicate
 		}
@@ -488,7 +486,7 @@ func processCondition(sctx base.PlanContext, condition expression.Expression) (e
 
 	if conditionType == orPredicate {
 		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, true)
-	} else if conditionType == andPredicate {
+	} else if conditionType == andPredicate || conditionType == andPredicateWithIsNullColumns {
 		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, false)
 	}
 
@@ -572,15 +570,19 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 	}
 	oldlist := make([]expression.Expression, 0, len(predicates))
 	isNullList := make([]*expression.ScalarFunction, 0, 8)
-	isNullColsList := make([][]*expression.Column, 0, 8)
+	isNullColsList := make([]map[int64]struct{}, 0, 8)
 	equalConditionList := make([]expression.Expression, 0, 8)
 	equalConditionColsList := make([][]*expression.Column, 0, 8)
 	for _, predicate := range predicates {
 		cols, tp := FindPredicateType(sctx, predicate)
 		switch tp {
-		case andTwoisNullColumnPredicate:
+		case andPredicateWithIsNullColumns:
 			isNullList = append(isNullList, predicate.(*expression.ScalarFunction))
-			isNullColsList = append(isNullColsList, expression.SortColumns(cols))
+			m := make(map[int64]struct{}, len(cols))
+			for _, col := range cols {
+				m[col.UniqueID] = struct{}{}
+			}
+			isNullColsList = append(isNullColsList, m)
 		case equalColumnPredicate:
 			equalConditionList = append(equalConditionList, predicate)
 			equalConditionColsList = append(equalConditionColsList, expression.SortColumns(cols))
@@ -591,7 +593,7 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 	removeIsNull := make(map[int]struct{}, len(isNullList))
 	intest.Assert(len(isNullList) == len(isNullColsList) && len(equalConditionList) == len(equalConditionColsList),
 		"length of isNullList and isNullColsList or equalConditionList and equalConditionColsList are not equal")
-	if len(equalConditionList) != len(isNullList) {
+	if len(equalConditionList) < len(isNullList) || len(isNullList) == 0 || len(equalConditionColsList) == 0 {
 		return predicates
 	}
 	for i := range equalConditionList {
@@ -601,8 +603,9 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 			if _, ok := removeIsNull[j]; ok {
 				continue
 			}
-			if slices.EqualFunc(cols, isNullCols, func(i, j *expression.Column) bool {
-				return i.Equals(j)
+			if slices.ContainsFunc(cols, func(i *expression.Column) bool {
+				_, ok := isNullCols[i.UniqueID]
+				return ok
 			}) {
 				removeIsNull[j] = struct{}{}
 				canTransfer = true

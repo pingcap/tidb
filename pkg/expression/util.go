@@ -2298,3 +2298,14 @@ func IsIsNullColumn(expr Expression) (*Column, bool) {
 	}
 	return nil, false
 }
+
+// ExtractIsNullColumns extracts all columns from expressions in the form of `isnull(col)`.
+func ExtractIsNullColumns(exprs []Expression) []*Column {
+	cols := make([]*Column, 0, len(exprs))
+	for _, expr := range exprs {
+		if col, ok := IsIsNullColumn(expr); ok {
+			cols = append(cols, col)
+		}
+	}
+	return cols
+}
