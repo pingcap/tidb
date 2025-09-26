@@ -163,7 +163,7 @@ func TestFileChunkProcess(t *testing.T) {
 
 	t.Run("encode error", func(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
-		sourceData := []byte(`1,2,3\n4,aa,6\n7,8,9\n`)
+		sourceData := []byte("1,2,3\n4,aa,6\n7,8,9\n")
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
 		csvParser := getCSVParser(ctx, t, fileName)
 		defer func() {
@@ -182,7 +182,10 @@ func TestFileChunkProcess(t *testing.T) {
 			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
-		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
+		err2 := processor.Process(ctx)
+		require.ErrorIs(t, err2, common.ErrEncodeKV)
+		require.ErrorContains(t, err2, "encoding 2-th data row in this chunk")
+		require.ErrorContains(t, err2, "at offset 6")
 		require.True(t, ctrl.Satisfied())
 	})
 
