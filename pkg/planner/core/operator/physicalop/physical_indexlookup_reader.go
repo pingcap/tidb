@@ -238,7 +238,11 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPus
 func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
 	intest.Assert(!p.IndexLookUpPushDown)
 	if p.KeepOrder {
-		// If keep order is required, we cannot push down the index lookup.
+		// Though most of the index-lookup push-down constraints should be checked in
+		// `checkIndexLookUpPushDownSupported` if possible,
+		// however, the keep order cannot be determined until the final plan is constructed.
+		// So we have to check the keep order here, and if it is required, we should not push down it and use
+		// the normal index-lookup instead.
 		ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
 		return
 	}
