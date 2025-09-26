@@ -2756,7 +2756,6 @@ func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStat
 }
 
 func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
-	s.Dedup()
 	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
 	tableIDs := make([]int64, 0, len(s.RefreshObjects))
 	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].RefreshObjectScope == ast.RefreshObjectScopeGlobal

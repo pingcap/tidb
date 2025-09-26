@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +48,7 @@ func TestRefreshTableStats(t *testing.T) {
 	tbl1Stats := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
 	tbl2Meta := tbl2.Meta()
 	tbl2Stats := handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
-	tk.MustExec("refresh stats test.t1")
+	tk.MustExec("refresh stats t1")
 	tbl1StatsUpdated := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
 	tbl2StatsUpdated := handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
 	require.NotSame(t, tbl1Stats, tbl1StatsUpdated)
@@ -87,4 +88,11 @@ func TestRefreshStatsWarningsForMissingObjects(t *testing.T) {
 	vars.StmtCtx.SetWarnings(nil)
 	tk.MustExec("refresh stats test.t")
 	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
+}
+
+func TestRefreshStatsRequiresDefaultDB(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetDBError("refresh stats t1", plannererrors.ErrNoDB)
 }
