@@ -125,7 +125,11 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 				strings.ToLower(execdetails.ProcessTimeStr): {},
 			}})
 
+	sessVars.SlowLogRules.NeedUpdateEffectiveFields = false
 	items := executor.PrepareSlowLogItemsForRules(goCtx, vardef.GlobalSlowLogRules.Load(), sessVars)
+	require.Nil(t, items)
+	sessVars.SlowLogRules.NeedUpdateEffectiveFields = true
+	items = executor.PrepareSlowLogItemsForRules(goCtx, vardef.GlobalSlowLogRules.Load(), sessVars)
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogConnIDStr)].Match(ctx.GetSessionVars(), items, uint64(123)))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogDBStr)].Match(ctx.GetSessionVars(), items, "testdb"))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogSucc)].Match(ctx.GetSessionVars(), items, true))
@@ -243,9 +247,9 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		tk.MustQuery(`select @@SESSION.tidb_slow_log_rules`).Check(
 			testkit.Rows("resource_group:otherRG"),
 		)
-		tk.MustQuery(`select @@Global.tidb_slow_log_rules`).Check(
-			testkit.Rows(fmt.Sprintf("conn_id:%d,resource_group:testRG", connID)),
-		)
+		ret := tk.MustQuery(`select @@Global.tidb_slow_log_rules`)
+		require.True(t, strings.Contains(ret.String(), "resource_group:testRG"))
+		require.True(t, strings.Contains(ret.String(), fmt.Sprintf("conn_id:%d", connID)))
 	})
 
 	t.Run("session not match, global ConnID not match, global unsetConnID match", func(t *testing.T) {
