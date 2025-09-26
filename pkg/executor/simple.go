@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -2730,7 +2731,15 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 }
 
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
-	sql := s.Text()
+	// Note: Restore the statement to a SQL string so we can broadcast fully qualified
+	// table names to every instance. For example, `REFRESH STATS tbl` executed in
+	// database `db` must be sent as `REFRESH STATS db.tbl`; otherwise a peer without
+	// that current database would skip the table.
+	sql, err := restoreRefreshStatsSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format refresh stats statement", zap.Error(err))
+		return err
+	}
 	if e.IsFromRemote {
 		if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
 			statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats from remote", zap.String("sql", sql), zap.Error(err))
@@ -2753,6 +2762,15 @@ func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStat
 	}
 	statslogutil.StatsLogger().Info("Successfully refreshed statistics on the current instance", zap.String("sql", sql))
 	return nil
+}
+
+func restoreRefreshStatsSQL(s *ast.RefreshStatsStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
 func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
