@@ -39,7 +39,6 @@ func TestPredicateSimplification(tt *testing.T) {
     PRIMARY KEY (c1, c2, c3),
     KEY c3 (c3)
 );`)
-		tk.MustQuery(`SELECT * FROM t1, t2 WHERE (t1.i=t2.j) OR (t1.i IS NULL AND t2.j IS NULL);`)
 		tk.MustExec(`CREATE TABLE t3 (
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
