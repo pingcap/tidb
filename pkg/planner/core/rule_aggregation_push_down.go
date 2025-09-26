@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -436,7 +437,7 @@ func (*AggregationPushDownSolver) pushAggCrossUnion(agg *logicalop.LogicalAggreg
 }
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
-func (a *AggregationPushDownSolver) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (a *AggregationPushDownSolver) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newLogicalPlan, err := a.aggPushDown(p)
 	return newLogicalPlan, planChanged, err

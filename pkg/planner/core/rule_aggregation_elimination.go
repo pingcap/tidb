@@ -88,7 +88,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
 // have unique key column. see detail example in https://github.com/pingcap/tidb/issues/23436
-func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.LogicalAggregation) {
 	for _, af := range agg.AggFuncs {
 		if af.HasDistinct {
 			cols := make([]*expression.Column, 0, len(af.Args))
@@ -243,7 +243,7 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 	if !ok {
 		return p, planChanged, nil
 	}
-	a.tryToEliminateDistinct(agg, opt)
+	a.tryToEliminateDistinct(agg)
 	if proj := a.tryToEliminateAggregation(agg); proj != nil {
 		return proj, planChanged, nil
 	}

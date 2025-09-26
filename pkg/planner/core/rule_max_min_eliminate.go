@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -37,9 +38,9 @@ type MaxMinEliminator struct {
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
-func (a *MaxMinEliminator) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (a *MaxMinEliminator) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return a.eliminateMaxMin(p, opt), planChanged, nil
+	return a.eliminateMaxMin(p), planChanged, nil
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
@@ -140,7 +141,7 @@ func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 // `select max(a) from t` + `select min(a) from t` + `select max(b) from t`.
 // Then we check whether `a` and `b` have indices. If any of the used column has no index, we cannot eliminate
 // this aggregation.
-func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) (aggs []*logicalop.LogicalAggregation, canEliminate bool) {
+func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAggregation) (aggs []*logicalop.LogicalAggregation, canEliminate bool) {
 	for _, f := range agg.AggFuncs {
 		// We must make sure the args of max/min is a simple single column.
 		col, ok := f.Args[0].(*expression.Column)
@@ -172,7 +173,7 @@ func (a *MaxMinEliminator) splitAggFuncAndCheckIndices(agg *logicalop.LogicalAgg
 }
 
 // eliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
-func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) *logicalop.LogicalAggregation {
+func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation) *logicalop.LogicalAggregation {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
 	ctx := agg.SCtx()
@@ -212,14 +213,14 @@ func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation
 }
 
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
-func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan) base.LogicalPlan {
 	// CTE's logical optimization is indenpent.
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChildren = append(newChildren, a.eliminateMaxMin(child, opt))
+		newChildren = append(newChildren, a.eliminateMaxMin(child))
 	}
 	p.SetChildren(newChildren...)
 	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
@@ -242,16 +243,16 @@ func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrac
 		if len(agg.AggFuncs) == 1 {
 			// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
 			// source, or whether the sort can be eliminated. This transformation won't be worse than previous.
-			return a.eliminateSingleMaxMin(agg, opt)
+			return a.eliminateSingleMaxMin(agg)
 		}
 		// If we have more than one aggFunc, we can eliminate this agg only if all of the aggFuncs can benefit from
 		// their column's index.
-		aggs, canEliminate := a.splitAggFuncAndCheckIndices(agg, opt)
+		aggs, canEliminate := a.splitAggFuncAndCheckIndices(agg)
 		if !canEliminate {
 			return agg
 		}
 		for i := range aggs {
-			aggs[i] = a.eliminateSingleMaxMin(aggs[i], opt)
+			aggs[i] = a.eliminateSingleMaxMin(aggs[i])
 		}
 		return a.composeAggsByInnerJoin(aggs)
 	}
