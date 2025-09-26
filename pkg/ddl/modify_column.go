@@ -1064,11 +1064,6 @@ func (w *worker) doModifyColumnIndexReorg(
 		if len(oldIdxInfos) == 0 {
 			oldCol.ChangingFieldType = nil
 			oldCol.DelFlag(mysql.PreventNullInsertFlag)
-			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{oldCol})
-			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
 
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 			if err != nil {
@@ -1095,11 +1090,6 @@ func (w *worker) doModifyColumnIndexReorg(
 			removeOldIndexes(tblInfo, oldIdxInfos)
 			oldCol.ChangingFieldType = nil
 			oldCol.DelFlag(mysql.PreventNullInsertFlag)
-			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{oldCol})
-			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
 
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 			if err != nil {
