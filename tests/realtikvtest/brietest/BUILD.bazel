@@ -18,6 +18,7 @@ go_test(
         "//pkg/config",
         "//pkg/executor",
         "//pkg/parser/mysql",
+        "//pkg/session",
         "//pkg/sessionctx/binloginfo",
         "//pkg/store/mockstore/mockcopr",
         "//pkg/testkit",
