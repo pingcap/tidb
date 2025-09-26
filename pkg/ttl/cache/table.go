@@ -424,13 +424,19 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 
 func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage,
 	startKey, endKey kv.Key, splitCnt int) ([]kv.KeyRange, error) {
+	maxSleep := 20000
+	if intest.InTest {
+		maxSleep = 500 // reduce the max sleep time in test
+	}
+
 	regionCache := store.GetRegionCache()
-	regionIDs, err := regionCache.ListRegionIDsInKeyRange(
-		tikv.NewBackofferWithVars(ctx, 20000, nil), startKey, endKey)
+	regions, err := regionCache.LocateKeyRange(
+		tikv.NewBackofferWithVars(ctx, maxSleep, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
 
+<<<<<<< HEAD
 	regionsPerRange := len(regionIDs) / splitCnt
 	oversizeCnt := len(regionIDs) % splitCnt
 	ranges := make([]kv.KeyRange, 0, min(len(regionIDs), splitCnt))
@@ -440,17 +446,21 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 		if err != nil {
 			return nil, err
 		}
+=======
+	regionsCnt := len(regions)
+	regionsPerRange := regionsCnt / splitCnt
+	oversizeCnt := regionsCnt % splitCnt
+	ranges := make([]kv.KeyRange, 0, min(regionsCnt, splitCnt))
+	for len(regions) > 0 {
+		startRegion := regions[0]
+>>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530))
 
 		endRegionIdx := regionsPerRange - 1
 		if oversizeCnt > 0 {
 			endRegionIdx++
 		}
 
-		endRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
-			regionIDs[endRegionIdx])
-		if err != nil {
-			return nil, err
-		}
+		endRegion := regions[endRegionIdx]
 
 		rangeStartKey := kv.Key(startRegion.StartKey)
 		if rangeStartKey.Cmp(startKey) < 0 {
@@ -464,7 +474,7 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 
 		ranges = append(ranges, kv.KeyRange{StartKey: rangeStartKey, EndKey: rangeEndKey})
 		oversizeCnt--
-		regionIDs = regionIDs[endRegionIdx+1:]
+		regions = regions[endRegionIdx+1:]
 	}
 	return ranges, nil
 }
