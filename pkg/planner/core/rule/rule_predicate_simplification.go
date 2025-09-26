@@ -581,7 +581,7 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 	if len(equalConditionList) > 0 {
 		return predicates
 	}
-	doEqualOrNullSimplification(sctx, equalConditionColsList, equalConditionList, andPredicateList)
+	equalConditionList, andPredicateList = doEqualOrNullSimplification(sctx, equalConditionColsList, equalConditionList, andPredicateList)
 	oldlist = append(oldlist, equalConditionList...)
 	oldlist = append(oldlist, andPredicateList...)
 	return oldlist
@@ -589,7 +589,8 @@ func equalOrNullSimplification(sctx base.PlanContext, predicates []expression.Ex
 
 // doEqualOrNullSimplification tries to simplify equal conditions with IsNull predicates.
 // It modifies equalConditionList and andPredicateList in place.
-func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [][]*expression.Column, equalConditionList, andPredicateList []expression.Expression) {
+func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [][]*expression.Column,
+	equalConditionList, andPredicateList []expression.Expression) (equalConditions, andPredicates []expression.Expression) {
 	columnsSets := make(map[int64]struct{}, len(equalConditionColsList)*2)
 	for andPredicateIdx, predicate := range andPredicateList {
 		andFunc := predicate.(*expression.ScalarFunction)
@@ -633,6 +634,7 @@ func doEqualOrNullSimplification(sctx base.PlanContext, equalConditionColsList [
 	andPredicateList = slices.DeleteFunc(andPredicateList, func(expr expression.Expression) bool {
 		return expr == nil
 	})
+	return equalConditionList, andPredicateList
 }
 
 func removeIsNullPredicates(andList []expression.Expression, columnsSets map[int64]struct{}) []expression.Expression {
