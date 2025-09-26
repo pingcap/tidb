@@ -9,8 +9,12 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 50,
+=======
+    shard_count = 39,
+>>>>>>> ce32d8a3346 (planner: limit pushdown shouldn't be affected by tidb_opt_limit_push_down_threshold (#63399))
     deps = [
         "//pkg/config",
         "//pkg/domain",
